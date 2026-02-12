@@ -1,0 +1,13 @@
+# Ignore python temporary files
+__pycache__/
+*.pyc
+
+# Ignore environmental variables (Secrets)
+.env
+.env.local
+.venv
+env/
+venv/
+
+# Ignore system files
+.DS_Store
