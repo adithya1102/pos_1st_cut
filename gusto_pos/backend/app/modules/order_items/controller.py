@@ -9,7 +9,8 @@ from app.modules.order_items.schema import OrderItemRead
 from app.modules.order_items.model import OrderItem
 from app.core.dependencies import get_db_dep
 
-router = APIRouter(prefix="/order-items", tags=["order_items"])
+# Router prefix and tags moved to main.py
+router = APIRouter()
 
 
 @router.get("/", response_model=list[OrderItemRead])

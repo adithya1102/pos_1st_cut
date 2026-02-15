@@ -1,23 +1,20 @@
 from typing import Any
 from uuid import UUID
-
 from fastapi import APIRouter, Depends, HTTPException, status, Body
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.modules.users.schema import UserRead, UserCreate
 from app.modules.users.model import User
 from app.core.dependencies import get_db_dep
 from app.core.security import get_password_hash, verify_password
 
-router = APIRouter(prefix="/users", tags=["users"])
-
+# FIXED: Removed prefix and tags
+router = APIRouter()
 
 @router.get("/", response_model=list[UserRead])
 async def list_users(db: AsyncSession = get_db_dep()):
     result = await db.execute(select(User))
     return result.scalars().all()
-
 
 @router.get("/{item_id}", response_model=UserRead)
 async def get_user(item_id: UUID, db: AsyncSession = get_db_dep()):
@@ -25,7 +22,6 @@ async def get_user(item_id: UUID, db: AsyncSession = get_db_dep()):
     if not obj:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return obj
-
 
 @router.post("/", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 async def create_user(payload: UserCreate = Body(...), db: AsyncSession = get_db_dep()):
@@ -35,7 +31,6 @@ async def create_user(payload: UserCreate = Body(...), db: AsyncSession = get_db
     await db.commit()
     await db.refresh(obj)
     return obj
-
 
 @router.put("/{item_id}", response_model=UserRead)
 async def update_user(item_id: UUID, payload: dict[str, Any] = Body(...), db: AsyncSession = get_db_dep()):
@@ -48,7 +43,6 @@ async def update_user(item_id: UUID, payload: dict[str, Any] = Body(...), db: As
     await db.commit()
     await db.refresh(obj)
     return obj
-
 
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(item_id: UUID, db: AsyncSession = get_db_dep()):

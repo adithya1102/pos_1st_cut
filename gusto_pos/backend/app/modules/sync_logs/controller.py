@@ -9,7 +9,8 @@ from app.modules.sync_logs.schema import SyncLogRead
 from app.modules.sync_logs.model import SyncLog
 from app.core.dependencies import get_db_dep
 
-router = APIRouter(prefix="/sync-logs", tags=["sync_logs"])
+# Router prefix and tags moved to main.py
+router = APIRouter()
 
 
 @router.get("/", response_model=list[SyncLogRead])

@@ -1,15 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.database import get_db
 from app.core.auth import create_access_token
 from app.core.security import verify_password
 from app.modules.users.model import User
 from app.modules.users.schema import UserRead
 
-router = APIRouter(prefix="/auth", tags=["auth"])
-
+# FIXED: Removed prefix and tags
+router = APIRouter()
 
 @router.post("/token")
 async def login(username: str, password: str, db: AsyncSession = Depends(get_db)):

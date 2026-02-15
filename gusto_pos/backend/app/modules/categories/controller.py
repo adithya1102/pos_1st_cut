@@ -9,7 +9,8 @@ from app.modules.categories.schema import CategoryRead
 from app.modules.categories.model import Category
 from app.core.dependencies import get_db_dep
 
-router = APIRouter(prefix="/categories", tags=["categories"])
+# Router prefix and tags moved to main.py
+router = APIRouter()
 
 
 @router.get("/", response_model=list[CategoryRead])

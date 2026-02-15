@@ -9,7 +9,8 @@ from app.modules.products.schema import ProductRead
 from app.modules.products.model import Product
 from app.core.dependencies import get_db_dep
 
-router = APIRouter(prefix="/products", tags=["products"])
+# Router prefix and tags moved to main.py
+router = APIRouter()
 
 
 @router.get("/", response_model=list[ProductRead])
