@@ -22,9 +22,9 @@ engine = create_async_engine(settings.DATABASE_URL, echo=True)
 AsyncSessionLocal = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
 
 async def init_db():
-    # Schema is already created via setup_schema.py
-    # This is kept for compatibility but does nothing
-    pass
+    """Create all database tables based on SQLAlchemy models."""
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
 async def get_db():
     async with AsyncSessionLocal() as session:
