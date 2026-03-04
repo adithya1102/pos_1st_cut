@@ -1,57 +1,37 @@
 from typing import Any
 from uuid import UUID
-
 from fastapi import APIRouter, Depends, HTTPException, status, Body
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import get_db
 from app.modules.inventory.schema import InventoryRead
-from app.modules.inventory.model import Inventory
-from app.core.dependencies import get_db_dep
+from app.modules.inventory.service import InventoryService
 
-router = APIRouter(prefix="/inventory", tags=["inventory"])
-
+router = APIRouter(prefix="/inventory")
 
 @router.get("/", response_model=list[InventoryRead])
-async def list_inventory(db: AsyncSession = get_db_dep()):
-    result = await db.execute(select(Inventory))
-    return result.scalars().all()
-
+async def list_inventory(db: AsyncSession = Depends(get_db)):
+    return await InventoryService.get_all_inventory(db)
 
 @router.get("/{item_id}", response_model=InventoryRead)
-async def get_inventory(item_id: UUID, db: AsyncSession = get_db_dep()):
-    obj = await db.get(Inventory, item_id)
+async def get_inventory(item_id: UUID, db: AsyncSession = Depends(get_db)):
+    obj = await InventoryService.get_inventory_by_id(db, item_id)
     if not obj:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found")
     return obj
-
 
 @router.post("/", response_model=InventoryRead, status_code=status.HTTP_201_CREATED)
-async def create_inventory(payload: dict[str, Any] = Body(...), db: AsyncSession = get_db_dep()):
-    obj = Inventory(**payload)
-    db.add(obj)
-    await db.commit()
-    await db.refresh(obj)
-    return obj
-
+async def create_inventory(payload: dict[str, Any] = Body(...), db: AsyncSession = Depends(get_db)):
+    return await InventoryService.create_inventory(db, payload)
 
 @router.put("/{item_id}", response_model=InventoryRead)
-async def update_inventory(item_id: UUID, payload: dict[str, Any] = Body(...), db: AsyncSession = get_db_dep()):
-    obj = await db.get(Inventory, item_id)
+async def update_inventory(item_id: UUID, payload: dict[str, Any] = Body(...), db: AsyncSession = Depends(get_db)):
+    obj = await InventoryService.update_inventory(db, item_id, payload)
     if not obj:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory not found")
-    for k, v in payload.items():
-        setattr(obj, k, v)
-    db.add(obj)
-    await db.commit()
-    await db.refresh(obj)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found")
     return obj
 
-
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_inventory(item_id: UUID, db: AsyncSession = get_db_dep()):
-    obj = await db.get(Inventory, item_id)
-    if not obj:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory not found")
-    await db.delete(obj)
-    await db.commit()
+async def delete_inventory(item_id: UUID, db: AsyncSession = Depends(get_db)):
+    if not await InventoryService.delete_inventory(db, item_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found")

@@ -7,18 +7,16 @@ from datetime import datetime
 
 class ItemModifierCreate(BaseModel):
     """Schema for creating an ItemModifier."""
-    name: str
-    description: Optional[str] = None
-    price_adjustment: float = 0.0
+    modifier_name: str
+    extra_price: float = 0.0
 
 
 class ItemModifierResponse(BaseModel):
     """Schema for ItemModifier response."""
     id: UUID
     menu_item_id: UUID
-    name: str
-    description: Optional[str]
-    price_adjustment: float
+    modifier_name: str
+    extra_price: float
     created_at: datetime
 
     class Config:

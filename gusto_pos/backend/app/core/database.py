@@ -14,7 +14,6 @@ from app.modules.order_items.model import OrderItem
 from app.modules.payments.model import Payment
 from app.modules.products.model import Product
 from app.modules.inventory.model import Inventory
-from app.modules.categories.model import Category
 from app.modules.audit_logs.model import AuditLog
 from app.modules.sync_logs.model import SyncLog
 

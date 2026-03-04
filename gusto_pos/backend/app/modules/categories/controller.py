@@ -1,57 +1,37 @@
 from typing import Any
 from uuid import UUID
-
 from fastapi import APIRouter, Depends, HTTPException, status, Body
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.categories.schema import CategoryRead
-from app.modules.categories.model import Category
-from app.core.dependencies import get_db_dep
+from app.core.database import get_db
+from app.modules.categories.schema import CategoryRead # Ensure this exists
+from app.modules.categories.service import CategoryService
 
-router = APIRouter(prefix="/categories", tags=["categories"])
-
+router = APIRouter(prefix="/categories")
 
 @router.get("/", response_model=list[CategoryRead])
-async def list_categories(db: AsyncSession = get_db_dep()):
-    result = await db.execute(select(Category))
-    return result.scalars().all()
-
+async def list_categories(db: AsyncSession = Depends(get_db)):
+    return await CategoryService.get_all_categories(db)
 
 @router.get("/{item_id}", response_model=CategoryRead)
-async def get_category(item_id: UUID, db: AsyncSession = get_db_dep()):
-    obj = await db.get(Category, item_id)
+async def get_category(item_id: UUID, db: AsyncSession = Depends(get_db)):
+    obj = await CategoryService.get_category_by_id(db, item_id)
     if not obj:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
     return obj
-
 
 @router.post("/", response_model=CategoryRead, status_code=status.HTTP_201_CREATED)
-async def create_category(payload: dict[str, Any] = Body(...), db: AsyncSession = get_db_dep()):
-    obj = Category(**payload)
-    db.add(obj)
-    await db.commit()
-    await db.refresh(obj)
-    return obj
-
+async def create_category(payload: dict[str, Any] = Body(...), db: AsyncSession = Depends(get_db)):
+    return await CategoryService.create_category(db, payload)
 
 @router.put("/{item_id}", response_model=CategoryRead)
-async def update_category(item_id: UUID, payload: dict[str, Any] = Body(...), db: AsyncSession = get_db_dep()):
-    obj = await db.get(Category, item_id)
+async def update_category(item_id: UUID, payload: dict[str, Any] = Body(...), db: AsyncSession = Depends(get_db)):
+    obj = await CategoryService.update_category(db, item_id, payload)
     if not obj:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
-    for k, v in payload.items():
-        setattr(obj, k, v)
-    db.add(obj)
-    await db.commit()
-    await db.refresh(obj)
     return obj
 
-
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_category(item_id: UUID, db: AsyncSession = get_db_dep()):
-    obj = await db.get(Category, item_id)
-    if not obj:
+async def delete_category(item_id: UUID, db: AsyncSession = Depends(get_db)):
+    if not await CategoryService.delete_category(db, item_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
-    await db.delete(obj)
-    await db.commit()

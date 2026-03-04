@@ -1,57 +1,37 @@
 from typing import Any
 from uuid import UUID
-
 from fastapi import APIRouter, Depends, HTTPException, status, Body
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.outlets.schema import OutletRead
-from app.modules.outlets.model import Outlet
-from app.core.dependencies import get_db_dep
+from app.core.database import get_db
+from app.modules.outlets.schema import OutletRead, OutletCreate, OutletUpdate
+from app.modules.outlets.service import OutletService
 
-router = APIRouter(prefix="/outlets", tags=["outlets"])
-
+router = APIRouter(prefix="/outlets")
 
 @router.get("/", response_model=list[OutletRead])
-async def list_outlets(db: AsyncSession = get_db_dep()):
-    result = await db.execute(select(Outlet))
-    return result.scalars().all()
-
+async def list_outlets(db: AsyncSession = Depends(get_db)):
+    return await OutletService.get_all_outlets(db)
 
 @router.get("/{item_id}", response_model=OutletRead)
-async def get_outlet(item_id: UUID, db: AsyncSession = get_db_dep()):
-    obj = await db.get(Outlet, item_id)
+async def get_outlet(item_id: UUID, db: AsyncSession = Depends(get_db)):
+    obj = await OutletService.get_outlet_by_id(db, item_id)
     if not obj:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Outlet not found")
     return obj
 
-
-@router.post("/", response_model=OutletRead, status_code=status.HTTP_201_CREATED)
-async def create_outlet(payload: dict[str, Any] = Body(...), db: AsyncSession = get_db_dep()):
-    obj = Outlet(**payload)
-    db.add(obj)
-    await db.commit()
-    await db.refresh(obj)
-    return obj
-
+@router.post("/", response_model=None, status_code=status.HTTP_201_CREATED)
+async def create_outlet(payload: OutletCreate, db: AsyncSession = Depends(get_db)):
+    return await OutletService.create_outlet(db, payload.model_dump())
 
 @router.put("/{item_id}", response_model=OutletRead)
-async def update_outlet(item_id: UUID, payload: dict[str, Any] = Body(...), db: AsyncSession = get_db_dep()):
-    obj = await db.get(Outlet, item_id)
+async def update_outlet(item_id: UUID, payload: OutletUpdate, db: AsyncSession = Depends(get_db)):
+    obj = await OutletService.update_outlet(db, item_id, payload.model_dump(exclude_unset=True))
     if not obj:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Outlet not found")
-    for k, v in payload.items():
-        setattr(obj, k, v)
-    db.add(obj)
-    await db.commit()
-    await db.refresh(obj)
     return obj
 
-
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_outlet(item_id: UUID, db: AsyncSession = get_db_dep()):
-    obj = await db.get(Outlet, item_id)
-    if not obj:
+async def delete_outlet(item_id: UUID, db: AsyncSession = Depends(get_db)):
+    if not await OutletService.delete_outlet(db, item_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Outlet not found")
-    await db.delete(obj)
-    await db.commit()

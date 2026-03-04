@@ -1,57 +1,37 @@
 from typing import Any
 from uuid import UUID
-
 from fastapi import APIRouter, Depends, HTTPException, status, Body
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.products.schema import ProductRead
-from app.modules.products.model import Product
-from app.core.dependencies import get_db_dep
+from app.core.database import get_db
+from app.modules.products.schema import ProductRead  # Ensure you have this schema
+from app.modules.products.service import ProductService
 
-router = APIRouter(prefix="/products", tags=["products"])
-
+router = APIRouter(prefix="/products")
 
 @router.get("/", response_model=list[ProductRead])
-async def list_products(db: AsyncSession = get_db_dep()):
-    result = await db.execute(select(Product))
-    return result.scalars().all()
-
+async def list_products(db: AsyncSession = Depends(get_db)):
+    return await ProductService.get_all_products(db)
 
 @router.get("/{item_id}", response_model=ProductRead)
-async def get_product(item_id: UUID, db: AsyncSession = get_db_dep()):
-    obj = await db.get(Product, item_id)
+async def get_product(item_id: UUID, db: AsyncSession = Depends(get_db)):
+    obj = await ProductService.get_product_by_id(db, item_id)
     if not obj:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
     return obj
-
 
 @router.post("/", response_model=ProductRead, status_code=status.HTTP_201_CREATED)
-async def create_product(payload: dict[str, Any] = Body(...), db: AsyncSession = get_db_dep()):
-    obj = Product(**payload)
-    db.add(obj)
-    await db.commit()
-    await db.refresh(obj)
-    return obj
-
+async def create_product(payload: dict[str, Any] = Body(...), db: AsyncSession = Depends(get_db)):
+    return await ProductService.create_product(db, payload)
 
 @router.put("/{item_id}", response_model=ProductRead)
-async def update_product(item_id: UUID, payload: dict[str, Any] = Body(...), db: AsyncSession = get_db_dep()):
-    obj = await db.get(Product, item_id)
+async def update_product(item_id: UUID, payload: dict[str, Any] = Body(...), db: AsyncSession = Depends(get_db)):
+    obj = await ProductService.update_product(db, item_id, payload)
     if not obj:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
-    for k, v in payload.items():
-        setattr(obj, k, v)
-    db.add(obj)
-    await db.commit()
-    await db.refresh(obj)
     return obj
 
-
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_product(item_id: UUID, db: AsyncSession = get_db_dep()):
-    obj = await db.get(Product, item_id)
-    if not obj:
+async def delete_product(item_id: UUID, db: AsyncSession = Depends(get_db)):
+    if not await ProductService.delete_product(db, item_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
-    await db.delete(obj)
-    await db.commit()

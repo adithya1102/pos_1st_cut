@@ -23,11 +23,11 @@ class Outlet(Base):
     organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))
 
     # Relationships
-    organization = relationship("Organization", back_populates="outlets")
-    staff = relationship("User", back_populates="outlet")
-    tables = relationship("Table", back_populates="outlet", cascade="all, delete-orphan")
-    menus = relationship("Menu", back_populates="outlet", cascade="all, delete-orphan")
-    orders = relationship("Order", back_populates="outlet", cascade="all, delete-orphan")
+    organization = relationship("Organization", back_populates="outlets", lazy="selectin")
+    staff = relationship("User", back_populates="outlet", lazy="selectin")
+    tables = relationship("Table", back_populates="outlet", cascade="all, delete-orphan", lazy="selectin")
+    menus = relationship("Menu", back_populates="outlet", cascade="all, delete-orphan", lazy="selectin")
+    orders = relationship("Order", back_populates="outlet", cascade="all, delete-orphan", lazy="selectin")
 
 
 class Table(Base):
@@ -38,5 +38,5 @@ class Table(Base):
     status: Mapped[TableStatus] = mapped_column(SQLEnum(TableStatus), default=TableStatus.AVAILABLE)
 
     # Relationships
-    outlet = relationship("Outlet", back_populates="tables")
-    orders = relationship("Order", back_populates="table", foreign_keys="Order.table_id")
+    outlet = relationship("Outlet", back_populates="tables", lazy="selectin")
+    orders = relationship("Order", back_populates="table", foreign_keys="Order.table_id", lazy="selectin")

@@ -8,4 +8,4 @@ class Organization(Base):
     gst_number: Mapped[str | None] = mapped_column(String(20))
 
     # Relationships
-    outlets = relationship("Outlet", back_populates="organization", cascade="all, delete-orphan")
+    outlets = relationship("Outlet", back_populates="organization", cascade="all, delete-orphan", lazy="selectin")

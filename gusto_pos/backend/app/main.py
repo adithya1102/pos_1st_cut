@@ -30,14 +30,16 @@ async def on_startup():
         await init_initial_data(session)
 
 # Endpoints
-app.include_router(org_router, prefix="/api/v1/organizations", tags=["Organizations"])
-app.include_router(outlet_router, prefix="/api/v1/outlets", tags=["Outlets & Tables"])
-app.include_router(user_router, prefix="/api/v1/users", tags=["Staff Users"])
-app.include_router(role_router, prefix="/api/v1/roles", tags=["Permissions"])
-app.include_router(customer_router, prefix="/api/v1/customers", tags=["Customers"])
-app.include_router(menu_router, prefix="/api/v1/menu", tags=["Digital Menu"])
-app.include_router(order_router, prefix="/api/v1/orders", tags=["Orders"])
-app.include_router(payment_router, prefix="/api/v1/payments", tags=["Payments (In-App UPI)"])
+# Note: The specific paths (like /organizations, /outlets) are already defined 
+# inside the controllers, so we only need to prefix them with /api/v1 here.
+app.include_router(org_router, prefix="/api/v1", tags=["Organizations"])
+app.include_router(outlet_router, prefix="/api/v1", tags=["Outlets & Tables"])
+app.include_router(user_router, prefix="/api/v1", tags=["Staff Users"])
+app.include_router(role_router, prefix="/api/v1", tags=["Permissions"])
+app.include_router(customer_router, prefix="/api/v1", tags=["Customers"])
+app.include_router(menu_router, prefix="/api/v1", tags=["Digital Menu"])
+app.include_router(order_router, prefix="/api/v1", tags=["Orders"])
+app.include_router(payment_router, prefix="/api/v1", tags=["Payments (In-App UPI)"])
 
 @app.get("/")
 async def root():

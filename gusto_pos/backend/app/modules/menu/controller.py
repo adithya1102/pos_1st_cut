@@ -17,7 +17,7 @@ router = APIRouter(prefix="/menus", tags=["menus"])
 
 
 # Menu endpoints
-@router.post("/", response_model=MenuResponse)
+@router.post("/", response_model=MenuResponse, status_code=status.HTTP_201_CREATED)
 async def create_menu(menu: MenuCreate, db: AsyncSession = Depends(get_db)):
     """Create a new menu."""
     return await MenuService.create_menu(db, menu)
@@ -107,16 +107,10 @@ async def get_category_items(category_id: UUID, db: AsyncSession = Depends(get_d
 
 @router.put("/items/{item_id}", response_model=MenuItemResponse)
 async def update_item(item_id: UUID, item_update: MenuItemUpdate, db: AsyncSession = Depends(get_db)):
-    """Update a menu item."""
-    item = await MenuItemService.get_item_by_id(db, item_id)
+    """Update a menu item (fixed: delegate to service, no inline db.refresh)."""
+    item = await MenuItemService.update_item(db, item_id, item_update)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-    
-    update_data = item_update.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(item, key, value)
-    await db.commit()
-    await db.refresh(item)
     return item
 
 
