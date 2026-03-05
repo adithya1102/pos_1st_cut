@@ -55,7 +55,7 @@ async def delete_menu(menu_id: UUID, db: AsyncSession = Depends(get_db)):
 
 
 # Menu Category endpoints
-@router.post("/categories/", response_model=MenuCategoryResponse)
+@router.post("/categories/", response_model=MenuCategoryResponse, status_code=status.HTTP_201_CREATED)
 async def create_category(category: MenuCategoryCreate, db: AsyncSession = Depends(get_db)):
     """Create a new menu category."""
     return await MenuCategoryService.create_category(db, category)
@@ -84,7 +84,7 @@ async def delete_category(category_id: UUID, db: AsyncSession = Depends(get_db))
 
 
 # Menu Item endpoints
-@router.post("/items/", response_model=MenuItemResponse)
+@router.post("/items/", response_model=MenuItemResponse, status_code=status.HTTP_201_CREATED)
 async def create_item(item: MenuItemCreate, db: AsyncSession = Depends(get_db)):
     """Create a new menu item."""
     return await MenuItemService.create_item(db, item)
@@ -122,7 +122,7 @@ async def delete_item(item_id: UUID, db: AsyncSession = Depends(get_db)):
 
 
 # Item Modifier endpoints
-@router.post("/modifiers/{menu_item_id}", response_model=ItemModifierResponse)
+@router.post("/modifiers/{menu_item_id}", response_model=ItemModifierResponse, status_code=status.HTTP_201_CREATED)
 async def create_modifier(menu_item_id: UUID, modifier: ItemModifierCreate, db: AsyncSession = Depends(get_db)):
     """Create a new item modifier."""
     return await ItemModifierService.create_modifier(db, modifier, menu_item_id)

@@ -1,10 +1,11 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from uuid import UUID
+from typing import Optional
 
 class PaymentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     order_id: UUID
     amount: float
-
-    class Config:
-        from_attributes = True
+    payment_method: Optional[str] = None

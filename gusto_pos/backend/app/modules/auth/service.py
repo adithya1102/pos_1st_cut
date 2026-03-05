@@ -2,7 +2,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
 from app.modules.users.model import User
-from app.core.security import verify_password, create_access_token
+from app.core.security import verify_password
+from app.core.auth import create_access_token
 
 class AuthService:
     @staticmethod
@@ -16,5 +17,5 @@ class AuthService:
             return None
             
         # 3. Create token
-        access_token = create_access_token(data={"sub": user.username})
+        access_token = create_access_token(subject=user.username)
         return {"access_token": access_token, "token_type": "bearer"}

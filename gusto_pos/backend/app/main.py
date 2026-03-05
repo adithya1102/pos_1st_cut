@@ -12,6 +12,7 @@ from app.modules.customers.controller import router as customer_router
 from app.modules.menu.controller import router as menu_router
 from app.modules.orders.controller import router as order_router
 from app.modules.payments.controller import router as payment_router
+from app.modules.auth.controller import router as auth_router
 
 app = FastAPI(title="Gusto POS", version="2.0.0")
 
@@ -40,6 +41,7 @@ app.include_router(customer_router, prefix="/api/v1", tags=["Customers"])
 app.include_router(menu_router, prefix="/api/v1", tags=["Digital Menu"])
 app.include_router(order_router, prefix="/api/v1", tags=["Orders"])
 app.include_router(payment_router, prefix="/api/v1", tags=["Payments (In-App UPI)"])
+app.include_router(auth_router, prefix="/api/v1", tags=["Authentication"])
 
 @app.get("/")
 async def root():

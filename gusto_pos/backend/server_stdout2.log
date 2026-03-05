@@ -1,0 +1,124 @@
+2026-03-04 19:06:40,539 INFO sqlalchemy.engine.Engine select pg_catalog.version()
+2026-03-04 19:06:40,546 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-03-04 19:06:40,546 INFO sqlalchemy.engine.Engine select current_schema()
+2026-03-04 19:06:40,550 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-03-04 19:06:40,551 INFO sqlalchemy.engine.Engine show standard_conforming_strings
+2026-03-04 19:06:40,551 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-03-04 19:06:40,554 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-03-04 19:06:40,581 INFO sqlalchemy.engine.Engine SELECT roles.id, roles.name, roles.permissions, roles.created_at 
+FROM roles
+2026-03-04 19:06:40,582 INFO sqlalchemy.engine.Engine [generated in 0.00076s] ()
+[OK] Roles already exist in database. Skipping seed data.
+2026-03-04 19:06:40,586 INFO sqlalchemy.engine.Engine ROLLBACK
+INFO:     127.0.0.1:62209 - "POST /api/v1/menus/categories/?menu_id=ed22052e-ecf3-4758-acdb-05db91f457c3 HTTP/1.1" 422 Unprocessable Entity
+INFO:     127.0.0.1:62210 - "POST /api/v1/menus/items/?category_id= HTTP/1.1" 422 Unprocessable Entity
+2026-03-04 19:07:25,438 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-03-04 19:07:25,441 INFO sqlalchemy.engine.Engine SELECT menus.outlet_id, menus.version_label, menus.is_latest, menus.id, menus.created_at 
+FROM menus 
+WHERE menus.id = $1::UUID
+2026-03-04 19:07:25,441 INFO sqlalchemy.engine.Engine [generated in 0.00056s] (UUID('ed22052e-ecf3-4758-acdb-05db91f457c3'),)
+2026-03-04 19:07:25,446 INFO sqlalchemy.engine.Engine SELECT menu_categories.menu_id AS menu_categories_menu_id, menu_categories.name AS menu_categories_name, menu_categories.id AS menu_categories_id, menu_categories.created_at AS menu_categories_created_at 
+FROM menu_categories 
+WHERE menu_categories.menu_id IN ($1::UUID)
+2026-03-04 19:07:25,446 INFO sqlalchemy.engine.Engine [generated in 0.00091s] (UUID('ed22052e-ecf3-4758-acdb-05db91f457c3'),)
+2026-03-04 19:07:25,456 INFO sqlalchemy.engine.Engine SELECT menu_items.category_id AS menu_items_category_id, menu_items.name AS menu_items_name, menu_items.short_code AS menu_items_short_code, menu_items.base_price AS menu_items_base_price, menu_items.is_veg AS menu_items_is_veg, menu_items.is_active AS menu_items_is_active, menu_items.id AS menu_items_id, menu_items.created_at AS menu_items_created_at 
+FROM menu_items 
+WHERE menu_items.category_id IN ($1::UUID, $2::UUID, $3::UUID, $4::UUID)
+2026-03-04 19:07:25,456 INFO sqlalchemy.engine.Engine [generated in 0.00082s] (UUID('50b1e393-4e76-43b6-88e3-abb1a186cb8e'), UUID('9c5cd79c-f257-4a03-ad97-65d8592ee992'), UUID('0993ce43-3598-44c4-9476-13e711f04a58'), UUID('3ecdecf9-16b6-4e98-a028-89def997a0a6'))
+2026-03-04 19:07:25,465 INFO sqlalchemy.engine.Engine SELECT item_modifiers.menu_item_id AS item_modifiers_menu_item_id, item_modifiers.modifier_name AS item_modifiers_modifier_name, item_modifiers.extra_price AS item_modifiers_extra_price, item_modifiers.id AS item_modifiers_id, item_modifiers.created_at AS item_modifiers_created_at 
+FROM item_modifiers 
+WHERE item_modifiers.menu_item_id IN ($1::UUID)
+2026-03-04 19:07:25,466 INFO sqlalchemy.engine.Engine [generated in 0.00080s] (UUID('e271c55a-3670-4b73-86bc-6a9abf4ea4dd'),)
+INFO:     127.0.0.1:62211 - "GET /api/v1/menus/ed22052e-ecf3-4758-acdb-05db91f457c3 HTTP/1.1" 200 OK
+2026-03-04 19:07:25,473 INFO sqlalchemy.engine.Engine ROLLBACK
+INFO:     127.0.0.1:62213 - "POST /api/v1/orders/ HTTP/1.1" 422 Unprocessable Entity
+2026-03-04 19:07:25,490 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-03-04 19:07:25,490 INFO sqlalchemy.engine.Engine SELECT users.username, users.hashed_password, users.is_active, users.role_id, users.outlet_id, users.id, users.created_at 
+FROM users 
+WHERE users.username = $1::VARCHAR
+2026-03-04 19:07:25,490 INFO sqlalchemy.engine.Engine [generated in 0.00059s] ('adithya_owner',)
+INFO:     127.0.0.1:62214 - "POST /api/v1/auth/login HTTP/1.1" 200 OK
+2026-03-04 19:07:25,857 INFO sqlalchemy.engine.Engine ROLLBACK
+INFO:     127.0.0.1:52227 - "POST /api/v1/menus/categories/?menu_id=ed22052e-ecf3-4758-acdb-05db91f457c3 HTTP/1.1" 422 Unprocessable Entity
+2026-03-04 19:07:58,515 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-03-04 19:07:58,522 INFO sqlalchemy.engine.Engine INSERT INTO menu_categories (menu_id, name, id, created_at) VALUES ($1::UUID, $2::VARCHAR, $3::UUID, $4::TIMESTAMP WITHOUT TIME ZONE)
+2026-03-04 19:07:58,522 INFO sqlalchemy.engine.Engine [generated in 0.00081s] (UUID('ed22052e-ecf3-4758-acdb-05db91f457c3'), 'Verify Cat', UUID('80639925-0720-41fb-b43c-8189e3658eaf'), datetime.datetime(2026, 3, 4, 13, 37, 58, 522710))
+2026-03-04 19:07:58,538 INFO sqlalchemy.engine.Engine COMMIT
+2026-03-04 19:07:58,538 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-03-04 19:07:58,538 INFO sqlalchemy.engine.Engine SELECT menu_categories.menu_id, menu_categories.name, menu_categories.id, menu_categories.created_at 
+FROM menu_categories 
+WHERE menu_categories.id = $1::UUID
+2026-03-04 19:07:58,541 INFO sqlalchemy.engine.Engine [generated in 0.00059s] (UUID('80639925-0720-41fb-b43c-8189e3658eaf'),)
+2026-03-04 19:07:58,542 INFO sqlalchemy.engine.Engine SELECT menu_items.category_id AS menu_items_category_id, menu_items.name AS menu_items_name, menu_items.short_code AS menu_items_short_code, menu_items.base_price AS menu_items_base_price, menu_items.is_veg AS menu_items_is_veg, menu_items.is_active AS menu_items_is_active, menu_items.id AS menu_items_id, menu_items.created_at AS menu_items_created_at 
+FROM menu_items 
+WHERE menu_items.category_id IN ($1::UUID)
+2026-03-04 19:07:58,545 INFO sqlalchemy.engine.Engine [generated in 0.00072s] (UUID('80639925-0720-41fb-b43c-8189e3658eaf'),)
+INFO:     127.0.0.1:58573 - "POST /api/v1/menus/categories/ HTTP/1.1" 201 Created
+2026-03-04 19:07:58,545 INFO sqlalchemy.engine.Engine ROLLBACK
+2026-03-04 19:10:00,678 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-03-04 19:10:00,679 INFO sqlalchemy.engine.Engine INSERT INTO menu_categories (menu_id, name, id, created_at) VALUES ($1::UUID, $2::VARCHAR, $3::UUID, $4::TIMESTAMP WITHOUT TIME ZONE)
+2026-03-04 19:10:00,679 INFO sqlalchemy.engine.Engine [cached since 122.2s ago] (UUID('ed22052e-ecf3-4758-acdb-05db91f457c3'), 'Verify Category', UUID('c68ceb17-72a7-48c8-b85a-f70a03de6e14'), datetime.datetime(2026, 3, 4, 13, 40, 0, 679982))
+2026-03-04 19:10:00,681 INFO sqlalchemy.engine.Engine COMMIT
+2026-03-04 19:10:00,684 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-03-04 19:10:00,685 INFO sqlalchemy.engine.Engine SELECT menu_categories.menu_id, menu_categories.name, menu_categories.id, menu_categories.created_at 
+FROM menu_categories 
+WHERE menu_categories.id = $1::UUID
+2026-03-04 19:10:00,685 INFO sqlalchemy.engine.Engine [cached since 122.1s ago] (UUID('c68ceb17-72a7-48c8-b85a-f70a03de6e14'),)
+2026-03-04 19:10:00,690 INFO sqlalchemy.engine.Engine SELECT menu_items.category_id AS menu_items_category_id, menu_items.name AS menu_items_name, menu_items.short_code AS menu_items_short_code, menu_items.base_price AS menu_items_base_price, menu_items.is_veg AS menu_items_is_veg, menu_items.is_active AS menu_items_is_active, menu_items.id AS menu_items_id, menu_items.created_at AS menu_items_created_at 
+FROM menu_items 
+WHERE menu_items.category_id IN ($1::UUID)
+2026-03-04 19:10:00,690 INFO sqlalchemy.engine.Engine [cached since 122.1s ago] (UUID('c68ceb17-72a7-48c8-b85a-f70a03de6e14'),)
+INFO:     127.0.0.1:59267 - "POST /api/v1/menus/categories/ HTTP/1.1" 201 Created
+2026-03-04 19:10:00,691 INFO sqlalchemy.engine.Engine ROLLBACK
+2026-03-04 19:10:00,699 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-03-04 19:10:00,702 INFO sqlalchemy.engine.Engine INSERT INTO menu_items (category_id, name, short_code, base_price, is_veg, is_active, id, created_at) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::NUMERIC(10, 2), $5::BOOLEAN, $6::BOOLEAN, $7::UUID, $8::TIMESTAMP WITHOUT TIME ZONE)
+2026-03-04 19:10:00,702 INFO sqlalchemy.engine.Engine [generated in 0.00054s] (UUID('c68ceb17-72a7-48c8-b85a-f70a03de6e14'), 'Verify Item', None, 199.0, False, True, UUID('dc4fe2a5-2768-406e-987c-9cbdca1eb681'), datetime.datetime(2026, 3, 4, 13, 40, 0, 702154))
+2026-03-04 19:10:00,709 INFO sqlalchemy.engine.Engine COMMIT
+2026-03-04 19:10:00,711 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-03-04 19:10:00,712 INFO sqlalchemy.engine.Engine SELECT menu_items.category_id, menu_items.name, menu_items.short_code, menu_items.base_price, menu_items.is_veg, menu_items.is_active, menu_items.id, menu_items.created_at 
+FROM menu_items 
+WHERE menu_items.id = $1::UUID
+2026-03-04 19:10:00,712 INFO sqlalchemy.engine.Engine [generated in 0.00056s] (UUID('dc4fe2a5-2768-406e-987c-9cbdca1eb681'),)
+2026-03-04 19:10:00,712 INFO sqlalchemy.engine.Engine SELECT item_modifiers.menu_item_id AS item_modifiers_menu_item_id, item_modifiers.modifier_name AS item_modifiers_modifier_name, item_modifiers.extra_price AS item_modifiers_extra_price, item_modifiers.id AS item_modifiers_id, item_modifiers.created_at AS item_modifiers_created_at 
+FROM item_modifiers 
+WHERE item_modifiers.menu_item_id IN ($1::UUID)
+2026-03-04 19:10:00,719 INFO sqlalchemy.engine.Engine [generated in 0.00143s] (UUID('dc4fe2a5-2768-406e-987c-9cbdca1eb681'),)
+INFO:     127.0.0.1:59268 - "POST /api/v1/menus/items/ HTTP/1.1" 201 Created
+2026-03-04 19:10:00,721 INFO sqlalchemy.engine.Engine ROLLBACK
+2026-03-04 19:10:00,726 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-03-04 19:10:00,727 INFO sqlalchemy.engine.Engine SELECT menus.outlet_id, menus.version_label, menus.is_latest, menus.id, menus.created_at 
+FROM menus 
+WHERE menus.id = $1::UUID
+2026-03-04 19:10:00,727 INFO sqlalchemy.engine.Engine [cached since 155.3s ago] (UUID('ed22052e-ecf3-4758-acdb-05db91f457c3'),)
+2026-03-04 19:10:00,729 INFO sqlalchemy.engine.Engine SELECT menu_categories.menu_id AS menu_categories_menu_id, menu_categories.name AS menu_categories_name, menu_categories.id AS menu_categories_id, menu_categories.created_at AS menu_categories_created_at 
+FROM menu_categories 
+WHERE menu_categories.menu_id IN ($1::UUID)
+2026-03-04 19:10:00,729 INFO sqlalchemy.engine.Engine [cached since 155.3s ago] (UUID('ed22052e-ecf3-4758-acdb-05db91f457c3'),)
+2026-03-04 19:10:00,731 INFO sqlalchemy.engine.Engine SELECT menu_items.category_id AS menu_items_category_id, menu_items.name AS menu_items_name, menu_items.short_code AS menu_items_short_code, menu_items.base_price AS menu_items_base_price, menu_items.is_veg AS menu_items_is_veg, menu_items.is_active AS menu_items_is_active, menu_items.id AS menu_items_id, menu_items.created_at AS menu_items_created_at 
+FROM menu_items 
+WHERE menu_items.category_id IN ($1::UUID, $2::UUID, $3::UUID, $4::UUID, $5::UUID, $6::UUID)
+2026-03-04 19:10:00,732 INFO sqlalchemy.engine.Engine [cached since 155.3s ago] (UUID('50b1e393-4e76-43b6-88e3-abb1a186cb8e'), UUID('9c5cd79c-f257-4a03-ad97-65d8592ee992'), UUID('0993ce43-3598-44c4-9476-13e711f04a58'), UUID('3ecdecf9-16b6-4e98-a028-89def997a0a6'), UUID('80639925-0720-41fb-b43c-8189e3658eaf'), UUID('c68ceb17-72a7-48c8-b85a-f70a03de6e14'))
+2026-03-04 19:10:00,734 INFO sqlalchemy.engine.Engine SELECT item_modifiers.menu_item_id AS item_modifiers_menu_item_id, item_modifiers.modifier_name AS item_modifiers_modifier_name, item_modifiers.extra_price AS item_modifiers_extra_price, item_modifiers.id AS item_modifiers_id, item_modifiers.created_at AS item_modifiers_created_at 
+FROM item_modifiers 
+WHERE item_modifiers.menu_item_id IN ($1::UUID, $2::UUID)
+2026-03-04 19:10:00,735 INFO sqlalchemy.engine.Engine [cached since 155.3s ago] (UUID('e271c55a-3670-4b73-86bc-6a9abf4ea4dd'), UUID('dc4fe2a5-2768-406e-987c-9cbdca1eb681'))
+INFO:     127.0.0.1:59270 - "GET /api/v1/menus/ed22052e-ecf3-4758-acdb-05db91f457c3 HTTP/1.1" 200 OK
+2026-03-04 19:10:00,739 INFO sqlalchemy.engine.Engine ROLLBACK
+2026-03-04 19:10:00,745 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-03-04 19:10:00,746 INFO sqlalchemy.engine.Engine INSERT INTO orders (outlet_id, table_id, customer_id, total_amount, order_status, kitchen_token, id, created_at) VALUES ($1::UUID, $2::UUID, $3::UUID, $4::NUMERIC(10, 2), $5::VARCHAR, $6::VARCHAR, $7::UUID, $8::TIMESTAMP WITHOUT TIME ZONE) RETURNING orders.readable_id
+2026-03-04 19:10:00,746 INFO sqlalchemy.engine.Engine [generated in 0.00065s] (UUID('cfba2bae-7b19-4a79-ad69-b5cda4a559d2'), None, None, 0.0, 'pending', None, UUID('59574510-51f3-4919-858f-b548245f90e5'), datetime.datetime(2026, 3, 4, 13, 40, 0, 746322))
+2026-03-04 19:10:00,754 INFO sqlalchemy.engine.Engine COMMIT
+2026-03-04 19:10:00,754 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-03-04 19:10:00,754 INFO sqlalchemy.engine.Engine SELECT orders.readable_id, orders.outlet_id, orders.table_id, orders.customer_id, orders.total_amount, orders.order_status, orders.kitchen_token, orders.id, orders.created_at 
+FROM orders 
+WHERE orders.id = $1::UUID
+2026-03-04 19:10:00,759 INFO sqlalchemy.engine.Engine [generated in 0.00074s] (UUID('59574510-51f3-4919-858f-b548245f90e5'),)
+INFO:     127.0.0.1:59271 - "POST /api/v1/orders/ HTTP/1.1" 201 Created
+2026-03-04 19:10:00,762 INFO sqlalchemy.engine.Engine ROLLBACK
+2026-03-04 19:10:00,764 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-03-04 19:10:00,766 INFO sqlalchemy.engine.Engine SELECT users.username, users.hashed_password, users.is_active, users.role_id, users.outlet_id, users.id, users.created_at 
+FROM users 
+WHERE users.username = $1::VARCHAR
+2026-03-04 19:10:00,767 INFO sqlalchemy.engine.Engine [cached since 155.3s ago] ('adithya_owner',)
+INFO:     127.0.0.1:59273 - "POST /api/v1/auth/login HTTP/1.1" 200 OK
+2026-03-04 19:10:01,054 INFO sqlalchemy.engine.Engine ROLLBACK

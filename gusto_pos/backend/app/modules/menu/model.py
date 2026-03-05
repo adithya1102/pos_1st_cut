@@ -13,7 +13,7 @@ class Menu(Base):
     is_latest: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Relationships
-    outlet = relationship("Outlet", back_populates="menus", lazy="selectin")
+    outlet = relationship("Outlet", back_populates="menus", lazy="raise")
     categories = relationship("MenuCategory", back_populates="menu", cascade="all, delete-orphan", lazy="selectin")
 
 
@@ -25,7 +25,7 @@ class MenuCategory(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
 
     # Relationships
-    menu = relationship("Menu", back_populates="categories", lazy="selectin")
+    menu = relationship("Menu", back_populates="categories", lazy="raise")
     items = relationship("MenuItem", back_populates="category", cascade="all, delete-orphan", lazy="selectin")
 
 
@@ -41,7 +41,7 @@ class MenuItem(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # Relationships
-    category = relationship("MenuCategory", back_populates="items", lazy="selectin")
+    category = relationship("MenuCategory", back_populates="items", lazy="raise")
     modifiers = relationship("ItemModifier", back_populates="menu_item", cascade="all, delete-orphan", lazy="selectin")
 
 
@@ -53,4 +53,4 @@ class ItemModifier(Base):
     extra_price: Mapped[float] = mapped_column(DECIMAL(10, 2), default=0)
 
     # Relationships
-    menu_item = relationship("MenuItem", back_populates="modifiers", lazy="selectin")
+    menu_item = relationship("MenuItem", back_populates="modifiers", lazy="raise")

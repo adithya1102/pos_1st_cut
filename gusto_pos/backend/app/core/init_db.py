@@ -17,7 +17,7 @@ async def init_initial_data(session: AsyncSession) -> None:
         existing_roles = result.scalars().all()
         
         if len(existing_roles) > 0:
-            print("✓ Roles already exist in database. Skipping seed data.")
+            print("[OK] Roles already exist in database. Skipping seed data.")
             return
         
         # Define default roles with their permissions
@@ -79,13 +79,13 @@ async def init_initial_data(session: AsyncSession) -> None:
             session.add(role)
         
         await session.commit()
-        print("✓ Default roles created successfully!")
+        print("[OK] Default roles created successfully!")
         print(f"  - Owner")
         print(f"  - Manager")
         print(f"  - Kitchen")
         print(f"  - Waiter")
         
     except Exception as e:
-        print(f"✗ Error initializing seed data: {e}")
+        print(f"[ERROR] Error initializing seed data: {e}")
         await session.rollback()
         raise

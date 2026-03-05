@@ -65,7 +65,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.modules.orders.schema import OrderRead
+from app.modules.orders.schema import OrderRead, OrderCreate, OrderUpdate
 from app.modules.orders.service import OrderService
 
 router = APIRouter(prefix="/orders")
@@ -84,12 +84,12 @@ async def get_order(item_id: UUID, db: AsyncSession = Depends(get_db)):
     return obj
 
 @router.post("/", response_model=OrderRead, status_code=status.HTTP_201_CREATED)
-async def create_order(payload: dict[str, Any] = Body(...), db: AsyncSession = Depends(get_db)):
+async def create_order(payload: OrderCreate, db: AsyncSession = Depends(get_db)):
     """Create a new order."""
     return await OrderService.create_order(db, payload)
 
 @router.put("/{item_id}", response_model=OrderRead)
-async def update_order(item_id: UUID, payload: dict[str, Any] = Body(...), db: AsyncSession = Depends(get_db)):
+async def update_order(item_id: UUID, payload: OrderUpdate, db: AsyncSession = Depends(get_db)):
     """Update an order."""
     obj = await OrderService.update_order(db, item_id, payload)
     if not obj:

@@ -14,22 +14,27 @@ class UserService:
 
     @staticmethod
     async def get_user_by_id(db: AsyncSession, user_id: UUID):
-        return await db.get(User, user_id)
+        result = await db.execute(
+            select(User).where(User.id == user_id)
+        )
+        return result.scalar_one_or_none()
 
     @staticmethod
     async def create_user(db: AsyncSession, payload: UserCreate):
         hashed = get_password_hash(payload.password)
         obj = User(
-            username=payload.username, 
-            hashed_password=hashed, 
-            is_active=payload.is_active, 
-            role_id=payload.role_id, 
+            username=payload.username,
+            hashed_password=hashed,
+            is_active=payload.is_active,
+            role_id=payload.role_id,
             outlet_id=payload.outlet_id
         )
         db.add(obj)
         await db.commit()
-        await db.refresh(obj)
-        return obj
+        result = await db.execute(
+            select(User).where(User.id == obj.id)
+        )
+        return result.scalar_one()
 
     @staticmethod
     async def update_user(db: AsyncSession, user_id: UUID, payload: dict[str, Any]):
@@ -44,8 +49,10 @@ class UserService:
             setattr(obj, k, v)
         db.add(obj)
         await db.commit()
-        await db.refresh(obj)
-        return obj
+        result = await db.execute(
+            select(User).where(User.id == user_id)
+        )
+        return result.scalar_one()
 
     @staticmethod
     async def delete_user(db: AsyncSession, user_id: UUID) -> bool:
