@@ -1,4 +1,7 @@
+from app.modules.sessions.router import router as sessions_router
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+import os
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.database import init_db, AsyncSessionLocal
 from app.core.init_db import init_initial_data
@@ -14,7 +17,18 @@ from app.modules.orders.controller import router as order_router
 from app.modules.payments.controller import router as payment_router
 from app.modules.auth.controller import router as auth_router
 
+from app.modules.kitchen.router import router as kitchen_router
+from app.modules.kitchen.customer_router import router as customer_ws_router
+from app.modules.tables.router import router as tables_router
+from app.modules.config.controller import router as config_router
+
+
 app = FastAPI(title="Gusto POS", version="2.0.0")
+
+# Serve kitchen display HTML
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+os.makedirs(static_dir, exist_ok=True)
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 app.add_middleware(
     CORSMiddleware,
@@ -42,6 +56,11 @@ app.include_router(menu_router, prefix="/api/v1", tags=["Digital Menu"])
 app.include_router(order_router, prefix="/api/v1", tags=["Orders"])
 app.include_router(payment_router, prefix="/api/v1", tags=["Payments (In-App UPI)"])
 app.include_router(auth_router, prefix="/api/v1", tags=["Authentication"])
+app.include_router(tables_router, prefix="/api/v1", tags=["Table Sessions"])
+app.include_router(sessions_router, prefix="/api/v1", tags=["Sessions"])
+app.include_router(config_router, prefix="/api/v1", tags=["Outlet Config"])
+app.include_router(kitchen_router)
+app.include_router(customer_ws_router)
 
 @app.get("/")
 async def root():

@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="GustoPOS.Views.MainPage"
+             BackgroundColor="#F8F9FA">
+    <Grid ColumnDefinitions="220,*">
+        <Grid Grid.Column="0" BackgroundColor="#1B4332"
+              RowDefinitions="Auto,*,Auto" Padding="0">
+            <!-- Logo -->
+            <StackLayout Grid.Row="0" Orientation="Horizontal"
+                         Padding="16,24,16,16" Spacing="10">
+                <Border BackgroundColor="#28A745" StrokeShape="RoundRectangle 8"
+                        WidthRequest="36" HeightRequest="36">
+                    <Label Text="G" TextColor="White" FontSize="18"
+                           FontAttributes="Bold"
+                           HorizontalOptions="Center" VerticalOptions="Center"/>
+                </Border>
+                <StackLayout VerticalOptions="Center">
+                    <Label Text="GUSTO" TextColor="White" FontSize="18" FontAttributes="Bold"/>
+                    <Label Text="Rudrarthi" TextColor="#6FCF97" FontSize="11"/>
+                </StackLayout>
+            </StackLayout>
+            <!-- Nav -->
+            <StackLayout Grid.Row="1" Padding="12,0" Spacing="2">
+                <Label Text="SERVICE" TextColor="#6FCF97" FontSize="10"
+                       FontAttributes="Bold" Margin="8,12,0,6"/>
+                <Button x:Name="BtnPOS" Text="📟  POS Terminal"
+                        BackgroundColor="#28A745" TextColor="White"
+                        HorizontalOptions="Fill" CornerRadius="8"
+                        HeightRequest="40" FontSize="13" Clicked="OnPosClicked"/>
+                <Button x:Name="BtnFloor" Text="🪑  Floor View"
+                        BackgroundColor="Transparent" TextColor="White"
+                        HorizontalOptions="Fill" CornerRadius="8"
+                        HeightRequest="40" FontSize="13" Clicked="OnFloorClicked"/>
+                <Button x:Name="BtnBilling" Text="💰  Billing Center"
+                        BackgroundColor="Transparent" TextColor="White"
+                        HorizontalOptions="Fill" CornerRadius="8"
+                        HeightRequest="40" FontSize="13" Clicked="OnBillingClicked"/>
+                <Label Text="SYSTEM" TextColor="#6FCF97" FontSize="10"
+                       FontAttributes="Bold" Margin="8,16,0,6"/>
+                <Button x:Name="BtnMgmt" Text="⚙️  Management"
+                        BackgroundColor="Transparent" TextColor="White"
+                        HorizontalOptions="Fill" CornerRadius="8"
+                        HeightRequest="40" FontSize="13" Clicked="OnMgmtClicked"/>
+            </StackLayout>
+            <Button Grid.Row="2" Text="🚪  Logout"
+                    BackgroundColor="Transparent" TextColor="#ADB5BD"
+                    HorizontalOptions="Fill" CornerRadius="0"
+                    Margin="12,0,12,16" FontSize="13"/>
+        </Grid>
+        <ContentView x:Name="ContentArea" Grid.Column="1" BackgroundColor="#F8F9FA"/>
+    </Grid>
+</ContentPage>

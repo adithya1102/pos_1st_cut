@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="GustoPOS.Views.FloorViewPage">
+    <Grid RowDefinitions="Auto,Auto,*" Padding="24" BackgroundColor="#F8F9FA">
+
+        <Label Grid.Row="0" Text="Floor Management"
+               FontSize="24" FontAttributes="Bold" TextColor="#212529"/>
+        <Label Grid.Row="1"
+               Text="Tap a table to open or close it"
+               TextColor="#555555" FontSize="14" Margin="0,4,0,16"/>
+
+        <ScrollView Grid.Row="2">
+            <StackLayout x:Name="FloorContainer" Spacing="16"/>
+        </ScrollView>
+
+    </Grid>
+</ContentView>

@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="GustoPOS.Views.PosTerminalPage">
+    <Grid>
+        <Grid ColumnDefinitions="*,340" BackgroundColor="#F8F9FA">
+
+            <!-- LEFT: Menu -->
+            <Grid Grid.Column="0" RowDefinitions="Auto,Auto,*" Padding="16" BackgroundColor="White">
+
+                <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,12">
+                    <Border Grid.Column="0" Stroke="#DEE2E6" StrokeShape="RoundRectangle 8"
+                            Padding="12,8" BackgroundColor="#FFFFFF">
+                        <Entry x:Name="SearchEntry" Placeholder="Search dishes..."
+                               PlaceholderColor="#ADB5BD" TextColor="#212529"
+                               BackgroundColor="#FFFFFF"
+                               TextChanged="OnSearchChanged">
+                            <VisualStateManager.VisualStateGroups>
+                                <VisualStateGroup x:Name="CommonStates">
+                                    <VisualState x:Name="Normal">
+                                        <VisualState.Setters>
+                                            <Setter Property="BackgroundColor" Value="#FFFFFF"/>
+                                        </VisualState.Setters>
+                                    </VisualState>
+                                    <VisualState x:Name="Focused">
+                                        <VisualState.Setters>
+                                            <Setter Property="BackgroundColor" Value="#FFFFFF"/>
+                                        </VisualState.Setters>
+                                    </VisualState>
+                                    <VisualState x:Name="Disabled">
+                                        <VisualState.Setters>
+                                            <Setter Property="BackgroundColor" Value="#F8F9FA"/>
+                                        </VisualState.Setters>
+                                    </VisualState>
+                                </VisualStateGroup>
+                            </VisualStateManager.VisualStateGroups>
+                        </Entry>
+                    </Border>
+                    <Button Grid.Column="1" Text="+ Add Dish"
+                            BackgroundColor="#28A745" TextColor="White"
+                            CornerRadius="8" FontSize="13" FontAttributes="Bold"
+                            Margin="8,0,0,0" HeightRequest="44"
+                            Clicked="OnAddDishClicked"/>
+                </Grid>
+
+                <ScrollView Grid.Row="1" Orientation="Horizontal"
+                            HorizontalScrollBarVisibility="Never" Margin="0,0,0,12">
+                    <HorizontalStackLayout x:Name="CategoryTabsPanel" Spacing="8"/>
+                </ScrollView>
+
+                <ScrollView Grid.Row="2">
+                    <FlexLayout x:Name="MenuGrid"
+                                Wrap="Wrap"
+                                Direction="Row"
+                                JustifyContent="Start"
+                                AlignItems="Start"
+                                Padding="4"/>
+                </ScrollView>
+            </Grid>
+
+            <!-- RIGHT: Order Panel -->
+            <Border Grid.Column="1" Stroke="#DEE2E6" StrokeShape="RoundRectangle 0"
+                    BackgroundColor="White" Padding="16">
+                <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto">
+
+                    <Label Grid.Row="0" Text="Current Order"
+                           FontSize="17" FontAttributes="Bold"
+                           TextColor="#000000" Margin="0,0,0,12"/>
+
+                    <Grid Grid.Row="1" ColumnDefinitions="*,*,*" Margin="0,0,0,12" ColumnSpacing="4">
+                        <Button Grid.Column="0" Text="DINE-IN" x:Name="BtnDineIn"
+                                BackgroundColor="#1B4332" TextColor="White"
+                                FontSize="11" CornerRadius="6" Clicked="OnDineInClicked"/>
+                        <Button Grid.Column="1" Text="TAKEAWAY" x:Name="BtnTakeaway"
+                                BackgroundColor="#F8F9FA" TextColor="#333333"
+                                FontSize="11" CornerRadius="6" Clicked="OnTakeawayClicked"/>
+                        <Button Grid.Column="2" Text="ONLINE" x:Name="BtnOnline"
+                                BackgroundColor="#F8F9FA" TextColor="#333333"
+                                FontSize="11" CornerRadius="6" Clicked="OnOnlineClicked"/>
+                    </Grid>
+
+                    <StackLayout Grid.Row="2" Margin="0,0,0,12">
+                        <Label Text="ASSIGN TABLE" FontSize="10" FontAttributes="Bold" TextColor="#555555"/>
+                        <StackLayout x:Name="TableGridContainer" Spacing="6" Margin="0,6,0,0"/>
+                        <Border x:Name="ZoneBadge" IsVisible="False"
+                                BackgroundColor="#FFF3CD" StrokeShape="RoundRectangle 6"
+                                Stroke="#FFC107" StrokeThickness="1"
+                                Padding="10,4" Margin="0,8,0,0"
+                                HorizontalOptions="Start">
+                            <Label x:Name="ZoneBadgeLabel" Text="NORMAL"
+                                   TextColor="#856404" FontSize="11" FontAttributes="Bold"/>
+                        </Border>
+                    </StackLayout>
+
+                    <BoxView Grid.Row="3" HeightRequest="1" BackgroundColor="#DEE2E6"/>
+
+                    <ScrollView Grid.Row="4">
+                        <StackLayout x:Name="CartPanel" Spacing="4" Padding="0,8"/>
+                    </ScrollView>
+
+                    <BoxView Grid.Row="5" HeightRequest="1" BackgroundColor="#DEE2E6" Margin="0,8"/>
+
+                    <StackLayout Grid.Row="6" Spacing="6">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <Label Grid.Column="0" Text="SUBTOTAL" TextColor="#555555" FontSize="13"/>
+                            <Label Grid.Column="1" x:Name="SubtotalLabel" Text="₹0" TextColor="#555555" FontSize="13"/>
+                        </Grid>
+                        <Grid ColumnDefinitions="*,Auto">
+                            <Label Grid.Column="0" Text="TOTAL" FontSize="18" FontAttributes="Bold" TextColor="#000000"/>
+                            <Label Grid.Column="1" x:Name="TotalLabel" Text="₹0"
+                                   FontSize="18" FontAttributes="Bold" TextColor="#28A745"/>
+                        </Grid>
+                    </StackLayout>
+
+                    <Button Grid.Row="7" Text="Generate Bill" BackgroundColor="#1B4332"
+                            TextColor="White" FontSize="16" FontAttributes="Bold"
+                            CornerRadius="8" HeightRequest="50" Margin="0,10,0,0"
+                            Clicked="OnPlaceOrderClicked"/>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- FLOATING: Payment Method Selector -->
+        <Grid x:Name="PaymentOverlay" IsVisible="False" BackgroundColor="#80000000">
+            <Border BackgroundColor="White" StrokeShape="RoundRectangle 16"
+                    Padding="28" HorizontalOptions="Center" VerticalOptions="Center" WidthRequest="420">
+                <StackLayout Spacing="16">
+                    <Label Text="Select Payment Method" FontSize="20"
+                           FontAttributes="Bold" TextColor="#212529"
+                           HorizontalOptions="Center"/>
+                    <Grid ColumnDefinitions="*,*,*" ColumnSpacing="10" x:Name="PaymentButtonsGrid">
+                        <Button Grid.Column="0" x:Name="BtnCash" Text="💵 Cash"
+                                BackgroundColor="White" TextColor="#212529"
+                                BorderColor="#DEE2E6" BorderWidth="2"
+                                FontSize="14" FontAttributes="Bold" CornerRadius="10"
+                                HeightRequest="60" Clicked="OnPaymentMethodClicked"/>
+                        <Button Grid.Column="1" x:Name="BtnCard" Text="💳 Card"
+                                BackgroundColor="White" TextColor="#212529"
+                                BorderColor="#DEE2E6" BorderWidth="2"
+                                FontSize="14" FontAttributes="Bold" CornerRadius="10"
+                                HeightRequest="60" Clicked="OnPaymentMethodClicked"/>
+                        <Button Grid.Column="2" x:Name="BtnUpi" Text="📱 UPI"
+                                BackgroundColor="White" TextColor="#212529"
+                                BorderColor="#DEE2E6" BorderWidth="2"
+                                FontSize="14" FontAttributes="Bold" CornerRadius="10"
+                                HeightRequest="60" Clicked="OnPaymentMethodClicked"/>
+                    </Grid>
+                    <Button x:Name="BtnConfirmBill" Text="Generate Bill"
+                            BackgroundColor="#28A745" TextColor="White"
+                            FontSize="16" FontAttributes="Bold" CornerRadius="10"
+                            HeightRequest="50" Clicked="OnConfirmGenerateBillClicked"/>
+                    <Button Text="Cancel" BackgroundColor="Transparent"
+                            TextColor="#495057" FontSize="13"
+                            Clicked="OnCancelPaymentClicked"/>
+                </StackLayout>
+            </Border>
+        </Grid>
+
+        <!-- FLOATING: Toast Banner -->
+        <Border x:Name="ToastBanner" IsVisible="False"
+                BackgroundColor="#28A745" StrokeShape="RoundRectangle 8"
+                Padding="14,10" Margin="20,10,20,0"
+                VerticalOptions="Start" HorizontalOptions="Fill">
+            <Label x:Name="ToastLabel" Text="" TextColor="White"
+                   FontSize="14" FontAttributes="Bold"
+                   HorizontalOptions="Center"/>
+        </Border>
+
+        <!-- FLOATING: Add Dish -->
+        <Grid x:Name="AddDishOverlay" IsVisible="False" BackgroundColor="#80000000">
+            <Border BackgroundColor="White" StrokeShape="RoundRectangle 16"
+                    Padding="28" HorizontalOptions="Center" VerticalOptions="Center" WidthRequest="400">
+                <StackLayout Spacing="14">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <Label Grid.Column="0" Text="Add New Dish" FontSize="20"
+                               FontAttributes="Bold" TextColor="#000000"/>
+                        <Button Grid.Column="1" Text="X" BackgroundColor="Transparent"
+                                TextColor="#333333" FontSize="16" WidthRequest="36"
+                                HeightRequest="36" Padding="0" Clicked="OnCloseAddDishClicked"/>
+                    </Grid>
+                    <StackLayout Spacing="4">
+                        <Label Text="Dish Name" FontSize="13" FontAttributes="Bold" TextColor="#333333"/>
+                        <Border Stroke="#DEE2E6" StrokeShape="RoundRectangle 8" Padding="12,10">
+                            <Entry x:Name="NewDishName" Placeholder="e.g. Dal Makhani"
+                                   PlaceholderColor="#999999" TextColor="#000000"/>
+                        </Border>
+                    </StackLayout>
+                    <StackLayout Spacing="4">
+                        <Label Text="Price (₹)" FontSize="13" FontAttributes="Bold" TextColor="#333333"/>
+                        <Border Stroke="#DEE2E6" StrokeShape="RoundRectangle 8" Padding="12,10">
+                            <Entry x:Name="NewDishPrice" Placeholder="e.g. 250"
+                                   Keyboard="Numeric" PlaceholderColor="#999999" TextColor="#000000"/>
+                        </Border>
+                    </StackLayout>
+                    <StackLayout Spacing="4">
+                        <Label Text="Category" FontSize="13" FontAttributes="Bold" TextColor="#333333"/>
+                        <Border Stroke="#DEE2E6" StrokeShape="RoundRectangle 8" Padding="4,2">
+                            <Picker x:Name="NewDishCategory" Title="Select category"
+                                    TextColor="#000000" TitleColor="#999999"/>
+                        </Border>
+                    </StackLayout>
+                    <StackLayout Spacing="4">
+                        <Label Text="Dietary Type" FontSize="13" FontAttributes="Bold" TextColor="#333333"/>
+                        <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                            <Button Grid.Column="0" x:Name="BtnVegSelect" Text="VEG"
+                                    BackgroundColor="#28A745" TextColor="White"
+                                    CornerRadius="8" FontSize="13" Clicked="OnVegSelectClicked"/>
+                            <Button Grid.Column="1" x:Name="BtnNonVegSelect" Text="NON-VEG"
+                                    BackgroundColor="#E8E8E8" TextColor="#333333"
+                                    CornerRadius="8" FontSize="13" Clicked="OnNonVegSelectClicked"/>
+                        </Grid>
+                    </StackLayout>
+                    <Button Text="Add to Menu" BackgroundColor="#28A745" TextColor="White"
+                            FontSize="15" FontAttributes="Bold" CornerRadius="10"
+                            HeightRequest="48" Clicked="OnConfirmAddDishClicked"/>
+                    <Label x:Name="AddDishStatus" Text="" FontSize="12"
+                           HorizontalOptions="Center" TextColor="#28A745"/>
+                </StackLayout>
+            </Border>
+        </Grid>
+    </Grid>
+</ContentView>

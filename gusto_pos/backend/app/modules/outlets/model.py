@@ -35,8 +35,8 @@ class Table(Base):
     __tablename__ = "tables"
     outlet_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("outlets.id"), nullable=False)
     table_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    qr_token: Mapped[str] = mapped_column(String(12), unique=True, nullable=False, index=True)
     status: Mapped[TableStatus] = mapped_column(SQLEnum(TableStatus), default=TableStatus.AVAILABLE)
 
     # Relationships
     outlet = relationship("Outlet", back_populates="tables", lazy="selectin")
-    orders = relationship("Order", back_populates="table", foreign_keys="Order.table_id", lazy="selectin")

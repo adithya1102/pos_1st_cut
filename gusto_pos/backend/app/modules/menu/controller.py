@@ -2,6 +2,8 @@
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
+from pydantic import BaseModel
 from app.core.dependencies import get_db
 from app.modules.menu.schema import (
     MenuCreate, MenuResponse, MenuUpdate,
@@ -14,6 +16,92 @@ from app.modules.menu.service import (
 )
 
 router = APIRouter(prefix="/menus", tags=["menus"])
+
+DEFAULT_CUSTOMIZATIONS = [
+    "No oil", "Less spice", "No butter",
+    "No onion", "No garlic", "Jain style",
+    "Half portion (1 by 2)", "Extra cheese +\u20b940"
+]
+
+# Zone-to-menu mapping for zone-based pricing
+ZONE_MENU_MAP = {
+    "normal": "dc88b6a6-129c-479f-8609-07b8525f4310",
+    "fine_dine": "5ddd464b-f4d3-42d1-a007-10b63659c66f",
+}
+
+
+class PriceRuleUpdate(BaseModel):
+    menu_item_id: str
+    zone: str
+    price: float
+    is_available: bool = True
+
+
+@router.get("/by-zone/{outlet_id}/{zone}", response_model=MenuResponse)
+async def get_menu_by_zone(outlet_id: str, zone: str, db: AsyncSession = Depends(get_db)):
+    """Get the correct menu for a given zone (normal or fine_dine)."""
+    menu_id = ZONE_MENU_MAP.get(zone, ZONE_MENU_MAP["normal"])
+    menu = await MenuService.get_menu_by_id(db, UUID(menu_id))
+    if not menu:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Menu not found")
+    return menu
+
+
+@router.get("/zone/{outlet_id}/{zone}")
+async def get_zone_menu(outlet_id: str, zone: str, db: AsyncSession = Depends(get_db)):
+    """Get all categories and items available in a zone via price_rules."""
+    result = await db.execute(
+        text(
+            "SELECT mc.id as cat_id, mc.name as cat_name, "
+            "mi.id as item_id, mi.name as item_name, mi.is_veg, "
+            "pr.price, pr.is_available "
+            "FROM price_rules pr "
+            "JOIN menu_items mi ON pr.menu_item_id = mi.id "
+            "JOIN menu_categories mc ON mi.category_id = mc.id "
+            "JOIN menus m ON mc.menu_id = m.id "
+            "WHERE m.outlet_id = :oid AND pr.zone = :zone "
+            "AND pr.is_available = true "
+            "ORDER BY mc.name, mi.name"
+        ),
+        {"oid": outlet_id, "zone": zone}
+    )
+    rows = result.fetchall()
+    categories = {}
+    for row in rows:
+        cat_id = str(row.cat_id)
+        if cat_id not in categories:
+            categories[cat_id] = {
+                "id": cat_id,
+                "name": row.cat_name,
+                "items": []
+            }
+        categories[cat_id]["items"].append({
+            "id": str(row.item_id),
+            "name": row.item_name,
+            "price": float(row.price),
+            "is_veg": row.is_veg,
+            "is_available": row.is_available,
+            "customization_options": DEFAULT_CUSTOMIZATIONS
+        })
+    return {"zone": zone, "categories": list(categories.values())}
+
+
+@router.patch("/price-rule")
+async def update_price_rule(payload: PriceRuleUpdate, db: AsyncSession = Depends(get_db)):
+    """Update a specific item's price or availability for a zone."""
+    result = await db.execute(
+        text(
+            "UPDATE price_rules SET price = :price, is_available = :avail "
+            "WHERE menu_item_id = :mid AND zone = :zone"
+        ),
+        {"price": payload.price, "avail": payload.is_available,
+         "mid": payload.menu_item_id, "zone": payload.zone}
+    )
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Price rule not found")
+    await db.commit()
+    return {"status": "updated", "menu_item_id": payload.menu_item_id, "zone": payload.zone,
+            "price": payload.price, "is_available": payload.is_available}
 
 
 # Menu endpoints

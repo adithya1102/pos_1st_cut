@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="GustoWaiter.Views.DashboardPage"
+             NavigationPage.HasNavigationBar="False">
+    <Grid RowDefinitions="64,*,60" BackgroundColor="#F8F9FA">
+
+        <!-- TOP HEADER - matches POS dark green bar -->
+        <Grid Grid.Row="0" BackgroundColor="#1B4332" Padding="16,0">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                <!-- Logo + title -->
+                <StackLayout Grid.Column="0" Orientation="Horizontal" Spacing="10"
+                             VerticalOptions="Center">
+                    <Border BackgroundColor="#28A745"
+                            StrokeShape="RoundRectangle 8"
+                            WidthRequest="36" HeightRequest="36" Padding="0">
+                        <Label Text="G" TextColor="White" FontSize="20"
+                               FontAttributes="Bold"
+                               HorizontalOptions="Center" VerticalOptions="Center"/>
+                    </Border>
+                    <StackLayout Spacing="0" VerticalOptions="Center">
+                        <Label Text="GUSTO" TextColor="White" FontSize="15"
+                               FontAttributes="Bold" LineBreakMode="NoWrap"/>
+                        <Label Text="Waiter App" TextColor="#6FCF97" FontSize="10"/>
+                    </StackLayout>
+                </StackLayout>
+
+                <!-- Waiter name -->
+                <Label Grid.Column="1" x:Name="SubtitleLabel"
+                       Text="Rudrarthi" TextColor="#A8D5B5" FontSize="13"
+                       HorizontalOptions="Center" VerticalOptions="Center"/>
+
+                <!-- Notification badge -->
+                <Border Grid.Column="3" x:Name="BadgeBorder"
+                        BackgroundColor="#DC3545" StrokeThickness="0"
+                        StrokeShape="RoundRectangle 12"
+                        Padding="10,3" VerticalOptions="Center"
+                        IsVisible="False">
+                    <Label x:Name="BadgeLabel" Text="0" TextColor="White"
+                           FontSize="13" FontAttributes="Bold"/>
+                </Border>
+            </Grid>
+        </Grid>
+
+        <!-- CONTENT AREA -->
+        <ContentView Grid.Row="1" x:Name="MainContent"/>
+
+        <!-- BOTTOM TAB BAR - matches POS sidebar nav style -->
+        <Grid Grid.Row="2" ColumnDefinitions="*,*,*"
+              BackgroundColor="White">
+            <Grid.Shadow>
+                <Shadow Brush="Black" Offset="0,-2" Radius="8" Opacity="0.08"/>
+            </Grid.Shadow>
+
+            <Button Grid.Column="0" x:Name="TabAlerts"
+                    Text="🔔  Alerts" FontSize="12"
+                    BackgroundColor="#1B4332" TextColor="White"
+                    CornerRadius="0" Clicked="OnAlertsTab"/>
+
+            <Button Grid.Column="1" x:Name="TabOrder"
+                    Text="📋  Order" FontSize="12"
+                    BackgroundColor="White" TextColor="#333333"
+                    CornerRadius="0" Clicked="OnOrderTab"/>
+
+            <Button Grid.Column="2" x:Name="TabTables"
+                    Text="🪑  Tables" FontSize="12"
+                    BackgroundColor="White" TextColor="#333333"
+                    CornerRadius="0" Clicked="OnTablesTab"/>
+        </Grid>
+    </Grid>
+</ContentPage>
