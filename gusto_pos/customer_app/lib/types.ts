@@ -4,13 +4,24 @@ export interface MenuModifier {
   extra_price: number;
 }
 
+// Structured modifier option returned by the zone menu endpoint
+export interface ModifierOption {
+  id: string;
+  label: string;
+  extra_price: number;
+  modifier_type: 'checkbox' | 'radio';
+  group_name: string | null;
+}
+
 export interface MenuItem {
   id: string;
   name: string;
   price: number;
   is_veg: boolean;
   is_available: boolean;
-  customization_options: string[];
+  // customization_options is either the new structured format (ModifierOption[])
+  // or the legacy string[] from older API versions
+  customization_options: ModifierOption[] | string[];
   short_code?: string;
   base_price?: number;
   is_active?: boolean;

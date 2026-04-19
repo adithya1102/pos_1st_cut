@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { MenuItem } from '@/lib/types';
+import { MenuItem, ModifierOption } from '@/lib/types';
 
 interface CustomizationModalProps {
   item: MenuItem;
@@ -14,9 +14,25 @@ interface CustomizationModalProps {
   onClose: () => void;
 }
 
-function parseAddonPrice(option: string): number {
-  const match = option.match(/\+₹(\d+)/);
-  return match ? parseInt(match[1], 10) : 0;
+// Normalise the raw customization_options array from the API.
+// The backend now returns ModifierOption[] (objects with id, label, etc.).
+// Guard against legacy string[] format just in case.
+function normalizeOptions(raw: ModifierOption[] | string[]): ModifierOption[] {
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  if (typeof raw[0] === 'string') {
+    // Legacy: convert plain strings to synthetic ModifierOption objects
+    return (raw as string[]).map((s, i) => {
+      const priceMatch = s.match(/\+₹(\d+)/);
+      return {
+        id: `legacy-${i}`,
+        label: s,
+        extra_price: priceMatch ? parseInt(priceMatch[1], 10) : 0,
+        modifier_type: 'checkbox' as const,
+        group_name: null,
+      };
+    });
+  }
+  return raw as ModifierOption[];
 }
 
 export default function CustomizationModal({
@@ -24,18 +40,77 @@ export default function CustomizationModal({
   onConfirm,
   onClose,
 }: CustomizationModalProps) {
-  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  // checkedOptions tracks selected checkbox modifier ids
+  const [checkedOptions, setCheckedOptions] = useState<Set<string>>(new Set());
+  // radioSelections maps group_name → selected modifier id
+  const [radioSelections, setRadioSelections] = useState<Record<string, string>>({});
   const [quantity, setQuantity] = useState(1);
   const [customNote, setCustomNote] = useState('');
 
-  const toggle = (option: string) => {
-    setSelected((prev) => ({ ...prev, [option]: !prev[option] }));
+  const allOptions = normalizeOptions(item.customization_options);
+
+  // Separate into radio groups and standalone checkboxes
+  const radioGroups: Record<string, ModifierOption[]> = {};
+  const checkboxOptions: ModifierOption[] = [];
+  for (const opt of allOptions) {
+    if (opt.modifier_type === 'radio' && opt.group_name) {
+      if (!radioGroups[opt.group_name]) radioGroups[opt.group_name] = [];
+      radioGroups[opt.group_name].push(opt);
+    } else {
+      checkboxOptions.push(opt);
+    }
+  }
+
+  const toggleCheckbox = (id: string) => {
+    setCheckedOptions((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
-  const selectedOptions = (item.customization_options || []).filter((o) => selected[o]);
-  const addonTotal = selectedOptions.reduce((sum, o) => sum + parseAddonPrice(o), 0);
+  const selectRadio = (groupName: string, id: string) => {
+    setRadioSelections((prev) => ({ ...prev, [groupName]: id }));
+  };
+
+  // Calculate total upcharge from selected paid modifiers
+  const addonTotal =
+    allOptions
+      .filter((opt) => {
+        if (opt.modifier_type === 'radio' && opt.group_name) {
+          return radioSelections[opt.group_name] === opt.id;
+        }
+        return checkedOptions.has(opt.id);
+      })
+      .reduce((sum, opt) => sum + opt.extra_price, 0);
+
   const itemPrice = item.price ?? item.base_price ?? 0;
   const total = (itemPrice + addonTotal) * quantity;
+
+  const handleConfirm = () => {
+    // Build flat string[] output for the cart store
+    const selections: string[] = [];
+
+    // Checkbox selections
+    for (const opt of checkboxOptions) {
+      if (checkedOptions.has(opt.id)) {
+        const label = opt.extra_price > 0 ? `${opt.label} +₹${opt.extra_price}` : opt.label;
+        selections.push(label);
+      }
+    }
+
+    // Radio selections
+    for (const [groupName, selectedId] of Object.entries(radioSelections)) {
+      const opts = radioGroups[groupName] || [];
+      const chosen = opts.find((o) => o.id === selectedId);
+      if (chosen) {
+        selections.push(`${groupName}: ${chosen.label}`);
+      }
+    }
+
+    onConfirm(item, selections, customNote, quantity);
+  };
 
   return (
     <div
@@ -78,41 +153,78 @@ export default function CustomizationModal({
           </button>
         </div>
 
-        {/* Section 1: Quick Options */}
-        {item.customization_options && item.customization_options.length > 0 && (
+        {/* Radio groups */}
+        {Object.entries(radioGroups).map(([groupName, opts]) => (
+          <div key={groupName} className="mb-5">
+            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">
+              {groupName.replace(/_/g, ' ')}
+            </h3>
+            <div className="space-y-2">
+              {opts.map((opt) => (
+                <label
+                  key={opt.id}
+                  className={`flex cursor-pointer items-center justify-between rounded-lg border p-3 transition-colors hover:bg-gray-50 ${
+                    radioSelections[groupName] === opt.id
+                      ? 'border-[#1B4332] bg-green-50'
+                      : 'border-gray-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="radio"
+                      name={groupName}
+                      checked={radioSelections[groupName] === opt.id}
+                      onChange={() => selectRadio(groupName, opt.id)}
+                      className="h-5 w-5 border-gray-300"
+                      style={{ accentColor: '#1B4332' }}
+                    />
+                    <span className="text-sm text-[#212529]">{opt.label}</span>
+                  </div>
+                  {opt.extra_price > 0 && (
+                    <span className="text-sm font-medium text-gray-500">+₹{opt.extra_price}</span>
+                  )}
+                </label>
+              ))}
+            </div>
+          </div>
+        ))}
+
+        {/* Checkbox options */}
+        {checkboxOptions.length > 0 && (
           <div className="mb-5">
             <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">
               Quick Options
             </h3>
             <div className="space-y-2">
-              {item.customization_options.map((option) => {
-                const addonPrice = parseAddonPrice(option);
-                return (
-                  <label
-                    key={option}
-                    className="flex cursor-pointer items-center justify-between rounded-lg border border-gray-200 p-3 transition-colors hover:bg-gray-50"
-                  >
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="checkbox"
-                        checked={!!selected[option]}
-                        onChange={() => toggle(option)}
-                        className="h-5 w-5 rounded border-gray-300"
-                        style={{ accentColor: '#1B4332' }}
-                      />
-                      <span className="text-sm text-[#212529]">{option}</span>
-                    </div>
-                    {addonPrice > 0 && (
-                      <span className="text-sm font-medium text-gray-500">+₹{addonPrice}</span>
-                    )}
-                  </label>
-                );
-              })}
+              {checkboxOptions.map((opt) => (
+                <label
+                  key={opt.id}
+                  className={`flex cursor-pointer items-center justify-between rounded-lg border p-3 transition-colors hover:bg-gray-50 ${
+                    checkedOptions.has(opt.id)
+                      ? 'border-[#1B4332] bg-green-50'
+                      : 'border-gray-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={checkedOptions.has(opt.id)}
+                      onChange={() => toggleCheckbox(opt.id)}
+                      className="h-5 w-5 rounded border-gray-300"
+                      style={{ accentColor: '#1B4332' }}
+                    />
+                    <span className="text-sm text-[#212529]">{opt.label}</span>
+                  </div>
+                  {opt.extra_price > 0 && (
+                    <span className="text-sm font-medium text-gray-500">+₹{opt.extra_price}</span>
+                  )}
+                </label>
+              ))}
             </div>
           </div>
         )}
 
-        {/* Section 2: Quantity */}
+        {/* Quantity */}
         <div className="mb-5">
           <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">
             Quantity
@@ -136,7 +248,7 @@ export default function CustomizationModal({
           </div>
         </div>
 
-        {/* Section 3: Custom Note */}
+        {/* Special Request */}
         <div className="mb-6">
           <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">
             Special Request
@@ -154,7 +266,7 @@ export default function CustomizationModal({
 
         {/* Add to Order Button */}
         <button
-          onClick={() => onConfirm(item, selectedOptions, customNote, quantity)}
+          onClick={handleConfirm}
           className="w-full rounded-xl py-4 text-center text-base font-bold text-white transition-colors hover:opacity-90 active:scale-[0.98]"
           style={{ backgroundColor: '#28A745' }}
         >

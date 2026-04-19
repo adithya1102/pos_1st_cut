@@ -51,6 +51,8 @@ class ItemModifier(Base):
     menu_item_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("menu_items.id"), nullable=False)
     modifier_name: Mapped[str] = mapped_column(String(100), nullable=False)
     extra_price: Mapped[float] = mapped_column(DECIMAL(10, 2), default=0)
+    modifier_type: Mapped[str] = mapped_column(String(20), default="checkbox")
+    group_name: Mapped[str | None] = mapped_column(String(50), nullable=True, default=None)
 
     # Relationships
     menu_item = relationship("MenuItem", back_populates="modifiers", lazy="raise")

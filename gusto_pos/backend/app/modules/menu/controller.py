@@ -2,7 +2,7 @@
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text
+from sqlalchemy import select, text
 from pydantic import BaseModel
 from app.core.dependencies import get_db
 from app.modules.menu.schema import (
@@ -18,9 +18,16 @@ from app.modules.menu.service import (
 router = APIRouter(prefix="/menus", tags=["menus"])
 
 DEFAULT_CUSTOMIZATIONS = [
-    "No oil", "Less spice", "No butter",
-    "No onion", "No garlic", "Jain style",
-    "Half portion (1 by 2)", "Extra cheese +\u20b940"
+    "No Ghee",
+    "No Oil",
+    "No Butter",
+    "Less Spicy",
+    "Extra Spicy",
+    "No Onion",
+    "No Garlic",
+    "Jain Style",
+    "Extra Cheese +\u20b925",
+    "Extra Butter +\u20b915",
 ]
 
 # Zone-to-menu mapping for zone-based pricing
@@ -49,40 +56,88 @@ async def get_menu_by_zone(outlet_id: str, zone: str, db: AsyncSession = Depends
 
 @router.get("/zone/{outlet_id}/{zone}")
 async def get_zone_menu(outlet_id: str, zone: str, db: AsyncSession = Depends(get_db)):
-    """Get all categories and items available in a zone via price_rules."""
-    result = await db.execute(
+    """Get all categories and items available in a zone via price_rules.
+
+    Scopes to the single ``is_latest`` menu for the outlet so that each
+    category appears exactly once, and uses explicit eager-loading to
+    prevent lazy-load / serialisation errors.
+    """
+    from sqlalchemy.orm import selectinload
+    from app.modules.menu.model import Menu, MenuCategory, MenuItem
+
+    # 1. Load the single active menu with full eager-loading chain.
+    menu_result = await db.execute(
+        select(Menu)
+        .options(
+            selectinload(Menu.categories)
+            .selectinload(MenuCategory.items)
+            .selectinload(MenuItem.modifiers),
+        )
+        .where(Menu.outlet_id == outlet_id, Menu.is_latest.is_(True))
+    )
+    menu = menu_result.scalar_one_or_none()
+
+    if not menu:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active menu found for this outlet",
+        )
+
+    # 2. Fetch per-item zone prices scoped to this single menu.
+    price_rows = await db.execute(
         text(
-            "SELECT mc.id as cat_id, mc.name as cat_name, "
-            "mi.id as item_id, mi.name as item_name, mi.is_veg, "
-            "pr.price, pr.is_available "
+            "SELECT pr.menu_item_id, pr.price, pr.is_available "
             "FROM price_rules pr "
             "JOIN menu_items mi ON pr.menu_item_id = mi.id "
             "JOIN menu_categories mc ON mi.category_id = mc.id "
-            "JOIN menus m ON mc.menu_id = m.id "
-            "WHERE m.outlet_id = :oid AND pr.zone = :zone "
-            "AND pr.is_available = true "
-            "ORDER BY mc.name, mi.name"
+            "WHERE mc.menu_id = :menu_id "
+            "  AND pr.zone = :zone "
+            "  AND pr.is_available = true"
         ),
-        {"oid": outlet_id, "zone": zone}
+        {"menu_id": str(menu.id), "zone": zone},
     )
-    rows = result.fetchall()
-    categories = {}
-    for row in rows:
-        cat_id = str(row.cat_id)
-        if cat_id not in categories:
+    price_map: dict[str, float] = {
+        str(r.menu_item_id): float(r.price) for r in price_rows.fetchall()
+    }
+
+    # 3. Build deduplicated response — one entry per category, only
+    #    items that have a price rule for the requested zone.
+    categories: dict[str, dict] = {}
+    for cat in menu.categories:
+        cat_id = str(cat.id)
+        zone_items = []
+        for item in cat.items:
+            item_id = str(item.id)
+            if item_id in price_map:
+                # Build structured modifier list from DB; fall back to defaults if none exist
+                if item.modifiers:
+                    customization_options = [
+                        {
+                            "id": str(m.id),
+                            "label": m.modifier_name,
+                            "extra_price": float(m.extra_price),
+                            "modifier_type": m.modifier_type or "checkbox",
+                            "group_name": m.group_name,
+                        }
+                        for m in item.modifiers
+                    ]
+                else:
+                    customization_options = DEFAULT_CUSTOMIZATIONS
+                zone_items.append({
+                    "id": item_id,
+                    "name": item.name,
+                    "price": price_map[item_id],
+                    "is_veg": item.is_veg,
+                    "is_available": True,
+                    "customization_options": customization_options,
+                })
+        if zone_items:
             categories[cat_id] = {
                 "id": cat_id,
-                "name": row.cat_name,
-                "items": []
+                "name": cat.name,
+                "items": zone_items,
             }
-        categories[cat_id]["items"].append({
-            "id": str(row.item_id),
-            "name": row.item_name,
-            "price": float(row.price),
-            "is_veg": row.is_veg,
-            "is_available": row.is_available,
-            "customization_options": DEFAULT_CUSTOMIZATIONS
-        })
+
     return {"zone": zone, "categories": list(categories.values())}
 
 

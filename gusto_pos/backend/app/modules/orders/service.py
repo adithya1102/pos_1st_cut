@@ -12,6 +12,7 @@ from app.modules.order_items.model import OrderItem
 from app.core.websocket_manager import kitchen_manager, customer_manager
 from app.modules.orders.schema import OrderCreate, OrderUpdate
 
+# Default Rudrarthi outlet ID — used as fallback when no outlet_id is passed
 OUTLET_ID = "0b8a8349-6144-41a8-b028-b9089bd8eaea"
 
 
@@ -43,16 +44,16 @@ class OrderService:
         db.add(obj)
         await db.flush()
 
-        # Save order items
+        # Save order items — item_notes stored as JSON so it's always parseable
+        import json
         if payload.items:
             for item_data in payload.items:
-                notes_parts = []
+                notes_payload: dict = {}
                 if item_data.customizations:
-                    import json
-                    notes_parts.append(json.dumps(item_data.customizations))
+                    notes_payload["customizations"] = item_data.customizations
                 if item_data.custom_note:
-                    notes_parts.append(item_data.custom_note)
-                item_notes = " | ".join(notes_parts) if notes_parts else None
+                    notes_payload["custom_note"] = item_data.custom_note
+                item_notes = json.dumps(notes_payload) if notes_payload else None
                 oi = OrderItem(
                     order_id=obj.id,
                     name_snap=item_data.name,
@@ -140,27 +141,29 @@ class OrderService:
         return True
 
     @staticmethod
-    async def get_orders_by_table(db: AsyncSession, table_id: str):
+    async def get_orders_by_table(db: AsyncSession, table_id: str, outlet_id: str | None = None):
         """Get all unpaid orders for a table with their items."""
+        oid = UUID(outlet_id) if outlet_id else UUID(OUTLET_ID)
         result = await db.execute(
             select(Order)
             .options(selectinload(Order.items))
             .where(
                 Order.table_id == table_id,
-                Order.outlet_id == UUID(OUTLET_ID),
+                Order.outlet_id == oid,
                 Order.order_status != "paid",
             )
         )
         return result.scalars().all()
 
     @staticmethod
-    async def settle_table(db: AsyncSession, table_id: str):
+    async def settle_table(db: AsyncSession, table_id: str, outlet_id: str | None = None):
         """Mark all unpaid orders for a table as paid."""
+        oid = UUID(outlet_id) if outlet_id else UUID(OUTLET_ID)
         result = await db.execute(
             select(Order)
             .where(
                 Order.table_id == table_id,
-                Order.outlet_id == UUID(OUTLET_ID),
+                Order.outlet_id == oid,
                 Order.order_status != "paid",
             )
         )
@@ -174,14 +177,15 @@ class OrderService:
         return len(orders), total
 
     @staticmethod
-    async def generate_bill(db: AsyncSession, table_id: str):
+    async def generate_bill(db: AsyncSession, table_id: str, outlet_id: str | None = None):
         """Generate a professional PDF bill for all unpaid orders on a table."""
+        oid = UUID(outlet_id) if outlet_id else UUID(OUTLET_ID)
         result = await db.execute(
             select(Order)
             .options(selectinload(Order.items))
             .where(
                 Order.table_id == table_id,
-                Order.outlet_id == UUID(OUTLET_ID),
+                Order.outlet_id == oid,
                 Order.order_status != "paid",
             )
         )
