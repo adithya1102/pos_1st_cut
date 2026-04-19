@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useCart } from '@/lib/cart-store';
 import { Menu, MenuCategory, MenuItem } from '@/lib/types';
+import { API_BASE } from '@/lib/api';
 import MenuItemCard from '@/components/MenuItemCard';
 import CustomizationModal from '@/components/CustomizationModal';
 import CartBar from '@/components/CartBar';
@@ -68,25 +69,30 @@ function MenuContent() {
     }
 
     // Validate token with backend
-    fetch(`http://192.168.1.4:8000/api/v1/tables/validate/${token}`)
-      .then((res) => res.json())
+    console.log("FETCHING MENU FOR TOKEN:", token);
+    fetch(`${API_BASE}/api/v1/tables/validate/${token}`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`Validate returned ${res.status}`);
+        return res.json();
+      })
       .then((data) => {
+        console.log("MENU DATA:", data);
         if (data.is_valid) {
           setTokenValid(true);
-          setValidatedTableId(data.table_id);
-          setOutletId(data.outlet_id);
-          setTableId(data.table_id);
+          setValidatedTableId(data.table_id || '');
+          setOutletId(data.outlet_id || '');
+          setTableId(data.table_id || '');
         } else {
           setTokenValid(false);
           setTokenMessage(data.message || 'Invalid or expired QR code.');
+          setLoading(false);
         }
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error("Token validation error:", err);
         setTokenValid(false);
         setTokenMessage('Could not connect to server. Please try again.');
-      })
-      .finally(() => {
-        // Only set loading to false after token validation is complete
+        setLoading(false);
       });
   }, [searchParams, setOutletId, setTableId]);
 
@@ -114,16 +120,39 @@ function MenuContent() {
 
     const zone = searchParams.get('zone') || localStorage.getItem('table_zone') || 'normal';
     const outletIdForMenu = searchParams.get('outlet_id') || process.env.NEXT_PUBLIC_OUTLET_ID || '';
+
+    if (!outletIdForMenu) {
+      setError('No outlet ID found. Please scan your table QR code again.');
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
-    fetch(`http://192.168.1.4:8000/api/v1/menus/zone/${outletIdForMenu}/${zone}`)
-      .then((res) => { if (!res.ok) throw new Error('Failed to fetch menu'); return res.json(); })
+    console.log("FETCHING MENU FOR TOKEN:", `zone/${outletIdForMenu}/${zone}`);
+    fetch(`${API_BASE}/api/v1/menus/zone/${outletIdForMenu}/${zone}`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`Menu fetch failed: ${res.status} ${res.statusText}`);
+        return res.json();
+      })
       .then((data) => {
-        setMenu(data);
-        if (data.categories?.length > 0) {
-          setActiveCategory(data.categories[0].id);
+        console.log("MENU DATA:", JSON.stringify(data, null, 2));
+        if (!data || typeof data !== 'object') throw new Error('Menu response is not a valid object');
+        setMenu({
+          zone: data.zone || zone,
+          categories: Array.isArray(data.categories) ? data.categories : [],
+          id: data.id,
+          outlet_id: data.outlet_id,
+          version_label: data.version_label,
+        });
+        const cats = Array.isArray(data.categories) ? data.categories : [];
+        if (cats.length > 0) {
+          setActiveCategory(cats[0].id);
         }
       })
-      .catch((err) => setError(err.message))
+      .catch((err) => {
+        console.error("Menu fetch error:", err);
+        setError(err.message || 'Unknown error loading menu');
+      })
       .finally(() => setLoading(false));
   }, [searchParams, tokenValid]);
 
@@ -254,19 +283,13 @@ function MenuContent() {
             (item) => item.is_available !== false && item.is_active !== false
           );
           if (activeItems.length === 0) return null;
-
           return (
             <div
               key={cat.id}
-              ref={(el) => {
-                categoryRefs.current[cat.id] = el;
-              }}
-              className="mb-6 scroll-mt-28"
+              ref={(el) => { categoryRefs.current[cat.id] = el; }}
+              className="pt-6"
             >
-              <h2 className="mb-3 text-sm font-semibold text-slate-400 uppercase tracking-wider">
-                {cat.name}{' '}
-                <span className="text-xs text-slate-600">({activeItems.length})</span>
-              </h2>
+              <h2 className="mb-3 text-base font-bold text-slate-300">{cat.name}</h2>
               <div className="space-y-3">
                 {activeItems.map((item) => (
                   <MenuItemCard key={item.id} item={item} onAdd={handleAddItem} />
@@ -277,10 +300,8 @@ function MenuContent() {
         })}
       </div>
 
-      {/* Cart bottom bar */}
       <CartBar />
 
-      {/* Customization modal */}
       {modalItem && (
         <CustomizationModal
           item={modalItem}
@@ -291,5 +312,3 @@ function MenuContent() {
     </div>
   );
 }
-
-

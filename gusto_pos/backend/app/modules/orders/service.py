@@ -2,13 +2,14 @@ from uuid import UUID
 from typing import Any
 from datetime import datetime
 import os
-from sqlalchemy import select, update
+from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import mm
 from app.modules.orders.model import Order
 from app.modules.order_items.model import OrderItem
+from app.modules.sessions.models import WaiterNotification
 from app.core.websocket_manager import kitchen_manager, customer_manager
 from app.modules.orders.schema import OrderCreate, OrderUpdate
 
@@ -69,19 +70,25 @@ class OrderService:
         )
         order = result.scalar_one()
 
-        await kitchen_manager.broadcast_new_order(
-            outlet_id=str(order.outlet_id),
-            order={
-                "id": str(order.id),
-                "kitchen_token": order.kitchen_token,
-                "table_id": str(order.table_id) if order.table_id else None,
-                "customer_id": str(order.customer_id) if order.customer_id else None,
-                "total_amount": float(order.total_amount),
-                "order_status": order.order_status,
-                "created_at": order.created_at,
-            }
-        )
+        # Build order preview text for waiter notification
+        item_names = [f"{item.name_snap} x{item.quantity}" for item in order.items]
+        preview_text = "\n".join(item_names)
 
+        # Insert WaiterNotification so waiter can review before kitchen is notified
+        notif = WaiterNotification(
+            outlet_id=order.outlet_id,
+            table_id=order.table_id or "",
+            notif_type="order_placed",
+            order_id=order.id,
+            total_amount=order.total_amount,
+            order_preview=preview_text,
+            customer_name="Guest",
+            is_read=False,
+        )
+        db.add(notif)
+        await db.commit()
+
+        # Notify customer that their order was received (not yet kitchen-confirmed)
         await customer_manager.notify_order_confirmed(
             order_id=str(order.id),
             order={
@@ -93,11 +100,37 @@ class OrderService:
 
     @staticmethod
     async def update_order(db: AsyncSession, order_id: UUID, payload: OrderUpdate):
+        import json
         obj = await OrderService.get_order_by_id(db, order_id)
         if not obj:
             return None
         order_status_changed = False
-        for k, v in payload.model_dump(exclude_unset=True).items():
+
+        # Handle items replacement: delete existing items, insert new ones
+        if payload.items is not None:
+            await db.execute(
+                delete(OrderItem).where(OrderItem.order_id == order_id)
+            )
+            new_total = 0.0
+            for item_data in payload.items:
+                notes_payload: dict = {}
+                if item_data.customizations:
+                    notes_payload["customizations"] = item_data.customizations
+                if item_data.custom_note:
+                    notes_payload["custom_note"] = item_data.custom_note
+                item_notes = json.dumps(notes_payload) if notes_payload else None
+                oi = OrderItem(
+                    order_id=obj.id,
+                    name_snap=item_data.name,
+                    price_snap=item_data.unit_price,
+                    quantity=item_data.quantity,
+                    item_notes=item_notes,
+                )
+                db.add(oi)
+                new_total += item_data.unit_price * item_data.quantity
+            obj.total_amount = new_total
+
+        for k, v in payload.model_dump(exclude_unset=True, exclude={"items"}).items():
             if k == "order_status" and v is not None:
                 v = v.value if hasattr(v, "value") else v
                 if getattr(obj, "order_status", None) != v:

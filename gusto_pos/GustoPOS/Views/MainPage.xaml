@@ -16,8 +16,8 @@
                            HorizontalOptions="Center" VerticalOptions="Center"/>
                 </Border>
                 <StackLayout VerticalOptions="Center">
-                    <Label Text="GUSTO" TextColor="White" FontSize="18" FontAttributes="Bold"/>
-                    <Label Text="Rudrarthi" TextColor="#6FCF97" FontSize="11"/>
+                    <Label Text="RUDRARTHI" TextColor="White" FontSize="18" FontAttributes="Bold"/>
+                    <Label Text="Restaurant POS" TextColor="#6FCF97" FontSize="11"/>
                 </StackLayout>
             </StackLayout>
             <!-- Nav -->

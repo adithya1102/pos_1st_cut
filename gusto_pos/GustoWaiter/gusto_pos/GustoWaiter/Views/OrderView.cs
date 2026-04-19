@@ -17,6 +17,7 @@ public class OrderView : ContentView {
     private readonly List<CartItem> _cart = new();
     private string _table = "N-1";
     private string _currentZone = "normal";
+    private readonly StackLayout _filterContainer = new() { Spacing = 0 };
     private readonly StackLayout _menuContainer = new() { Spacing = 0 };
     private readonly HorizontalStackLayout _normalTablesRow = new() { Spacing = 6 };
     private readonly HorizontalStackLayout _acTablesRow = new() { Spacing = 6, IsVisible = false };
@@ -32,10 +33,20 @@ public class OrderView : ContentView {
     private bool _loaded;
     private ZoneMenuResponse? _normalMenuCache;
     private ZoneMenuResponse? _acMenuCache;
+    private string _searchText = "";
+    private string _vegFilter = "All";
+    private readonly SearchBar _searchBar = new();
+    private readonly Button _filterAllBtn = new();
+    private readonly Button _filterVegBtn = new();
+    private readonly Button _filterNonVegBtn = new();
+    private bool _filterUiInitialized;
+    private bool _isRendering;
+    private CancellationTokenSource? _searchDebounceCts;
 
     public OrderView(ApiService api, DashboardPage dash) {
         _api = api;
         _dash = dash;
+        SetupFilterControls();
         BuildLayout();
         Loaded += OnLoaded;
     }
@@ -65,6 +76,90 @@ public class OrderView : ContentView {
     }
 
 
+    private void SetupFilterControls() {
+        if (_filterUiInitialized) return;
+        _filterUiInitialized = true;
+
+        _searchBar.Placeholder = "Search dishes...";
+        _searchBar.PlaceholderColor = Color.FromArgb("#AAAAAA");
+        _searchBar.BackgroundColor = Colors.White;
+        _searchBar.TextColor = Colors.Black;
+        _searchBar.Margin = new Thickness(12, 8, 12, 4);
+        _searchBar.TextChanged += OnSearchTextChanged;
+
+        ConfigureFilterButton(_filterAllBtn, "All");
+        ConfigureFilterButton(_filterVegBtn, "Veg");
+        ConfigureFilterButton(_filterNonVegBtn, "Non-Veg");
+
+        _filterAllBtn.Clicked += (s, e) => ApplyVegFilter("All");
+        _filterVegBtn.Clicked += (s, e) => ApplyVegFilter("Veg");
+        _filterNonVegBtn.Clicked += (s, e) => ApplyVegFilter("Non-Veg");
+
+        var filterRow = new HorizontalStackLayout {
+            Spacing = 8,
+            Margin = new Thickness(12, 4, 12, 12),
+            HorizontalOptions = LayoutOptions.Fill,
+            Children = { _filterAllBtn, _filterVegBtn, _filterNonVegBtn }
+        };
+
+        _filterContainer.Children.Clear();
+        _filterContainer.Children.Add(_searchBar);
+        _filterContainer.Children.Add(filterRow);
+
+        UpdateFilterButtonStyles();
+    }
+
+    private void ConfigureFilterButton(Button button, string text) {
+        button.Text = text;
+        button.FontSize = 13;
+        button.CornerRadius = 8;
+        button.HeightRequest = 40;
+        button.HorizontalOptions = LayoutOptions.Fill;
+        button.BorderColor = Color.FromArgb("#DEE2E6");
+        button.BorderWidth = 1;
+    }
+
+    private async void OnSearchTextChanged(object? sender, TextChangedEventArgs e) {
+        _searchText = e.NewTextValue ?? "";
+        Debug.WriteLine($">>> [DIAGNOSTIC]: SearchBar TextChanged -> '{_searchText}'");
+        _searchDebounceCts?.Cancel();
+        _searchDebounceCts = new CancellationTokenSource();
+        var token = _searchDebounceCts.Token;
+        try {
+            await Task.Delay(250, token);
+            if (!token.IsCancellationRequested)
+                RenderCurrentZoneMenu();
+        } catch (TaskCanceledException) { }
+    }
+
+    private void ApplyVegFilter(string filter) {
+        Debug.WriteLine($">>> [DIAGNOSTIC]: ApplyVegFilter -> '{filter}'");
+        _vegFilter = filter;
+        UpdateFilterButtonStyles();
+        RenderCurrentZoneMenu();
+    }
+
+    private void UpdateFilterButtonStyles() {
+        UpdateFilterButton(_filterAllBtn, _vegFilter == "All");
+        UpdateFilterButton(_filterVegBtn, _vegFilter == "Veg");
+        UpdateFilterButton(_filterNonVegBtn, _vegFilter == "Non-Veg");
+    }
+
+    private static void UpdateFilterButton(Button button, bool isSelected) {
+        if (isSelected) {
+            button.BackgroundColor = Color.FromArgb("#1B4332");
+            button.TextColor = Colors.White;
+        } else {
+            button.BackgroundColor = Colors.White;
+            button.TextColor = Color.FromArgb("#1B4332");
+        }
+    }
+
+    private ZoneMenuResponse? GetCurrentZoneMenu() =>
+        _currentZone == "normal" ? _normalMenuCache : _acMenuCache;
+
+    private void RenderCurrentZoneMenu() => RenderMenu(GetCurrentZoneMenu());
+
     private void BuildLayout() {
         _regularBtn = new Button {
             Text = "REGULAR", FontSize = 13, FontAttributes = FontAttributes.Bold,
@@ -93,7 +188,7 @@ public class OrderView : ContentView {
         };
 
         _zoneBanner = new Label {
-            Text = "Regular Menu — Standard Prices",
+            Text = "Regular Menu - Standard Prices",
             FontSize = 12, TextColor = Color.FromArgb("#495057"),
             BackgroundColor = Color.FromArgb("#F8F9FA"),
             Padding = new Thickness(12, 6),
@@ -112,7 +207,7 @@ public class OrderView : ContentView {
         var menuScroll = new ScrollView {
             Content = new StackLayout {
                 Padding = new Thickness(12, 4, 12, 12),
-                Children = { _menuContainer }
+                Children = { _filterContainer, _menuContainer }
             }
         };
 
@@ -220,7 +315,7 @@ public class OrderView : ContentView {
                 _acBtn.TextColor = Color.FromArgb("#212529");
                 _acBtn.BorderColor = Color.FromArgb("#DEE2E6");
                 _acBtn.BorderWidth = 1;
-                _zoneBanner.Text = "Regular Menu — Standard Prices";
+                _zoneBanner.Text = "Regular Menu - Standard Prices";
                 _zoneBanner.TextColor = Color.FromArgb("#495057");
                 _zoneBanner.BackgroundColor = Color.FromArgb("#F8F9FA");
                 _normalTablesRow.IsVisible = true;
@@ -287,27 +382,59 @@ public class OrderView : ContentView {
     }
 
     private void RenderMenu(ZoneMenuResponse? response) {
-        _menuContainer.Children.Clear();
-        if (response == null) {
-            _menuContainer.Children.Add(new Label {
-                Text = "Could not load menu", FontSize = 14,
-                TextColor = Color.FromArgb("#6C757D"),
-                HorizontalOptions = LayoutOptions.Center, Margin = new Thickness(0, 20)
-            });
+        if (_isRendering) {
+            Debug.WriteLine(">>> [DIAGNOSTIC]: RenderMenu SKIPPED (re-entrancy guard)");
             return;
         }
-        _categories = response.Categories;
-        foreach (var cat in _categories) {
-            var activeItems = cat.Items.Where(i => i.IsAvailable).ToList();
-            if (!activeItems.Any()) continue;
-            _menuContainer.Children.Add(new Label {
-                Text = cat.Name, FontSize = 13, FontAttributes = FontAttributes.Bold,
-                TextColor = Color.FromArgb("#1B4332"),
-                BackgroundColor = Color.FromArgb("#F0F7F0"),
-                Padding = new Thickness(16, 10, 16, 8)
-            });
-            foreach (var item in activeItems)
-                _menuContainer.Children.Add(BuildMenuItemCard(item));
+        _isRendering = true;
+        Debug.WriteLine($">>> [DIAGNOSTIC]: RenderMenu START zone={_currentZone} search='{_searchText}' filter={_vegFilter}");
+        try {
+            _menuContainer.Children.Clear();
+            if (response == null) {
+                _menuContainer.Children.Add(new Label {
+                    Text = "Could not load menu", FontSize = 14,
+                    TextColor = Color.FromArgb("#6C757D"),
+                    HorizontalOptions = LayoutOptions.Center, Margin = new Thickness(0, 20)
+                });
+                return;
+            }
+
+            _categories = response.Categories;
+            var hasResults = false;
+            foreach (var cat in _categories) {
+                var activeItems = cat.Items
+                    .Where(i => i.IsAvailable)
+                    .Where(i => string.IsNullOrWhiteSpace(_searchText) ||
+                        i.Name.Contains(_searchText, StringComparison.OrdinalIgnoreCase))
+                    .Where(i => _vegFilter == "All" ||
+                        (_vegFilter == "Veg" && i.IsVeg) ||
+                        (_vegFilter == "Non-Veg" && !i.IsVeg))
+                    .ToList();
+                if (!activeItems.Any()) continue;
+
+                hasResults = true;
+                _menuContainer.Children.Add(new Label {
+                    Text = cat.Name, FontSize = 13, FontAttributes = FontAttributes.Bold,
+                    TextColor = Color.FromArgb("#1B4332"),
+                    BackgroundColor = Color.FromArgb("#F0F7F0"),
+                    Padding = new Thickness(16, 10, 16, 8)
+                });
+                foreach (var item in activeItems)
+                    _menuContainer.Children.Add(BuildMenuItemCard(item));
+            }
+
+            if (!hasResults) {
+                _menuContainer.Children.Add(new Label {
+                    Text = "No dishes match the current filters",
+                    FontSize = 14,
+                    TextColor = Color.FromArgb("#6C757D"),
+                    HorizontalOptions = LayoutOptions.Center,
+                    Margin = new Thickness(0, 20)
+                });
+            }
+            Debug.WriteLine($">>> [DIAGNOSTIC]: RenderMenu END hasResults={hasResults}");
+        } finally {
+            _isRendering = false;
         }
     }
 

@@ -69,7 +69,10 @@ async def get_notifications(outlet_id: str, db: AsyncSession = Depends(get_db)):
     ).order_by(WaiterNotification.created_at.desc()))
     return [{"id":str(n.id),"table_id":n.table_id,"customer_name":n.customer_name,
              "type":n.notif_type,"order_preview":n.order_preview,
-             "session_id":str(n.session_id),"created_at":str(n.created_at)}
+             "session_id":str(n.session_id) if n.session_id else None,
+             "order_id":str(n.order_id) if n.order_id else None,
+             "total_amount":float(n.total_amount) if n.total_amount is not None else None,
+             "is_read":n.is_read,"created_at":str(n.created_at)}
             for n in res.scalars().all()]
 
 @router.post("/waiter/action")

@@ -1,6 +1,6 @@
 import uuid, random, string
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, Boolean, Text
+from sqlalchemy import Column, String, DateTime, Boolean, Text, DECIMAL
 from sqlalchemy.dialects.postgresql import UUID
 from app.core.database import Base
 
@@ -37,4 +37,6 @@ class WaiterNotification(Base):
     is_read       = Column(Boolean, default=False)
     is_confirmed  = Column(Boolean, nullable=True)
     session_id    = Column(UUID(as_uuid=True), nullable=True)
+    order_id      = Column(UUID(as_uuid=True), nullable=True)
+    total_amount  = Column(DECIMAL(10, 2), nullable=True)
     created_at    = Column(DateTime, default=datetime.utcnow)

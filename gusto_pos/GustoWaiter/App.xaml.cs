@@ -14,17 +14,21 @@ public partial class App : Application {
                 using var http = new System.Net.Http.HttpClient() { Timeout = TimeSpan.FromSeconds(3) };
                 var resp = await http.GetAsync("http://127.0.0.1:8000/");
                 if (!resp.IsSuccessStatusCode) {
-                    await MainThread.InvokeOnMainThreadAsync(async () => {
-                        await Current!.MainPage!.DisplayAlertAsync("Backend unreachable", "Backend unreachable. Make sure the server is running on port 8000.", "OK");
-                    });
+                    await ShowBackendAlert();
                 }
             } catch (Exception ex) {
                 CrashLogger.Log(ex, "App.CheckBackendConnectivity");
-                await MainThread.InvokeOnMainThreadAsync(async () => {
-                    try {
-                        await Current!.MainPage!.DisplayAlertAsync("Backend unreachable", "Backend unreachable. Make sure the server is running on port 8000.", "OK");
-                    } catch { }
-                });
+                try { await ShowBackendAlert(); } catch { }
             }
+        }
+
+        private async Task ShowBackendAlert() {
+            await MainThread.InvokeOnMainThreadAsync(async () => {
+                try {
+                    var page = Current?.Windows.FirstOrDefault()?.Page;
+                    if (page != null)
+                        await page.DisplayAlertAsync("Backend unreachable", "Backend unreachable. Make sure the server is running on port 8000.", "OK");
+                } catch { }
+            });
         }
     }

@@ -254,7 +254,7 @@ public AlertsView(ApiService api, DashboardPage dash) {
         openBtn.Clicked += async (s, e) => {
             try {
                 await _api.RespondToNotificationAsync(n.Id, true);
-                var page = new OrderReviewPage(_api, n);
+                var page = new ApprovalChecklistPage(_api, n);
                 await Application.Current!.Windows[0].Page!.Navigation.PushAsync(page);
                 await LoadAsync();
             } catch (Exception ex) {

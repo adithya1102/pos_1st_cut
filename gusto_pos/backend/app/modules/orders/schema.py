@@ -42,6 +42,7 @@ class OrderUpdate(BaseModel):
     total_amount: Optional[float] = None
     order_status: Optional[OrderStatusEnum] = None
     kitchen_token: Optional[str] = None
+    items: Optional[List[OrderItemCreate]] = None
 
 
 class OrderRead(BaseModel):

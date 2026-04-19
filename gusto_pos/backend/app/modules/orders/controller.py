@@ -22,9 +22,9 @@ async def list_orders(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/table/{table_id}", response_model=list[OrderWithItemsRead])
-async def get_table_orders(table_id: str, db: AsyncSession = Depends(get_db)):
-    """Get all unpaid orders for a table."""
-    orders = await OrderService.get_orders_by_table(db, table_id)
+async def get_table_orders(table_id: str, outlet_id: str = None, db: AsyncSession = Depends(get_db)):
+    """Get all unpaid orders for a table. outlet_id defaults to Rudrarthi outlet."""
+    orders = await OrderService.get_orders_by_table(db, table_id, outlet_id)
     return orders
 
 
@@ -96,9 +96,9 @@ async def get_order_summary(outlet_id: str, date: str = None, db: AsyncSession =
     }
 
 
-@router.get("/{item_id}", response_model=OrderRead)
+@router.get("/{item_id}", response_model=OrderWithItemsRead)
 async def get_order(item_id: UUID, db: AsyncSession = Depends(get_db)):
-    """Get an order by ID."""
+    """Get an order by ID (includes items with name, unit_price, customizations)."""
     obj = await OrderService.get_order_by_id(db, item_id)
     if not obj:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
@@ -112,18 +112,18 @@ async def create_order(payload: OrderCreate, db: AsyncSession = Depends(get_db))
 
 
 @router.post("/bill/{table_id}", response_model=BillResponse)
-async def generate_bill(table_id: str, db: AsyncSession = Depends(get_db)):
+async def generate_bill(table_id: str, outlet_id: str = None, db: AsyncSession = Depends(get_db)):
     """Generate a PDF bill for all unpaid orders on a table."""
-    result = await OrderService.generate_bill(db, table_id)
+    result = await OrderService.generate_bill(db, table_id, outlet_id)
     if not result:
         raise HTTPException(status_code=404, detail="No unpaid orders found for this table")
     return result
 
 
 @router.post("/settle/{table_id}", response_model=SettleResponse)
-async def settle_table(table_id: str, db: AsyncSession = Depends(get_db)):
+async def settle_table(table_id: str, outlet_id: str = None, db: AsyncSession = Depends(get_db)):
     """Mark all unpaid orders for a table as paid."""
-    count, total = await OrderService.settle_table(db, table_id)
+    count, total = await OrderService.settle_table(db, table_id, outlet_id)
     return SettleResponse(
         settled_count=count,
         total_amount=total,
@@ -151,8 +151,15 @@ async def delete_order(item_id: UUID, db: AsyncSession = Depends(get_db)):
 
 @router.post("/{order_id}/confirm")
 async def confirm_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
-    """Confirm an order - updates status from pending to confirmed."""
-    obj = await OrderService.get_order_by_id(db, order_id)
+    """Confirm an order — waiter approved; now notify kitchen via WebSocket."""
+    from sqlalchemy.orm import selectinload
+    from sqlalchemy import select
+    from app.core.websocket_manager import kitchen_manager
+
+    result = await db.execute(
+        select(Order).options(selectinload(Order.items)).where(Order.id == order_id)
+    )
+    obj = result.scalar_one_or_none()
 
     if not obj:
         raise HTTPException(
@@ -162,6 +169,27 @@ async def confirm_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
 
     obj.order_status = "confirmed"
     await db.commit()
+
+    # Refresh to get current state
+    result2 = await db.execute(
+        select(Order).options(selectinload(Order.items)).where(Order.id == order_id)
+    )
+    confirmed_order = result2.scalar_one()
+
+    # Now that waiter confirmed, tell kitchen
+    await kitchen_manager.broadcast_new_order(
+        outlet_id=str(confirmed_order.outlet_id),
+        order={
+            "id": str(confirmed_order.id),
+            "kitchen_token": confirmed_order.kitchen_token,
+            "table_id": str(confirmed_order.table_id) if confirmed_order.table_id else None,
+            "customer_id": str(confirmed_order.customer_id) if confirmed_order.customer_id else None,
+            "total_amount": float(confirmed_order.total_amount),
+            "order_status": confirmed_order.order_status,
+            "created_at": confirmed_order.created_at,
+            "items": [{"name": i.name_snap, "qty": i.quantity} for i in confirmed_order.items],
+        }
+    )
 
     return {
         "message": "Order confirmed",

@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 
-const API = 'http://192.168.1.4:8000/api/v1';
+const API = 'http://192.168.1.7:8000/api/v1';
 const OUTLET_ID = '0b8a8349-6144-41a8-b028-b9089bd8eaea';
 
 type Step = 'loading' | 'error' | 'login' | 'otp' | 'waiting';
@@ -113,25 +113,38 @@ export default function QREntryPage() {
 
     (async () => {
       try {
+        console.log("FETCHING MENU FOR TOKEN:", slug);
         const res = await fetch(`${API}/tables/validate/${slug}`);
-        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(`Server returned ${res.status}: ${res.statusText}`);
+        }
+
+        let data: Record<string, unknown>;
+        try {
+          data = await res.json();
+        } catch (parseErr) {
+          throw new Error(`Failed to parse server response: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`);
+        }
+
+        console.log("MENU DATA:", data);
 
         if (!data.is_valid) {
           // Check if it's a closed-table vs truly invalid
-          const msg = (data.message || '').toLowerCase();
+          const msg = ((data.message as string) || '').toLowerCase();
           if (msg.includes('expired') || msg.includes('closed') || msg.includes('reopen')) {
             setErrorMsg('Table not active. Ask your waiter to open the table.');
           } else {
-            setErrorMsg('Invalid QR code. Please ask your waiter.');
+            setErrorMsg(`Invalid QR code. Please ask your waiter. (${data.message || 'unknown reason'})`);
           }
           setStep('error');
           return;
         }
 
         // Valid token
-        setTableId(data.table_id);
-        setOutletId(data.outlet_id);
-        const tableZone = data.zone || 'normal';
+        setTableId((data.table_id as string) || '');
+        setOutletId((data.outlet_id as string) || '');
+        const tableZone = (data.zone as string) || 'normal';
         setZone(tableZone);
         localStorage.setItem('table_zone', tableZone);
 
@@ -144,16 +157,18 @@ export default function QREntryPage() {
             const statusRes = await fetch(`${API}/sessions/status/${parsed.session_id}`);
             const status = await statusRes.json();
             if (status.confirmed && !status.expired) {
-              goToMenu(data.outlet_id, data.table_id, tableZone);
+              goToMenu((data.outlet_id as string) || '', (data.table_id as string) || '', tableZone);
               return;
             }
-          } catch { /* ignore */ }
+          } catch { /* ignore stale session */ }
           localStorage.removeItem(key);
         }
 
         setStep('login');
-      } catch {
-        setErrorMsg('Could not connect to server. Please try again.');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error("Token validation failed:", msg);
+        setErrorMsg(`Could not connect to server: ${msg}`);
         setStep('error');
       }
     })();
@@ -435,19 +450,17 @@ export default function QREntryPage() {
           <h2 style={{ color: '#1B4332', fontSize: 20, fontWeight: 700, margin: '0 0 8px' }}>
             Waiter Notified!
           </h2>
-          <p style={{ color: '#6b7280', fontSize: 14, lineHeight: 1.5, margin: '0 0 20px' }}>
-            Your waiter is coming to confirm your table.<br />
-            This only happens once!
+          <p style={{ color: '#6b7280', fontSize: 14, margin: '0 0 20px' }}>
+            Your request has been sent to the waiter. They will confirm your table shortly — please stay seated.
           </p>
-
           <div style={{
-            width: 36, height: 36, border: '4px solid #e5e7eb',
+            width: 40, height: 40, border: '4px solid #e5e7eb',
             borderTopColor: '#1B4332', borderRadius: '50%',
             animation: 'spin 1s linear infinite',
-            margin: '0 auto',
+            margin: '0 auto 16px',
           }} />
-          <p style={{ color: '#9ca3af', fontSize: 12, marginTop: 12 }}>
-            Checking every few seconds...
+          <p style={{ color: '#9ca3af', fontSize: 12 }}>
+            This page will redirect automatically once confirmed.
           </p>
           <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
         </div>
@@ -455,5 +468,6 @@ export default function QREntryPage() {
     );
   }
 
+  // Fallback (should never reach here)
   return null;
 }
