@@ -18,16 +18,16 @@ from app.modules.menu.service import (
 router = APIRouter(prefix="/menus", tags=["menus"])
 
 DEFAULT_CUSTOMIZATIONS = [
-    "No Ghee",
-    "No Oil",
-    "No Butter",
-    "Less Spicy",
-    "Extra Spicy",
-    "No Onion",
-    "No Garlic",
-    "Jain Style",
-    "Extra Cheese +\u20b925",
-    "Extra Butter +\u20b915",
+    {"id": "def-no-ghee",    "label": "No Ghee",          "extra_price": 0.0, "modifier_type": "checkbox", "group_name": None},
+    {"id": "def-no-oil",     "label": "No Oil",            "extra_price": 0.0, "modifier_type": "checkbox", "group_name": None},
+    {"id": "def-no-butter",  "label": "No Butter",         "extra_price": 0.0, "modifier_type": "checkbox", "group_name": None},
+    {"id": "def-less-spicy", "label": "Less Spicy",        "extra_price": 0.0, "modifier_type": "checkbox", "group_name": None},
+    {"id": "def-xtra-spicy", "label": "Extra Spicy",       "extra_price": 0.0, "modifier_type": "checkbox", "group_name": None},
+    {"id": "def-no-onion",   "label": "No Onion",          "extra_price": 0.0, "modifier_type": "checkbox", "group_name": None},
+    {"id": "def-no-garlic",  "label": "No Garlic",         "extra_price": 0.0, "modifier_type": "checkbox", "group_name": None},
+    {"id": "def-jain",       "label": "Jain Style",        "extra_price": 0.0, "modifier_type": "checkbox", "group_name": None},
+    {"id": "def-xtra-cheese","label": "Extra Cheese",      "extra_price": 25.0,"modifier_type": "checkbox", "group_name": None},
+    {"id": "def-xtra-butter","label": "Extra Butter",      "extra_price": 15.0,"modifier_type": "checkbox", "group_name": None},
 ]
 
 # Zone-to-menu mapping for zone-based pricing

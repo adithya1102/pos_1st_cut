@@ -33,5 +33,16 @@ class OrderItemRead(BaseModel):
         except (json.JSONDecodeError, AttributeError):
             return []
 
+    @computed_field
+    @property
+    def custom_note(self) -> str:
+        if not self.item_notes:
+            return ""
+        try:
+            data = json.loads(self.item_notes)
+            return data.get("custom_note", "") or ""
+        except (json.JSONDecodeError, AttributeError):
+            return ""
+
     class Config:
         from_attributes = True
