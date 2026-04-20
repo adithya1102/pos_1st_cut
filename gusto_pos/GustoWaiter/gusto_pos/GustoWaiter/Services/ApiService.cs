@@ -274,4 +274,17 @@ public class ApiService {
             Debug.WriteLine($"SetGpsAsync error: {ex.Message}");
         }
     }
+
+    public async Task<Models.PinLoginResponse?> PinLoginAsync(string pin) {
+        try {
+            var body = JsonSerializer.Serialize(new { pin }, J);
+            var res = await _http.PostAsync($"{Base}/auth/pin-login",
+                new StringContent(body, Encoding.UTF8, "application/json"));
+            if (!res.IsSuccessStatusCode) return null;
+            return JsonSerializer.Deserialize<Models.PinLoginResponse>(await res.Content.ReadAsStringAsync(), J);
+        } catch (Exception ex) {
+            Debug.WriteLine($"PinLoginAsync error: {ex.Message}");
+            return null;
+        }
+    }
 }

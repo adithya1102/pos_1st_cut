@@ -16,6 +16,7 @@ from app.modules.products.model import Product
 from app.modules.inventory.model import Inventory
 from app.modules.audit_logs.model import AuditLog
 from app.modules.sync_logs.model import SyncLog
+from app.modules.staff.model import Staff
 
 engine = create_async_engine(settings.DATABASE_URL, echo=True)
 AsyncSessionLocal = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)

@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="GustoWaiter.Views.PinLoginPage"
+             BackgroundColor="#141414"
+             Shell.NavBarIsVisible="False">
+
+    <Grid RowDefinitions="*,Auto,*" VerticalOptions="Fill" HorizontalOptions="Fill">
+
+        <!-- Top spacer -->
+        <BoxView Grid.Row="0" Color="Transparent" />
+
+        <!-- Centre card -->
+        <VerticalStackLayout Grid.Row="1"
+                             Spacing="0"
+                             HorizontalOptions="Center"
+                             WidthRequest="320">
+
+            <!-- Logo / Title -->
+            <Label Text="GUSTO"
+                   FontSize="34"
+                   FontAttributes="Bold"
+                   TextColor="#ac99ea"
+                   HorizontalTextAlignment="Center"
+                   LetterSpacing="6" />
+            <Label Text="WAITER"
+                   FontSize="14"
+                   TextColor="#6E6E6E"
+                   HorizontalTextAlignment="Center"
+                   LetterSpacing="8"
+                   Margin="0,0,0,32" />
+
+            <!-- PIN dot display -->
+            <HorizontalStackLayout x:Name="DotRow"
+                                   HorizontalOptions="Center"
+                                   Spacing="16"
+                                   Margin="0,0,0,32">
+                <Ellipse x:Name="Dot1" WidthRequest="18" HeightRequest="18" Fill="#404040" />
+                <Ellipse x:Name="Dot2" WidthRequest="18" HeightRequest="18" Fill="#404040" />
+                <Ellipse x:Name="Dot3" WidthRequest="18" HeightRequest="18" Fill="#404040" />
+                <Ellipse x:Name="Dot4" WidthRequest="18" HeightRequest="18" Fill="#404040" />
+            </HorizontalStackLayout>
+
+            <!-- Error label -->
+            <Label x:Name="ErrorLabel"
+                   Text=""
+                   TextColor="#FF4444"
+                   FontSize="13"
+                   HorizontalTextAlignment="Center"
+                   Margin="0,0,0,14"
+                   IsVisible="False" />
+
+            <!-- Numeric keypad -->
+            <Grid ColumnDefinitions="*,*,*"
+                  RowDefinitions="Auto,Auto,Auto,Auto"
+                  ColumnSpacing="10"
+                  RowSpacing="10">
+
+                <Button Grid.Row="0" Grid.Column="0" Text="1" StyleClass="PinKey" Clicked="OnDigit" CommandParameter="1" />
+                <Button Grid.Row="0" Grid.Column="1" Text="2" StyleClass="PinKey" Clicked="OnDigit" CommandParameter="2" />
+                <Button Grid.Row="0" Grid.Column="2" Text="3" StyleClass="PinKey" Clicked="OnDigit" CommandParameter="3" />
+
+                <Button Grid.Row="1" Grid.Column="0" Text="4" StyleClass="PinKey" Clicked="OnDigit" CommandParameter="4" />
+                <Button Grid.Row="1" Grid.Column="1" Text="5" StyleClass="PinKey" Clicked="OnDigit" CommandParameter="5" />
+                <Button Grid.Row="1" Grid.Column="2" Text="6" StyleClass="PinKey" Clicked="OnDigit" CommandParameter="6" />
+
+                <Button Grid.Row="2" Grid.Column="0" Text="7" StyleClass="PinKey" Clicked="OnDigit" CommandParameter="7" />
+                <Button Grid.Row="2" Grid.Column="1" Text="8" StyleClass="PinKey" Clicked="OnDigit" CommandParameter="8" />
+                <Button Grid.Row="2" Grid.Column="2" Text="9" StyleClass="PinKey" Clicked="OnDigit" CommandParameter="9" />
+
+                <Button Grid.Row="3" Grid.Column="0" Text="⌫" StyleClass="PinKey" Clicked="OnBackspace" />
+                <Button Grid.Row="3" Grid.Column="1" Text="0" StyleClass="PinKey" Clicked="OnDigit" CommandParameter="0" />
+                <Button Grid.Row="3" Grid.Column="2" Text="→"
+                        BackgroundColor="#512BD4"
+                        TextColor="White"
+                        FontSize="20"
+                        CornerRadius="12"
+                        HeightRequest="66"
+                        Clicked="OnEnter" />
+            </Grid>
+
+        </VerticalStackLayout>
+
+        <!-- Bottom spacer -->
+        <BoxView Grid.Row="2" Color="Transparent" />
+    </Grid>
+
+    <ContentPage.Resources>
+        <Style TargetType="Button" Class="PinKey">
+            <Setter Property="BackgroundColor" Value="#212121" />
+            <Setter Property="TextColor" Value="#E1E1E1" />
+            <Setter Property="FontSize" Value="20" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="HeightRequest" Value="66" />
+        </Style>
+    </ContentPage.Resources>
+
+</ContentPage>

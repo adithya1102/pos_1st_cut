@@ -15,6 +15,7 @@ public static class MauiProgram {
         builder.Services.AddSingleton<ApiService>();
         builder.Services.AddSingleton<App>();
         builder.Services.AddTransient<MainPage>();
+        builder.Services.AddTransient<PinLoginPage>();
         return builder.Build();
     }
 }
