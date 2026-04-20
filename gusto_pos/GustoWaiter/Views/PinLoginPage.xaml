@@ -22,12 +22,12 @@
                    FontAttributes="Bold"
                    TextColor="#ac99ea"
                    HorizontalTextAlignment="Center"
-                   LetterSpacing="6" />
+                   CharacterSpacing="6" />
             <Label Text="WAITER"
                    FontSize="14"
                    TextColor="#6E6E6E"
                    HorizontalTextAlignment="Center"
-                   LetterSpacing="8"
+                   CharacterSpacing="8"
                    Margin="0,0,0,32" />
 
             <!-- PIN dot display -->
