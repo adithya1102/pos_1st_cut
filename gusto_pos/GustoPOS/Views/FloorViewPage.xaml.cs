@@ -33,7 +33,7 @@ public partial class FloorViewPage : ContentView
         _api = api;
         LoadConfigAndBuildAsync();
         _refreshTimer = Application.Current!.Dispatcher.CreateTimer();
-        _refreshTimer.Interval = TimeSpan.FromSeconds(10);
+        _refreshTimer.Interval = TimeSpan.FromSeconds(30);
         _refreshTimer.Tick += (s, e) => RefreshTableStatusFromDbAsync();
         _refreshTimer.Start();
     }

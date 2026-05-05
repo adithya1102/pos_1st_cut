@@ -30,7 +30,7 @@ public partial class BillingPage : ContentView
         _api = api;
         LoadConfigAndBuildAsync();
         _refreshTimer = Application.Current!.Dispatcher.CreateTimer();
-        _refreshTimer.Interval = TimeSpan.FromSeconds(15);
+        _refreshTimer.Interval = TimeSpan.FromSeconds(30);
         _refreshTimer.Tick += (s, e) => LoadTableStatusParallelAsync();
         _refreshTimer.Start();
     }
