@@ -42,9 +42,9 @@ public partial class PinLoginPage : ContentPage {
     }
 
     private async Task SubmitPin() {
-        var response = await _api.PinLoginAsync(_pin.ToString());
+        var (response, error) = await _api.PinLoginAsync(_pin.ToString());
         if (response is null) {
-            ShowError("Invalid PIN. Please try again.");
+            ShowError(error ?? "Invalid PIN. Please try again.");
             _pin.Clear();
             RefreshDots();
             return;

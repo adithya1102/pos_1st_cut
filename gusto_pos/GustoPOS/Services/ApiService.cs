@@ -210,16 +210,20 @@ public class ApiService {
         }
     }
 
-    public async Task<PinLoginResponse?> PinLoginAsync(string pin) {
+    public async Task<(PinLoginResponse? Response, string? Error)> PinLoginAsync(string pin) {
         try {
             var body = JsonSerializer.Serialize(new { pin }, Opts);
             var res = await _http.PostAsync($"{Base}/auth/pin-login",
                 new StringContent(body, Encoding.UTF8, "application/json"));
-            if (!res.IsSuccessStatusCode) return null;
-            return JsonSerializer.Deserialize<PinLoginResponse>(await res.Content.ReadAsStringAsync(), Opts);
+            if (!res.IsSuccessStatusCode) {
+                var errorBody = await res.Content.ReadAsStringAsync();
+                return (null, $"HTTP {(int)res.StatusCode}: {errorBody}");
+            }
+            var response = JsonSerializer.Deserialize<PinLoginResponse>(await res.Content.ReadAsStringAsync(), Opts);
+            return (response, null);
         } catch (Exception ex) {
             System.Diagnostics.Debug.WriteLine($"PinLogin: {ex.Message}");
-            return null;
+            return (null, $"Network error: {ex.Message}");
         }
     }
 }
