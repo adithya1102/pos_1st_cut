@@ -2,6 +2,10 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Net.WebSockets;
+using System.Text;
+using System.Text.Json;
+using System.Threading;
 using Microsoft.Maui.Controls;
 using Microsoft.Maui.Graphics;
 using Microsoft.Maui.Layouts;
@@ -21,6 +25,8 @@ public partial class BillingPage : ContentView
     private string _selectedZone = "";
     private bool _billGenerated;
     private IDispatcherTimer? _refreshTimer;
+    private ClientWebSocket? _billingWs;
+    private CancellationTokenSource? _billingWsCts;
     private int _normalCount = 10;
     private int _acCount = 10;
 
@@ -33,11 +39,53 @@ public partial class BillingPage : ContentView
         _refreshTimer.Interval = TimeSpan.FromSeconds(30);
         _refreshTimer.Tick += (s, e) => LoadTableStatusParallelAsync();
         _refreshTimer.Start();
+        _ = ConnectBillingWsAsync();
     }
 
     public void OnTabShown()
     {
         LoadConfigAndBuildAsync();
+        _ = ConnectBillingWsAsync();
+    }
+
+    private async Task ConnectBillingWsAsync()
+    {
+        _billingWsCts?.Cancel();
+        _billingWsCts = new CancellationTokenSource();
+        _billingWs = new ClientWebSocket();
+        try
+        {
+            await _billingWs.ConnectAsync(new Uri(_api.GetPosWsUrl()), _billingWsCts.Token);
+            _ = Task.Run(() => ReceiveBillingEventsAsync(_billingWsCts.Token));
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Billing WS connect failed: {ex.Message}");
+        }
+    }
+
+    private async Task ReceiveBillingEventsAsync(CancellationToken ct)
+    {
+        var buf = new byte[4096];
+        while (_billingWs?.State == WebSocketState.Open && !ct.IsCancellationRequested)
+        {
+            try
+            {
+                var result = await _billingWs.ReceiveAsync(buf, ct);
+                if (result.MessageType == WebSocketMessageType.Close) break;
+                var msg = Encoding.UTF8.GetString(buf, 0, result.Count);
+                using var doc = JsonDocument.Parse(msg);
+                var evt = doc.RootElement.TryGetProperty("event", out var ep) ? ep.GetString() : null;
+                if (evt is "NEW_ORDER" or "ORDER_CONFIRMED" or "ORDER_STATUS_UPDATED")
+                    MainThread.BeginInvokeOnMainThread(() => LoadTableStatusParallelAsync());
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Billing WS recv: {ex.Message}");
+                break;
+            }
+        }
     }
 
     private async void LoadConfigAndBuildAsync()
