@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
+using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using Microsoft.Maui.Controls;
 using Microsoft.Maui.Graphics;
 using GustoPOS.Models;
@@ -19,6 +21,8 @@ public partial class FloorViewPage : ContentView
     private readonly HttpClient _http = new();
     private readonly ApiService _api;
     private IDispatcherTimer? _refreshTimer;
+    private ClientWebSocket? _floorWs;
+    private CancellationTokenSource? _floorWsCts;
 
     private List<Table> _normalTables = new();
     private List<Table> _acTables = new();
@@ -36,11 +40,53 @@ public partial class FloorViewPage : ContentView
         _refreshTimer.Interval = TimeSpan.FromSeconds(30);
         _refreshTimer.Tick += (s, e) => RefreshTableStatusFromDbAsync();
         _refreshTimer.Start();
+        _ = ConnectFloorWsAsync();
     }
 
     public void OnTabShown()
     {
         LoadConfigAndBuildAsync();
+        _ = ConnectFloorWsAsync();
+    }
+
+    private async Task ConnectFloorWsAsync()
+    {
+        _floorWsCts?.Cancel();
+        _floorWsCts = new CancellationTokenSource();
+        _floorWs = new ClientWebSocket();
+        try
+        {
+            await _floorWs.ConnectAsync(new Uri(_api.GetPosWsUrl()), _floorWsCts.Token);
+            _ = Task.Run(() => ReceiveFloorEventsAsync(_floorWsCts.Token));
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Floor WS connect failed: {ex.Message}");
+        }
+    }
+
+    private async Task ReceiveFloorEventsAsync(CancellationToken ct)
+    {
+        var buf = new byte[4096];
+        while (_floorWs?.State == WebSocketState.Open && !ct.IsCancellationRequested)
+        {
+            try
+            {
+                var result = await _floorWs.ReceiveAsync(buf, ct);
+                if (result.MessageType == WebSocketMessageType.Close) break;
+                var msg = Encoding.UTF8.GetString(buf, 0, result.Count);
+                using var doc = JsonDocument.Parse(msg);
+                var evt = doc.RootElement.TryGetProperty("event", out var ep) ? ep.GetString() : null;
+                if (evt is "NEW_ORDER" or "ORDER_CONFIRMED" or "ORDER_STATUS_UPDATED")
+                    MainThread.BeginInvokeOnMainThread(() => RefreshTableStatusFromDbAsync());
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Floor WS recv: {ex.Message}");
+                break;
+            }
+        }
     }
 
     private async void LoadConfigAndBuildAsync()
