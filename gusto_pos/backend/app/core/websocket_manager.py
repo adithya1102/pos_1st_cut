@@ -163,3 +163,6 @@ class CustomerWebSocketManager:
 
 # Singleton instance for customer connections
 customer_manager = CustomerWebSocketManager()
+
+# Singleton instance for POS terminal connections (outlet-keyed, same pattern as kitchen_manager)
+pos_manager = KitchenWebSocketManager()
