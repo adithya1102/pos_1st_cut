@@ -8,7 +8,7 @@ namespace GustoWaiter.Services;
 
 public class ApiService {
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(15) };
-    private const string Base = "http://192.168.1.7:8000/api/v1";
+    private const string Base = "http://127.0.0.1:8000/api/v1";
     public const string OutletId = "0b8a8349-6144-41a8-b028-b9089bd8eaea";
     private const string MenuId = "dc88b6a6-129c-479f-8609-07b8525f4310";
 

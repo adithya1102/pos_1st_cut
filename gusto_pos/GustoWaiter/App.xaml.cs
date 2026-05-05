@@ -12,7 +12,7 @@ public partial class App : Application {
         private async Task CheckBackendConnectivity() {
             try {
                 using var http = new System.Net.Http.HttpClient() { Timeout = TimeSpan.FromSeconds(3) };
-                var resp = await http.GetAsync("http://192.168.1.7:8000/");
+                var resp = await http.GetAsync("http://127.0.0.1:8000/");
                 if (!resp.IsSuccessStatusCode) {
                     await ShowBackendAlert();
                 }

@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 
-const API = 'http://192.168.1.7:8000/api/v1';
+const API = process.env.NEXT_PUBLIC_API_URL ? `${process.env.NEXT_PUBLIC_API_URL}/api/v1` : 'http://127.0.0.1:8000/api/v1';
 const OUTLET_ID = '0b8a8349-6144-41a8-b028-b9089bd8eaea';
 
 type Step = 'loading' | 'error' | 'login' | 'otp' | 'waiting';
@@ -132,7 +132,7 @@ export default function QREntryPage() {
         if (!data.is_valid) {
           // Check if it's a closed-table vs truly invalid
           const msg = ((data.message as string) || '').toLowerCase();
-          if (msg.includes('expired') || msg.includes('closed') || msg.includes('reopen')) {
+          if (msg.includes('expired') || msg.includes('closed') || msg.includes('reopen') || msg.includes('not active') || msg.includes('open the table')) {
             setErrorMsg('Table not active. Ask your waiter to open the table.');
           } else {
             setErrorMsg(`Invalid QR code. Please ask your waiter. (${data.message || 'unknown reason'})`);
