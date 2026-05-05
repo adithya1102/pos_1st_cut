@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
@@ -33,9 +33,6 @@ public partial class PosTerminalPage : ContentView
     private List<Button> _allTableButtons = new();
     private Dictionary<string, bool> _tableHasOrders = new();
 
-    // ── In-memory RAM cache: single source of truth, loaded once ──
-    private List<PosMenuItem> _masterMenu = new();
-    private Dictionary<string, Label> _priceLabelCache = new();
 
     public PosTerminalPage(ApiService api)
     {
@@ -63,15 +60,6 @@ public partial class PosTerminalPage : ContentView
             .SelectMany(c => c.Items.Select(i => { i.CategoryId = c.Id; return i; }))
             .Cast<PosMenuItem>().ToList();
 
-        // Populate the master RAM cache (loaded once, never re-fetched)
-        // Business rule: AC price = Normal price + 30% markup
-        _masterMenu = _allItems;
-        foreach (var item in _masterMenu)
-        {
-            item.PriceNormal = item.BasePrice;
-            item.PriceAc = Math.Round(item.BasePrice * 1.30m, 2);
-        }
-
         NewDishCategory.Items.Clear();
         foreach (var cat in _categories) NewDishCategory.Items.Add(cat.Name);
         if (NewDishCategory.Items.Count > 0) NewDishCategory.SelectedIndex = 0;
@@ -80,9 +68,7 @@ public partial class PosTerminalPage : ContentView
         AddTab("All", true);
         foreach (var cat in _categories) AddTab(cat.Name, false);
 
-        // Set initial display prices based on current zone selection
-        var initialZone = string.IsNullOrEmpty(_selectedZone) ? "normal" : _selectedZone;
-        ApplyZonePricing(initialZone);
+        Filter();
     }
 
     private async Task LoadMenuForZoneAsync(string zone)
@@ -103,45 +89,6 @@ public partial class PosTerminalPage : ContentView
         _selectedCategory = "All";
 
         Filter();
-    }
-
-    /// <summary>
-    /// Zero-lag in-memory price toggle. Loops through the RAM-cached _masterMenu
-    /// and swaps BasePrice to the zone-appropriate value. Updates existing card
-    /// price labels directly — no network calls, no card rebuilds.
-    /// Target: &lt; 0.01 s even on 4 GB RAM machines.
-    /// </summary>
-    private void ApplyZonePricing(string zone)
-    {
-        var useAc = zone == "ac";
-
-        foreach (var item in _masterMenu)
-        {
-            // Swap display price from the RAM cache
-            item.BasePrice = useAc ? item.PriceAc : item.PriceNormal;
-
-            // Update the cached price label directly (avoids full card rebuild)
-            if (_priceLabelCache.TryGetValue(item.Id, out var lbl))
-                lbl.Text = $"\u20B9{item.BasePrice:F0}";
-        }
-
-        // Clear card cache so any future Filter() rebuilds use the new price
-        _cardCache.Clear();
-        _priceLabelCache.Clear();
-        _selectedCategory = "All";
-
-        // Reset category tab highlights
-        MainThread.BeginInvokeOnMainThread(() =>
-        {
-            foreach (var v in CategoryTabsPanel.Children)
-                if (v is Button b) { b.BackgroundColor = Color.FromArgb("#E8E8E8"); b.TextColor = Colors.Black; }
-            if (CategoryTabsPanel.Children.FirstOrDefault() is Button allBtn)
-            {
-                allBtn.BackgroundColor = Color.FromArgb("#1B4332");
-                allBtn.TextColor = Colors.White;
-            }
-            Filter();
-        });
     }
 
     private void AddTab(string name, bool active)
@@ -227,8 +174,6 @@ public partial class PosTerminalPage : ContentView
             FontAttributes = FontAttributes.Bold, FontSize = 14,
             HorizontalOptions = LayoutOptions.End, VerticalOptions = LayoutOptions.Center
         };
-        // Cache the price label for instant in-memory price updates
-        _priceLabelCache[item.Id] = price;
 
         var topRow = new Grid();
         topRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
@@ -697,8 +642,7 @@ public partial class PosTerminalPage : ContentView
             ZoneBadgeLabel.TextColor = Color.FromArgb("#0C5460");
             ZoneBadge.BackgroundColor = Color.FromArgb("#D1ECF1");
             ZoneBadge.Stroke = Color.FromArgb("#0C5460");
-            // In-memory price swap — zero API calls
-            ApplyZonePricing("ac");
+            await LoadMenuForZoneAsync("ac");
         }
         else if (_selectedZone == "normal")
         {
@@ -707,14 +651,12 @@ public partial class PosTerminalPage : ContentView
             ZoneBadgeLabel.TextColor = Color.FromArgb("#495057");
             ZoneBadge.BackgroundColor = Color.FromArgb("#E8E8E8");
             ZoneBadge.Stroke = Color.FromArgb("#DEE2E6");
-            // In-memory price swap — zero API calls
-            ApplyZonePricing("normal");
+            await LoadMenuForZoneAsync("normal");
         }
         else
         {
             ZoneBadge.IsVisible = false;
-            // Direct order: default to normal pricing
-            ApplyZonePricing("normal");
+            await LoadMenuForZoneAsync("normal");
         }
 
         _existingOrders.Clear();

@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Text.Json.Serialization;
 namespace GustoPOS.Models;
 public class MenuModifier {
     public string Id { get; set; } = "";
@@ -12,9 +13,13 @@ private bool _isActive = true;
 public string Id { get; set; } = "";
 public string Name { get; set; } = "";
 public string ShortCode { get; set; } = "";
-public decimal BasePrice { get; set; }
-public decimal PriceNormal { get; set; }  // Normal-zone price (computed from BasePrice)
-public decimal PriceAc { get; set; }      // AC-zone price (BasePrice * 1.30, computed in-memory)
+[JsonPropertyName("price")]
+public decimal Price { get; set; }
+[JsonPropertyName("base_price")]
+public decimal BasePrice {
+    get => Price;
+    set => Price = value;
+}
 public bool IsVeg { get; set; }
 public string CategoryId { get; set; } = "";
 public bool IsActive {

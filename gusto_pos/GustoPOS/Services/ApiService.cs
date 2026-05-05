@@ -27,7 +27,7 @@ public class ApiService {
     }
     public async Task<Menu?> GetMenuByZoneAsync(string zone) {
         try {
-            var json = await _http.GetStringAsync($"{Base}/menus/by-zone/{OutletId}/{zone}");
+            var json = await _http.GetStringAsync($"{Base}/menus/zone/{OutletId}/{zone}");
             return JsonSerializer.Deserialize<Menu>(json, Opts);
         } catch (Exception ex) {
             System.Diagnostics.Debug.WriteLine($"GetMenuByZone: {ex.Message}");
@@ -206,6 +206,54 @@ public class ApiService {
             return res.IsSuccessStatusCode;
         } catch (Exception ex) {
             System.Diagnostics.Debug.WriteLine($"UpdateOutletConfig: {ex.Message}");
+            return false;
+        }
+    }
+
+    public string GetPosWsUrl() =>
+        $"ws://127.0.0.1:8000/ws/pos/{OutletId}";
+
+    public async Task<List<StaffMember>> GetStaffAsync() {
+        try {
+            var json = await _http.GetStringAsync($"{Base}/staff/");
+            return JsonSerializer.Deserialize<List<StaffMember>>(json, Opts) ?? new();
+        } catch (Exception ex) {
+            System.Diagnostics.Debug.WriteLine($"GetStaff: {ex.Message}");
+            return new();
+        }
+    }
+
+    public async Task<StaffMember?> CreateStaffAsync(string name, string role, string pin) {
+        try {
+            var body = JsonSerializer.Serialize(new { name, role, pin }, Opts);
+            var res = await _http.PostAsync($"{Base}/staff/",
+                new StringContent(body, Encoding.UTF8, "application/json"));
+            if (!res.IsSuccessStatusCode) return null;
+            return JsonSerializer.Deserialize<StaffMember>(await res.Content.ReadAsStringAsync(), Opts);
+        } catch (Exception ex) {
+            System.Diagnostics.Debug.WriteLine($"CreateStaff: {ex.Message}");
+            return null;
+        }
+    }
+
+    public async Task<bool> ResetStaffPinAsync(string staffId, string pin) {
+        try {
+            var body = JsonSerializer.Serialize(new { pin }, Opts);
+            var res = await _http.PutAsync($"{Base}/staff/{staffId}/pin",
+                new StringContent(body, Encoding.UTF8, "application/json"));
+            return res.IsSuccessStatusCode;
+        } catch (Exception ex) {
+            System.Diagnostics.Debug.WriteLine($"ResetStaffPin: {ex.Message}");
+            return false;
+        }
+    }
+
+    public async Task<bool> DeleteStaffAsync(string staffId) {
+        try {
+            var res = await _http.DeleteAsync($"{Base}/staff/{staffId}");
+            return res.IsSuccessStatusCode;
+        } catch (Exception ex) {
+            System.Diagnostics.Debug.WriteLine($"DeleteStaff: {ex.Message}");
             return false;
         }
     }

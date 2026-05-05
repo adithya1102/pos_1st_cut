@@ -1,9 +1,10 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.staff.model import Staff
-from app.modules.staff.schema import PinLoginRequest, PinLoginResponse, StaffProfile
-from app.core.security import verify_password
+from app.modules.staff.schema import PinLoginRequest, PinLoginResponse, StaffProfile, StaffCreate
+from app.core.security import verify_password, get_password_hash
 from app.core.auth import create_access_token
+import uuid
 
 
 class StaffService:
@@ -20,3 +21,40 @@ class StaffService:
                     staff=StaffProfile.model_validate(member),
                 )
         return None
+
+    @staticmethod
+    async def get_all(db: AsyncSession) -> list[Staff]:
+        result = await db.execute(select(Staff).order_by(Staff.name))
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def create_staff(db: AsyncSession, payload: StaffCreate) -> Staff:
+        member = Staff(
+            name=payload.name,
+            role=payload.role,
+            hashed_pin=get_password_hash(payload.pin),
+        )
+        db.add(member)
+        await db.commit()
+        await db.refresh(member)
+        return member
+
+    @staticmethod
+    async def reset_pin(db: AsyncSession, staff_id: str, pin: str) -> bool:
+        result = await db.execute(select(Staff).where(Staff.id == uuid.UUID(staff_id)))
+        member = result.scalars().first()
+        if not member:
+            return False
+        member.hashed_pin = get_password_hash(pin)
+        await db.commit()
+        return True
+
+    @staticmethod
+    async def delete_staff(db: AsyncSession, staff_id: str) -> bool:
+        result = await db.execute(select(Staff).where(Staff.id == uuid.UUID(staff_id)))
+        member = result.scalars().first()
+        if not member:
+            return False
+        await db.delete(member)
+        await db.commit()
+        return True

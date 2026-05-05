@@ -19,8 +19,10 @@ from app.modules.auth.controller import router as auth_router
 
 from app.modules.kitchen.router import router as kitchen_router
 from app.modules.kitchen.customer_router import router as customer_ws_router
+from app.modules.kitchen.pos_router import router as pos_ws_router
 from app.modules.tables.router import router as tables_router
 from app.modules.config.controller import router as config_router
+from app.modules.staff.controller import router as staff_router
 
 
 app = FastAPI(title="Gusto POS", version="2.0.0")
@@ -61,6 +63,8 @@ app.include_router(sessions_router, prefix="/api/v1", tags=["Sessions"])
 app.include_router(config_router, prefix="/api/v1", tags=["Outlet Config"])
 app.include_router(kitchen_router)
 app.include_router(customer_ws_router)
+app.include_router(pos_ws_router)
+app.include_router(staff_router, prefix="/api/v1", tags=["Staff Management"])
 
 @app.get("/")
 async def root():
