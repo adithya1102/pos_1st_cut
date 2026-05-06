@@ -38,6 +38,7 @@ class OrderService:
             outlet_id=payload.outlet_id,
             table_id=payload.table_id,
             customer_id=payload.customer_id,
+            staff_id=payload.staff_id,
             total_amount=payload.total_amount,
             order_status=payload.order_status.value if payload.order_status else "pending",
             kitchen_token=payload.kitchen_token,

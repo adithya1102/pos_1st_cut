@@ -23,6 +23,7 @@ from app.modules.kitchen.pos_router import router as pos_ws_router
 from app.modules.tables.router import router as tables_router
 from app.modules.config.controller import router as config_router
 from app.modules.staff.controller import router as staff_router
+from app.modules.categories.controller import router as categories_router
 
 
 app = FastAPI(title="Gusto POS", version="2.0.0")
@@ -65,6 +66,7 @@ app.include_router(kitchen_router)
 app.include_router(customer_ws_router)
 app.include_router(pos_ws_router)
 app.include_router(staff_router, prefix="/api/v1", tags=["Staff Management"])
+app.include_router(categories_router, prefix="/api/v1", tags=["Category Management"])
 
 @app.get("/")
 async def root():

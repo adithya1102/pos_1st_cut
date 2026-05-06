@@ -46,7 +46,8 @@
             <Button Grid.Row="2" Text="🚪  Logout"
                     BackgroundColor="Transparent" TextColor="#ADB5BD"
                     HorizontalOptions="Fill" CornerRadius="0"
-                    Margin="12,0,12,16" FontSize="13"/>
+                    Margin="12,0,12,16" FontSize="13"
+                    Clicked="OnLogoutClicked"/>
         </Grid>
         <ContentView x:Name="ContentArea" Grid.Column="1" BackgroundColor="#F8F9FA"/>
     </Grid>

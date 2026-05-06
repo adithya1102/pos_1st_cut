@@ -16,6 +16,7 @@ public partial class PosTerminalPage : ContentView
 {
     private readonly ApiService _api;
     private List<MenuCategory> _categories = new();
+    private List<CategoryItem> _categoryItems = new();
     private List<PosMenuItem> _allItems = new();
     private List<PosMenuItem> _filtered = new();
     private List<CartItem> _cart = new();
@@ -26,6 +27,7 @@ public partial class PosTerminalPage : ContentView
     private string _orderType = "dine_in";
     private string _selectedPaymentMethod = "cash";
     private bool _newDishIsVeg = true;
+    private string? _loggedInStaffId;
 
     private string _selectedZone = "";
     private int _normalCount = 10;
@@ -38,12 +40,20 @@ public partial class PosTerminalPage : ContentView
     {
         InitializeComponent();
         _api = api;
+        LoadStaffIdAsync();
         LoadMenuAsync();
         LoadConfigAndBuildTablesAsync();
     }
 
+    private async void LoadStaffIdAsync()
+    {
+        _loggedInStaffId = await SecureStorage.GetAsync("staff_id");
+    }
+
     private async void LoadMenuAsync()
     {
+        _cardCache.Clear();
+        _selectedCategory = "All";
         var menu = await _api.GetMenuAsync();
         if (menu == null)
         {
@@ -59,9 +69,11 @@ public partial class PosTerminalPage : ContentView
         _allItems = menu.Categories
             .SelectMany(c => c.Items.Select(i => { i.CategoryId = c.Id; return i; }))
             .Cast<PosMenuItem>().ToList();
+        SetAllItemsACMode(_selectedZone == "ac");
 
+        _categoryItems = await _api.GetCategoriesForMenuAsync();
         NewDishCategory.Items.Clear();
-        foreach (var cat in _categories) NewDishCategory.Items.Add(cat.Name);
+        foreach (var c in _categoryItems) NewDishCategory.Items.Add(c.Name);
         if (NewDishCategory.Items.Count > 0) NewDishCategory.SelectedIndex = 0;
 
         CategoryTabsPanel.Children.Clear();
@@ -71,24 +83,11 @@ public partial class PosTerminalPage : ContentView
         Filter();
     }
 
-    private async Task LoadMenuForZoneAsync(string zone)
+    // Flip IsACMode on every loaded item.
+    // Card price labels update reactively via PropertyChanged — no cache rebuild needed.
+    private void SetAllItemsACMode(bool isAC)
     {
-        var menu = await _api.GetMenuByZoneAsync(zone);
-        if (menu == null) return;
-
-        _categories = menu.Categories;
-        _allItems = menu.Categories
-            .SelectMany(c => c.Items.Select(i => { i.CategoryId = c.Id; return i; }))
-            .Cast<PosMenuItem>().ToList();
-
-        _cardCache.Clear();
-
-        CategoryTabsPanel.Children.Clear();
-        AddTab("All", true);
-        foreach (var cat in _categories) AddTab(cat.Name, false);
-        _selectedCategory = "All";
-
-        Filter();
+        foreach (var item in _allItems) item.IsACMode = isAC;
     }
 
     private void AddTab(string name, bool active)
@@ -169,10 +168,15 @@ public partial class PosTerminalPage : ContentView
 
         var price = new Label
         {
-            Text = $"₹{item.BasePrice:F0}",
+            Text = $"₹{item.DisplayPrice:F0}",
             TextColor = Color.FromArgb("#28A745"),
             FontAttributes = FontAttributes.Bold, FontSize = 14,
             HorizontalOptions = LayoutOptions.End, VerticalOptions = LayoutOptions.Center
+        };
+        item.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(PosMenuItem.DisplayPrice))
+                MainThread.BeginInvokeOnMainThread(() => price.Text = $"₹{item.DisplayPrice:F0}");
         };
 
         var topRow = new Grid();
@@ -194,26 +198,28 @@ public partial class PosTerminalPage : ContentView
             MinimumHeightRequest = 36
         };
 
-        // Toggle — OFF=Red (visible), ON=Green
-        var availLbl = new Label
+        // Availability — only show "Unavailable" badge when inactive; no green tick clutter
+        var unavailLbl = new Label
         {
-            Text = item.IsActive ? "Available" : "Unavailable",
-            TextColor = item.IsActive ? Color.FromArgb("#28A745") : Color.FromArgb("#DC3545"),
-            FontSize = 10, VerticalOptions = LayoutOptions.Center, Margin = new Thickness(4, 0)
+            Text = "Unavailable",
+            TextColor = Color.FromArgb("#DC3545"),
+            FontSize = 10,
+            VerticalOptions = LayoutOptions.Center,
+            Margin = new Thickness(4, 0),
+            IsVisible = !item.IsActive,
         };
         var toggle = new Switch
         {
             IsToggled = item.IsActive,
             OnColor = Color.FromArgb("#28A745"),
-            ThumbColor = Colors.Black,
+            ThumbColor = Colors.White,
             Scale = 0.8,
             VerticalOptions = LayoutOptions.Center
         };
         toggle.Toggled += async (s, e) =>
         {
             item.IsActive = e.Value;
-            availLbl.Text = e.Value ? "Available" : "Unavailable";
-            availLbl.TextColor = e.Value ? Color.FromArgb("#28A745") : Color.FromArgb("#DC3545");
+            unavailLbl.IsVisible = !e.Value;
             await _api.ToggleItemAvailabilityAsync(item.Id, e.Value);
         };
 
@@ -221,7 +227,7 @@ public partial class PosTerminalPage : ContentView
         bottomRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
         bottomRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
         bottomRow.Add(toggle, 0, 0);
-        bottomRow.Add(availLbl, 1, 0);
+        bottomRow.Add(unavailLbl, 1, 0);
 
         // Card — tap to add, hover = black border
         var card = new Border
@@ -284,7 +290,7 @@ public partial class PosTerminalPage : ContentView
     {
         var ex = _cart.FirstOrDefault(c => c.MenuItemId == item.Id);
         if (ex != null) ex.Quantity++;
-        else _cart.Add(new CartItem { MenuItemId = item.Id, Name = item.Name, BasePrice = item.BasePrice });
+        else _cart.Add(new CartItem { MenuItemId = item.Id, Name = item.Name, BasePrice = item.DisplayPrice });
         RefreshCart();
     }
 
@@ -429,6 +435,7 @@ public partial class PosTerminalPage : ContentView
     public void OnTabShown()
     {
         LoadConfigAndBuildTablesAsync();
+        LoadMenuAsync();
     }
 
     private async void LoadConfigAndBuildTablesAsync()
@@ -642,7 +649,7 @@ public partial class PosTerminalPage : ContentView
             ZoneBadgeLabel.TextColor = Color.FromArgb("#0C5460");
             ZoneBadge.BackgroundColor = Color.FromArgb("#D1ECF1");
             ZoneBadge.Stroke = Color.FromArgb("#0C5460");
-            await LoadMenuForZoneAsync("ac");
+            SetAllItemsACMode(true);
         }
         else if (_selectedZone == "normal")
         {
@@ -651,12 +658,12 @@ public partial class PosTerminalPage : ContentView
             ZoneBadgeLabel.TextColor = Color.FromArgb("#495057");
             ZoneBadge.BackgroundColor = Color.FromArgb("#E8E8E8");
             ZoneBadge.Stroke = Color.FromArgb("#DEE2E6");
-            await LoadMenuForZoneAsync("normal");
+            SetAllItemsACMode(false);
         }
         else
         {
             ZoneBadge.IsVisible = false;
-            await LoadMenuForZoneAsync("normal");
+            SetAllItemsACMode(false);
         }
 
         _existingOrders.Clear();
@@ -680,7 +687,7 @@ public partial class PosTerminalPage : ContentView
                 await Application.Current!.Windows[0].Page!.DisplayAlertAsync("Empty Cart", "Add items first.", "OK");
                 return;
             }
-            var order = await _api.CreateOrderAsync(_cart, null, _orderType);
+            var order = await _api.CreateOrderAsync(_cart, null, _orderType, staffId: _loggedInStaffId);
             if (order != null)
             {
                 _cart.Clear();
@@ -752,7 +759,7 @@ public partial class PosTerminalPage : ContentView
         // Step 1: If new items in cart, save them
         if (_cart.Any())
         {
-            var newOrder = await _api.CreateOrderWithPaymentAsync(_cart, tableId, _orderType, _selectedPaymentMethod, _selectedZone);
+            var newOrder = await _api.CreateOrderWithPaymentAsync(_cart, tableId, _orderType, _selectedPaymentMethod, _selectedZone, _loggedInStaffId);
             if (newOrder == null)
             {
                 await Application.Current!.Windows[0].Page!.DisplayAlertAsync("Error", "Could not save new items.", "OK");
@@ -865,18 +872,20 @@ public partial class PosTerminalPage : ContentView
         if (catName == null)
         { AddDishStatus.Text = "Select a category."; AddDishStatus.TextColor = Colors.Red; return; }
 
+        var catItem = _categoryItems.FirstOrDefault(c => c.Name == catName);
         var category = _categories.FirstOrDefault(c => c.Name == catName);
-        if (category == null) return;
+        var categoryId = catItem?.Id ?? category?.Id;
+        if (categoryId == null) return;
 
         var sc = string.Concat(name.Where(char.IsLetter).Take(4)).ToUpper();
         AddDishStatus.Text = "Adding...";
         AddDishStatus.TextColor = Colors.Gray;
 
-        var newItem = await _api.AddMenuItemAsync(category.Id, name, price, _newDishIsVeg, sc);
+        var newItem = await _api.AddMenuItemAsync(categoryId, name, price, _newDishIsVeg, sc);
         if (newItem != null)
         {
-            newItem.CategoryId = category.Id;
-            category.Items.Add(newItem);
+            newItem.CategoryId = categoryId;
+            if (category != null) category.Items.Add(newItem);
             _allItems.Add(newItem);
             AddDishStatus.Text = $"'{name}' added! Synced to customer app.";
             AddDishStatus.TextColor = Color.FromArgb("#28A745");

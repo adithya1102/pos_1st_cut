@@ -34,11 +34,12 @@ public class ApiService {
             return null;
         }
     }
-    public async Task<Order?> CreateOrderAsync(List<CartItem> items, string? tableId, string orderType = "dine_in", string? zone = null) {
+    public async Task<Order?> CreateOrderAsync(List<CartItem> items, string? tableId, string orderType = "dine_in", string? zone = null, string? staffId = null) {
         try {
             var body = JsonSerializer.Serialize(new {
                 outlet_id = OutletId,
                 table_id = tableId,
+                staff_id = staffId,
                 total_amount = items.Sum(i => i.ItemTotal),
                 order_type = orderType,
                 zone = zone,
@@ -166,11 +167,12 @@ public class ApiService {
             return null;
         }
     }
-    public async Task<Order?> CreateOrderWithPaymentAsync(List<CartItem> items, string? tableId, string orderType, string paymentMethod, string? zone = null) {
+    public async Task<Order?> CreateOrderWithPaymentAsync(List<CartItem> items, string? tableId, string orderType, string paymentMethod, string? zone = null, string? staffId = null) {
         try {
             var body = JsonSerializer.Serialize(new {
                 outlet_id = OutletId,
                 table_id = tableId,
+                staff_id = staffId,
                 total_amount = items.Sum(i => i.ItemTotal),
                 order_type = orderType,
                 payment_method = paymentMethod,
@@ -254,6 +256,81 @@ public class ApiService {
             return res.IsSuccessStatusCode;
         } catch (Exception ex) {
             System.Diagnostics.Debug.WriteLine($"DeleteStaff: {ex.Message}");
+            return false;
+        }
+    }
+
+    public async Task<StaffMember?> UpdateStaffAsync(string staffId, string? assignedTable, string? shiftStart, string? shiftEnd) {
+        try {
+            var body = JsonSerializer.Serialize(new {
+                assigned_table = assignedTable,
+                shift_start = shiftStart,
+                shift_end = shiftEnd
+            }, Opts);
+            var res = await _http.PutAsync($"{Base}/staff/{staffId}",
+                new StringContent(body, Encoding.UTF8, "application/json"));
+            if (!res.IsSuccessStatusCode) return null;
+            return JsonSerializer.Deserialize<StaffMember>(await res.Content.ReadAsStringAsync(), Opts);
+        } catch (Exception ex) {
+            System.Diagnostics.Debug.WriteLine($"UpdateStaff: {ex.Message}");
+            return null;
+        }
+    }
+
+    public async Task<List<CategoryItem>> GetCategoriesForMenuAsync() {
+        try {
+            var json = await _http.GetStringAsync($"{Base}/menus/categories/menu/{MenuId}");
+            var cats = JsonSerializer.Deserialize<List<CategoryItem>>(json, Opts) ?? new();
+            return cats;
+        } catch (Exception ex) {
+            System.Diagnostics.Debug.WriteLine($"GetCategories: {ex.Message}");
+            return new();
+        }
+    }
+
+    public async Task<CategoryItem?> CreateCategoryAsync(string name) {
+        try {
+            var body = JsonSerializer.Serialize(new { menu_id = MenuId, name }, Opts);
+            var res = await _http.PostAsync($"{Base}/menus/categories/",
+                new StringContent(body, Encoding.UTF8, "application/json"));
+            if (!res.IsSuccessStatusCode) return null;
+            return JsonSerializer.Deserialize<CategoryItem>(await res.Content.ReadAsStringAsync(), Opts);
+        } catch (Exception ex) {
+            System.Diagnostics.Debug.WriteLine($"CreateCategory: {ex.Message}");
+            return null;
+        }
+    }
+
+    public async Task<bool> UpdateCategoryAsync(string categoryId, string name) {
+        try {
+            var body = JsonSerializer.Serialize(new { name }, Opts);
+            var res = await _http.PutAsync($"{Base}/categories/{categoryId}",
+                new StringContent(body, Encoding.UTF8, "application/json"));
+            return res.IsSuccessStatusCode;
+        } catch (Exception ex) {
+            System.Diagnostics.Debug.WriteLine($"UpdateCategory: {ex.Message}");
+            return false;
+        }
+    }
+
+    public async Task<bool> DeleteCategoryAsync(string categoryId) {
+        try {
+            var res = await _http.DeleteAsync($"{Base}/categories/{categoryId}");
+            return res.IsSuccessStatusCode;
+        } catch (Exception ex) {
+            System.Diagnostics.Debug.WriteLine($"DeleteCategory: {ex.Message}");
+            return false;
+        }
+    }
+
+    public async Task<bool> UpdateMenuItemPriceAsync(string itemId, decimal newPrice) {
+        try {
+            var body = JsonSerializer.Serialize(new { base_price = newPrice }, Opts);
+            var res = await _http.PutAsync($"{Base}/menus/items/{itemId}",
+                new StringContent(body, Encoding.UTF8, "application/json"));
+            return res.IsSuccessStatusCode;
+        } catch (Exception ex) {
+            System.Diagnostics.Debug.WriteLine($"UpdateMenuItemPrice: {ex.Message}");
             return false;
         }
     }

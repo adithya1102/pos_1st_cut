@@ -15,3 +15,6 @@ class Staff(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     role: Mapped[StaffRole] = mapped_column(SAEnum(StaffRole, name="staffrole"), nullable=False)
     hashed_pin: Mapped[str] = mapped_column(String, nullable=False)
+    assigned_table: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    shift_start: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    shift_end: Mapped[str | None] = mapped_column(String(5), nullable=True)

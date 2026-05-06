@@ -27,4 +27,16 @@ public partial class MainPage : ContentPage {
     private void OnFloorClicked(object s, EventArgs e) => ShowFloor();
     private void OnBillingClicked(object s, EventArgs e) => ShowBilling();
     private void OnMgmtClicked(object s, EventArgs e) => ShowMgmt();
+
+    private void OnLogoutClicked(object s, EventArgs e)
+    {
+        SecureStorage.Remove("auth_token");
+        SecureStorage.Remove("staff_name");
+        SecureStorage.Remove("staff_role");
+        SecureStorage.Remove("staff_id");
+
+        var window = Application.Current?.Windows.FirstOrDefault();
+        if (window is not null)
+            window.Page = new PinLoginPage(_api);
+    }
 }

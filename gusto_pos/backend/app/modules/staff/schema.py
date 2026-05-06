@@ -1,4 +1,5 @@
 import uuid
+from typing import Optional
 from pydantic import BaseModel, field_validator
 from app.modules.staff.model import StaffRole
 
@@ -32,6 +33,10 @@ class StaffRead(BaseModel):
     id: uuid.UUID
     name: str
     role: StaffRole
+    assigned_table: Optional[str] = None
+    shift_start: Optional[str] = None
+    shift_end: Optional[str] = None
+    earnings_today: float = 0.0
 
     model_config = {"from_attributes": True}
 
@@ -47,6 +52,12 @@ class StaffCreate(BaseModel):
         if not v.isdigit() or len(v) != 4:
             raise ValueError("PIN must be exactly 4 digits")
         return v
+
+
+class StaffUpdate(BaseModel):
+    assigned_table: Optional[str] = None
+    shift_start: Optional[str] = None
+    shift_end: Optional[str] = None
 
 
 class ResetPinRequest(BaseModel):

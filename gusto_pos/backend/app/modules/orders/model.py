@@ -30,6 +30,7 @@ class Order(Base):
     total_amount: Mapped[float] = mapped_column(DECIMAL(10, 2), nullable=False)
     order_status: Mapped[str] = mapped_column(String(20), default="pending")
     kitchen_token: Mapped[str | None] = mapped_column(String(50))
+    staff_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("staff.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships — lazy="raise" to prevent cascade loads in async
     outlet = relationship("Outlet", back_populates="orders", lazy="raise")

@@ -1,0 +1,290 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="GustoPOS.Views.StaffRosterPage"
+             BackgroundColor="#F8F9FA">
+    <Grid>
+
+        <!-- ═══════════════════ MAIN CONTENT ═══════════════════ -->
+        <ScrollView>
+            <StackLayout Padding="24" Spacing="20">
+
+                <!-- Header row -->
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="16">
+                    <Button Grid.Column="0" Text="← Back"
+                            BackgroundColor="Transparent" TextColor="#1B4332"
+                            FontSize="14" FontAttributes="Bold"
+                            HeightRequest="44" Clicked="OnBackClicked"/>
+                    <StackLayout Grid.Column="1" VerticalOptions="Center" Spacing="2">
+                        <Label Text="Staff Roster"
+                               FontSize="24" FontAttributes="Bold" TextColor="#212529"/>
+                        <Label Text="Manage staff accounts, shifts, and table assignments."
+                               FontSize="13" TextColor="#6C757D"/>
+                    </StackLayout>
+                    <Button Grid.Column="2" Text="+ Add New Staff"
+                            BackgroundColor="#1B4332" TextColor="White"
+                            CornerRadius="8" FontSize="13" FontAttributes="Bold"
+                            HeightRequest="44" Padding="16,0"
+                            Clicked="OnAddNewStaffClicked"/>
+                </Grid>
+
+                <Label x:Name="StatusLabel" Text="" FontSize="13" TextColor="#28A745" MinimumHeightRequest="18"/>
+
+                <!-- Staff table card -->
+                <Border BackgroundColor="White" Stroke="#DEE2E6" StrokeShape="RoundRectangle 12">
+                    <StackLayout>
+
+                        <!-- Column headers: Name/Role | Table | Shift | Today's Earnings | PIN | Edit | Remove -->
+                        <Grid ColumnDefinitions="*,80,130,110,100,60,70"
+                              Padding="20,12" BackgroundColor="#F8F9FA" ColumnSpacing="10">
+                            <Label Grid.Column="0" Text="NAME / ROLE"
+                                   FontSize="11" FontAttributes="Bold" TextColor="#6C757D"/>
+                            <Label Grid.Column="1" Text="TABLE"
+                                   FontSize="11" FontAttributes="Bold" TextColor="#6C757D"
+                                   HorizontalTextAlignment="Center"/>
+                            <Label Grid.Column="2" Text="SHIFT"
+                                   FontSize="11" FontAttributes="Bold" TextColor="#6C757D"
+                                   HorizontalTextAlignment="Center"/>
+                            <Label Grid.Column="3" Text="TODAY'S ₹"
+                                   FontSize="11" FontAttributes="Bold" TextColor="#6C757D"
+                                   HorizontalTextAlignment="Center"/>
+                            <Label Grid.Column="4" Text="PIN"
+                                   FontSize="11" FontAttributes="Bold" TextColor="#6C757D"
+                                   HorizontalTextAlignment="Center"/>
+                            <Label Grid.Column="5" Text="EDIT"
+                                   FontSize="11" FontAttributes="Bold" TextColor="#6C757D"
+                                   HorizontalTextAlignment="Center"/>
+                            <Label Grid.Column="6" Text="REMOVE"
+                                   FontSize="11" FontAttributes="Bold" TextColor="#6C757D"
+                                   HorizontalTextAlignment="Center"/>
+                        </Grid>
+                        <BoxView Color="#DEE2E6" HeightRequest="1"/>
+
+                        <CollectionView x:Name="StaffCollectionView">
+                            <CollectionView.EmptyView>
+                                <StackLayout Padding="24" HorizontalOptions="Center">
+                                    <Label Text="No staff members yet."
+                                           FontSize="14" TextColor="#6C757D"
+                                           HorizontalTextAlignment="Center"/>
+                                    <Label Text="Tap '+ Add New Staff' to create the first account."
+                                           FontSize="12" TextColor="#ADB5BD"
+                                           HorizontalTextAlignment="Center"/>
+                                </StackLayout>
+                            </CollectionView.EmptyView>
+                            <CollectionView.ItemTemplate>
+                                <DataTemplate>
+                                    <StackLayout>
+                                        <Grid ColumnDefinitions="*,80,130,110,100,60,70"
+                                              Padding="20,14" ColumnSpacing="10">
+
+                                            <!-- Name & Role -->
+                                            <StackLayout Grid.Column="0" VerticalOptions="Center" Spacing="2">
+                                                <Label Text="{Binding Name}"
+                                                       FontSize="15" FontAttributes="Bold" TextColor="#212529"/>
+                                                <Label Text="{Binding Role}"
+                                                       FontSize="12" TextColor="#6C757D"/>
+                                            </StackLayout>
+
+                                            <!-- Assigned Table -->
+                                            <Label Grid.Column="1"
+                                                   Text="{Binding AssignedTable, TargetNullValue='—'}"
+                                                   FontSize="13" TextColor="#495057"
+                                                   HorizontalTextAlignment="Center"
+                                                   VerticalOptions="Center"/>
+
+                                            <!-- Shift -->
+                                            <Label Grid.Column="2"
+                                                   Text="{Binding ShiftDisplay}"
+                                                   FontSize="12" TextColor="#495057"
+                                                   HorizontalTextAlignment="Center"
+                                                   VerticalOptions="Center"/>
+
+                                            <!-- Today's Earnings -->
+                                            <Label Grid.Column="3"
+                                                   Text="{Binding EarningsToday, StringFormat='₹{0:F0}'}"
+                                                   FontSize="14" FontAttributes="Bold"
+                                                   TextColor="#1B4332"
+                                                   HorizontalTextAlignment="Center"
+                                                   VerticalOptions="Center"/>
+
+                                            <!-- Reset PIN -->
+                                            <Button Grid.Column="4"
+                                                    Text="Reset PIN"
+                                                    BackgroundColor="#E8F4FD" TextColor="#0C5460"
+                                                    CornerRadius="6" FontSize="12" FontAttributes="Bold"
+                                                    HeightRequest="36" Padding="8,0"
+                                                    CommandParameter="{Binding Id}"
+                                                    Clicked="OnResetPinClicked"/>
+
+                                            <!-- Edit -->
+                                            <Button Grid.Column="5"
+                                                    Text="✏️"
+                                                    BackgroundColor="#FFF9E6" TextColor="#856404"
+                                                    CornerRadius="6" FontSize="14"
+                                                    HeightRequest="36" Padding="4,0"
+                                                    CommandParameter="{Binding Id}"
+                                                    Clicked="OnEditStaffClicked"/>
+
+                                            <!-- Delete -->
+                                            <Button Grid.Column="6"
+                                                    Text="Delete"
+                                                    BackgroundColor="#FFF0F0" TextColor="#DC3545"
+                                                    CornerRadius="6" FontSize="12" FontAttributes="Bold"
+                                                    HeightRequest="36" Padding="8,0"
+                                                    CommandParameter="{Binding Id}"
+                                                    Clicked="OnDeleteClicked"/>
+                                        </Grid>
+                                        <BoxView Color="#DEE2E6" HeightRequest="1" Margin="0"/>
+                                    </StackLayout>
+                                </DataTemplate>
+                            </CollectionView.ItemTemplate>
+                        </CollectionView>
+
+                    </StackLayout>
+                </Border>
+
+            </StackLayout>
+        </ScrollView>
+
+        <!-- ═══════════════════ ADD STAFF MODAL ═══════════════════ -->
+        <Grid x:Name="AddStaffOverlay" IsVisible="False" BackgroundColor="#80000000">
+            <Border BackgroundColor="White" Stroke="#DEE2E6" StrokeShape="RoundRectangle 16"
+                    WidthRequest="420" VerticalOptions="Center" HorizontalOptions="Center" Padding="32">
+                <StackLayout Spacing="20">
+                    <Label Text="Add New Staff Member"
+                           FontSize="20" FontAttributes="Bold" TextColor="#212529"/>
+
+                    <StackLayout Spacing="6">
+                        <Label Text="FULL NAME" FontSize="11" FontAttributes="Bold" TextColor="#6C757D"/>
+                        <Border Stroke="#DEE2E6" StrokeShape="RoundRectangle 8" BackgroundColor="White" Padding="12,4">
+                            <Entry x:Name="NewStaffName" Placeholder="e.g. Ravi Kumar"
+                                   FontSize="14" TextColor="#212529" BackgroundColor="Transparent"/>
+                        </Border>
+                    </StackLayout>
+
+                    <StackLayout Spacing="6">
+                        <Label Text="ROLE" FontSize="11" FontAttributes="Bold" TextColor="#6C757D"/>
+                        <Border Stroke="#DEE2E6" StrokeShape="RoundRectangle 8" BackgroundColor="White" Padding="8,0">
+                            <Picker x:Name="NewStaffRole" Title="Select role"
+                                    FontSize="14" TextColor="#212529">
+                                <Picker.Items>
+                                    <x:String>Admin</x:String>
+                                    <x:String>Waiter</x:String>
+                                    <x:String>Kitchen</x:String>
+                                </Picker.Items>
+                            </Picker>
+                        </Border>
+                    </StackLayout>
+
+                    <StackLayout Spacing="6">
+                        <Label Text="4-DIGIT PIN" FontSize="11" FontAttributes="Bold" TextColor="#6C757D"/>
+                        <Border Stroke="#DEE2E6" StrokeShape="RoundRectangle 8" BackgroundColor="White" Padding="12,4">
+                            <Entry x:Name="NewStaffPin" Keyboard="Numeric" MaxLength="4"
+                                   Placeholder="e.g. 1234" FontSize="14" TextColor="#212529"
+                                   BackgroundColor="Transparent" IsPassword="True"/>
+                        </Border>
+                    </StackLayout>
+
+                    <Label x:Name="AddStaffError" Text="" TextColor="#DC3545" FontSize="12" MinimumHeightRequest="16"/>
+
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                        <Button Grid.Column="0" Text="Cancel"
+                                BackgroundColor="#F8F9FA" TextColor="#6C757D"
+                                CornerRadius="8" FontSize="14" HeightRequest="44"
+                                Clicked="OnAddStaffCancel"/>
+                        <Button Grid.Column="1" Text="Create Staff"
+                                BackgroundColor="#1B4332" TextColor="White"
+                                CornerRadius="8" FontSize="14" FontAttributes="Bold"
+                                HeightRequest="44" Clicked="OnAddStaffConfirm"/>
+                    </Grid>
+                </StackLayout>
+            </Border>
+        </Grid>
+
+        <!-- ═══════════════════ RESET PIN MODAL ═══════════════════ -->
+        <Grid x:Name="ResetPinOverlay" IsVisible="False" BackgroundColor="#80000000">
+            <Border BackgroundColor="White" Stroke="#DEE2E6" StrokeShape="RoundRectangle 16"
+                    WidthRequest="380" VerticalOptions="Center" HorizontalOptions="Center" Padding="32">
+                <StackLayout Spacing="20">
+                    <Label Text="Reset Staff PIN" FontSize="20" FontAttributes="Bold" TextColor="#212529"/>
+                    <Label x:Name="ResetPinSubtitle" Text="" FontSize="14" TextColor="#6C757D"/>
+
+                    <StackLayout Spacing="6">
+                        <Label Text="NEW 4-DIGIT PIN" FontSize="11" FontAttributes="Bold" TextColor="#6C757D"/>
+                        <Border Stroke="#DEE2E6" StrokeShape="RoundRectangle 8" BackgroundColor="White" Padding="12,4">
+                            <Entry x:Name="NewPinEntry" Keyboard="Numeric" MaxLength="4"
+                                   Placeholder="Enter new PIN" FontSize="14" TextColor="#212529"
+                                   BackgroundColor="Transparent" IsPassword="True"/>
+                        </Border>
+                    </StackLayout>
+
+                    <Label x:Name="ResetPinError" Text="" TextColor="#DC3545" FontSize="12" MinimumHeightRequest="16"/>
+
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                        <Button Grid.Column="0" Text="Cancel"
+                                BackgroundColor="#F8F9FA" TextColor="#6C757D"
+                                CornerRadius="8" FontSize="14" HeightRequest="44"
+                                Clicked="OnResetPinCancel"/>
+                        <Button Grid.Column="1" Text="Save PIN"
+                                BackgroundColor="#0C5460" TextColor="White"
+                                CornerRadius="8" FontSize="14" FontAttributes="Bold"
+                                HeightRequest="44" Clicked="OnResetPinConfirm"/>
+                    </Grid>
+                </StackLayout>
+            </Border>
+        </Grid>
+
+        <!-- ═══════════════════ EDIT STAFF MODAL ═══════════════════ -->
+        <Grid x:Name="EditStaffOverlay" IsVisible="False" BackgroundColor="#80000000">
+            <Border BackgroundColor="White" Stroke="#DEE2E6" StrokeShape="RoundRectangle 16"
+                    WidthRequest="440" VerticalOptions="Center" HorizontalOptions="Center" Padding="32">
+                <StackLayout Spacing="20">
+                    <Label Text="Edit Staff Details" FontSize="20" FontAttributes="Bold" TextColor="#212529"/>
+                    <Label x:Name="EditStaffSubtitle" Text="" FontSize="14" TextColor="#6C757D"/>
+
+                    <StackLayout Spacing="6">
+                        <Label Text="ASSIGNED TABLE (optional)" FontSize="11" FontAttributes="Bold" TextColor="#6C757D"/>
+                        <Border Stroke="#DEE2E6" StrokeShape="RoundRectangle 8" BackgroundColor="White" Padding="12,4">
+                            <Entry x:Name="EditAssignedTable"
+                                   Placeholder="e.g. N-3 or A-5 (leave blank if floating)"
+                                   FontSize="14" TextColor="#212529" BackgroundColor="Transparent"/>
+                        </Border>
+                    </StackLayout>
+
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                        <StackLayout Grid.Column="0" Spacing="6">
+                            <Label Text="SHIFT START (HH:MM)" FontSize="11" FontAttributes="Bold" TextColor="#6C757D"/>
+                            <Border Stroke="#DEE2E6" StrokeShape="RoundRectangle 8" BackgroundColor="White" Padding="12,4">
+                                <Entry x:Name="EditShiftStart" Placeholder="09:00"
+                                       MaxLength="5" FontSize="14" TextColor="#212529"
+                                       BackgroundColor="Transparent"/>
+                            </Border>
+                        </StackLayout>
+                        <StackLayout Grid.Column="1" Spacing="6">
+                            <Label Text="SHIFT END (HH:MM)" FontSize="11" FontAttributes="Bold" TextColor="#6C757D"/>
+                            <Border Stroke="#DEE2E6" StrokeShape="RoundRectangle 8" BackgroundColor="White" Padding="12,4">
+                                <Entry x:Name="EditShiftEnd" Placeholder="17:00"
+                                       MaxLength="5" FontSize="14" TextColor="#212529"
+                                       BackgroundColor="Transparent"/>
+                            </Border>
+                        </StackLayout>
+                    </Grid>
+
+                    <Label x:Name="EditStaffError" Text="" TextColor="#DC3545" FontSize="12" MinimumHeightRequest="16"/>
+
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                        <Button Grid.Column="0" Text="Cancel"
+                                BackgroundColor="#F8F9FA" TextColor="#6C757D"
+                                CornerRadius="8" FontSize="14" HeightRequest="44"
+                                Clicked="OnEditStaffCancel"/>
+                        <Button Grid.Column="1" Text="Save Changes"
+                                BackgroundColor="#1B4332" TextColor="White"
+                                CornerRadius="8" FontSize="14" FontAttributes="Bold"
+                                HeightRequest="44" Clicked="OnEditStaffConfirm"/>
+                    </Grid>
+                </StackLayout>
+            </Border>
+        </Grid>
+
+    </Grid>
+</ContentView>

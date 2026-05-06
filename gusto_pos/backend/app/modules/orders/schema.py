@@ -30,6 +30,7 @@ class OrderCreate(BaseModel):
     outlet_id: UUID
     table_id: Optional[str] = None
     customer_id: Optional[UUID] = None
+    staff_id: Optional[UUID] = None
     total_amount: float
     order_status: OrderStatusEnum = OrderStatusEnum.PENDING
     kitchen_token: Optional[str] = None
