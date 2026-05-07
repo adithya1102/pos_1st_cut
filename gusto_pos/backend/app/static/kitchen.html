@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Gusto Kitchen Display</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #1a1a2e;
+      color: #eee;
+      padding: 20px;
+    }
+    h1 {
+      text-align: center;
+      color: #e94560;
+      margin-bottom: 10px;
+      font-size: 2rem;
+    }
+    #status {
+      text-align: center;
+      margin-bottom: 20px;
+      font-size: 0.9rem;
+      color: #aaa;
+    }
+    #status.connected { color: #00ff88; }
+    #status.disconnected { color: #ff4444; }
+    #orders {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 16px;
+    }
+    .order-card {
+      background: #16213e;
+      border-radius: 12px;
+      padding: 20px;
+      border-left: 5px solid #e94560;
+      animation: slideIn 0.3s ease;
+    }
+    .order-card.Preparing { border-left-color: #f5a623; }
+    .order-card.Ready { border-left-color: #00ff88; }
+    .order-card.Completed { opacity: 0.5; }
+    @keyframes slideIn {
+      from { transform: translateY(-10px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    .token {
+      font-size: 2rem;
+      font-weight: bold;
+      color: #e94560;
+      margin-bottom: 8px;
+    }
+    .status-badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: bold;
+      margin-bottom: 12px;
+      background: #e94560;
+    }
+    .status-badge.Preparing { background: #f5a623; color: #000; }
+    .status-badge.Ready { background: #00ff88; color: #000; }
+    .status-badge.Completed { background: #555; }
+    .detail { font-size: 0.85rem; color: #aaa; margin: 4px 0; }
+    .amount { font-size: 1.2rem; color: #00ff88; font-weight: bold; margin-top: 8px; }
+    .btn-row { display: flex; gap: 8px; margin-top: 12px; }
+    button {
+      flex: 1;
+      padding: 8px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: bold;
+      font-size: 0.85rem;
+    }
+    .btn-prepare { background: #f5a623; color: #000; }
+    .btn-ready   { background: #00ff88; color: #000; }
+    #log {
+      margin-top: 30px;
+      background: #0f0f1a;
+      border-radius: 8px;
+      padding: 12px;
+      max-height: 150px;
+      overflow-y: auto;
+      font-size: 0.75rem;
+      color: #666;
+    }
+    .log-entry { padding: 2px 0; border-bottom: 1px solid #1a1a2e; }
+  </style>
+</head>
+<body>
+
+<h1>🍽️ Gusto Kitchen Display</h1>
+<div id="status" class="disconnected">⚡ Connecting...</div>
+
+<div id="orders"></div>
+<div id="log"></div>
+
+<script>
+  // ── CONFIG ─────────────────────────────────────────────
+  const OUTLET_ID = new URLSearchParams(window.location.search).get('outlet_id')
+    || prompt('Enter Outlet ID:');
+  const WS_URL = `ws://127.0.0.1:8000/ws/kitchen/${OUTLET_ID}`;
+  const API_URL = `http://127.0.0.1:8000/api/v1`;
+  // ───────────────────────────────────────────────────────
+
+  const ordersDiv = document.getElementById('orders');
+  const statusDiv = document.getElementById('status');
+  const logDiv    = document.getElementById('log');
+  const orders    = {}; // order_id -> card element
+
+  function log(msg) {
+    const el = document.createElement('div');
+    el.className = 'log-entry';
+    el.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    logDiv.prepend(el);
+  }
+
+  function setStatus(connected) {
+    statusDiv.className = connected ? 'connected' : 'disconnected';
+    statusDiv.textContent = connected
+      ? `✅ Connected — Outlet: ${OUTLET_ID}`
+      : '❌ Disconnected — retrying...';
+  }
+
+  function renderOrder(order) {
+    const existing = orders[order.order_id];
+    if (existing) {
+      // Update existing card
+      existing.className = `order-card ${order.order_status}`;
+      existing.querySelector('.status-badge').className = `status-badge ${order.order_status}`;
+      existing.querySelector('.status-badge').textContent = order.order_status;
+      log(`Order ${order.kitchen_token} → ${order.order_status}`);
+      return;
+    }
+
+    // New card
+    const card = document.createElement('div');
+    card.className = `order-card ${order.order_status}`;
+    card.innerHTML = `
+      <div class="token">#${order.kitchen_token || order.order_id.slice(0,6).toUpperCase()}</div>
+      <span class="status-badge ${order.order_status}">${order.order_status}</span>
+      <div class="detail">🕐 ${new Date(order.created_at).toLocaleTimeString()}</div>
+      ${order.total_amount ? `<div class="amount">₹${order.total_amount}</div>` : ''}
+      <div class="btn-row">
+        <button class="btn-prepare" onclick="updateStatus('${order.order_id}', 'Preparing')">
+          🔥 Preparing
+        </button>
+        <button class="btn-ready" onclick="updateStatus('${order.order_id}', 'Ready')">
+          ✅ Ready
+        </button>
+      </div>
+    `;
+    orders[order.order_id] = card;
+    ordersDiv.prepend(card);
+    log(`NEW ORDER: #${order.kitchen_token || order.order_id.slice(0,6).toUpperCase()}`);
+  }
+
+  async function updateStatus(orderId, status) {
+    try {
+      await fetch(`${API_URL}/orders/${orderId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order_status: status })
+      });
+      log(`Sent status update: ${status}`);
+    } catch (e) {
+      log(`Error updating status: ${e.message}`);
+    }
+  }
+
+  function connect() {
+    const ws = new WebSocket(WS_URL);
+
+    ws.onopen = () => {
+      setStatus(true);
+      log('WebSocket connected');
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        log(`Event: ${msg.event}`);
+
+        if (msg.event === 'NEW_ORDER') {
+          renderOrder(msg);
+        } else if (msg.event === 'ORDER_STATUS_UPDATED') {
+          renderOrder(msg);
+        }
+      } catch (e) {
+        log(`Raw message: ${event.data}`);
+      }
+    };
+
+    ws.onclose = () => {
+      setStatus(false);
+      log('Disconnected. Reconnecting in 3s...');
+      setTimeout(connect, 3000);
+    };
+
+    ws.onerror = (e) => {
+      log(`WebSocket error`);
+    };
+  }
+
+  connect();
+</script>
+</body>
+</html>

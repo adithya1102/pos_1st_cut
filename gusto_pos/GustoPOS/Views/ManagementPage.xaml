@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="GustoPOS.Views.ManagementPage">
+    <ScrollView>
+    <StackLayout Padding="24" Spacing="20">
+        <Label Text="Admin Console" FontSize="24" FontAttributes="Bold" TextColor="#212529"/>
+        <Label Text="Local database management and hardware configuration."
+               TextColor="#212529" FontSize="14"/>
+        <Grid ColumnDefinitions="*,*,*,*" RowDefinitions="Auto,Auto"
+              ColumnSpacing="16" RowSpacing="16">
+            <Border Grid.Row="0" Grid.Column="0" BackgroundColor="White"
+                    Stroke="#DEE2E6" StrokeShape="RoundRectangle 12" Padding="20">
+                <StackLayout Spacing="8">
+                    <Label Text="👤" FontSize="28"/>
+                    <Label Text="Staff Management" FontSize="15" FontAttributes="Bold" TextColor="#212529"/>
+                    <Label Text="ROSTER AND LOGIN DETAILS" FontSize="10" TextColor="#6C757D"/>
+                </StackLayout>
+            </Border>
+            <Border Grid.Row="0" Grid.Column="1" BackgroundColor="White"
+                    Stroke="#DEE2E6" StrokeShape="RoundRectangle 12" Padding="20">
+                <StackLayout Spacing="8">
+                    <Label Text="🪑" FontSize="28"/>
+                    <Label Text="Table Setup" FontSize="15" FontAttributes="Bold" TextColor="#212529"/>
+                    <Label Text="REGENERATE YOUR FLOOR PLAN" FontSize="10" TextColor="#6C757D"/>
+                </StackLayout>
+            </Border>
+            <Border Grid.Row="0" Grid.Column="2" BackgroundColor="White"
+                    Stroke="#DEE2E6" StrokeShape="RoundRectangle 12" Padding="20">
+                <StackLayout Spacing="8">
+                    <Label Text="📋" FontSize="28"/>
+                    <Label Text="Menu Management" FontSize="15" FontAttributes="Bold" TextColor="#212529"/>
+                    <Label Text="DISHES, PRICING AND CATEGORIES" FontSize="10" TextColor="#6C757D"/>
+                </StackLayout>
+            </Border>
+            <Border Grid.Row="0" Grid.Column="3" BackgroundColor="White"
+                    Stroke="#DEE2E6" StrokeShape="RoundRectangle 12" Padding="20">
+                <StackLayout Spacing="8">
+                    <Label Text="💳" FontSize="28"/>
+                    <Label Text="Billing &amp; Payments" FontSize="15" FontAttributes="Bold" TextColor="#212529"/>
+                    <Label Text="TAX RULES AND SETTLEMENT FLOW" FontSize="10" TextColor="#6C757D"/>
+                </StackLayout>
+            </Border>
+            <Border Grid.Row="1" Grid.Column="0" BackgroundColor="White"
+                    Stroke="#DEE2E6" StrokeShape="RoundRectangle 12" Padding="20">
+                <StackLayout Spacing="8">
+                    <Label Text="⚙️" FontSize="28"/>
+                    <Label Text="System Settings" FontSize="15" FontAttributes="Bold" TextColor="#212529"/>
+                    <Label Text="PRINTERS &amp; LOCAL BACKUPS" FontSize="10" TextColor="#6C757D"/>
+                </StackLayout>
+            </Border>
+        </Grid>
+
+        <!-- Table Configuration Section -->
+        <Label Text="Table Configuration" FontSize="20" FontAttributes="Bold"
+               TextColor="#1B4332" Margin="0,16,0,0"/>
+
+        <Border BackgroundColor="White" Stroke="#DEE2E6"
+                StrokeShape="RoundRectangle 12" Padding="20">
+            <StackLayout Spacing="16">
+                <!-- Normal Dining Row -->
+                <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="12">
+                    <Label Grid.Column="0" Text="NORMAL DINING"
+                           FontSize="14" FontAttributes="Bold"
+                           TextColor="#495057" VerticalOptions="Center"/>
+                    <Border Grid.Column="1" Stroke="#DEE2E6"
+                            StrokeShape="RoundRectangle 8" BackgroundColor="White" Padding="8,0">
+                        <Entry x:Name="NormalCountEntry" Keyboard="Numeric"
+                               Text="10" TextColor="#212529" BackgroundColor="Transparent" FontSize="14"
+                               HorizontalTextAlignment="Center"
+                               Placeholder="Count"/>
+                    </Border>
+                    <Button Grid.Column="2" x:Name="BtnSaveNormal"
+                            Text="Save" BackgroundColor="#1B4332"
+                            TextColor="White" CornerRadius="8"
+                            FontSize="13" FontAttributes="Bold"
+                            HeightRequest="40" WidthRequest="80"
+                            Clicked="OnSaveNormalClicked"/>
+                    <Label Grid.Column="3" x:Name="NormalSaveStatus"
+                           Text="" FontSize="12" VerticalOptions="Center"
+                           TextColor="#28A745"/>
+                </Grid>
+
+                <BoxView Color="#DEE2E6" HeightRequest="1"/>
+
+                <!-- AC Dining Row -->
+                <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="12">
+                    <Label Grid.Column="0" Text="AC DINING ❄️"
+                           FontSize="14" FontAttributes="Bold"
+                           TextColor="#0C5460" VerticalOptions="Center"/>
+                    <Border Grid.Column="1" Stroke="#DEE2E6"
+                            StrokeShape="RoundRectangle 8" BackgroundColor="White" Padding="8,0">
+                        <Entry x:Name="AcCountEntry" Keyboard="Numeric"
+                               Text="10" TextColor="#212529" BackgroundColor="Transparent" FontSize="14"
+                               HorizontalTextAlignment="Center"
+                               Placeholder="Count"/>
+                    </Border>
+                    <Button Grid.Column="2" x:Name="BtnSaveAc"
+                            Text="Save" BackgroundColor="#0C5460"
+                            TextColor="White" CornerRadius="8"
+                            FontSize="13" FontAttributes="Bold"
+                            HeightRequest="40" WidthRequest="80"
+                            Clicked="OnSaveAcClicked"/>
+                    <Label Grid.Column="3" x:Name="AcSaveStatus"
+                           Text="" FontSize="12" VerticalOptions="Center"
+                           TextColor="#28A745"/>
+                </Grid>
+            </StackLayout>
+        </Border>
+    </StackLayout>
+    </ScrollView>
+</ContentView>

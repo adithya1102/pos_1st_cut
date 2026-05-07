@@ -14,6 +14,7 @@ class OrderStatus(str, enum.Enum):
     SERVED = "served"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
+    PAID = "paid"
 
 
 class Order(Base):
@@ -24,7 +25,7 @@ class Order(Base):
         server_default=text("nextval('orders_readable_id_seq'::regclass)"),
     )
     outlet_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("outlets.id"), nullable=False)
-    table_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("tables.id"))
+    table_id: Mapped[str | None] = mapped_column(String(20), nullable=True)
     customer_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("customers.id"))
     total_amount: Mapped[float] = mapped_column(DECIMAL(10, 2), nullable=False)
     order_status: Mapped[str] = mapped_column(String(20), default="pending")
@@ -32,7 +33,6 @@ class Order(Base):
 
     # Relationships — lazy="raise" to prevent cascade loads in async
     outlet = relationship("Outlet", back_populates="orders", lazy="raise")
-    table = relationship("Table", back_populates="orders", foreign_keys=[table_id], lazy="raise")
     customer = relationship("Customer", back_populates="orders", lazy="raise")
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan", lazy="raise")
 

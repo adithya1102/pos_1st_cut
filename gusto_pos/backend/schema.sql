@@ -242,9 +242,26 @@ ALTER TABLE roles ADD COLUMN IF NOT EXISTS users_count INTEGER DEFAULT 0;
 ALTER TABLE outlets ADD COLUMN IF NOT EXISTS staff_count INTEGER DEFAULT 0;
 
 -- ==========================================
+-- 22. STAFF (PIN-based login for POS terminal)
+-- ==========================================
+DO $$ BEGIN
+    CREATE TYPE staffrole AS ENUM ('Admin', 'Waiter', 'Kitchen');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
+CREATE TABLE IF NOT EXISTS staff (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(100) NOT NULL,
+    role staffrole NOT NULL,
+    hashed_pin VARCHAR NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ==========================================
 -- SEED DATA (Default Roles)
 -- ==========================================
-INSERT INTO roles (name, permissions) VALUES 
+INSERT INTO roles (name, permissions) VALUES
 ('Owner', '{"all": true}'),
 ('Manager', '{"reports": true, "refunds": true}'),
 ('Kitchen', '{"kds_view": true}'),
