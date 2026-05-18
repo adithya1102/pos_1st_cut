@@ -313,15 +313,15 @@ public partial class PosTerminalPage : ContentView
 
         decimal existingTotal = 0;
 
-        // ── Existing orders section (read-only) ──
+        // ── Existing orders section (read-only, line-item detail) ──
         if (hasExisting)
         {
             CartPanel.Children.Add(new Label
             {
-                Text = "Existing Orders", FontSize = 13,
+                Text = "Active Orders", FontSize = 13,
                 FontAttributes = FontAttributes.Bold,
                 TextColor = Color.FromArgb("#1B4332"),
-                Margin = new Thickness(0, 0, 0, 6)
+                Margin = new Thickness(0, 0, 0, 4)
             });
 
             foreach (var order in _existingOrders)
@@ -330,12 +330,34 @@ public partial class PosTerminalPage : ContentView
 
                 CartPanel.Children.Add(new Label
                 {
-                    Text = $"Order #{order.ReadableId} — ₹{order.TotalAmount:F0}",
-                    FontSize = 12,
-                    FontAttributes = FontAttributes.Italic,
-                    TextColor = Color.FromArgb("#495057"),
-                    Margin = new Thickness(4, 2)
+                    Text = $"  Order #{order.ReadableId}  ({order.OrderStatus})",
+                    FontSize = 11, FontAttributes = FontAttributes.Italic,
+                    TextColor = Color.FromArgb("#6C757D"),
+                    Margin = new Thickness(0, 2, 0, 2)
                 });
+
+                foreach (var item in order.Items)
+                {
+                    var itemName = item.NameSnap ?? "Item";
+                    var itemTotal = (item.PriceSnap ?? 0m) * item.Quantity;
+                    var itemRow = new Grid { Margin = new Thickness(4, 1) };
+                    itemRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+                    itemRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+                    itemRow.Add(new Label
+                    {
+                        Text = $"{itemName}  ×{item.Quantity}",
+                        FontSize = 12, TextColor = Colors.Black,
+                        VerticalOptions = LayoutOptions.Center
+                    }, 0, 0);
+                    itemRow.Add(new Label
+                    {
+                        Text = $"₹{itemTotal:F0}",
+                        FontSize = 12, FontAttributes = FontAttributes.Bold,
+                        TextColor = Colors.Black,
+                        VerticalOptions = LayoutOptions.Center
+                    }, 1, 0);
+                    CartPanel.Children.Add(itemRow);
+                }
             }
 
             // Divider
@@ -437,6 +459,8 @@ public partial class PosTerminalPage : ContentView
         LoadConfigAndBuildTablesAsync();
         LoadMenuAsync();
     }
+
+    public void TriggerTableRefresh() => LoadTableOrderStatusAsync();
 
     private async void LoadConfigAndBuildTablesAsync()
     {
@@ -595,9 +619,9 @@ public partial class PosTerminalPage : ContentView
                 {
                     if (hasOrders)
                     {
-                        btn.BackgroundColor = Color.FromArgb("#E8F5E9");
+                        btn.BackgroundColor = Color.FromArgb("#FFEBEE");
                         btn.TextColor = Color.FromArgb("#212529");
-                        btn.BorderColor = Color.FromArgb("#28A745");
+                        btn.BorderColor = Color.FromArgb("#DC3545");
                     }
                     else
                     {

@@ -1,0 +1,1995 @@
+[2026-04-17 18:08:53] AlertsView.UIUpdate
+Type: System.Runtime.InteropServices.COMException
+Message: 
+Stack:    at WinRT.ExceptionHelpers.<ThrowExceptionForHR>g__Throw|38_0(Int32 hr)
+   at Microsoft.Maui.Handlers.LayoutHandler.Clear()
+   at Microsoft.Maui.Controls.Layout.Clear()
+   at GustoWaiter.Views.AlertsView.BuildList(List`1 notifs) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 45
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass4_0.<.ctor>b__1() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 27
+Inner: none
+---
+[2026-04-17 18:08:53] DashboardPage.StartPolling.UIUpdate
+Type: System.Runtime.InteropServices.COMException
+Message: 
+Stack:    at WinRT.ExceptionHelpers.<ThrowExceptionForHR>g__Throw|38_0(Int32 hr)
+   at Microsoft.Maui.Handlers.LayoutHandler.Clear()
+   at Microsoft.Maui.Controls.Layout.Clear()
+   at GustoWaiter.Views.AlertsView.BuildList(List`1 notifs) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 45
+   at GustoWaiter.Views.AlertsView.Refresh(List`1 notifs) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 40
+   at GustoWaiter.Views.DashboardPage.<>c__DisplayClass12_0.<StartPolling>b__1() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 48
+Inner: none
+---
+[2026-04-17 20:20:20] AlertsView.UIUpdate
+Type: System.ObjectDisposedException
+Message: Cannot access a disposed object.
+Object name: 'IServiceProvider'.
+Stack:    at Microsoft.Extensions.DependencyInjection.ServiceLookup.ThrowHelper.ThrowObjectDisposedException()
+   at Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService[T](IServiceProvider provider)
+   at Microsoft.Maui.ElementHandlerExtensions.GetRequiredService[T](IElementHandler handler)
+   at Microsoft.Maui.Handlers.LabelHandler.MapFont(ILabelHandler handler, ILabel label)
+   at Microsoft.Maui.PropertyMapper.UpdateProperties(IElementHandler viewHandler, IElement virtualView)
+   at Microsoft.Maui.Handlers.ElementHandler.SetVirtualView(IElement view)
+   at Microsoft.Maui.Controls.Element.SetHandler(IElementHandler newHandler)
+   at Microsoft.Maui.Platform.ElementExtensions.ToHandler(IElement view, IMauiContext context)
+   at Microsoft.Maui.Platform.ElementExtensions.ToPlatform(IElement view, IMauiContext context)
+   at Microsoft.Maui.Handlers.LayoutHandler.Add(IView child)
+   at Microsoft.Maui.Handlers.LayoutHandler.MapAdd(ILayoutHandler handler, ILayout layout, Object arg)
+   at GustoWaiter.Views.AlertsView.BuildList(List`1 notifs)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass4_0.<.ctor>b__1()
+Inner: none
+---
+[2026-04-17 20:20:20] DashboardPage.StartPolling.UIUpdate
+Type: System.ObjectDisposedException
+Message: Cannot access a disposed object.
+Object name: 'IServiceProvider'.
+Stack:    at Microsoft.Extensions.DependencyInjection.ServiceLookup.ThrowHelper.ThrowObjectDisposedException()
+   at Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService[T](IServiceProvider provider)
+   at Microsoft.Maui.ElementHandlerExtensions.GetRequiredService[T](IElementHandler handler)
+   at Microsoft.Maui.Handlers.LabelHandler.MapFont(ILabelHandler handler, ILabel label)
+   at Microsoft.Maui.PropertyMapper.UpdateProperties(IElementHandler viewHandler, IElement virtualView)
+   at Microsoft.Maui.Handlers.ElementHandler.SetVirtualView(IElement view)
+   at Microsoft.Maui.Controls.Element.SetHandler(IElementHandler newHandler)
+   at Microsoft.Maui.Platform.ElementExtensions.ToHandler(IElement view, IMauiContext context)
+   at Microsoft.Maui.Platform.ElementExtensions.ToPlatform(IElement view, IMauiContext context)
+   at Microsoft.Maui.Handlers.LayoutHandler.Add(IView child)
+   at Microsoft.Maui.Handlers.LayoutHandler.MapAdd(ILayoutHandler handler, ILayout layout, Object arg)
+   at GustoWaiter.Views.AlertsView.BuildList(List`1 notifs)
+   at GustoWaiter.Views.AlertsView.Refresh(List`1 notifs)
+   at GustoWaiter.Views.DashboardPage.<>c__DisplayClass12_0.<StartPolling>b__1()
+Inner: none
+---
+[2026-04-17 20:20:20] AlertsView.UIUpdate
+Type: System.ObjectDisposedException
+Message: Cannot access a disposed object.
+Object name: 'IServiceProvider'.
+Stack:    at Microsoft.Extensions.DependencyInjection.ServiceLookup.ThrowHelper.ThrowObjectDisposedException()
+   at Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService[T](IServiceProvider provider)
+   at Microsoft.Maui.ElementHandlerExtensions.GetRequiredService[T](IElementHandler handler)
+   at Microsoft.Maui.Handlers.LabelHandler.MapFont(ILabelHandler handler, ILabel label)
+   at Microsoft.Maui.PropertyMapper.UpdateProperties(IElementHandler viewHandler, IElement virtualView)
+   at Microsoft.Maui.Handlers.ElementHandler.SetVirtualView(IElement view)
+   at Microsoft.Maui.Controls.Element.SetHandler(IElementHandler newHandler)
+   at Microsoft.Maui.Platform.ElementExtensions.ToHandler(IElement view, IMauiContext context)
+   at Microsoft.Maui.Platform.ElementExtensions.ToPlatform(IElement view, IMauiContext context)
+   at Microsoft.Maui.Handlers.LayoutHandler.Add(IView child)
+   at Microsoft.Maui.Handlers.LayoutHandler.MapAdd(ILayoutHandler handler, ILayout layout, Object arg)
+   at GustoWaiter.Views.AlertsView.BuildList(List`1 notifs)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass4_0.<.ctor>b__1()
+Inner: none
+---
+[2026-04-17 20:20:20] DashboardPage.StartPolling.UIUpdate
+Type: System.ObjectDisposedException
+Message: Cannot access a disposed object.
+Object name: 'IServiceProvider'.
+Stack:    at Microsoft.Extensions.DependencyInjection.ServiceLookup.ThrowHelper.ThrowObjectDisposedException()
+   at Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService[T](IServiceProvider provider)
+   at Microsoft.Maui.ElementHandlerExtensions.GetRequiredService[T](IElementHandler handler)
+   at Microsoft.Maui.Handlers.LabelHandler.MapFont(ILabelHandler handler, ILabel label)
+   at Microsoft.Maui.PropertyMapper.UpdateProperties(IElementHandler viewHandler, IElement virtualView)
+   at Microsoft.Maui.Handlers.ElementHandler.SetVirtualView(IElement view)
+   at Microsoft.Maui.Controls.Element.SetHandler(IElementHandler newHandler)
+   at Microsoft.Maui.Platform.ElementExtensions.ToHandler(IElement view, IMauiContext context)
+   at Microsoft.Maui.Platform.ElementExtensions.ToPlatform(IElement view, IMauiContext context)
+   at Microsoft.Maui.Handlers.LayoutHandler.Add(IView child)
+   at Microsoft.Maui.Handlers.LayoutHandler.MapAdd(ILayoutHandler handler, ILayout layout, Object arg)
+   at GustoWaiter.Views.AlertsView.BuildList(List`1 notifs)
+   at GustoWaiter.Views.AlertsView.Refresh(List`1 notifs)
+   at GustoWaiter.Views.DashboardPage.<>c__DisplayClass12_0.<StartPolling>b__1()
+Inner: none
+---
+[2026-04-19 02:40:52] App.CheckBackendConnectivity
+Type: System.Net.Http.HttpRequestException
+Message: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+Stack:    at System.Net.Http.HttpConnectionPool.ConnectToTcpHostAsync(String host, Int32 port, HttpRequestMessage initialRequest, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionPool.ConnectAsync(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionPool.CreateHttp11ConnectionAsync(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionPool.InjectNewHttp11ConnectionAsync(QueueItem queueItem)
+   at System.Threading.Tasks.TaskCompletionSourceWithCancellation`1.WaitWithCancellationAsync(CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionWaiter`1.WaitForConnectionWithTelemetryAsync(HttpRequestMessage request, HttpConnectionPool pool, Boolean async, CancellationToken requestCancellationToken)
+   at System.Net.Http.HttpConnectionPool.SendWithVersionDetectionAndRetryAsync(HttpRequestMessage request, Boolean async, Boolean doRequestAuth, CancellationToken cancellationToken)
+   at System.Net.Http.DiagnosticsHandler.SendAsyncCore(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.RedirectHandler.SendAsync(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.SocketsHttpHandler.<SendAsync>g__CreateHandlerAndSendAsync|115_0(HttpRequestMessage request, CancellationToken cancellationToken)
+   at System.Net.Http.HttpClient.<SendAsync>g__Core|83_0(HttpRequestMessage request, HttpCompletionOption completionOption, CancellationTokenSource cts, Boolean disposeCts, CancellationTokenSource pendingRequestsCts, CancellationToken originalCancellationToken)
+   at GustoWaiter.App.CheckBackendConnectivity() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\App.xaml.cs:line 15
+Inner: No connection could be made because the target machine actively refused it.
+---
+[2026-04-20 14:30:35] App.CheckBackendConnectivity
+Type: System.Net.Http.HttpRequestException
+Message: No connection could be made because the target machine actively refused it. (192.168.1.7:8000)
+Stack:    at System.Net.Http.HttpConnectionPool.ConnectToTcpHostAsync(String host, Int32 port, HttpRequestMessage initialRequest, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionPool.ConnectAsync(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionPool.CreateHttp11ConnectionAsync(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionPool.InjectNewHttp11ConnectionAsync(QueueItem queueItem)
+   at System.Threading.Tasks.TaskCompletionSourceWithCancellation`1.WaitWithCancellationAsync(CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionPool.SendWithVersionDetectionAndRetryAsync(HttpRequestMessage request, Boolean async, Boolean doRequestAuth, CancellationToken cancellationToken)
+   at System.Net.Http.RedirectHandler.SendAsync(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.SocketsHttpHandler.<SendAsync>g__CreateHandlerAndSendAsync|115_0(HttpRequestMessage request, CancellationToken cancellationToken)
+   at System.Net.Http.HttpClient.<SendAsync>g__Core|83_0(HttpRequestMessage request, HttpCompletionOption completionOption, CancellationTokenSource cts, Boolean disposeCts, CancellationTokenSource pendingRequestsCts, CancellationToken originalCancellationToken)
+   at GustoWaiter.App.CheckBackendConnectivity() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\App.xaml.cs:line 15
+Inner: No connection could be made because the target machine actively refused it.
+---
+[2026-04-20 18:14:17] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 258
+Inner: none
+---
+[2026-04-20 18:14:20] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 258
+Inner: none
+---
+[2026-04-20 18:14:21] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 258
+Inner: none
+---
+[2026-04-20 18:14:22] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 258
+Inner: none
+---
+[2026-04-20 18:14:23] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 258
+Inner: none
+---
+[2026-04-24 14:12:45] DashboardPage.StartPolling.UIUpdate
+Type: System.Runtime.InteropServices.COMException
+Message: 
+Stack:    at WinRT.ExceptionHelpers.<ThrowExceptionForHR>g__Throw|38_0(Int32 hr)
+   at Microsoft.Maui.Handlers.LayoutHandler.Clear()
+   at Microsoft.Maui.CommandMapper.InvokeCore(String key, IElementHandler viewHandler, IElement virtualView, Object args)
+   at Microsoft.Maui.Controls.Layout.OnClear()
+   at Microsoft.Maui.Controls.Layout.Clear()
+   at GustoWaiter.Views.AlertsView.BuildList(List`1 notifs) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 45
+   at GustoWaiter.Views.AlertsView.Refresh(List`1 notifs) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 40
+   at GustoWaiter.Views.DashboardPage.<>c__DisplayClass12_0.<StartPolling>b__1() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 48
+Inner: none
+---
+[2026-04-24 14:12:45] AlertsView.UIUpdate
+Type: System.Runtime.InteropServices.COMException
+Message: 
+Stack:    at WinRT.ExceptionHelpers.<ThrowExceptionForHR>g__Throw|38_0(Int32 hr)
+   at Microsoft.Maui.Handlers.LayoutHandler.Clear()
+   at Microsoft.Maui.CommandMapper.InvokeCore(String key, IElementHandler viewHandler, IElement virtualView, Object args)
+   at Microsoft.Maui.Controls.Layout.OnClear()
+   at Microsoft.Maui.Controls.Layout.Clear()
+   at GustoWaiter.Views.AlertsView.BuildList(List`1 notifs) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 45
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass4_0.<.ctor>b__1() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 27
+Inner: none
+---
+[2026-04-27 16:49:19] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 258
+Inner: none
+---
+[2026-04-27 16:51:18] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 258
+Inner: none
+---
+[2026-04-27 16:52:06] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 258
+Inner: none
+---
+[2026-04-27 20:31:03] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-04-27 20:31:06] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-04-27 20:31:06] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-04-27 20:31:06] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-04-27 20:31:13] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-04-27 20:31:48] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-04-27 20:31:48] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-04-27 20:31:48] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-04-27 20:31:49] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-04-27 20:31:49] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-04-27 20:31:50] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-04-27 20:31:51] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-04-27 20:32:24] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-04-27 20:32:24] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-04-27 20:33:41] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-04-27 20:33:43] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-04-29 03:11:00] AlertsView.UIUpdate
+Type: System.ObjectDisposedException
+Message: Cannot access a disposed object.
+Object name: 'IServiceProvider'.
+Stack:    at Microsoft.Extensions.DependencyInjection.ServiceLookup.ThrowHelper.ThrowObjectDisposedException()
+   at Microsoft.Maui.Handlers.LabelHandler.MapFont(ILabelHandler handler, ILabel label)
+   at Microsoft.Maui.PropertyMapper.UpdateProperties(IElementHandler viewHandler, IElement virtualView)
+   at Microsoft.Maui.Handlers.ElementHandler.SetVirtualView(IElement view)
+   at Microsoft.Maui.Controls.Element.SetHandler(IElementHandler newHandler)
+   at Microsoft.Maui.Platform.ElementExtensions.ToHandler(IElement view, IMauiContext context)
+   at Microsoft.Maui.Platform.ElementExtensions.ToPlatform(IElement view, IMauiContext context)
+   at Microsoft.Maui.Handlers.LayoutHandler.Add(IView child)
+   at GustoWaiter.Views.AlertsView.BuildList(List`1 notifs) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 48
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass4_0.<.ctor>b__1() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 27
+Inner: none
+---
+[2026-04-29 03:11:00] DashboardPage.StartPolling.UIUpdate
+Type: System.ObjectDisposedException
+Message: Cannot access a disposed object.
+Object name: 'IServiceProvider'.
+Stack:    at Microsoft.Extensions.DependencyInjection.ServiceLookup.ThrowHelper.ThrowObjectDisposedException()
+   at Microsoft.Maui.Handlers.LabelHandler.MapFont(ILabelHandler handler, ILabel label)
+   at Microsoft.Maui.PropertyMapper.UpdateProperties(IElementHandler viewHandler, IElement virtualView)
+   at Microsoft.Maui.Handlers.ElementHandler.SetVirtualView(IElement view)
+   at Microsoft.Maui.Controls.Element.SetHandler(IElementHandler newHandler)
+   at Microsoft.Maui.Platform.ElementExtensions.ToHandler(IElement view, IMauiContext context)
+   at Microsoft.Maui.Platform.ElementExtensions.ToPlatform(IElement view, IMauiContext context)
+   at Microsoft.Maui.Handlers.LayoutHandler.Add(IView child)
+   at GustoWaiter.Views.AlertsView.BuildList(List`1 notifs) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 48
+   at GustoWaiter.Views.AlertsView.Refresh(List`1 notifs) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 40
+   at GustoWaiter.Views.DashboardPage.<>c__DisplayClass12_0.<StartPolling>b__1() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 48
+Inner: none
+---
+[2026-05-05 14:34:27] App.CheckBackendConnectivity
+Type: System.Threading.Tasks.TaskCanceledException
+Message: The request was canceled due to the configured HttpClient.Timeout of 3 seconds elapsing.
+Stack:    at System.Net.Http.HttpClient.HandleFailure(Exception e, Boolean telemetryStarted, HttpResponseMessage response, CancellationTokenSource cts, CancellationToken cancellationToken, CancellationTokenSource pendingRequestsCts)
+   at System.Net.Http.HttpClient.<SendAsync>g__Core|83_0(HttpRequestMessage request, HttpCompletionOption completionOption, CancellationTokenSource cts, Boolean disposeCts, CancellationTokenSource pendingRequestsCts, CancellationToken originalCancellationToken)
+   at GustoWaiter.App.CheckBackendConnectivity() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\App.xaml.cs:line 15
+Inner: A task was canceled.
+---
+[2026-05-06 00:52:44] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 258
+Inner: none
+---
+[2026-05-06 00:52:47] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 258
+Inner: none
+---
+[2026-05-06 01:22:24] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 258
+Inner: none
+---
+[2026-05-06 01:22:24] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 258
+Inner: none
+---
+[2026-05-06 01:22:24] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 258
+Inner: none
+---
+[2026-05-06 01:22:25] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 258
+Inner: none
+---
+[2026-05-07 18:24:27] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-05-07 18:24:34] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-05-07 18:24:35] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-05-07 18:24:37] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-05-07 18:24:37] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-05-07 18:24:38] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-05-07 18:33:44] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-05-07 18:33:45] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-05-07 18:33:45] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-05-08 01:27:23] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 87
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-08 01:27:29] DashboardPage.StartPolling.UIUpdate
+Type: System.ObjectDisposedException
+Message: Cannot access a disposed object.
+Object name: 'IServiceProvider'.
+Stack:    at Microsoft.Extensions.DependencyInjection.ServiceLookup.ThrowHelper.ThrowObjectDisposedException()
+   at Microsoft.Maui.Handlers.LabelHandler.MapFont(ILabelHandler handler, ILabel label)
+   at Microsoft.Maui.PropertyMapper.UpdateProperties(IElementHandler viewHandler, IElement virtualView)
+   at Microsoft.Maui.Handlers.ElementHandler.SetVirtualView(IElement view)
+   at Microsoft.Maui.Controls.Element.SetHandler(IElementHandler newHandler)
+   at Microsoft.Maui.Platform.ElementExtensions.ToHandler(IElement view, IMauiContext context)
+   at Microsoft.Maui.Platform.ElementExtensions.ToPlatform(IElement view, IMauiContext context)
+   at Microsoft.Maui.Handlers.LayoutHandler.Add(IView child)
+   at GustoWaiter.Views.AlertsView.BuildList(List`1 notifs) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 48
+   at GustoWaiter.Views.AlertsView.Refresh(List`1 notifs) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 40
+   at GustoWaiter.Views.DashboardPage.<>c__DisplayClass14_0.<StartPolling>b__1() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 55
+Inner: none
+---
+[2026-05-08 01:27:29] AlertsView.UIUpdate
+Type: System.ObjectDisposedException
+Message: Cannot access a disposed object.
+Object name: 'IServiceProvider'.
+Stack:    at Microsoft.Extensions.DependencyInjection.ServiceLookup.ThrowHelper.ThrowObjectDisposedException()
+   at Microsoft.Maui.Handlers.LabelHandler.MapFont(ILabelHandler handler, ILabel label)
+   at Microsoft.Maui.PropertyMapper.UpdateProperties(IElementHandler viewHandler, IElement virtualView)
+   at Microsoft.Maui.Handlers.ElementHandler.SetVirtualView(IElement view)
+   at Microsoft.Maui.Controls.Element.SetHandler(IElementHandler newHandler)
+   at Microsoft.Maui.Platform.ElementExtensions.ToHandler(IElement view, IMauiContext context)
+   at Microsoft.Maui.Platform.ElementExtensions.ToPlatform(IElement view, IMauiContext context)
+   at Microsoft.Maui.Handlers.LayoutHandler.Add(IView child)
+   at GustoWaiter.Views.AlertsView.BuildList(List`1 notifs) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 48
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass4_0.<.ctor>b__1() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 27
+Inner: none
+---
+[2026-05-08 01:29:36] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-05-08 01:33:37] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-05-08 01:33:37] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass9_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 257
+Inner: none
+---
+[2026-05-08 02:53:33] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 87
+Inner: An error occurred while sending the request.
+---
+[2026-05-08 02:53:40] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 87
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-08 02:53:47] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 87
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-08 02:53:54] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 87
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-08 02:54:02] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 87
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-09 22:31:30] App.CheckBackendConnectivity
+Type: System.Net.Http.HttpRequestException
+Message: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+Stack:    at System.Net.Http.HttpConnectionPool.ConnectToTcpHostAsync(String host, Int32 port, HttpRequestMessage initialRequest, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionPool.ConnectAsync(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionPool.CreateHttp11ConnectionAsync(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionPool.InjectNewHttp11ConnectionAsync(QueueItem queueItem)
+   at System.Threading.Tasks.TaskCompletionSourceWithCancellation`1.WaitWithCancellationAsync(CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionWaiter`1.WaitForConnectionWithTelemetryAsync(HttpRequestMessage request, HttpConnectionPool pool, Boolean async, CancellationToken requestCancellationToken)
+   at System.Net.Http.HttpConnectionPool.SendWithVersionDetectionAndRetryAsync(HttpRequestMessage request, Boolean async, Boolean doRequestAuth, CancellationToken cancellationToken)
+   at System.Net.Http.DiagnosticsHandler.SendAsyncCore(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.RedirectHandler.SendAsync(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.SocketsHttpHandler.<SendAsync>g__CreateHandlerAndSendAsync|115_0(HttpRequestMessage request, CancellationToken cancellationToken)
+   at System.Net.Http.HttpClient.<SendAsync>g__Core|83_0(HttpRequestMessage request, HttpCompletionOption completionOption, CancellationTokenSource cts, Boolean disposeCts, CancellationTokenSource pendingRequestsCts, CancellationToken originalCancellationToken)
+   at GustoWaiter.App.CheckBackendConnectivity() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\App.xaml.cs:line 15
+Inner: No connection could be made because the target machine actively refused it.
+---
+[2026-05-10 00:15:00] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass8_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 247
+Inner: none
+---
+[2026-05-10 00:15:02] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass8_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 247
+Inner: none
+---
+[2026-05-10 00:15:02] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass8_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 247
+Inner: none
+---
+[2026-05-10 00:15:06] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass8_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 247
+Inner: none
+---
+[2026-05-10 00:15:06] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass8_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 247
+Inner: none
+---
+[2026-05-10 00:15:06] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass8_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 247
+Inner: none
+---
+[2026-05-10 02:45:49] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:45:57] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:46:04] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:46:11] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:46:18] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:46:25] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:46:32] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:46:39] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:46:46] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:46:53] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:47:00] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:47:07] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:47:14] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:47:22] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:47:29] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:47:36] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:47:43] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:47:50] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:47:57] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:48:04] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:48:11] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:48:18] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:48:25] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:48:32] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:48:40] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:48:47] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:48:54] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:49:01] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:49:08] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:49:15] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:49:22] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:49:29] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:49:36] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:49:43] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:49:50] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:49:57] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:50:05] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:50:12] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:50:19] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:50:26] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:50:33] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:50:40] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:50:47] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:50:54] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:51:01] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:51:08] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:51:15] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:51:22] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:51:30] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:51:37] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:51:44] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:51:51] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:51:58] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:52:05] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:52:12] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 02:52:19] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:02:07] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:02:14] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:02:21] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:02:28] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:02:35] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:02:42] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:02:49] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:02:56] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:03:03] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:03:11] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:03:18] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:03:25] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:03:32] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:03:39] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:03:46] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:03:53] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:04:00] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:04:07] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:04:14] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:04:21] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:04:28] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:04:35] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:04:42] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:04:49] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:04:56] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:05:04] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:05:11] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:05:18] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:05:25] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:05:32] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:05:39] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:05:46] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:05:53] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:06:00] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:06:07] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:06:14] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:06:21] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:06:28] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:06:36] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:06:43] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:06:50] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:06:57] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:07:04] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:07:11] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:07:18] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:07:25] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:07:32] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:07:39] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:07:46] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:07:53] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:08:00] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:08:07] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:08:15] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:17:50] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: An error occurred while sending the request.
+---
+[2026-05-10 03:17:58] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:18:05] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:18:12] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:18:19] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 03:18:26] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 04:15:44] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 04:15:51] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 04:15:58] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 04:22:35] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-10 04:22:42] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-18 08:50:10] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass8_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 247
+Inner: none
+---
+[2026-05-18 08:50:10] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass8_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 247
+Inner: none
+---
+[2026-05-18 08:54:33] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass8_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 247
+Inner: none
+---
+[2026-05-18 08:54:33] AlertsView.OpenReview
+Type: System.InvalidOperationException
+Message: PushAsync is not supported, please use a NavigationPage.
+Stack:    at Microsoft.Maui.Controls.Window.NavigationImpl.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.OnPushAsync(Page page, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root, Boolean animated)
+   at Microsoft.Maui.Controls.Internals.NavigationProxy.PushAsync(Page root)
+   at GustoWaiter.Views.AlertsView.<>c__DisplayClass8_0.<<BuildOrderPlacedCard>b__0>d.MoveNext() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\AlertsView.cs:line 247
+Inner: none
+---
+[2026-05-18 10:21:13] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-18 10:21:20] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-18 10:21:27] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-18 10:21:34] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-18 10:21:41] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-18 10:21:48] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-18 11:51:11] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-18 11:51:18] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-18 11:51:51] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-18 11:51:58] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-18 11:52:05] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-18 12:01:02] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-18 12:01:09] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-18 12:01:16] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-18 15:15:44] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-18 15:15:51] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-18 15:15:58] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-18 15:16:05] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+---
+[2026-05-18 21:31:55] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (192.168.1.7:8000)
+---
+[2026-05-18 21:32:02] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (192.168.1.7:8000)
+---
+[2026-05-18 21:32:09] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
+Inner: No connection could be made because the target machine actively refused it. (192.168.1.7:8000)
+---

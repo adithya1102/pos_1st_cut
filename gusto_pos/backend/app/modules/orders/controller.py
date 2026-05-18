@@ -5,9 +5,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.websocket_manager import pos_manager, waiter_manager
 from app.modules.orders.model import Order
+from app.modules.outlets.model import Table, TableStatus
 from app.modules.orders.schema import (
-    OrderRead, OrderCreate, OrderUpdate,
+    OrderRead, OrderCreate, OrderUpdate, OrderItemsUpdate,
     OrderWithItemsRead, SettleResponse, BillResponse,
 )
 from app.modules.orders.service import OrderService
@@ -22,9 +24,9 @@ async def list_orders(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/table/{table_id}", response_model=list[OrderWithItemsRead])
-async def get_table_orders(table_id: str, outlet_id: str = None, db: AsyncSession = Depends(get_db)):
-    """Get all unpaid orders for a table. outlet_id defaults to Rudrarthi outlet."""
-    orders = await OrderService.get_orders_by_table(db, table_id, outlet_id)
+async def get_table_orders(table_id: str, db: AsyncSession = Depends(get_db)):
+    """Get all unpaid orders for a table."""
+    orders = await OrderService.get_orders_by_table(db, table_id)
     return orders
 
 
@@ -96,9 +98,9 @@ async def get_order_summary(outlet_id: str, date: str = None, db: AsyncSession =
     }
 
 
-@router.get("/{item_id}", response_model=OrderWithItemsRead)
+@router.get("/{item_id}", response_model=OrderRead)
 async def get_order(item_id: UUID, db: AsyncSession = Depends(get_db)):
-    """Get an order by ID (includes items with name, unit_price, customizations)."""
+    """Get an order by ID."""
     obj = await OrderService.get_order_by_id(db, item_id)
     if not obj:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
@@ -112,18 +114,18 @@ async def create_order(payload: OrderCreate, db: AsyncSession = Depends(get_db))
 
 
 @router.post("/bill/{table_id}", response_model=BillResponse)
-async def generate_bill(table_id: str, outlet_id: str = None, db: AsyncSession = Depends(get_db)):
+async def generate_bill(table_id: str, db: AsyncSession = Depends(get_db)):
     """Generate a PDF bill for all unpaid orders on a table."""
-    result = await OrderService.generate_bill(db, table_id, outlet_id)
+    result = await OrderService.generate_bill(db, table_id)
     if not result:
         raise HTTPException(status_code=404, detail="No unpaid orders found for this table")
     return result
 
 
 @router.post("/settle/{table_id}", response_model=SettleResponse)
-async def settle_table(table_id: str, outlet_id: str = None, db: AsyncSession = Depends(get_db)):
+async def settle_table(table_id: str, db: AsyncSession = Depends(get_db)):
     """Mark all unpaid orders for a table as paid."""
-    count, total = await OrderService.settle_table(db, table_id, outlet_id)
+    count, total = await OrderService.settle_table(db, table_id)
     return SettleResponse(
         settled_count=count,
         total_amount=total,
@@ -149,17 +151,19 @@ async def delete_order(item_id: UUID, db: AsyncSession = Depends(get_db)):
 
 
 
+@router.put("/{order_id}/items", response_model=OrderRead)
+async def update_order_items(order_id: UUID, payload: OrderItemsUpdate, db: AsyncSession = Depends(get_db)):
+    """Replace all items in an order and recalculate total amount."""
+    obj = await OrderService.replace_order_items(db, order_id, payload.items)
+    if not obj:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+    return obj
+
+
 @router.post("/{order_id}/confirm")
 async def confirm_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
-    """Confirm an order — waiter approved; now notify kitchen via WebSocket."""
-    from sqlalchemy.orm import selectinload
-    from sqlalchemy import select
-    from app.core.websocket_manager import kitchen_manager
-
-    result = await db.execute(
-        select(Order).options(selectinload(Order.items)).where(Order.id == order_id)
-    )
-    obj = result.scalar_one_or_none()
+    """Confirm an order - updates status from pending to confirmed."""
+    obj = await OrderService.get_order_by_id(db, order_id)
 
     if not obj:
         raise HTTPException(
@@ -167,32 +171,54 @@ async def confirm_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
             detail="Order not found"
         )
 
-    obj.order_status = "confirmed"
+    obj.order_status = "in_kitchen"
+
+    # Persist table occupancy in DB so floor views stay correct after restarts
+    if obj.table_id:
+        tbl_result = await db.execute(
+            select(Table).where(
+                Table.outlet_id == obj.outlet_id,
+                Table.table_number == str(obj.table_id),
+            )
+        )
+        tbl = tbl_result.scalar_one_or_none()
+        if tbl:
+            tbl.status = TableStatus.OCCUPIED
+
     await db.commit()
 
-    # Refresh to get current state
-    result2 = await db.execute(
-        select(Order).options(selectinload(Order.items)).where(Order.id == order_id)
+    confirm_payload = {
+        "id": str(obj.id),
+        "table_id": str(obj.table_id) if obj.table_id else None,
+        "order_status": "in_kitchen",
+        "total_amount": float(obj.total_amount),
+    }
+    await pos_manager.broadcast_order_event(
+        outlet_id=str(obj.outlet_id),
+        event="ORDER_CONFIRMED",
+        order=confirm_payload,
     )
-    confirmed_order = result2.scalar_one()
+    await waiter_manager.broadcast_order_event(
+        outlet_id=str(obj.outlet_id),
+        event="ORDER_CONFIRMED",
+        order=confirm_payload,
+    )
 
-    # Now that waiter confirmed, tell kitchen
-    await kitchen_manager.broadcast_new_order(
-        outlet_id=str(confirmed_order.outlet_id),
-        order={
-            "id": str(confirmed_order.id),
-            "kitchen_token": confirmed_order.kitchen_token,
-            "table_id": str(confirmed_order.table_id) if confirmed_order.table_id else None,
-            "customer_id": str(confirmed_order.customer_id) if confirmed_order.customer_id else None,
-            "total_amount": float(confirmed_order.total_amount),
-            "order_status": confirmed_order.order_status,
-            "created_at": confirmed_order.created_at,
-            "items": [{"name": i.name_snap, "qty": i.quantity} for i in confirmed_order.items],
-        }
-    )
+    if obj.table_id:
+        table_payload = {"table_id": str(obj.table_id), "status": "occupied"}
+        await pos_manager.broadcast_order_event(
+            outlet_id=str(obj.outlet_id),
+            event="TABLE_STATUS_CHANGED",
+            order=table_payload,
+        )
+        await waiter_manager.broadcast_order_event(
+            outlet_id=str(obj.outlet_id),
+            event="TABLE_STATUS_CHANGED",
+            order=table_payload,
+        )
 
     return {
-        "message": "Order confirmed",
+        "message": "Order fired to kitchen",
         "order_id": str(order_id),
-        "status": "confirmed"
+        "status": "in_kitchen"
     }

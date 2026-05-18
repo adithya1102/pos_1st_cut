@@ -8,7 +8,7 @@ namespace GustoWaiter.Services;
 
 public class ApiService {
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(15) };
-    private const string Base = "http://127.0.0.1:8000/api/v1";
+    private const string Base = "http://192.168.1.7:8000/api/v1";
     public const string OutletId = "0b8a8349-6144-41a8-b028-b9089bd8eaea";
     private const string MenuId = "dc88b6a6-129c-479f-8609-07b8525f4310";
 
@@ -137,6 +137,7 @@ public class ApiService {
                 table_id = tableId,
                 total_amount = items.Sum(i => i.ItemTotal),
                 order_type = orderType,
+                source = "waiter",
                 items = items.Select(i => new {
                     name = i.Name,
                     quantity = i.Quantity,
@@ -169,41 +170,53 @@ public class ApiService {
     public async Task<List<TableInfo>> GetTablesAsync() {
         try {
             var config = await GetOutletConfigAsync();
-            var json = await _http.GetStringAsync($"{Base}/tables/all");
-            using var doc = JsonDocument.Parse(json);
-            var activeSessions = new Dictionary<string, string>();
 
-            foreach (var el in doc.RootElement.EnumerateArray()) {
-                if (el.TryGetProperty("is_active", out var active) && active.GetBoolean()) {
-                    var tid = el.GetProperty("table_id").GetString() ?? "";
-                    var tok = el.GetProperty("token").GetString() ?? "";
-                    activeSessions[tid] = tok;
+            // Fetch sessions and all orders in parallel — a table is occupied if it has
+            // an active session OR unpaid orders (covers waiter-placed orders with no session)
+            var sessionsTask = _http.GetStringAsync($"{Base}/tables/all");
+            var ordersTask = _http.GetStringAsync($"{Base}/orders/");
+            await Task.WhenAll(sessionsTask, ordersTask);
+
+            var activeSessions = new Dictionary<string, string>();
+            using (var doc = JsonDocument.Parse(sessionsTask.Result)) {
+                foreach (var el in doc.RootElement.EnumerateArray()) {
+                    if (el.TryGetProperty("is_active", out var active) && active.GetBoolean()) {
+                        var tid = el.GetProperty("table_id").GetString() ?? "";
+                        var tok = el.GetProperty("token").GetString() ?? "";
+                        activeSessions[tid] = tok;
+                    }
+                }
+            }
+
+            var occupiedByOrders = new HashSet<string>();
+            using (var doc = JsonDocument.Parse(ordersTask.Result)) {
+                foreach (var el in doc.RootElement.EnumerateArray()) {
+                    var status = el.TryGetProperty("order_status", out var sp) ? sp.GetString() : null;
+                    var tableId = el.TryGetProperty("table_id", out var tp) ? tp.GetString() : null;
+                    if (!string.IsNullOrEmpty(tableId) && status != "paid" && status != "cancelled")
+                        occupiedByOrders.Add(tableId);
                 }
             }
 
             var tables = new List<TableInfo>();
             for (int i = 1; i <= config.NormalTableCount; i++) {
                 var tid = $"N-{i}";
-                var isOpen = activeSessions.ContainsKey(tid);
                 tables.Add(new TableInfo {
                     TableId = tid,
-                    Slug = isOpen ? activeSessions[tid] : "",
-                    IsOpen = isOpen,
+                    Slug = activeSessions.TryGetValue(tid, out var tok) ? tok : "",
+                    IsOpen = activeSessions.ContainsKey(tid) || occupiedByOrders.Contains(tid),
                     Capacity = "4"
                 });
             }
-
             for (int i = 1; i <= config.AcTableCount; i++) {
                 var tid = $"A-{i}";
-                var isOpen = activeSessions.ContainsKey(tid);
                 tables.Add(new TableInfo {
                     TableId = tid,
-                    Slug = isOpen ? activeSessions[tid] : "",
-                    IsOpen = isOpen,
+                    Slug = activeSessions.TryGetValue(tid, out var tok) ? tok : "",
+                    IsOpen = activeSessions.ContainsKey(tid) || occupiedByOrders.Contains(tid),
                     Capacity = "4"
                 });
             }
-
             return tables;
         } catch (Exception ex) {
             Debug.WriteLine($"GetTablesAsync error: {ex.Message}");
@@ -263,6 +276,9 @@ public class ApiService {
             return (0, 0);
         }
     }
+
+    public string GetWaiterWsUrl() =>
+        $"ws://192.168.1.7:8000/ws/waiter/{OutletId}";
 
     public async Task SetGpsAsync() {
         try {

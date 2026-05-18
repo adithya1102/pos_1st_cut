@@ -6,4 +6,7 @@ asyncpg
 pydantic-settings
 python-jose[cryptography]
 passlib[bcrypt]
+bcrypt>=4.0.1,<5.0.0
 uuid
+sentence-transformers
+faiss-cpu

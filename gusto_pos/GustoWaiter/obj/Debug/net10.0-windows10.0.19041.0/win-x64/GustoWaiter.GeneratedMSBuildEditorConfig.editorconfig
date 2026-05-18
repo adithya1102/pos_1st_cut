@@ -78,11 +78,31 @@ build_metadata.AdditionalFiles.NoWarn =
 build_metadata.AdditionalFiles.EnableDiagnostics = 
 build_metadata.AdditionalFiles.LineInfo = 
 
+[C:/Users/Adithya/Desktop/demo1/pos_1st_cut/gusto_pos/GustoWaiter/Views/ApprovalChecklistPage.xaml]
+build_metadata.AdditionalFiles.GenKind = Xaml
+build_metadata.AdditionalFiles.ManifestResourceName = GustoWaiter.Views.ApprovalChecklistPage.xaml
+build_metadata.AdditionalFiles.TargetPath = Views\ApprovalChecklistPage.xaml
+build_metadata.AdditionalFiles.RelativePath = Views\ApprovalChecklistPage.xaml
+build_metadata.AdditionalFiles.Inflator = Runtime
+build_metadata.AdditionalFiles.NoWarn = 
+build_metadata.AdditionalFiles.EnableDiagnostics = 
+build_metadata.AdditionalFiles.LineInfo = 
+
 [C:/Users/Adithya/Desktop/demo1/pos_1st_cut/gusto_pos/GustoWaiter/Views/DashboardPage.xaml]
 build_metadata.AdditionalFiles.GenKind = Xaml
 build_metadata.AdditionalFiles.ManifestResourceName = GustoWaiter.Views.DashboardPage.xaml
 build_metadata.AdditionalFiles.TargetPath = Views\DashboardPage.xaml
 build_metadata.AdditionalFiles.RelativePath = Views\DashboardPage.xaml
+build_metadata.AdditionalFiles.Inflator = Runtime
+build_metadata.AdditionalFiles.NoWarn = 
+build_metadata.AdditionalFiles.EnableDiagnostics = 
+build_metadata.AdditionalFiles.LineInfo = 
+
+[C:/Users/Adithya/Desktop/demo1/pos_1st_cut/gusto_pos/GustoWaiter/Views/PinLoginPage.xaml]
+build_metadata.AdditionalFiles.GenKind = Xaml
+build_metadata.AdditionalFiles.ManifestResourceName = GustoWaiter.Views.PinLoginPage.xaml
+build_metadata.AdditionalFiles.TargetPath = Views\PinLoginPage.xaml
+build_metadata.AdditionalFiles.RelativePath = Views\PinLoginPage.xaml
 build_metadata.AdditionalFiles.Inflator = Runtime
 build_metadata.AdditionalFiles.NoWarn = 
 build_metadata.AdditionalFiles.EnableDiagnostics = 

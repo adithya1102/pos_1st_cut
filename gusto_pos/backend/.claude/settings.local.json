@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(PYTHONPATH=$\\(pwd\\) python scripts/seed_tables.py)",
+      "Bash(export PYTHONPATH=$\\(pwd\\))",
+      "Bash(python scripts/seed_price_rules.py)",
+      "Bash(python -c \"from app.main import app; print\\('Backend imports OK'\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(python seed_staff.py)",
+      "Bash(python migrate_outlet_config.py)",
+      "Bash(PGPASSWORD=\"npg_FNVST1qQshi6\" psql \"postgresql://neondb_owner@ep-frosty-fire-aobvdei1.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require\" -c \"SELECT id, table_number, zone, qr_token, outlet_id FROM tables WHERE zone='normal' AND table_number='N-1' LIMIT 5;\")",
+      "Bash(PGPASSWORD=\"npg_FNVST1qQshi6\" psql \"postgresql://neondb_owner@ep-frosty-fire-aobvdei1.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require\" -c \"SELECT id, table_number, zone, qr_token, outlet_id FROM tables WHERE zone='normal' LIMIT 10;\")",
+      "Bash(pip install *)",
+      "Bash(curl *)",
+      "Bash(python -m json.tool)",
+      "Bash(netstat -ano)",
+      "Bash(powershell -Command \"netstat -ano | findstr :8000\")",
+      "Bash(pip show *)",
+      "Bash(python *)",
+      "Bash(venv/Scripts/python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000)",
+      "Bash(venv/Scripts/pip install *)",
+      "Bash(timeout 12 venv/Scripts/python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8001)",
+      "PowerShell(netstat *)",
+      "PowerShell(Invoke-RestMethod -Uri \"http://localhost:8000/\" -Method Get | ConvertTo-Json)",
+      "PowerShell(Invoke-RestMethod -Uri \"http://localhost:8000/api/v1/staff/\" -Method Get | ConvertTo-Json -Depth 5)"
+    ]
+  }
+}

@@ -1,8 +1,9 @@
 from uuid import UUID
-from typing import Any
+from typing import Any, List
 from datetime import datetime
 import os
-from sqlalchemy import select, update, delete
+import json as _json
+from sqlalchemy import select, update, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from reportlab.pdfgen import canvas
@@ -10,10 +11,10 @@ from reportlab.lib.units import mm
 from app.modules.orders.model import Order
 from app.modules.order_items.model import OrderItem
 from app.modules.sessions.models import WaiterNotification
-from app.core.websocket_manager import kitchen_manager, customer_manager
-from app.modules.orders.schema import OrderCreate, OrderUpdate
+from app.modules.tables.models import TableSession
+from app.core.websocket_manager import kitchen_manager, customer_manager, pos_manager, waiter_manager
+from app.modules.orders.schema import OrderCreate, OrderUpdate, OrderItemCreate
 
-# Default Rudrarthi outlet ID — used as fallback when no outlet_id is passed
 OUTLET_ID = "0b8a8349-6144-41a8-b028-b9089bd8eaea"
 
 
@@ -34,36 +35,83 @@ class OrderService:
 
     @staticmethod
     async def create_order(db: AsyncSession, payload: OrderCreate):
-        obj = Order(
-            outlet_id=payload.outlet_id,
-            table_id=payload.table_id,
-            customer_id=payload.customer_id,
-            staff_id=payload.staff_id,
-            total_amount=payload.total_amount,
-            order_status=payload.order_status.value if payload.order_status else "pending",
-            kitchen_token=payload.kitchen_token,
-        )
-        db.add(obj)
-        await db.flush()
-
-        # Save order items — item_notes stored as JSON so it's always parseable
         import json
+
+        source = (payload.source or "customer").strip()
+
+        # "One Active Table = One Active Order" — merge into existing open order if present.
+        existing = None
+        if payload.table_id:
+            r = await db.execute(
+                select(Order)
+                .options(selectinload(Order.items))
+                .where(
+                    Order.table_id == payload.table_id,
+                    Order.outlet_id == payload.outlet_id,
+                    Order.order_status.notin_(["paid", "cancelled"]),
+                )
+                .order_by(Order.created_at.desc())
+                .limit(1)
+            )
+            existing = r.scalar_one_or_none()
+
+        if existing:
+            obj = existing
+        else:
+            obj = Order(
+                outlet_id=payload.outlet_id,
+                table_id=payload.table_id,
+                customer_id=payload.customer_id,
+                total_amount=0,
+                order_status=payload.order_status.value if payload.order_status else "pending",
+                kitchen_token=payload.kitchen_token,
+                source=source,
+            )
+            db.add(obj)
+            await db.flush()
+
+        # Append new items and accumulate their total
+        notif_items = []
+        new_items_total = 0.0
         if payload.items:
             for item_data in payload.items:
-                notes_payload: dict = {}
+                notes_dict: dict = {}
                 if item_data.customizations:
-                    notes_payload["customizations"] = item_data.customizations
+                    notes_dict["customizations"] = item_data.customizations
                 if item_data.custom_note:
-                    notes_payload["custom_note"] = item_data.custom_note
-                item_notes = json.dumps(notes_payload) if notes_payload else None
-                oi = OrderItem(
+                    notes_dict["custom_note"] = item_data.custom_note
+                item_notes = json.dumps(notes_dict) if notes_dict else None
+                db.add(OrderItem(
                     order_id=obj.id,
                     name_snap=item_data.name,
                     price_snap=item_data.unit_price,
                     quantity=item_data.quantity,
                     item_notes=item_notes,
-                )
-                db.add(oi)
+                ))
+                new_items_total += item_data.unit_price * item_data.quantity
+                notif_items.append({
+                    "name": item_data.name,
+                    "quantity": item_data.quantity,
+                    "unit_price": item_data.unit_price,
+                    "customizations": item_data.customizations or [],
+                    "custom_note": item_data.custom_note or "",
+                })
+
+        obj.total_amount = float(obj.total_amount) + new_items_total
+        db.add(obj)
+
+        # Only notify the waiter when the order came from a customer (not from the waiter app itself)
+        if source != "waiter":
+            db.add(WaiterNotification(
+                outlet_id=obj.outlet_id,
+                table_id=str(obj.table_id) if obj.table_id else "",
+                customer_name="Customer",
+                customer_id=str(obj.customer_id) if obj.customer_id else "",
+                notif_type="order_placed",
+                order_id=obj.id,
+                total_amount=obj.total_amount,
+                order_preview=_json.dumps(notif_items),
+            ))
 
         await db.commit()
         result = await db.execute(
@@ -71,25 +119,37 @@ class OrderService:
         )
         order = result.scalar_one()
 
-        # Build order preview text for waiter notification
-        item_names = [f"{item.name_snap} x{item.quantity}" for item in order.items]
-        preview_text = "\n".join(item_names)
-
-        # Insert WaiterNotification so waiter can review before kitchen is notified
-        notif = WaiterNotification(
-            outlet_id=order.outlet_id,
-            table_id=order.table_id or "",
-            notif_type="order_placed",
-            order_id=order.id,
-            total_amount=order.total_amount,
-            order_preview=preview_text,
-            customer_name="Guest",
-            is_read=False,
+        await kitchen_manager.broadcast_new_order(
+            outlet_id=str(order.outlet_id),
+            order={
+                "id": str(order.id),
+                "kitchen_token": order.kitchen_token,
+                "table_id": str(order.table_id) if order.table_id else None,
+                "customer_id": str(order.customer_id) if order.customer_id else None,
+                "total_amount": float(order.total_amount),
+                "order_status": order.order_status,
+                "created_at": order.created_at,
+            }
         )
-        db.add(notif)
-        await db.commit()
 
-        # Notify customer that their order was received (not yet kitchen-confirmed)
+        order_event_payload = {
+            "id": str(order.id),
+            "table_id": str(order.table_id) if order.table_id else None,
+            "order_status": order.order_status,
+            "total_amount": float(order.total_amount),
+            "source": source,
+        }
+        await pos_manager.broadcast_order_event(
+            outlet_id=str(order.outlet_id),
+            event="NEW_ORDER",
+            order=order_event_payload,
+        )
+        await waiter_manager.broadcast_order_event(
+            outlet_id=str(order.outlet_id),
+            event="NEW_ORDER",
+            order=order_event_payload,
+        )
+
         await customer_manager.notify_order_confirmed(
             order_id=str(order.id),
             order={
@@ -97,41 +157,26 @@ class OrderService:
                 "kitchen_token": order.kitchen_token,
             }
         )
+
+        # Mark table occupied on all floor views so the UI turns Red immediately
+        if order.table_id:
+            table_occupied = {"table_id": str(order.table_id), "status": "occupied"}
+            await pos_manager.broadcast_order_event(
+                str(order.outlet_id), "TABLE_STATUS_CHANGED", table_occupied
+            )
+            await waiter_manager.broadcast_order_event(
+                str(order.outlet_id), "TABLE_STATUS_CHANGED", table_occupied
+            )
+
         return order
 
     @staticmethod
     async def update_order(db: AsyncSession, order_id: UUID, payload: OrderUpdate):
-        import json
         obj = await OrderService.get_order_by_id(db, order_id)
         if not obj:
             return None
         order_status_changed = False
-
-        # Handle items replacement: delete existing items, insert new ones
-        if payload.items is not None:
-            await db.execute(
-                delete(OrderItem).where(OrderItem.order_id == order_id)
-            )
-            new_total = 0.0
-            for item_data in payload.items:
-                notes_payload: dict = {}
-                if item_data.customizations:
-                    notes_payload["customizations"] = item_data.customizations
-                if item_data.custom_note:
-                    notes_payload["custom_note"] = item_data.custom_note
-                item_notes = json.dumps(notes_payload) if notes_payload else None
-                oi = OrderItem(
-                    order_id=obj.id,
-                    name_snap=item_data.name,
-                    price_snap=item_data.unit_price,
-                    quantity=item_data.quantity,
-                    item_notes=item_notes,
-                )
-                db.add(oi)
-                new_total += item_data.unit_price * item_data.quantity
-            obj.total_amount = new_total
-
-        for k, v in payload.model_dump(exclude_unset=True, exclude={"items"}).items():
+        for k, v in payload.model_dump(exclude_unset=True).items():
             if k == "order_status" and v is not None:
                 v = v.value if hasattr(v, "value") else v
                 if getattr(obj, "order_status", None) != v:
@@ -163,6 +208,37 @@ class OrderService:
         return order
 
     @staticmethod
+    async def replace_order_items(db: AsyncSession, order_id: UUID, items: List[OrderItemCreate]):
+        """Delete all existing order items, insert the new list, and recalculate total_amount."""
+        order = await OrderService.get_order_by_id(db, order_id)
+        if not order:
+            return None
+        await db.execute(sa_delete(OrderItem).where(OrderItem.order_id == order_id))
+        total = 0.0
+        for item_data in items:
+            notes_dict: dict = {}
+            if item_data.customizations:
+                notes_dict["customizations"] = item_data.customizations
+            if item_data.custom_note:
+                notes_dict["custom_note"] = item_data.custom_note
+            item_notes = _json.dumps(notes_dict) if notes_dict else None
+            db.add(OrderItem(
+                order_id=order_id,
+                name_snap=item_data.name,
+                price_snap=item_data.unit_price,
+                quantity=item_data.quantity,
+                item_notes=item_notes,
+            ))
+            total += item_data.unit_price * item_data.quantity
+        order.total_amount = total
+        db.add(order)
+        await db.commit()
+        result = await db.execute(
+            select(Order).options(selectinload(Order.items)).where(Order.id == order_id)
+        )
+        return result.scalar_one()
+
+    @staticmethod
     async def delete_order(db: AsyncSession, order_id: UUID) -> bool:
         result = await db.execute(
             select(Order).options(selectinload(Order.items)).where(Order.id == order_id)
@@ -175,29 +251,27 @@ class OrderService:
         return True
 
     @staticmethod
-    async def get_orders_by_table(db: AsyncSession, table_id: str, outlet_id: str | None = None):
+    async def get_orders_by_table(db: AsyncSession, table_id: str):
         """Get all unpaid orders for a table with their items."""
-        oid = UUID(outlet_id) if outlet_id else UUID(OUTLET_ID)
         result = await db.execute(
             select(Order)
             .options(selectinload(Order.items))
             .where(
                 Order.table_id == table_id,
-                Order.outlet_id == oid,
+                Order.outlet_id == UUID(OUTLET_ID),
                 Order.order_status != "paid",
             )
         )
         return result.scalars().all()
 
     @staticmethod
-    async def settle_table(db: AsyncSession, table_id: str, outlet_id: str | None = None):
-        """Mark all unpaid orders for a table as paid."""
-        oid = UUID(outlet_id) if outlet_id else UUID(OUTLET_ID)
+    async def settle_table(db: AsyncSession, table_id: str):
+        """Mark all unpaid orders as paid, close the table session, and broadcast availability."""
         result = await db.execute(
             select(Order)
             .where(
                 Order.table_id == table_id,
-                Order.outlet_id == oid,
+                Order.outlet_id == UUID(OUTLET_ID),
                 Order.order_status != "paid",
             )
         )
@@ -207,19 +281,36 @@ class OrderService:
             order.order_status = "paid"
             total += float(order.total_amount)
             db.add(order)
+
+        # Close any active table session so the table shows as available everywhere
+        sessions_result = await db.execute(
+            select(TableSession).where(
+                TableSession.outlet_id == UUID(OUTLET_ID),
+                TableSession.table_id == table_id,
+                TableSession.is_active == True,
+            )
+        )
+        for session in sessions_result.scalars().all():
+            session.is_active = False
+            session.closed_at = datetime.utcnow()
+
         await db.commit()
+
+        # Notify all floor views to turn the table Green
+        await pos_manager.broadcast_order_event(OUTLET_ID, "TABLE_CLOSED", {"table_id": table_id})
+        await waiter_manager.broadcast_order_event(OUTLET_ID, "TABLE_CLOSED", {"table_id": table_id})
+
         return len(orders), total
 
     @staticmethod
-    async def generate_bill(db: AsyncSession, table_id: str, outlet_id: str | None = None):
+    async def generate_bill(db: AsyncSession, table_id: str):
         """Generate a professional PDF bill for all unpaid orders on a table."""
-        oid = UUID(outlet_id) if outlet_id else UUID(OUTLET_ID)
         result = await db.execute(
             select(Order)
             .options(selectinload(Order.items))
             .where(
                 Order.table_id == table_id,
-                Order.outlet_id == oid,
+                Order.outlet_id == UUID(OUTLET_ID),
                 Order.order_status != "paid",
             )
         )

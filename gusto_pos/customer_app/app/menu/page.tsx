@@ -37,8 +37,10 @@ function MenuContent() {
   const [error, setError] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState<string>('');
   const [modalItem, setModalItem] = useState<MenuItem | null>(null);
-  
-  // Token validation states
+
+  // Resolved from backend — never from URL params
+  const [resolvedOutletId, setResolvedOutletId] = useState<string>('');
+  const [resolvedZone, setResolvedZone] = useState<string>('normal');
   const [tokenValid, setTokenValid] = useState<boolean | null>(null);
   const [tokenMessage, setTokenMessage] = useState<string>('');
   const [validatedTableId, setValidatedTableId] = useState<string>('');
@@ -46,115 +48,104 @@ function MenuContent() {
   const categoryRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const tabContainerRef = useRef<HTMLDivElement>(null);
 
-  // Validate token on load
+  // Resolve table context from backend — zone and outlet are never read from URL params
   useEffect(() => {
-    const token = searchParams.get('token');
-    const outletIdParam = searchParams.get('outlet_id');
-    const tableIdParam = searchParams.get('table_id');
+    const t = searchParams.get('t');         // static QR token (printed on table)
+    const token = searchParams.get('token'); // legacy dynamic session token
 
-    if (!token) {
-      // Allow direct access via outlet_id + table_id query params
-      if (outletIdParam && tableIdParam) {
-        setOutletId(outletIdParam);
-        setTableId(tableIdParam);
-        setValidatedTableId(tableIdParam);
-        setTokenValid(true);
-        return;
-      }
-      // No token and no direct params - show error
-      setTokenValid(false);
-      setTokenMessage('No table token provided. Please scan the QR code at your table.');
-      setLoading(false);
+    if (t) {
+      // Secure path: resolve static QR token; backend returns outlet_id + zone authoritatively
+      fetch(`${API_BASE}/api/v1/tables/resolve?t=${encodeURIComponent(t)}`)
+        .then((res) => {
+          if (!res.ok) throw new Error(`resolve ${res.status}`);
+          return res.json();
+        })
+        .then((data) => {
+          const z = data.zone || 'normal';
+          setResolvedOutletId(data.outlet_id);
+          setResolvedZone(z);
+          setValidatedTableId(data.table_name || '');
+          setOutletId(data.outlet_id);
+          setTableId(data.table_name || '');
+          localStorage.setItem('table_zone', z);
+          setTokenValid(true);
+        })
+        .catch((err) => {
+          console.error('Token resolve error:', err);
+          setTokenValid(false);
+          setTokenMessage('Invalid QR code. Please scan the code on your table.');
+          setLoading(false);
+        });
       return;
     }
 
-    // Validate token with backend
-    console.log("FETCHING MENU FOR TOKEN:", token);
-    fetch(`${API_BASE}/api/v1/tables/validate/${token}`)
-      .then((res) => {
-        if (!res.ok) throw new Error(`Validate returned ${res.status}`);
-        return res.json();
-      })
-      .then((data) => {
-        console.log("MENU DATA:", data);
-        if (data.is_valid) {
-          setTokenValid(true);
-          setValidatedTableId(data.table_id || '');
-          setOutletId(data.outlet_id || '');
-          setTableId(data.table_id || '');
-        } else {
+    if (token) {
+      // Legacy path: validate dynamic session token
+      fetch(`${API_BASE}/api/v1/tables/validate/${token}`)
+        .then((res) => {
+          if (!res.ok) throw new Error(`Validate ${res.status}`);
+          return res.json();
+        })
+        .then((data) => {
+          if (data.is_valid) {
+            const z = data.zone || 'normal';
+            setResolvedOutletId(data.outlet_id || '');
+            setResolvedZone(z);
+            setValidatedTableId(data.table_id || '');
+            setOutletId(data.outlet_id || '');
+            setTableId(data.table_id || '');
+            localStorage.setItem('table_zone', z);
+            setTokenValid(true);
+          } else {
+            setTokenValid(false);
+            setTokenMessage(data.message || 'Invalid or expired QR code.');
+            setLoading(false);
+          }
+        })
+        .catch((err) => {
+          console.error('Token validation error:', err);
           setTokenValid(false);
-          setTokenMessage(data.message || 'Invalid or expired QR code.');
+          setTokenMessage('Could not connect to server. Please try again.');
           setLoading(false);
-        }
-      })
-      .catch((err) => {
-        console.error("Token validation error:", err);
-        setTokenValid(false);
-        setTokenMessage('Could not connect to server. Please try again.');
-        setLoading(false);
-      });
+        });
+      return;
+    }
+
+    // No token present at all
+    setTokenValid(false);
+    setTokenMessage('No table token provided. Please scan the QR code at your table.');
+    setLoading(false);
   }, [searchParams, setOutletId, setTableId]);
 
-  // Read query params (legacy support)
+  // Fetch menu once token is resolved — zone and outlet come from state, not URL
   useEffect(() => {
-    const outletId = searchParams.get('outlet_id') || process.env.NEXT_PUBLIC_OUTLET_ID || '';
-    const tableId = searchParams.get('table_id') || '1';
-    // Only use these if token validation hasn't set them
-    if (!validatedTableId) {
-      if (outletId) setOutletId(outletId);
-      setTableId(tableId);
-    }
-  }, [searchParams, setOutletId, setTableId, validatedTableId]);
-
-  // Fetch menu (only if token is valid)
-  useEffect(() => {
-    if (tokenValid === false) {
-      setLoading(false);
-      return;
-    }
-    if (tokenValid === null) {
-      // Still validating token
-      return;
-    }
-
-    const zone = searchParams.get('zone') || localStorage.getItem('table_zone') || 'normal';
-    const outletIdForMenu = searchParams.get('outlet_id') || process.env.NEXT_PUBLIC_OUTLET_ID || '';
-
-    if (!outletIdForMenu) {
-      setError('No outlet ID found. Please scan your table QR code again.');
-      setLoading(false);
-      return;
-    }
+    if (tokenValid === false || tokenValid === null) return;
+    if (!resolvedOutletId) return;
 
     setLoading(true);
-    console.log("FETCHING MENU FOR TOKEN:", `zone/${outletIdForMenu}/${zone}`);
-    fetch(`${API_BASE}/api/v1/menus/zone/${outletIdForMenu}/${zone}`)
+    fetch(`${API_BASE}/api/v1/menus/zone/${resolvedOutletId}/${resolvedZone}`)
       .then((res) => {
         if (!res.ok) throw new Error(`Menu fetch failed: ${res.status} ${res.statusText}`);
         return res.json();
       })
       .then((data) => {
-        console.log("MENU DATA:", JSON.stringify(data, null, 2));
         if (!data || typeof data !== 'object') throw new Error('Menu response is not a valid object');
         setMenu({
-          zone: data.zone || zone,
+          zone: data.zone || resolvedZone,
           categories: Array.isArray(data.categories) ? data.categories : [],
           id: data.id,
           outlet_id: data.outlet_id,
           version_label: data.version_label,
         });
         const cats = Array.isArray(data.categories) ? data.categories : [];
-        if (cats.length > 0) {
-          setActiveCategory(cats[0].id);
-        }
+        if (cats.length > 0) setActiveCategory(cats[0].id);
       })
       .catch((err) => {
-        console.error("Menu fetch error:", err);
+        console.error('Menu fetch error:', err);
         setError(err.message || 'Unknown error loading menu');
       })
       .finally(() => setLoading(false));
-  }, [searchParams, tokenValid]);
+  }, [tokenValid, resolvedOutletId, resolvedZone]);
 
   const handleAddItem = (item: MenuItem) => {
     setModalItem(item);
@@ -226,7 +217,7 @@ function MenuContent() {
   }
 
   const categories: MenuCategory[] = menu.categories || [];
-  const zone = menu.zone || searchParams.get('zone') || 'normal';
+  const zone = menu.zone || resolvedZone;
 
   return (
     <div className="min-h-screen bg-[#0f172a] pb-24">
@@ -242,16 +233,6 @@ function MenuContent() {
                 Table {validatedTableId || searchParams.get('table_id') || '1'}
               </p>
             </div>
-            {/* Zone badge */}
-            {zone === 'ac' ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-blue-600 px-3 py-1 text-xs font-semibold text-white">
-                ❄️ AC DINING
-              </span>
-            ) : (
-              <span className="inline-flex items-center rounded-full bg-gray-500 px-3 py-1 text-xs font-semibold text-white">
-                REGULAR DINING
-              </span>
-            )}
           </div>
         </div>
 

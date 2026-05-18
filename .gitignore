@@ -11,3 +11,9 @@ venv/
 
 # Ignore system files
 .DS_Store
+
+# Visual Studio local cache (locked by IDE, never commit)
+.vs/
+
+# Claude Code worktrees (ephemeral, not part of source)
+.claude/worktrees/

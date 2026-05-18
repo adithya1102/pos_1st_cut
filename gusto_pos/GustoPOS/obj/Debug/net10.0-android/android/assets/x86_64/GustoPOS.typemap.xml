@@ -1,0 +1,10 @@
+<api type="debug" assembly-name="GustoPOS" mvid="990475baf10a420486479e857cb4b9e5">
+  <java-to-managed>
+    <entry java-name="crc6473d1dbc3fab4acc0/MainActivity" managed-name="GustoPOS.MainActivity, GustoPOS" managed-type-token-id="33554457" />
+    <entry java-name="crc6473d1dbc3fab4acc0/MainApplication" managed-name="GustoPOS.MainApplication, GustoPOS" managed-type-token-id="33554458" />
+  </java-to-managed>
+  <managed-to-java>
+    <entry java-name="crc6473d1dbc3fab4acc0/MainActivity" managed-name="GustoPOS.MainActivity, GustoPOS" managed-type-token-id="33554457" />
+    <entry java-name="crc6473d1dbc3fab4acc0/MainApplication" managed-name="GustoPOS.MainApplication, GustoPOS" managed-type-token-id="33554458" />
+  </managed-to-java>
+</api>

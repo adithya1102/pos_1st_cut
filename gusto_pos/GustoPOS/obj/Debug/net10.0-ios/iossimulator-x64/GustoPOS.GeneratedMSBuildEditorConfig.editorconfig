@@ -56,11 +56,31 @@ build_metadata.AdditionalFiles.NoWarn =
 build_metadata.AdditionalFiles.EnableDiagnostics = 
 build_metadata.AdditionalFiles.LineInfo = 
 
+[C:/Users/Adithya/Desktop/demo1/pos_1st_cut/gusto_pos/GustoPOS/Views/AskGustoPage.xaml]
+build_metadata.AdditionalFiles.GenKind = Xaml
+build_metadata.AdditionalFiles.ManifestResourceName = GustoPOS.Views.AskGustoPage.xaml
+build_metadata.AdditionalFiles.TargetPath = Views\AskGustoPage.xaml
+build_metadata.AdditionalFiles.RelativePath = Views\AskGustoPage.xaml
+build_metadata.AdditionalFiles.Inflator = Runtime
+build_metadata.AdditionalFiles.NoWarn = 
+build_metadata.AdditionalFiles.EnableDiagnostics = 
+build_metadata.AdditionalFiles.LineInfo = 
+
 [C:/Users/Adithya/Desktop/demo1/pos_1st_cut/gusto_pos/GustoPOS/Views/BillingPage.xaml]
 build_metadata.AdditionalFiles.GenKind = Xaml
 build_metadata.AdditionalFiles.ManifestResourceName = GustoPOS.Views.BillingPage.xaml
 build_metadata.AdditionalFiles.TargetPath = Views\BillingPage.xaml
 build_metadata.AdditionalFiles.RelativePath = Views\BillingPage.xaml
+build_metadata.AdditionalFiles.Inflator = Runtime
+build_metadata.AdditionalFiles.NoWarn = 
+build_metadata.AdditionalFiles.EnableDiagnostics = 
+build_metadata.AdditionalFiles.LineInfo = 
+
+[C:/Users/Adithya/Desktop/demo1/pos_1st_cut/gusto_pos/GustoPOS/Views/CategoryManagementPage.xaml]
+build_metadata.AdditionalFiles.GenKind = Xaml
+build_metadata.AdditionalFiles.ManifestResourceName = GustoPOS.Views.CategoryManagementPage.xaml
+build_metadata.AdditionalFiles.TargetPath = Views\CategoryManagementPage.xaml
+build_metadata.AdditionalFiles.RelativePath = Views\CategoryManagementPage.xaml
 build_metadata.AdditionalFiles.Inflator = Runtime
 build_metadata.AdditionalFiles.NoWarn = 
 build_metadata.AdditionalFiles.EnableDiagnostics = 
@@ -96,11 +116,41 @@ build_metadata.AdditionalFiles.NoWarn =
 build_metadata.AdditionalFiles.EnableDiagnostics = 
 build_metadata.AdditionalFiles.LineInfo = 
 
+[C:/Users/Adithya/Desktop/demo1/pos_1st_cut/gusto_pos/GustoPOS/Views/MenuManagementPage.xaml]
+build_metadata.AdditionalFiles.GenKind = Xaml
+build_metadata.AdditionalFiles.ManifestResourceName = GustoPOS.Views.MenuManagementPage.xaml
+build_metadata.AdditionalFiles.TargetPath = Views\MenuManagementPage.xaml
+build_metadata.AdditionalFiles.RelativePath = Views\MenuManagementPage.xaml
+build_metadata.AdditionalFiles.Inflator = Runtime
+build_metadata.AdditionalFiles.NoWarn = 
+build_metadata.AdditionalFiles.EnableDiagnostics = 
+build_metadata.AdditionalFiles.LineInfo = 
+
+[C:/Users/Adithya/Desktop/demo1/pos_1st_cut/gusto_pos/GustoPOS/Views/PinLoginPage.xaml]
+build_metadata.AdditionalFiles.GenKind = Xaml
+build_metadata.AdditionalFiles.ManifestResourceName = GustoPOS.Views.PinLoginPage.xaml
+build_metadata.AdditionalFiles.TargetPath = Views\PinLoginPage.xaml
+build_metadata.AdditionalFiles.RelativePath = Views\PinLoginPage.xaml
+build_metadata.AdditionalFiles.Inflator = Runtime
+build_metadata.AdditionalFiles.NoWarn = 
+build_metadata.AdditionalFiles.EnableDiagnostics = 
+build_metadata.AdditionalFiles.LineInfo = 
+
 [C:/Users/Adithya/Desktop/demo1/pos_1st_cut/gusto_pos/GustoPOS/Views/PosTerminalPage.xaml]
 build_metadata.AdditionalFiles.GenKind = Xaml
 build_metadata.AdditionalFiles.ManifestResourceName = GustoPOS.Views.PosTerminalPage.xaml
 build_metadata.AdditionalFiles.TargetPath = Views\PosTerminalPage.xaml
 build_metadata.AdditionalFiles.RelativePath = Views\PosTerminalPage.xaml
+build_metadata.AdditionalFiles.Inflator = Runtime
+build_metadata.AdditionalFiles.NoWarn = 
+build_metadata.AdditionalFiles.EnableDiagnostics = 
+build_metadata.AdditionalFiles.LineInfo = 
+
+[C:/Users/Adithya/Desktop/demo1/pos_1st_cut/gusto_pos/GustoPOS/Views/StaffRosterPage.xaml]
+build_metadata.AdditionalFiles.GenKind = Xaml
+build_metadata.AdditionalFiles.ManifestResourceName = GustoPOS.Views.StaffRosterPage.xaml
+build_metadata.AdditionalFiles.TargetPath = Views\StaffRosterPage.xaml
+build_metadata.AdditionalFiles.RelativePath = Views\StaffRosterPage.xaml
 build_metadata.AdditionalFiles.Inflator = Runtime
 build_metadata.AdditionalFiles.NoWarn = 
 build_metadata.AdditionalFiles.EnableDiagnostics = 

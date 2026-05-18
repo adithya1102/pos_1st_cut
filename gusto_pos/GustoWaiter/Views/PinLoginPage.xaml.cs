@@ -56,7 +56,7 @@ public partial class PinLoginPage : ContentPage {
 
         var window = Application.Current?.Windows.FirstOrDefault();
         if (window is not null)
-            window.Page = new DashboardPage();
+            window.Page = new NavigationPage(new DashboardPage());
     }
 
     private void ShowError(string message) {

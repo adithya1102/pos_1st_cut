@@ -1,4 +1,4 @@
-<api type="debug" assembly-name="Microsoft.Maui.Controls" mvid="d8df4bd83df44b9cb28778a193738700">
+<api type="debug" assembly-name="Microsoft.Maui.Controls" mvid="8f745065fea24724a738b7038675e4f8">
   <java-to-managed>
     <entry java-name="crc64f728827fec74e9c3/TapWindowTracker_GestureListener" managed-name="Microsoft.Maui.Controls.TapWindowTracker+GestureListener, Microsoft.Maui.Controls" managed-type-token-id="33555615" />
     <entry java-name="crc64f728827fec74e9c3/Toolbar_Container" managed-name="Microsoft.Maui.Controls.Toolbar+Container, Microsoft.Maui.Controls" managed-type-token-id="33555823" />
@@ -19,8 +19,8 @@
     <entry java-name="crc64338477404e88479c/PointerGestureHandler" managed-name="Microsoft.Maui.Controls.Platform.PointerGestureHandler, Microsoft.Maui.Controls" managed-type-token-id="33555288" />
     <entry java-name="crc64338477404e88479c/TapAndPanGestureDetector" managed-name="Microsoft.Maui.Controls.Platform.TapAndPanGestureDetector, Microsoft.Maui.Controls" managed-type-token-id="33555291" />
     <entry java-name="crc64338477404e88479c/ModalNavigationManager_ModalFragment" managed-name="Microsoft.Maui.Controls.Platform.ModalNavigationManager+ModalFragment, Microsoft.Maui.Controls" managed-type-token-id="33555974" />
-    <entry java-name="crc64338477404e88479c/ModalNavigationManager_ModalFragment_CustomComponentDialog" managed-name="Microsoft.Maui.Controls.Platform.ModalNavigationManager+ModalFragment+CustomComponentDialog, Microsoft.Maui.Controls" managed-type-token-id="33556138" />
-    <entry java-name="crc64338477404e88479c/ModalNavigationManager_ModalFragment_CustomComponentDialog_CallBack" managed-name="Microsoft.Maui.Controls.Platform.ModalNavigationManager+ModalFragment+CustomComponentDialog+CallBack, Microsoft.Maui.Controls" managed-type-token-id="33556150" />
+    <entry java-name="crc64338477404e88479c/ModalNavigationManager_ModalFragment_CustomComponentDialog" managed-name="Microsoft.Maui.Controls.Platform.ModalNavigationManager+ModalFragment+CustomComponentDialog, Microsoft.Maui.Controls" managed-type-token-id="33556139" />
+    <entry java-name="crc64338477404e88479c/ModalNavigationManager_ModalFragment_CustomComponentDialog_CallBack" managed-name="Microsoft.Maui.Controls.Platform.ModalNavigationManager+ModalFragment+CustomComponentDialog+CallBack, Microsoft.Maui.Controls" managed-type-token-id="33556151" />
     <entry java-name="crc640ec207abc449b2ca/ContainerView" managed-name="Microsoft.Maui.Controls.Platform.Compatibility.ContainerView, Microsoft.Maui.Controls" managed-type-token-id="33555305" />
     <entry java-name="crc640ec207abc449b2ca/CustomFrameLayout" managed-name="Microsoft.Maui.Controls.Platform.Compatibility.CustomFrameLayout, Microsoft.Maui.Controls" managed-type-token-id="33555306" />
     <entry java-name="crc640ec207abc449b2ca/ShellContentFragment" managed-name="Microsoft.Maui.Controls.Platform.Compatibility.ShellContentFragment, Microsoft.Maui.Controls" managed-type-token-id="33555320" />
@@ -104,8 +104,8 @@
     <entry java-name="crc64e1fb321c08285b90/SwitchCellView" managed-name="Microsoft.Maui.Controls.Handlers.Compatibility.SwitchCellView, Microsoft.Maui.Controls" managed-type-token-id="33555422" />
     <entry java-name="crc64e1fb321c08285b90/TextCellRenderer_TextCellView" managed-name="Microsoft.Maui.Controls.Handlers.Compatibility.TextCellRenderer+TextCellView, Microsoft.Maui.Controls" managed-type-token-id="33556035" />
     <entry java-name="crc64e1fb321c08285b90/ViewCellRenderer_ViewCellContainer" managed-name="Microsoft.Maui.Controls.Handlers.Compatibility.ViewCellRenderer+ViewCellContainer, Microsoft.Maui.Controls" managed-type-token-id="33556036" />
-    <entry java-name="crc64e1fb321c08285b90/ViewCellRenderer_ViewCellContainer_TapGestureListener" managed-name="Microsoft.Maui.Controls.Handlers.Compatibility.ViewCellRenderer+ViewCellContainer+TapGestureListener, Microsoft.Maui.Controls" managed-type-token-id="33556141" />
-    <entry java-name="crc64e1fb321c08285b90/ViewCellRenderer_ViewCellContainer_LongPressGestureListener" managed-name="Microsoft.Maui.Controls.Handlers.Compatibility.ViewCellRenderer+ViewCellContainer+LongPressGestureListener, Microsoft.Maui.Controls" managed-type-token-id="33556142" />
+    <entry java-name="crc64e1fb321c08285b90/ViewCellRenderer_ViewCellContainer_TapGestureListener" managed-name="Microsoft.Maui.Controls.Handlers.Compatibility.ViewCellRenderer+ViewCellContainer+TapGestureListener, Microsoft.Maui.Controls" managed-type-token-id="33556142" />
+    <entry java-name="crc64e1fb321c08285b90/ViewCellRenderer_ViewCellContainer_LongPressGestureListener" managed-name="Microsoft.Maui.Controls.Handlers.Compatibility.ViewCellRenderer+ViewCellContainer+LongPressGestureListener, Microsoft.Maui.Controls" managed-type-token-id="33556143" />
     <entry java-name="crc64e1fb321c08285b90/TableViewModelRenderer" managed-name="Microsoft.Maui.Controls.Handlers.Compatibility.TableViewModelRenderer, Microsoft.Maui.Controls" managed-type-token-id="33555426" />
     <entry java-name="crc64e1fb321c08285b90/TableViewRenderer" managed-name="Microsoft.Maui.Controls.Handlers.Compatibility.TableViewRenderer, Microsoft.Maui.Controls" managed-type-token-id="33555427" />
   </java-to-managed>
@@ -129,8 +129,8 @@
     <entry java-name="crc64338477404e88479c/PointerGestureHandler" managed-name="Microsoft.Maui.Controls.Platform.PointerGestureHandler, Microsoft.Maui.Controls" managed-type-token-id="33555288" />
     <entry java-name="crc64338477404e88479c/TapAndPanGestureDetector" managed-name="Microsoft.Maui.Controls.Platform.TapAndPanGestureDetector, Microsoft.Maui.Controls" managed-type-token-id="33555291" />
     <entry java-name="crc64338477404e88479c/ModalNavigationManager_ModalFragment" managed-name="Microsoft.Maui.Controls.Platform.ModalNavigationManager+ModalFragment, Microsoft.Maui.Controls" managed-type-token-id="33555974" />
-    <entry java-name="crc64338477404e88479c/ModalNavigationManager_ModalFragment_CustomComponentDialog" managed-name="Microsoft.Maui.Controls.Platform.ModalNavigationManager+ModalFragment+CustomComponentDialog, Microsoft.Maui.Controls" managed-type-token-id="33556138" />
-    <entry java-name="crc64338477404e88479c/ModalNavigationManager_ModalFragment_CustomComponentDialog_CallBack" managed-name="Microsoft.Maui.Controls.Platform.ModalNavigationManager+ModalFragment+CustomComponentDialog+CallBack, Microsoft.Maui.Controls" managed-type-token-id="33556150" />
+    <entry java-name="crc64338477404e88479c/ModalNavigationManager_ModalFragment_CustomComponentDialog" managed-name="Microsoft.Maui.Controls.Platform.ModalNavigationManager+ModalFragment+CustomComponentDialog, Microsoft.Maui.Controls" managed-type-token-id="33556139" />
+    <entry java-name="crc64338477404e88479c/ModalNavigationManager_ModalFragment_CustomComponentDialog_CallBack" managed-name="Microsoft.Maui.Controls.Platform.ModalNavigationManager+ModalFragment+CustomComponentDialog+CallBack, Microsoft.Maui.Controls" managed-type-token-id="33556151" />
     <entry java-name="crc640ec207abc449b2ca/ContainerView" managed-name="Microsoft.Maui.Controls.Platform.Compatibility.ContainerView, Microsoft.Maui.Controls" managed-type-token-id="33555305" />
     <entry java-name="crc640ec207abc449b2ca/CustomFrameLayout" managed-name="Microsoft.Maui.Controls.Platform.Compatibility.CustomFrameLayout, Microsoft.Maui.Controls" managed-type-token-id="33555306" />
     <entry java-name="crc640ec207abc449b2ca/ShellContentFragment" managed-name="Microsoft.Maui.Controls.Platform.Compatibility.ShellContentFragment, Microsoft.Maui.Controls" managed-type-token-id="33555320" />
@@ -214,8 +214,8 @@
     <entry java-name="crc64e1fb321c08285b90/SwitchCellView" managed-name="Microsoft.Maui.Controls.Handlers.Compatibility.SwitchCellView, Microsoft.Maui.Controls" managed-type-token-id="33555422" />
     <entry java-name="crc64e1fb321c08285b90/TextCellRenderer_TextCellView" managed-name="Microsoft.Maui.Controls.Handlers.Compatibility.TextCellRenderer+TextCellView, Microsoft.Maui.Controls" managed-type-token-id="33556035" />
     <entry java-name="crc64e1fb321c08285b90/ViewCellRenderer_ViewCellContainer" managed-name="Microsoft.Maui.Controls.Handlers.Compatibility.ViewCellRenderer+ViewCellContainer, Microsoft.Maui.Controls" managed-type-token-id="33556036" />
-    <entry java-name="crc64e1fb321c08285b90/ViewCellRenderer_ViewCellContainer_TapGestureListener" managed-name="Microsoft.Maui.Controls.Handlers.Compatibility.ViewCellRenderer+ViewCellContainer+TapGestureListener, Microsoft.Maui.Controls" managed-type-token-id="33556141" />
-    <entry java-name="crc64e1fb321c08285b90/ViewCellRenderer_ViewCellContainer_LongPressGestureListener" managed-name="Microsoft.Maui.Controls.Handlers.Compatibility.ViewCellRenderer+ViewCellContainer+LongPressGestureListener, Microsoft.Maui.Controls" managed-type-token-id="33556142" />
+    <entry java-name="crc64e1fb321c08285b90/ViewCellRenderer_ViewCellContainer_TapGestureListener" managed-name="Microsoft.Maui.Controls.Handlers.Compatibility.ViewCellRenderer+ViewCellContainer+TapGestureListener, Microsoft.Maui.Controls" managed-type-token-id="33556142" />
+    <entry java-name="crc64e1fb321c08285b90/ViewCellRenderer_ViewCellContainer_LongPressGestureListener" managed-name="Microsoft.Maui.Controls.Handlers.Compatibility.ViewCellRenderer+ViewCellContainer+LongPressGestureListener, Microsoft.Maui.Controls" managed-type-token-id="33556143" />
     <entry java-name="crc64e1fb321c08285b90/TableViewModelRenderer" managed-name="Microsoft.Maui.Controls.Handlers.Compatibility.TableViewModelRenderer, Microsoft.Maui.Controls" managed-type-token-id="33555426" />
     <entry java-name="crc64e1fb321c08285b90/TableViewRenderer" managed-name="Microsoft.Maui.Controls.Handlers.Compatibility.TableViewRenderer, Microsoft.Maui.Controls" managed-type-token-id="33555427" />
   </managed-to-java>

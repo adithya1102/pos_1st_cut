@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.database import get_db
+from app.core.websocket_manager import pos_manager, waiter_manager
 from app.modules.tables.models import TableSession
 from app.modules.outlets.model import Table
 from app.modules.tables.schemas import TableSessionCreate, TableSessionResponse, TableSessionValidate
@@ -23,6 +24,43 @@ def generate_static_qr_token(outlet_id: str, table_number: int) -> str:
     Same inputs always produce the same token — safe for printed QR codes."""
     raw = f"{outlet_id}-table-{table_number}"
     return hashlib.sha256(raw.encode()).hexdigest()[:8].upper()
+
+
+@router.get("/resolve")
+async def resolve_qr_token(t: str, db: AsyncSession = Depends(get_db)):
+    """Resolve a static printed QR token → {outlet_id, table_name, zone}.
+
+    The customer frontend calls this on every page load to derive table context
+    securely from the server instead of trusting URL parameters.
+    Returns 404 for any unknown token — no enumeration surface.
+    """
+    table_result = await db.execute(
+        select(Table).where(Table.qr_token == t.strip().upper())
+    )
+    table = table_result.scalar_one_or_none()
+    if not table:
+        raise HTTPException(
+            status_code=404,
+            detail="Invalid QR code. Please scan the code on your table."
+        )
+
+    table_name = table.table_number  # stored as "N-1", "A-1", etc.
+
+    # Zone is owned by the active session (waiter sets it when opening the table)
+    session_result = await db.execute(
+        select(TableSession).where(
+            TableSession.outlet_id == table.outlet_id,
+            TableSession.table_id == table_name,
+            TableSession.is_active == True,
+        )
+    )
+    session = session_result.scalar_one_or_none()
+
+    return {
+        "outlet_id": str(table.outlet_id),
+        "table_name": table_name,
+        "zone": session.zone if session else "normal",
+    }
 
 
 @router.post("/open", response_model=TableSessionResponse)
@@ -59,6 +97,11 @@ async def open_table(data: TableSessionCreate, db: AsyncSession = Depends(get_db
     db.add(session)
     await db.commit()
     await db.refresh(session)
+
+    payload = {"table_id": str(data.table_id), "token": token}
+    await pos_manager.broadcast_order_event(str(data.outlet_id), "TABLE_OPENED", payload)
+    await waiter_manager.broadcast_order_event(str(data.outlet_id), "TABLE_OPENED", payload)
+
     return session
 
 @router.post("/close/{table_id}")
@@ -76,6 +119,11 @@ async def close_table(table_id: str, outlet_id: uuid.UUID, db: AsyncSession = De
         s.is_active = False
         s.closed_at = datetime.utcnow()
     await db.commit()
+
+    payload = {"table_id": str(table_id)}
+    await pos_manager.broadcast_order_event(str(outlet_id), "TABLE_CLOSED", payload)
+    await waiter_manager.broadcast_order_event(str(outlet_id), "TABLE_CLOSED", payload)
+
     return {"message": f"Table {table_id} closed. Token invalidated."}
 
 @router.get("/validate/{token}", response_model=TableSessionValidate)
@@ -98,7 +146,7 @@ async def validate_token(token: str, db: AsyncSession = Depends(get_db)):
 
     if table:
         # Found a physical table — now check for active session
-        table_id = f"T-{table.table_number}"
+        table_id = table.table_number  # stored as "N-1", "A-1", etc.
         outlet_id = str(table.outlet_id)
 
         session_result = await db.execute(

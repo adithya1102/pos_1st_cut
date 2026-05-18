@@ -73,6 +73,10 @@ class KitchenWebSocketManager:
             "order_status": order.get("order_status"),
         })
 
+    async def broadcast_order_event(self, outlet_id: str, event: str, order: dict):
+        """Generic broadcast for POS/Waiter terminals (NEW_ORDER, ORDER_CONFIRMED, TABLE_OPENED, TABLE_CLOSED)."""
+        await self.broadcast_to_outlet(outlet_id, {"event": event, **order})
+
 # Singleton instance — shared across all requests
 kitchen_manager = KitchenWebSocketManager()
 
@@ -166,3 +170,6 @@ customer_manager = CustomerWebSocketManager()
 
 # Singleton instance for POS terminal connections (outlet-keyed, same pattern as kitchen_manager)
 pos_manager = KitchenWebSocketManager()
+
+# Singleton instance for Waiter tablet connections
+waiter_manager = KitchenWebSocketManager()

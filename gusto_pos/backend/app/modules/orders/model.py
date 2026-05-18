@@ -27,10 +27,11 @@ class Order(Base):
     outlet_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("outlets.id"), nullable=False)
     table_id: Mapped[str | None] = mapped_column(String(20), nullable=True)
     customer_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("customers.id"))
+    staff_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("staff.id"), nullable=True)
     total_amount: Mapped[float] = mapped_column(DECIMAL(10, 2), nullable=False)
     order_status: Mapped[str] = mapped_column(String(20), default="pending")
     kitchen_token: Mapped[str | None] = mapped_column(String(50))
-    staff_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("staff.id", ondelete="SET NULL"), nullable=True)
+    source: Mapped[str] = mapped_column(String(20), default="customer")
 
     # Relationships — lazy="raise" to prevent cascade loads in async
     outlet = relationship("Outlet", back_populates="orders", lazy="raise")

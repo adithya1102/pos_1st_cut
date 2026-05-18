@@ -30,11 +30,11 @@ class OrderCreate(BaseModel):
     outlet_id: UUID
     table_id: Optional[str] = None
     customer_id: Optional[UUID] = None
-    staff_id: Optional[UUID] = None
     total_amount: float
     order_status: OrderStatusEnum = OrderStatusEnum.PENDING
     kitchen_token: Optional[str] = None
     items: Optional[List[OrderItemCreate]] = []
+    source: Optional[str] = "customer"
 
 
 class OrderUpdate(BaseModel):
@@ -43,7 +43,10 @@ class OrderUpdate(BaseModel):
     total_amount: Optional[float] = None
     order_status: Optional[OrderStatusEnum] = None
     kitchen_token: Optional[str] = None
-    items: Optional[List[OrderItemCreate]] = None
+
+
+class OrderItemsUpdate(BaseModel):
+    items: List[OrderItemCreate]
 
 
 class OrderRead(BaseModel):
@@ -56,6 +59,7 @@ class OrderRead(BaseModel):
     order_status: OrderStatusEnum
     kitchen_token: Optional[str]
     created_at: datetime
+    source: Optional[str] = "customer"
 
     class Config:
         from_attributes = True

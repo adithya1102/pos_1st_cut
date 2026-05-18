@@ -15,7 +15,7 @@ namespace GustoPOS.Views;
 
 public partial class FloorViewPage : ContentView
 {
-    private const string BackendBase = "http://127.0.0.1:8000/api/v1";
+    private const string BackendBase = "http://192.168.1.7:8000/api/v1";
     private const string OutletId = "0b8a8349-6144-41a8-b028-b9089bd8eaea";
     private const string CustomerBase = "http://localhost:3000/menu";
     private readonly HttpClient _http = new();
@@ -46,46 +46,57 @@ public partial class FloorViewPage : ContentView
     public void OnTabShown()
     {
         LoadConfigAndBuildAsync();
-        _ = ConnectFloorWsAsync();
+        if (_floorWs?.State != WebSocketState.Open)
+            _ = ConnectFloorWsAsync();
     }
 
-    private async Task ConnectFloorWsAsync()
+    private Task ConnectFloorWsAsync()
     {
         _floorWsCts?.Cancel();
         _floorWsCts = new CancellationTokenSource();
-        _floorWs = new ClientWebSocket();
-        try
-        {
-            await _floorWs.ConnectAsync(new Uri(_api.GetPosWsUrl()), _floorWsCts.Token);
-            _ = Task.Run(() => ReceiveFloorEventsAsync(_floorWsCts.Token));
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"Floor WS connect failed: {ex.Message}");
-        }
+        _ = Task.Run(() => ReceiveFloorEventsAsync(_floorWsCts.Token));
+        return Task.CompletedTask;
     }
 
     private async Task ReceiveFloorEventsAsync(CancellationToken ct)
     {
         var buf = new byte[4096];
-        while (_floorWs?.State == WebSocketState.Open && !ct.IsCancellationRequested)
+        while (!ct.IsCancellationRequested)
         {
+            _floorWs?.Dispose();
+            _floorWs = new ClientWebSocket();
             try
             {
-                var result = await _floorWs.ReceiveAsync(buf, ct);
-                if (result.MessageType == WebSocketMessageType.Close) break;
-                var msg = Encoding.UTF8.GetString(buf, 0, result.Count);
-                using var doc = JsonDocument.Parse(msg);
-                var evt = doc.RootElement.TryGetProperty("event", out var ep) ? ep.GetString() : null;
-                if (evt is "NEW_ORDER" or "ORDER_CONFIRMED" or "ORDER_STATUS_UPDATED")
-                    MainThread.BeginInvokeOnMainThread(() => RefreshTableStatusFromDbAsync());
+                await _floorWs.ConnectAsync(new Uri(_api.GetPosWsUrl()), ct);
+                while (_floorWs.State == WebSocketState.Open && !ct.IsCancellationRequested)
+                {
+                    var result = await _floorWs.ReceiveAsync(buf, ct);
+                    if (result.MessageType == WebSocketMessageType.Close) break;
+                    var msg = Encoding.UTF8.GetString(buf, 0, result.Count);
+                    using var doc = JsonDocument.Parse(msg);
+                    var evt = doc.RootElement.TryGetProperty("event", out var ep) ? ep.GetString() : null;
+                    if (evt is "TABLE_CLOSED" or "TABLE_STATUS_CHANGED")
+                    {
+                        // Capture the table_id string before the JsonDocument is disposed
+                        var closedTableId = doc.RootElement.TryGetProperty("table_id", out var tidProp)
+                            ? tidProp.GetString() : null;
+                        MainThread.BeginInvokeOnMainThread(() =>
+                        {
+                            if (closedTableId != null) _tableTokens.Remove(closedTableId);
+                            RefreshTableStatusFromDbAsync();
+                        });
+                    }
+                    else if (evt is "NEW_ORDER" or "ORDER_CONFIRMED" or "ORDER_STATUS_UPDATED" or "TABLE_OPENED")
+                        MainThread.BeginInvokeOnMainThread(() => RefreshTableStatusFromDbAsync());
+                }
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Floor WS recv: {ex.Message}");
-                break;
+                System.Diagnostics.Debug.WriteLine($"Floor WS: {ex.Message}, reconnecting in 5s");
             }
+            if (!ct.IsCancellationRequested)
+                try { await Task.Delay(5000, ct); } catch (OperationCanceledException) { break; }
         }
     }
 

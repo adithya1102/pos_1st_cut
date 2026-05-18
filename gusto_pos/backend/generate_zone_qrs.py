@@ -5,7 +5,7 @@ from app.core.database import engine
 from sqlalchemy import text
 
 OUTLET_ID = '0b8a8349-6144-41a8-b028-b9089bd8eaea'
-IP_ADDRESS = '192.168.1.4' 
+IP_ADDRESS = '192.168.1.7'
 
 async def generate():
     async with engine.begin() as conn:
@@ -40,11 +40,11 @@ async def generate():
                 zone = "normal" if prefix == "N" else "ac"
                 await conn.execute(text(
                     "INSERT INTO tables (id, outlet_id, table_number, qr_token, status, zone) "
-                    "VALUES (gen_random_uuid(), :oid, :t_num, :tok, 'free', :zone)"
+                    "VALUES (gen_random_uuid(), :oid, :t_num, :tok, 'AVAILABLE', :zone)"
                 ), {'oid': OUTLET_ID, 't_num': t_num, 'tok': token, 'zone': zone})
 
                 # Generate QR link
-                url = f"http://{IP_ADDRESS}:3000/menu/{token}"
+                url = f"http://{IP_ADDRESS}:3000/menu?t={token}"
                 qr = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={url}"
                 html += f"<div class='card'><h2 style='margin-top:0;'>{t_num}</h2><img src='{qr}' width='150'/><br><br><a href='{url}' target='_blank'>Open on PC</a></div>"
             html += "</div>"
@@ -58,8 +58,8 @@ async def generate():
         with open("qr_codes/index.html", "w", encoding="utf-8") as f:
             f.write(html)
 
-        print(f"✅ Generated {n_count} Normal and {a_count} AC tables in the database!")
-        print(f"✅ QR code page updated at backend/qr_codes/index.html")
+        print(f"[OK] Generated {n_count} Normal and {a_count} AC tables in the database!")
+        print(f"[OK] QR code page updated at backend/qr_codes/index.html")
 
 if __name__ == "__main__":
     asyncio.run(generate())

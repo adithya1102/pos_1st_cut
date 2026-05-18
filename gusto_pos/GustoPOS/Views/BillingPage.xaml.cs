@@ -76,7 +76,8 @@ public partial class BillingPage : ContentView
                 var msg = Encoding.UTF8.GetString(buf, 0, result.Count);
                 using var doc = JsonDocument.Parse(msg);
                 var evt = doc.RootElement.TryGetProperty("event", out var ep) ? ep.GetString() : null;
-                if (evt is "NEW_ORDER" or "ORDER_CONFIRMED" or "ORDER_STATUS_UPDATED")
+                if (evt is "NEW_ORDER" or "ORDER_CONFIRMED" or "ORDER_STATUS_UPDATED"
+                        or "TABLE_CLOSED" or "TABLE_STATUS_CHANGED")
                     MainThread.BeginInvokeOnMainThread(() => LoadTableStatusParallelAsync());
             }
             catch (OperationCanceledException) { break; }

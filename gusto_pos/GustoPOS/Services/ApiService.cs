@@ -9,7 +9,7 @@ using GustoPOS.Models;
 namespace GustoPOS.Services;
 public class ApiService {
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(15) };
-    private const string Base = "http://127.0.0.1:8000/api/v1";
+    private const string Base = "http://192.168.1.7:8000/api/v1";
     private const string MenuId = "dc88b6a6-129c-479f-8609-07b8525f4310";
     private const string OutletId = "0b8a8349-6144-41a8-b028-b9089bd8eaea";
     private static readonly JsonSerializerOptions Opts = new() {
@@ -43,6 +43,7 @@ public class ApiService {
                 total_amount = items.Sum(i => i.ItemTotal),
                 order_type = orderType,
                 zone = zone,
+                source = "pos",
                 items = items.Select(i => new {
                     name = i.Name,
                     quantity = i.Quantity,
@@ -177,6 +178,7 @@ public class ApiService {
                 order_type = orderType,
                 payment_method = paymentMethod,
                 zone = zone,
+                source = "pos",
                 items = items.Select(i => new {
                     name = i.Name,
                     quantity = i.Quantity,
@@ -213,7 +215,7 @@ public class ApiService {
     }
 
     public string GetPosWsUrl() =>
-        $"ws://127.0.0.1:8000/ws/pos/{OutletId}";
+        $"ws://192.168.1.7:8000/ws/pos/{OutletId}";
 
     public async Task<List<StaffMember>> GetStaffAsync() {
         try {
@@ -332,6 +334,77 @@ public class ApiService {
         } catch (Exception ex) {
             System.Diagnostics.Debug.WriteLine($"UpdateMenuItemPrice: {ex.Message}");
             return false;
+        }
+    }
+
+    public async Task<string> GetFreeTablesAsync() {
+        try {
+            var json = await _http.GetStringAsync($"{Base}/analytics/free-tables?outlet_id={OutletId}");
+            var resp = JsonSerializer.Deserialize<FreeTablesResponse>(json, Opts);
+            if (resp == null) return "No data returned.";
+            if (resp.Count == 0) return "All tables are currently occupied.";
+            var list = string.Join(", ", resp.TableNumbers.Select(n => $"T-{n}"));
+            return $"{resp.Count} free {(resp.Count == 1 ? "table" : "tables")}: {list}";
+        } catch (Exception ex) {
+            System.Diagnostics.Debug.WriteLine($"GetFreeTables: {ex.Message}");
+            return "Error: could not reach the server.";
+        }
+    }
+    public async Task<string> GetTotalTablesAsync() {
+        try {
+            var json = await _http.GetStringAsync($"{Base}/analytics/total-tables?outlet_id={OutletId}");
+            var resp = JsonSerializer.Deserialize<TotalTablesResponse>(json, Opts);
+            return resp == null ? "No data returned." : $"{resp.Count} total tables";
+        } catch (Exception ex) {
+            System.Diagnostics.Debug.WriteLine($"GetTotalTables: {ex.Message}");
+            return "Error: could not reach the server.";
+        }
+    }
+    public async Task<string> GetTopDishAsync() {
+        try {
+            var json = await _http.GetStringAsync($"{Base}/analytics/top-dish?outlet_id={OutletId}");
+            var resp = JsonSerializer.Deserialize<TopDishResponse>(json, Opts);
+            if (resp?.Dish == null) return "No orders recorded today yet.";
+            return $"{resp.Dish}  —  {resp.Quantity} sold today";
+        } catch (Exception ex) {
+            System.Diagnostics.Debug.WriteLine($"GetTopDish: {ex.Message}");
+            return "Error: could not reach the server.";
+        }
+    }
+    public async Task<string> GetTodaysRevenueAsync() {
+        try {
+            var json = await _http.GetStringAsync($"{Base}/analytics/todays-revenue?outlet_id={OutletId}");
+            var resp = JsonSerializer.Deserialize<RevenueResponse>(json, Opts);
+            return resp == null ? "No data returned." : $"₹{resp.Revenue:N2}";
+        } catch (Exception ex) {
+            System.Diagnostics.Debug.WriteLine($"GetTodaysRevenue: {ex.Message}");
+            return "Error: could not reach the server.";
+        }
+    }
+
+    public async Task<ChatResponse?> ChatQueryAsync(string question) {
+        try {
+            var body = JsonSerializer.Serialize(new { question }, Opts);
+            var res = await _http.PostAsync($"{Base}/chat/query",
+                new StringContent(body, Encoding.UTF8, "application/json"));
+            return JsonSerializer.Deserialize<ChatResponse>(await res.Content.ReadAsStringAsync(), Opts);
+        } catch (Exception ex) {
+            System.Diagnostics.Debug.WriteLine($"ChatQuery: {ex.Message}");
+            return null;
+        }
+    }
+
+    public async Task<ChatResponse?> AskGustoAsync(string query) {
+        try {
+            var body = JsonSerializer.Serialize(new { query, outlet_id = OutletId }, Opts);
+            var res = await _http.PostAsync($"{Base}/chat/ask",
+                new StringContent(body, Encoding.UTF8, "application/json"));
+            if (!res.IsSuccessStatusCode)
+                return new ChatResponse { Answer = "Server returned an error. Please try again." };
+            return JsonSerializer.Deserialize<ChatResponse>(await res.Content.ReadAsStringAsync(), Opts);
+        } catch (Exception ex) {
+            System.Diagnostics.Debug.WriteLine($"AskGusto: {ex.Message}");
+            return new ChatResponse { Answer = "Error: could not reach the server." };
         }
     }
 

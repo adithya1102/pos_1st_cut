@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(timeout 15 npm run dev)",
+      "Bash(timeout 18 npm run dev)",
+      "Bash(taskkill /F /PID 26148)",
+      "Bash(taskkill /F /IM node.exe)",
+      "Bash(timeout 20 npm run dev)",
+      "Bash(taskkill //F //PID 26148)",
+      "Bash(taskkill //F //IM node.exe)"
+    ]
+  }
+}

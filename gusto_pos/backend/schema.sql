@@ -177,6 +177,7 @@ CREATE TABLE IF NOT EXISTS orders (
     total_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
     order_status VARCHAR(20) DEFAULT 'pending',
     kitchen_token VARCHAR(50),
+    source VARCHAR(20) NOT NULL DEFAULT 'customer',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

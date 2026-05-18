@@ -57,6 +57,7 @@ function CartContent() {
         total_amount: totalAmount,
         order_type: 'dine_in',
         zone,
+        source: 'customer',
         items: items.map((item) => ({
           name: item.name,
           quantity: item.quantity,
