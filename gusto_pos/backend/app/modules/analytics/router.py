@@ -5,15 +5,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
 from app.core.database import get_db
-from app.modules.outlets.model import Table, TableStatus
+from app.modules.outlets.model import Table
 from app.modules.orders.model import Order
 from app.modules.order_items.model import OrderItem
 
 router = APIRouter(prefix="/analytics", tags=["Analytics Dashboard"])
 
+TABLE_FREE = 0
+TABLE_OCCUPIED = 1
+
 
 def _today_start() -> datetime:
-    """UTC midnight of the current day — used for all today-scoped queries."""
     return datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
 
 
@@ -24,7 +26,7 @@ async def get_free_tables(
 ):
     result = await db.execute(
         select(Table.table_number)
-        .where(Table.outlet_id == outlet_id, Table.status == TableStatus.AVAILABLE)
+        .where(Table.outlet_id == outlet_id, Table.status == TABLE_FREE)
         .order_by(Table.table_number)
     )
     numbers = result.scalars().all()

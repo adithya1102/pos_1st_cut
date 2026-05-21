@@ -14,16 +14,7 @@ async def list_staff(db: AsyncSession = Depends(get_db)):
 
 @router.post("/", response_model=StaffRead, status_code=201)
 async def create_staff(payload: StaffCreate, db: AsyncSession = Depends(get_db)):
-    member = await StaffService.create_staff(db, payload)
-    return StaffRead(
-        id=member.id,
-        name=member.name,
-        role=member.role,
-        assigned_table=member.assigned_table,
-        shift_start=member.shift_start,
-        shift_end=member.shift_end,
-        earnings_today=0.0,
-    )
+    return await StaffService.create_staff(db, payload)
 
 
 @router.put("/{staff_id}", response_model=StaffRead)
@@ -31,16 +22,7 @@ async def update_staff(staff_id: str, payload: StaffUpdate, db: AsyncSession = D
     member = await StaffService.update_staff(db, staff_id, payload)
     if not member:
         raise HTTPException(status_code=404, detail="Staff not found")
-    earnings = await StaffService.get_earnings_today(db, staff_id)
-    return StaffRead(
-        id=member.id,
-        name=member.name,
-        role=member.role,
-        assigned_table=member.assigned_table,
-        shift_start=member.shift_start,
-        shift_end=member.shift_end,
-        earnings_today=earnings,
-    )
+    return member
 
 
 @router.put("/{staff_id}/pin")

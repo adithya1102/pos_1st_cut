@@ -3,8 +3,10 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.users.model import User
+from app.modules.roles.model import Role
 from app.modules.users.schema import UserCreate
 from app.core.security import get_password_hash
+
 
 class UserService:
     @staticmethod
@@ -26,14 +28,15 @@ class UserService:
             username=payload.username,
             hashed_password=hashed,
             is_active=payload.is_active,
-            role_id=payload.role_id,
-            outlet_id=payload.outlet_id
+            outlet_id=payload.outlet_id,
         )
+        role_ids = getattr(payload, "role_ids", None) or []
+        if role_ids:
+            r = await db.execute(select(Role).where(Role.id.in_(role_ids)))
+            obj.roles = list(r.scalars().all())
         db.add(obj)
         await db.commit()
-        result = await db.execute(
-            select(User).where(User.id == obj.id)
-        )
+        result = await db.execute(select(User).where(User.id == obj.id))
         return result.scalar_one()
 
     @staticmethod
@@ -41,17 +44,18 @@ class UserService:
         obj = await db.get(User, user_id)
         if not obj:
             return None
+        role_ids = payload.pop("role_ids", None)
         for k, v in payload.items():
-            # If they are updating the password, hash it first
             if k == "password":
                 v = get_password_hash(v)
                 k = "hashed_password"
             setattr(obj, k, v)
+        if role_ids is not None:
+            r = await db.execute(select(Role).where(Role.id.in_(role_ids)))
+            obj.roles = list(r.scalars().all())
         db.add(obj)
         await db.commit()
-        result = await db.execute(
-            select(User).where(User.id == user_id)
-        )
+        result = await db.execute(select(User).where(User.id == user_id))
         return result.scalar_one()
 
     @staticmethod

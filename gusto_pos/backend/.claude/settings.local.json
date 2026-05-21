@@ -22,7 +22,8 @@
       "Bash(timeout 12 venv/Scripts/python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8001)",
       "PowerShell(netstat *)",
       "PowerShell(Invoke-RestMethod -Uri \"http://localhost:8000/\" -Method Get | ConvertTo-Json)",
-      "PowerShell(Invoke-RestMethod -Uri \"http://localhost:8000/api/v1/staff/\" -Method Get | ConvertTo-Json -Depth 5)"
+      "PowerShell(Invoke-RestMethod -Uri \"http://localhost:8000/api/v1/staff/\" -Method Get | ConvertTo-Json -Depth 5)",
+      "Bash(PYTHONPATH=$\\(pwd\\) python check_pin.py)"
     ]
   }
 }

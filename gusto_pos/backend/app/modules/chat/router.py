@@ -2,7 +2,7 @@ import traceback
 import uuid
 from datetime import datetime
 
-import faiss
+# import faiss  # temporarily disabled
 import numpy as np
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -134,8 +134,8 @@ _corpus_vecs = _model.encode(
     _phrases, convert_to_numpy=True, normalize_embeddings=True
 ).astype(np.float32)
 
-_index = faiss.IndexFlatIP(_corpus_vecs.shape[1])  # 384-dim for all-MiniLM-L6-v2
-_index.add(_corpus_vecs)
+# _index = faiss.IndexFlatIP(_corpus_vecs.shape[1])  # disabled: faiss not installed
+# _index.add(_corpus_vecs)
 
 CONFIDENCE_THRESHOLD = 0.65
 

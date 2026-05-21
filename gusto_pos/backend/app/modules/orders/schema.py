@@ -32,9 +32,7 @@ class OrderCreate(BaseModel):
     customer_id: Optional[UUID] = None
     total_amount: float
     order_status: OrderStatusEnum = OrderStatusEnum.PENDING
-    kitchen_token: Optional[str] = None
     items: Optional[List[OrderItemCreate]] = []
-    source: Optional[str] = "customer"
 
 
 class OrderUpdate(BaseModel):
@@ -42,7 +40,6 @@ class OrderUpdate(BaseModel):
     customer_id: Optional[UUID] = None
     total_amount: Optional[float] = None
     order_status: Optional[OrderStatusEnum] = None
-    kitchen_token: Optional[str] = None
 
 
 class OrderItemsUpdate(BaseModel):
@@ -57,9 +54,7 @@ class OrderRead(BaseModel):
     customer_id: Optional[UUID]
     total_amount: float
     order_status: OrderStatusEnum
-    kitchen_token: Optional[str]
     created_at: datetime
-    source: Optional[str] = "customer"
 
     class Config:
         from_attributes = True

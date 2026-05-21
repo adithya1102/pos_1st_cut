@@ -1,15 +1,7 @@
 import uuid
-from sqlalchemy import String, ForeignKey, DECIMAL, Integer, Enum as SQLEnum
+from sqlalchemy import String, ForeignKey, DECIMAL, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base
-import enum
-
-
-class TableStatus(str, enum.Enum):
-    """Status enum for tables."""
-    AVAILABLE = "available"
-    OCCUPIED = "occupied"
-    RESERVED = "reserved"
 
 
 class Outlet(Base):
@@ -20,23 +12,22 @@ class Outlet(Base):
     longitude: Mapped[float | None] = mapped_column(DECIMAL(11, 8))
     geofence_radius_meters: Mapped[int] = mapped_column(Integer, default=100)
 
-    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"))
 
-    # Relationships
     organization = relationship("Organization", back_populates="outlets", lazy="selectin")
     staff = relationship("User", back_populates="outlet", lazy="selectin")
     tables = relationship("Table", back_populates="outlet", cascade="all, delete-orphan", lazy="selectin")
     menus = relationship("Menu", back_populates="outlet", cascade="all, delete-orphan", lazy="selectin")
     orders = relationship("Order", back_populates="outlet", cascade="all, delete-orphan", lazy="selectin")
+    inventory = relationship("Inventory", back_populates="outlet", cascade="all, delete-orphan", lazy="selectin")
 
 
 class Table(Base):
-    """Table model - represents physical tables in an outlet."""
     __tablename__ = "tables"
-    outlet_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("outlets.id"), nullable=False)
-    table_number: Mapped[str] = mapped_column(String(20), nullable=False)
-    qr_token: Mapped[str] = mapped_column(String(12), unique=True, nullable=False, index=True)
-    status: Mapped[TableStatus] = mapped_column(SQLEnum(TableStatus), default=TableStatus.AVAILABLE)
+    outlet_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("outlets.id", ondelete="CASCADE"), nullable=False)
+    table_number: Mapped[str] = mapped_column(String(10), nullable=False)
+    # 0 = Free, 1 = Occupied
+    status: Mapped[int] = mapped_column(Integer, default=0)
 
-    # Relationships
     outlet = relationship("Outlet", back_populates="tables", lazy="selectin")
+    orders = relationship("Order", back_populates="table", lazy="selectin")

@@ -35,10 +35,6 @@ class OrderService:
 
     @staticmethod
     async def create_order(db: AsyncSession, payload: OrderCreate):
-        import json
-
-        source = (payload.source or "customer").strip()
-
         # "One Active Table = One Active Order" — merge into existing open order if present.
         existing = None
         if payload.table_id:
@@ -64,8 +60,6 @@ class OrderService:
                 customer_id=payload.customer_id,
                 total_amount=0,
                 order_status=payload.order_status.value if payload.order_status else "pending",
-                kitchen_token=payload.kitchen_token,
-                source=source,
             )
             db.add(obj)
             await db.flush()
@@ -75,18 +69,11 @@ class OrderService:
         new_items_total = 0.0
         if payload.items:
             for item_data in payload.items:
-                notes_dict: dict = {}
-                if item_data.customizations:
-                    notes_dict["customizations"] = item_data.customizations
-                if item_data.custom_note:
-                    notes_dict["custom_note"] = item_data.custom_note
-                item_notes = json.dumps(notes_dict) if notes_dict else None
                 db.add(OrderItem(
                     order_id=obj.id,
                     name_snap=item_data.name,
                     price_snap=item_data.unit_price,
                     quantity=item_data.quantity,
-                    item_notes=item_notes,
                 ))
                 new_items_total += item_data.unit_price * item_data.quantity
                 notif_items.append({
@@ -100,18 +87,16 @@ class OrderService:
         obj.total_amount = float(obj.total_amount) + new_items_total
         db.add(obj)
 
-        # Only notify the waiter when the order came from a customer (not from the waiter app itself)
-        if source != "waiter":
-            db.add(WaiterNotification(
-                outlet_id=obj.outlet_id,
-                table_id=str(obj.table_id) if obj.table_id else "",
-                customer_name="Customer",
-                customer_id=str(obj.customer_id) if obj.customer_id else "",
-                notif_type="order_placed",
-                order_id=obj.id,
-                total_amount=obj.total_amount,
-                order_preview=_json.dumps(notif_items),
-            ))
+        db.add(WaiterNotification(
+            outlet_id=obj.outlet_id,
+            table_id=str(obj.table_id) if obj.table_id else "",
+            customer_name="Customer",
+            customer_id=str(obj.customer_id) if obj.customer_id else "",
+            notif_type="order_placed",
+            order_id=obj.id,
+            total_amount=obj.total_amount,
+            order_preview=_json.dumps(notif_items),
+        ))
 
         await db.commit()
         result = await db.execute(
@@ -123,7 +108,6 @@ class OrderService:
             outlet_id=str(order.outlet_id),
             order={
                 "id": str(order.id),
-                "kitchen_token": order.kitchen_token,
                 "table_id": str(order.table_id) if order.table_id else None,
                 "customer_id": str(order.customer_id) if order.customer_id else None,
                 "total_amount": float(order.total_amount),
@@ -137,7 +121,6 @@ class OrderService:
             "table_id": str(order.table_id) if order.table_id else None,
             "order_status": order.order_status,
             "total_amount": float(order.total_amount),
-            "source": source,
         }
         await pos_manager.broadcast_order_event(
             outlet_id=str(order.outlet_id),
@@ -154,7 +137,6 @@ class OrderService:
             order_id=str(order.id),
             order={
                 "order_status": str(order.order_status),
-                "kitchen_token": order.kitchen_token,
             }
         )
 
@@ -194,7 +176,6 @@ class OrderService:
                 outlet_id=str(order.outlet_id),
                 order={
                     "id": str(order.id),
-                    "kitchen_token": order.kitchen_token,
                     "order_status": order.order_status,
                 }
             )
@@ -202,7 +183,6 @@ class OrderService:
                 order_id=str(order.id),
                 order={
                     "order_status": str(order.order_status),
-                    "kitchen_token": order.kitchen_token,
                 }
             )
         return order
@@ -216,18 +196,11 @@ class OrderService:
         await db.execute(sa_delete(OrderItem).where(OrderItem.order_id == order_id))
         total = 0.0
         for item_data in items:
-            notes_dict: dict = {}
-            if item_data.customizations:
-                notes_dict["customizations"] = item_data.customizations
-            if item_data.custom_note:
-                notes_dict["custom_note"] = item_data.custom_note
-            item_notes = _json.dumps(notes_dict) if notes_dict else None
             db.add(OrderItem(
                 order_id=order_id,
                 name_snap=item_data.name,
                 price_snap=item_data.unit_price,
                 quantity=item_data.quantity,
-                item_notes=item_notes,
             ))
             total += item_data.unit_price * item_data.quantity
         order.total_amount = total

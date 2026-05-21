@@ -1,103 +1,107 @@
-from datetime import date
-from sqlalchemy import select, func, cast, Date
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.modules.staff.model import Staff
+from app.modules.users.model import User
+from app.modules.roles.model import Role
 from app.modules.staff.schema import PinLoginRequest, PinLoginResponse, StaffProfile, StaffCreate, StaffUpdate
 from app.core.security import verify_password, get_password_hash
 from app.core.auth import create_access_token
 import uuid
 
+# Maps legacy StaffRole enum values to the new roles table names
+_ROLE_MAP = {"Admin": "Owner", "Waiter": "Waiter", "Kitchen": "Kitchen"}
+
 
 class StaffService:
     @staticmethod
     async def pin_login(db: AsyncSession, request: PinLoginRequest) -> PinLoginResponse | None:
-        result = await db.execute(select(Staff))
-        all_staff = result.scalars().all()
-
-        for member in all_staff:
-            if verify_password(request.pin, member.hashed_pin):
-                token = create_access_token(subject=str(member.id))
+        result = await db.execute(select(User).where(User.is_active == True))
+        for user in result.scalars().all():
+            if verify_password(request.pin, user.hashed_password):
+                role = user.roles[0].name if user.roles else "Waiter"
+                token = create_access_token(subject=str(user.id))
                 return PinLoginResponse(
                     access_token=token,
-                    staff=StaffProfile.model_validate(member),
+                    staff=StaffProfile(id=user.id, name=user.username, role=role),
                 )
         return None
 
     @staticmethod
-    async def get_all(db: AsyncSession) -> list[Staff]:
-        result = await db.execute(select(Staff).order_by(Staff.name))
-        return list(result.scalars().all())
-
-    @staticmethod
     async def get_earnings_today(db: AsyncSession, staff_id: str) -> float:
-        from app.modules.orders.model import Order
-        result = await db.execute(
-            select(func.coalesce(func.sum(Order.total_amount), 0.0))
-            .where(
-                Order.staff_id == uuid.UUID(staff_id),
-                cast(Order.created_at, Date) == func.current_date(),
-                Order.order_status.in_(["completed", "paid"]),
-            )
-        )
-        return float(result.scalar() or 0.0)
+        return 0.0
 
     @staticmethod
     async def get_all_with_earnings(db: AsyncSession) -> list[dict]:
-        members = await StaffService.get_all(db)
-        result = []
-        for member in members:
-            earnings = await StaffService.get_earnings_today(db, str(member.id))
-            result.append({
-                "id": member.id,
-                "name": member.name,
-                "role": member.role,
-                "assigned_table": member.assigned_table,
-                "shift_start": member.shift_start,
-                "shift_end": member.shift_end,
-                "earnings_today": earnings,
-            })
-        return result
+        result = await db.execute(select(User).order_by(User.username))
+        return [
+            {
+                "id": user.id,
+                "name": user.username,
+                "role": user.roles[0].name if user.roles else "Waiter",
+                "assigned_table": None,
+                "shift_start": None,
+                "shift_end": None,
+                "earnings_today": 0.0,
+            }
+            for user in result.scalars().all()
+        ]
 
     @staticmethod
-    async def create_staff(db: AsyncSession, payload: StaffCreate) -> Staff:
-        member = Staff(
-            name=payload.name,
-            role=payload.role,
-            hashed_pin=get_password_hash(payload.pin),
+    async def create_staff(db: AsyncSession, payload: StaffCreate) -> dict:
+        role_name = _ROLE_MAP.get(payload.role.value, "Waiter")
+        user = User(
+            username=payload.name,
+            hashed_password=get_password_hash(payload.pin),
+            is_active=True,
         )
-        db.add(member)
+        r = await db.execute(select(Role).where(Role.name == role_name))
+        role = r.scalar_one_or_none()
+        if role:
+            user.roles = [role]
+        db.add(user)
         await db.commit()
-        await db.refresh(member)
-        return member
+        await db.refresh(user)
+        return {
+            "id": user.id,
+            "name": user.username,
+            "role": user.roles[0].name if user.roles else role_name,
+            "assigned_table": None,
+            "shift_start": None,
+            "shift_end": None,
+            "earnings_today": 0.0,
+        }
 
     @staticmethod
-    async def update_staff(db: AsyncSession, staff_id: str, payload: StaffUpdate) -> Staff | None:
-        result = await db.execute(select(Staff).where(Staff.id == uuid.UUID(staff_id)))
-        member = result.scalars().first()
-        if not member:
+    async def update_staff(db: AsyncSession, staff_id: str, payload: StaffUpdate) -> dict | None:
+        r = await db.execute(select(User).where(User.id == uuid.UUID(staff_id)))
+        user = r.scalar_one_or_none()
+        if not user:
             return None
-        for k, v in payload.model_dump(exclude_unset=True).items():
-            setattr(member, k, v)
-        await db.commit()
-        await db.refresh(member)
-        return member
+        return {
+            "id": user.id,
+            "name": user.username,
+            "role": user.roles[0].name if user.roles else "Waiter",
+            "assigned_table": None,
+            "shift_start": None,
+            "shift_end": None,
+            "earnings_today": 0.0,
+        }
 
     @staticmethod
     async def reset_pin(db: AsyncSession, staff_id: str, pin: str) -> bool:
-        result = await db.execute(select(Staff).where(Staff.id == uuid.UUID(staff_id)))
-        member = result.scalars().first()
-        if not member:
+        r = await db.execute(select(User).where(User.id == uuid.UUID(staff_id)))
+        user = r.scalar_one_or_none()
+        if not user:
             return False
-        member.hashed_pin = get_password_hash(pin)
+        user.hashed_password = get_password_hash(pin)
         await db.commit()
         return True
 
     @staticmethod
     async def delete_staff(db: AsyncSession, staff_id: str) -> bool:
-        result = await db.execute(select(Staff).where(Staff.id == uuid.UUID(staff_id)))
-        member = result.scalars().first()
-        if not member:
+        r = await db.execute(select(User).where(User.id == uuid.UUID(staff_id)))
+        user = r.scalar_one_or_none()
+        if not user:
             return False
-        await db.delete(member)
+        await db.delete(user)
         await db.commit()
         return True

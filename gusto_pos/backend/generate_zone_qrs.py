@@ -1,65 +1,74 @@
 import asyncio
-import uuid
 import os
 from app.core.database import engine
 from sqlalchemy import text
 
-OUTLET_ID = '0b8a8349-6144-41a8-b028-b9089bd8eaea'
 IP_ADDRESS = '192.168.1.7'
+NORMAL_COUNT = 12
+AC_COUNT = 4
+
 
 async def generate():
     async with engine.begin() as conn:
-        # 1. Get current config counts
-        res = await conn.execute(text("SELECT config_key, config_value FROM outlet_config WHERE outlet_id = :oid"), {'oid': OUTLET_ID})
-        configs = {row[0]: int(row[1]) for row in res.fetchall()}
-        n_count = configs.get('normal_table_count', 10)
-        a_count = configs.get('ac_table_count', 10)
+        # Fetch the first seeded outlet
+        res = await conn.execute(text("SELECT id FROM outlets ORDER BY created_at LIMIT 1"))
+        row = res.fetchone()
+        if not row:
+            print("[ERROR] No outlets found. Run reset_db.py first to seed the database.")
+            return
+        outlet_id = str(row[0])
+        print(f"[INFO] Using outlet_id: {outlet_id}")
 
-        # 2. Delete old hardcoded tables
-        await conn.execute(text("DELETE FROM tables WHERE outlet_id = :oid"), {'oid': OUTLET_ID})
-
-        # 2b. Alter table_number to varchar if it's still integer
-        await conn.execute(text("ALTER TABLE tables ALTER COLUMN table_number TYPE varchar USING table_number::varchar"))
+        # Delete existing tables for this outlet and re-seed
+        await conn.execute(text("DELETE FROM tables WHERE outlet_id = :oid"), {'oid': outlet_id})
 
         html = f"""<html><head><style>
         body {{ font-family: sans-serif; background: #f8f9fa; text-align: center; }}
         .grid {{ display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; padding: 20px; }}
         .card {{ background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); width: 200px; }}
+        .zone-label {{ font-size: 12px; color: #888; margin-top: 8px; }}
         h2 {{ color: #1b4332; margin-top: 40px; }}
-        </style></head><body><h1>Gusto POS — WiFi QR Testing</h1>
-        <p>Ensure your phone is connected to the same WiFi network ({IP_ADDRESS})</p>"""
+        .note {{ background: #fff3cd; border: 1px solid #ffc107; border-radius: 8px; padding: 12px; margin: 20px auto; max-width: 600px; font-size: 14px; color: #856404; }}
+        </style></head><body>
+        <h1>Gusto POS — Table Reference</h1>
+        <p>Backend: <code>{IP_ADDRESS}:8000</code> &nbsp;|&nbsp; Frontend: <code>{IP_ADDRESS}:3000</code></p>
+        <div class="note">
+            QR codes are now <strong>session-based</strong>. Staff must open a table from the POS terminal
+            (or call <code>POST /api/v1/tables/open</code>) to generate a live session token.
+            The QR sticker printed from the POS encodes that token.
+        </div>"""
 
-        async def make_tables(prefix, count, title):
+        async def make_tables(prefix, count, title, zone):
             nonlocal html
             html += f"<h2>{title}</h2><div class='grid'>"
             for i in range(1, count + 1):
                 t_num = f"{prefix}-{i}"
-                token = uuid.uuid4().hex[:8].upper()
-                
-                # Insert dynamic table
-                zone = "normal" if prefix == "N" else "ac"
                 await conn.execute(text(
-                    "INSERT INTO tables (id, outlet_id, table_number, qr_token, status, zone) "
-                    "VALUES (gen_random_uuid(), :oid, :t_num, :tok, 'AVAILABLE', :zone)"
-                ), {'oid': OUTLET_ID, 't_num': t_num, 'tok': token, 'zone': zone})
+                    "INSERT INTO tables (id, outlet_id, table_number, status, created_at) "
+                    "VALUES (gen_random_uuid(), :oid, :t_num, 0, NOW())"
+                ), {'oid': outlet_id, 't_num': t_num})
 
-                # Generate QR link
-                url = f"http://{IP_ADDRESS}:3000/menu?t={token}"
-                qr = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={url}"
-                html += f"<div class='card'><h2 style='margin-top:0;'>{t_num}</h2><img src='{qr}' width='150'/><br><br><a href='{url}' target='_blank'>Open on PC</a></div>"
+                open_url = f"http://{IP_ADDRESS}:8000/api/v1/tables/open"
+                html += (
+                    f"<div class='card'>"
+                    f"<h2 style='margin-top:0;'>{t_num}</h2>"
+                    f"<div class='zone-label'>Zone: {zone}</div>"
+                    f"<br><a href='{open_url}' target='_blank' style='font-size:12px;'>Open via API</a>"
+                    f"</div>"
+                )
             html += "</div>"
 
-        await make_tables("N", n_count, "NORMAL DINING")
-        await make_tables("A", a_count, "AC FINE-DINE ❄️")
+        await make_tables("N", NORMAL_COUNT, "NORMAL DINING", "normal")
+        await make_tables("A", AC_COUNT, "AC FINE-DINE", "ac")
         html += "</body></html>"
 
-        # 3. Save the HTML file
         os.makedirs("qr_codes", exist_ok=True)
         with open("qr_codes/index.html", "w", encoding="utf-8") as f:
             f.write(html)
 
-        print(f"[OK] Generated {n_count} Normal and {a_count} AC tables in the database!")
-        print(f"[OK] QR code page updated at backend/qr_codes/index.html")
+        print(f"[OK] Seeded {NORMAL_COUNT} Normal (N-1..N-{NORMAL_COUNT}) and {AC_COUNT} AC (A-1..A-{AC_COUNT}) tables.")
+        print(f"[OK] Reference page saved to backend/qr_codes/index.html")
+
 
 if __name__ == "__main__":
     asyncio.run(generate())

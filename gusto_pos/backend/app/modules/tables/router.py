@@ -1,7 +1,6 @@
 import uuid
 import random
 import string
-import hashlib
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,81 +8,68 @@ from sqlalchemy import select
 from app.core.database import get_db
 from app.core.websocket_manager import pos_manager, waiter_manager
 from app.modules.tables.models import TableSession
-from app.modules.outlets.model import Table
 from app.modules.tables.schemas import TableSessionCreate, TableSessionResponse, TableSessionValidate
 
 router = APIRouter(prefix="/tables", tags=["Tables"])
 
-def generate_token(length=6):
-    """Generate a short alphanumeric token like A3K9PX"""
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
 
-
-def generate_static_qr_token(outlet_id: str, table_number: int) -> str:
-    """Generate a deterministic permanent QR token from outlet + table number.
-    Same inputs always produce the same token — safe for printed QR codes."""
-    raw = f"{outlet_id}-table-{table_number}"
-    return hashlib.sha256(raw.encode()).hexdigest()[:8].upper()
+def generate_token(length=6) -> str:
+    return "".join(random.choices(string.ascii_uppercase + string.digits, k=length))
 
 
 @router.get("/resolve")
-async def resolve_qr_token(t: str, db: AsyncSession = Depends(get_db)):
-    """Resolve a static printed QR token → {outlet_id, table_name, zone}.
+async def resolve_session_token(t: str, db: AsyncSession = Depends(get_db)):
+    """Resolve a session token → {outlet_id, table_id, zone}.
 
-    The customer frontend calls this on every page load to derive table context
-    securely from the server instead of trusting URL parameters.
-    Returns 404 for any unknown token — no enumeration surface.
+    The customer frontend calls this on every page load.  The token is the
+    short code printed on the physical QR sticker (which encodes the session
+    token generated when staff opens the table, not a static qr_token field).
     """
-    table_result = await db.execute(
-        select(Table).where(Table.qr_token == t.strip().upper())
-    )
-    table = table_result.scalar_one_or_none()
-    if not table:
-        raise HTTPException(
-            status_code=404,
-            detail="Invalid QR code. Please scan the code on your table."
-        )
-
-    table_name = table.table_number  # stored as "N-1", "A-1", etc.
-
-    # Zone is owned by the active session (waiter sets it when opening the table)
-    session_result = await db.execute(
+    token_upper = t.strip().upper()
+    result = await db.execute(
         select(TableSession).where(
-            TableSession.outlet_id == table.outlet_id,
-            TableSession.table_id == table_name,
+            TableSession.token == token_upper,
             TableSession.is_active == True,
         )
     )
-    session = session_result.scalar_one_or_none()
-
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(
+            status_code=404,
+            detail="Invalid QR code. Please scan the code on your table.",
+        )
     return {
-        "outlet_id": str(table.outlet_id),
-        "table_name": table_name,
-        "zone": session.zone if session else "normal",
+        "outlet_id": str(session.outlet_id),
+        "table_id": session.table_id,
+        "zone": session.zone or "normal",
     }
 
 
 @router.post("/open", response_model=TableSessionResponse)
 async def open_table(data: TableSessionCreate, db: AsyncSession = Depends(get_db)):
-    """Staff opens a table — creates a session (QR token is static, session is internal)"""
-    
+    """Staff opens a table — creates an active session with a fresh short token.
+    The token is what gets encoded in the QR code shown to the customer.
+    """
     # Close any existing active session for this table
     result = await db.execute(
         select(TableSession).where(
             TableSession.outlet_id == data.outlet_id,
             TableSession.table_id == data.table_id,
-            TableSession.is_active == True
+            TableSession.is_active == True,
         )
     )
-    existing = result.scalars().all()
-    for session in existing:
-        session.is_active = False
-        session.closed_at = datetime.utcnow()
+    for existing in result.scalars().all():
+        existing.is_active = False
+        existing.closed_at = datetime.utcnow()
 
-    # Generate unique internal token for this session
+    # Generate a unique session token (collision-safe)
     while True:
         token = generate_token()
-        check = await db.execute(select(TableSession).where(TableSession.token == token, TableSession.is_active == True))
+        check = await db.execute(
+            select(TableSession).where(
+                TableSession.token == token, TableSession.is_active == True
+            )
+        )
         if not check.scalar_one_or_none():
             break
 
@@ -92,7 +78,7 @@ async def open_table(data: TableSessionCreate, db: AsyncSession = Depends(get_db
         table_id=data.table_id,
         zone=data.zone,
         token=token,
-        expires_at=datetime.utcnow() + timedelta(hours=12)
+        expires_at=datetime.utcnow() + timedelta(hours=12),
     )
     db.add(session)
     await db.commit()
@@ -104,18 +90,18 @@ async def open_table(data: TableSessionCreate, db: AsyncSession = Depends(get_db
 
     return session
 
+
 @router.post("/close/{table_id}")
 async def close_table(table_id: str, outlet_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    """Staff closes a table — token immediately invalidated"""
+    """Staff closes a table — session token immediately invalidated."""
     result = await db.execute(
         select(TableSession).where(
             TableSession.outlet_id == outlet_id,
             TableSession.table_id == table_id,
-            TableSession.is_active == True
+            TableSession.is_active == True,
         )
     )
-    sessions = result.scalars().all()
-    for s in sessions:
+    for s in result.scalars().all():
         s.is_active = False
         s.closed_at = datetime.utcnow()
     await db.commit()
@@ -123,87 +109,45 @@ async def close_table(table_id: str, outlet_id: uuid.UUID, db: AsyncSession = De
     payload = {"table_id": str(table_id)}
     await pos_manager.broadcast_order_event(str(outlet_id), "TABLE_CLOSED", payload)
     await waiter_manager.broadcast_order_event(str(outlet_id), "TABLE_CLOSED", payload)
-
     return {"message": f"Table {table_id} closed. Token invalidated."}
+
 
 @router.get("/validate/{token}", response_model=TableSessionValidate)
 async def validate_token(token: str, db: AsyncSession = Depends(get_db)):
-    """Customer scans QR → validates static token → checks for active session.
-    
-    Flow:
-    1. Look up the permanent Table record by qr_token
-    2. If found, check if there's an active TableSession for that table
-    3. If no active session, tell customer to ask waiter to open the table
-    4. Fall back to old dynamic token lookup for backward compatibility
+    """Customer scans QR → validate the session token.
+
+    The QR code encodes the short session token (set when staff opens the
+    table).  There are no static qr_token fields any more — tokens are
+    per-session and expire after 12 h.
     """
     token_upper = token.upper()
 
-    # ── Step 1: Check if this is a STATIC QR token (permanent, printed on table) ──
-    table_result = await db.execute(
-        select(Table).where(Table.qr_token == token_upper)
-    )
-    table = table_result.scalar_one_or_none()
-
-    if table:
-        # Found a physical table — now check for active session
-        table_id = table.table_number  # stored as "N-1", "A-1", etc.
-        outlet_id = str(table.outlet_id)
-
-        session_result = await db.execute(
-            select(TableSession).where(
-                TableSession.outlet_id == table.outlet_id,
-                TableSession.table_id == table_id,
-                TableSession.is_active == True
-            )
-        )
-        session = session_result.scalar_one_or_none()
-
-        if not session:
-            return TableSessionValidate(
-                token=token, table_id=table_id, outlet_id=outlet_id,
-                is_valid=False,
-                message="Table not active. Ask your waiter to open the table."
-            )
-
-        if datetime.utcnow() > session.expires_at:
-            session.is_active = False
-            await db.commit()
-            return TableSessionValidate(
-                token=token, table_id=table_id, outlet_id=outlet_id,
-                is_valid=False,
-                message="Session expired. Ask your waiter to reopen the table."
-            )
-
-        return TableSessionValidate(
-            token=token,
-            table_id=table_id,
-            outlet_id=outlet_id,
-            zone=session.zone or "normal",
-            is_valid=True,
-            message="Valid"
-        )
-
-    # ── Step 2: Fall back to old dynamic token lookup (backward compat) ──
     result = await db.execute(
         select(TableSession).where(
             TableSession.token == token_upper,
-            TableSession.is_active == True
+            TableSession.is_active == True,
         )
     )
     session = result.scalar_one_or_none()
 
     if not session:
         return TableSessionValidate(
-            token=token, table_id="", outlet_id="",
-            is_valid=False, message="Invalid QR code. Please ask staff for assistance."
+            token=token,
+            table_id="",
+            outlet_id="",
+            is_valid=False,
+            message="Invalid QR code. Please ask staff for assistance.",
         )
 
     if datetime.utcnow() > session.expires_at:
         session.is_active = False
         await db.commit()
         return TableSessionValidate(
-            token=token, table_id="", outlet_id="",
-            is_valid=False, message="Session expired. Ask your waiter to reopen the table."
+            token=token,
+            table_id=session.table_id,
+            outlet_id=str(session.outlet_id),
+            is_valid=False,
+            message="Session expired. Ask your waiter to reopen the table.",
         )
 
     return TableSessionValidate(
@@ -212,44 +156,46 @@ async def validate_token(token: str, db: AsyncSession = Depends(get_db)):
         outlet_id=str(session.outlet_id),
         zone=session.zone or "normal",
         is_valid=True,
-        message="Valid"
+        message="Valid",
     )
+
 
 @router.get("/all")
 async def list_all_sessions(db: AsyncSession = Depends(get_db)):
-    """List all table sessions (for debugging/admin)"""
     result = await db.execute(select(TableSession))
     sessions = result.scalars().all()
     return [
         {
-            "id": str(session.id),
-            "token": session.token,
-            "table_id": session.table_id,
-            "outlet_id": str(session.outlet_id),
-            "is_active": session.is_active,
-            "created_at": session.created_at.isoformat() if session.created_at else None,
-            "expires_at": session.expires_at.isoformat() if session.expires_at else None,
-            "closed_at": session.closed_at.isoformat() if session.closed_at else None,
+            "id": str(s.id),
+            "token": s.token,
+            "table_id": s.table_id,
+            "outlet_id": str(s.outlet_id),
+            "zone": s.zone,
+            "is_active": s.is_active,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+            "expires_at": s.expires_at.isoformat() if s.expires_at else None,
+            "closed_at": s.closed_at.isoformat() if s.closed_at else None,
         }
-        for session in sessions
+        for s in sessions
     ]
+
 
 @router.get("/active")
 async def list_active_sessions(outlet_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    """List only active table sessions for a specific outlet"""
     result = await db.execute(
         select(TableSession).where(
             TableSession.outlet_id == outlet_id,
-            TableSession.is_active == True
+            TableSession.is_active == True,
         )
     )
     sessions = result.scalars().all()
     return [
         {
-            "token": session.token,
-            "table_id": session.table_id,
-            "created_at": session.created_at.isoformat() if session.created_at else None,
-            "expires_at": session.expires_at.isoformat() if session.expires_at else None,
+            "token": s.token,
+            "table_id": s.table_id,
+            "zone": s.zone,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+            "expires_at": s.expires_at.isoformat() if s.expires_at else None,
         }
-        for session in sessions
+        for s in sessions
     ]

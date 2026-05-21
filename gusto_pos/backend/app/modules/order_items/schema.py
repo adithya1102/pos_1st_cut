@@ -1,7 +1,7 @@
-import json
 from pydantic import BaseModel, computed_field
 from uuid import UUID
 from typing import Optional
+
 
 class OrderItemRead(BaseModel):
     id: UUID
@@ -10,7 +10,6 @@ class OrderItemRead(BaseModel):
     name_snap: Optional[str] = None
     price_snap: Optional[float] = None
     quantity: int
-    item_notes: Optional[str] = None
 
     @computed_field
     @property
@@ -21,28 +20,6 @@ class OrderItemRead(BaseModel):
     @property
     def unit_price(self) -> float:
         return self.price_snap or 0.0
-
-    @computed_field
-    @property
-    def customizations(self) -> list[str]:
-        if not self.item_notes:
-            return []
-        try:
-            data = json.loads(self.item_notes)
-            return data.get("customizations", [])
-        except (json.JSONDecodeError, AttributeError):
-            return []
-
-    @computed_field
-    @property
-    def custom_note(self) -> str:
-        if not self.item_notes:
-            return ""
-        try:
-            data = json.loads(self.item_notes)
-            return data.get("custom_note", "") or ""
-        except (json.JSONDecodeError, AttributeError):
-            return ""
 
     class Config:
         from_attributes = True

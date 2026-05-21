@@ -18,7 +18,7 @@ class PinLoginRequest(BaseModel):
 class StaffProfile(BaseModel):
     id: uuid.UUID
     name: str
-    role: StaffRole
+    role: str
 
     model_config = {"from_attributes": True}
 
@@ -32,7 +32,7 @@ class PinLoginResponse(BaseModel):
 class StaffRead(BaseModel):
     id: uuid.UUID
     name: str
-    role: StaffRole
+    role: str
     assigned_table: Optional[str] = None
     shift_start: Optional[str] = None
     shift_end: Optional[str] = None

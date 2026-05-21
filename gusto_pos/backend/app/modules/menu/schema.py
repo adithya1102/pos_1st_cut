@@ -9,8 +9,6 @@ class ItemModifierCreate(BaseModel):
     """Schema for creating an ItemModifier."""
     modifier_name: str
     extra_price: float = 0.0
-    modifier_type: str = "checkbox"
-    group_name: Optional[str] = None
 
 
 class ItemModifierResponse(BaseModel):
@@ -19,8 +17,6 @@ class ItemModifierResponse(BaseModel):
     menu_item_id: UUID
     modifier_name: str
     extra_price: float
-    modifier_type: str
-    group_name: Optional[str]
     created_at: datetime
 
     class Config:
@@ -32,8 +28,6 @@ class ModifierOption(BaseModel):
     id: str
     label: str
     extra_price: float
-    modifier_type: str
-    group_name: Optional[str]
 
 
 class MenuItemCreate(BaseModel):

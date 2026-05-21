@@ -3,35 +3,29 @@ from pydantic import BaseModel
 from uuid import UUID
 from typing import Optional
 from datetime import datetime
-from enum import Enum
 
 
-class TableStatusEnum(str, Enum):
-    """Table status enum."""
-    AVAILABLE = "available"
-    OCCUPIED = "occupied"
-    RESERVED = "reserved"
+# Table status uses integers: 0 = Free, 1 = Occupied
+TABLE_FREE = 0
+TABLE_OCCUPIED = 1
 
 
 class TableCreate(BaseModel):
-    """Schema for creating a Table."""
     outlet_id: UUID
-    table_number: int
-    status: TableStatusEnum = TableStatusEnum.AVAILABLE
+    table_number: str
+    status: int = TABLE_FREE
 
 
 class TableUpdate(BaseModel):
-    """Schema for updating a Table."""
-    table_number: Optional[int] = None
-    status: Optional[TableStatusEnum] = None
+    table_number: Optional[str] = None
+    status: Optional[int] = None
 
 
 class TableRead(BaseModel):
-    """Schema for Table response."""
     id: UUID
     outlet_id: UUID
-    table_number: int
-    status: TableStatusEnum
+    table_number: str
+    status: int
     created_at: datetime
 
     class Config:
@@ -39,7 +33,6 @@ class TableRead(BaseModel):
 
 
 class OutletCreate(BaseModel):
-    """Schema for creating an Outlet."""
     organization_id: UUID
     location_name: str
     city: Optional[str] = None
@@ -49,7 +42,6 @@ class OutletCreate(BaseModel):
 
 
 class OutletUpdate(BaseModel):
-    """Schema for updating an Outlet."""
     location_name: Optional[str] = None
     city: Optional[str] = None
     latitude: Optional[float] = None
@@ -58,7 +50,6 @@ class OutletUpdate(BaseModel):
 
 
 class OutletRead(BaseModel):
-    """Schema for Outlet response."""
     id: UUID
     organization_id: UUID
     location_name: str
@@ -70,4 +61,3 @@ class OutletRead(BaseModel):
 
     class Config:
         from_attributes = True
-

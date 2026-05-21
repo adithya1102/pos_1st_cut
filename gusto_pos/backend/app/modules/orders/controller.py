@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.websocket_manager import pos_manager, waiter_manager
 from app.modules.orders.model import Order
-from app.modules.outlets.model import Table, TableStatus
+from app.modules.outlets.model import Table
 from app.modules.orders.schema import (
     OrderRead, OrderCreate, OrderUpdate, OrderItemsUpdate,
     OrderWithItemsRead, SettleResponse, BillResponse,
@@ -183,7 +183,7 @@ async def confirm_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
         )
         tbl = tbl_result.scalar_one_or_none()
         if tbl:
-            tbl.status = TableStatus.OCCUPIED
+            tbl.status = 1  # 1 = Occupied
 
     await db.commit()
 
