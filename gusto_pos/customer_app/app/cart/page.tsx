@@ -2,8 +2,15 @@
 
 import { useCart } from '@/lib/cart-store';
 import { createOrder } from '@/lib/api';
+import { useGeofence } from '@/lib/use-geofence';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState, useEffect, Suspense } from 'react';
+
+// TODO: Replace with real outlet coordinates fetched from the API once the
+// outlet endpoint exposes lat/lon. These are placeholders for local testing.
+const RESTAURANT_LAT = 12.9716;
+const RESTAURANT_LON = 77.5946;
+const GEOFENCE_RADIUS_METERS = 100;
 
 interface OrderResult {
   id: string;
@@ -41,6 +48,13 @@ function CartContent() {
   const [orderSuccess, setOrderSuccess] = useState<OrderResult | null>(null);
   const [zone, setZone] = useState('normal');
 
+  const { status: geofenceStatus, distanceMeters, checkLocation, reset: resetGeofence } =
+    useGeofence({
+      targetLat: RESTAURANT_LAT,
+      targetLon: RESTAURANT_LON,
+      radiusMeters: GEOFENCE_RADIUS_METERS,
+    });
+
   useEffect(() => {
     const z = searchParams.get('zone') || localStorage.getItem('table_zone') || 'normal';
     setZone(z);
@@ -48,8 +62,21 @@ function CartContent() {
 
   const handlePlaceOrder = async () => {
     if (items.length === 0) return;
-    setPlacing(true);
     setError(null);
+
+    const locationResult = await checkLocation();
+
+    if (locationResult === 'denied' || locationResult === 'outside') {
+      return;
+    }
+
+    if (locationResult === 'error') {
+      setError('Could not verify your location. Please try again.');
+      return;
+    }
+
+    // locationResult === 'inside' — safe to proceed
+    setPlacing(true);
     try {
       const orderData = {
         outlet_id: outletId,
@@ -114,6 +141,8 @@ function CartContent() {
       </div>
     );
   }
+
+  const isBlocked = geofenceStatus === 'checking' || placing;
 
   return (
     <div className="min-h-screen bg-[#0f172a] pb-40">
@@ -202,17 +231,60 @@ function CartContent() {
             <span className="text-lg font-bold text-[#f8fafc]">₹{totalAmount}</span>
           </div>
 
+          {/* Geofence: user is outside the restaurant */}
+          {geofenceStatus === 'outside' && (
+            <div className="mb-3 rounded-xl bg-[#7f1d1d] px-4 py-3">
+              <p className="text-center text-sm font-semibold text-[#fca5a5]">
+                It looks like you aren&apos;t at the restaurant!
+              </p>
+              <p className="mt-1 text-center text-xs text-[#fca5a5]/80">
+                You must be dining in to place an order.
+                {distanceMeters !== null && ` (${distanceMeters}m away)`}
+              </p>
+              <button
+                onClick={resetGeofence}
+                className="mt-2 w-full text-center text-xs text-[#fca5a5] underline underline-offset-2"
+              >
+                Try again
+              </button>
+            </div>
+          )}
+
+          {/* Geofence: location permission denied */}
+          {geofenceStatus === 'denied' && (
+            <div className="mb-3 rounded-xl bg-[#431407] px-4 py-3">
+              <p className="text-center text-sm font-semibold text-[#fdba74]">
+                Location access required
+              </p>
+              <p className="mt-1 text-center text-xs text-[#fdba74]/80">
+                Please enable location permissions in your browser settings to verify your table.
+              </p>
+              <button
+                onClick={resetGeofence}
+                className="mt-2 w-full text-center text-xs text-[#fdba74] underline underline-offset-2"
+              >
+                Try again
+              </button>
+            </div>
+          )}
+
+          {/* Generic location error */}
           {error && (
             <p className="mb-3 text-center text-sm text-[#ef4444]">{error}</p>
           )}
 
           <button
             onClick={handlePlaceOrder}
-            disabled={placing}
+            disabled={isBlocked}
             className="w-full rounded-xl py-3.5 text-center text-lg font-bold text-white transition-colors hover:opacity-90 disabled:opacity-50 active:scale-[0.98]"
             style={{ backgroundColor: '#1B4332', height: '56px', fontSize: '18px' }}
           >
-            {placing ? (
+            {geofenceStatus === 'checking' ? (
+              <span className="flex items-center justify-center gap-2">
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                Verifying location...
+              </span>
+            ) : placing ? (
               <span className="flex items-center justify-center gap-2">
                 <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
                 Sending order...

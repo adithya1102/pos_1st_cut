@@ -1,0 +1,15 @@
+<api>
+  <jcw-types>
+    <type name="MainActivity" package="crc6473d1dbc3fab4acc0" application_java_class="android.app.Application" mono_runtime_initialization="mono.MonoPackageManager.LoadApplication (context);" extends_type="crc6488302ad6e9e4df1a.MauiAppCompatActivity" partial_assembly_qualified_name="GustoPOS.MainActivity, GustoPOS">
+      <constructors>
+        <constructor name="MainActivity" method="n_.ctor:()V:" jni_signature="()V" managed_parameters="" retval="void" is_dynamically_registered="True" />
+        <constructor name="MainActivity" method="n_.ctor:(I)V:" jni_signature="(I)V" managed_parameters="System.Int32, System.Private.CoreLib" params="int p0" retval="void" is_dynamically_registered="True" super_call="p0" activate_call="p0" />
+      </constructors>
+    </type>
+    <type name="MainApplication" package="crc6473d1dbc3fab4acc0" application_java_class="android.app.Application" mono_runtime_initialization="mono.MonoPackageManager.LoadApplication (context);" extends_type="crc6488302ad6e9e4df1a.MauiApplication" is_application="True" partial_assembly_qualified_name="GustoPOS.MainApplication, GustoPOS" application_constructor="MainApplication" />
+  </jcw-types>
+  <acw-types partial-assembly-name="GustoPOS" module-name="GustoPOS.dll">
+    <type assembly-qualified-name="GustoPOS.MainActivity, GustoPOS, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null" compat-jni-name="gustopos.MainActivity" java-key="crc6473d1dbc3fab4acc0.MainActivity" managed-key="GustoPOS.MainActivity" partial-assembly-qualified-name="GustoPOS.MainActivity, GustoPOS" />
+    <type assembly-qualified-name="GustoPOS.MainApplication, GustoPOS, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null" compat-jni-name="gustopos.MainApplication" java-key="crc6473d1dbc3fab4acc0.MainApplication" managed-key="GustoPOS.MainApplication" partial-assembly-qualified-name="GustoPOS.MainApplication, GustoPOS" />
+  </acw-types>
+</api>

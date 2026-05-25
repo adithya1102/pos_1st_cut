@@ -17,6 +17,7 @@ public partial class DashboardPage : ContentPage {
     private Button[] _tabs = Array.Empty<Button>();
     private ClientWebSocket? _waiterWs;
     private CancellationTokenSource? _waiterWsCts;
+    private readonly HashSet<string> _pendingApprovals = new();
 
     public DashboardPage() {
         InitializeComponent();
@@ -63,12 +64,18 @@ public partial class DashboardPage : ContentPage {
                     var msg = Encoding.UTF8.GetString(buf, 0, result.Count);
                     using var doc = JsonDocument.Parse(msg);
                     var evt = doc.RootElement.TryGetProperty("event", out var ep) ? ep.GetString() : null;
-                    if (evt is "NEW_ORDER" or "ORDER_CONFIRMED") {
-                        // Only show an alert when the order was placed by a customer via the web app.
-                        // Waiter-placed orders skip the alert tab (they already know what they ordered).
-                        var src = doc.RootElement.TryGetProperty("source", out var sp) ? sp.GetString() : "customer";
-                        if (src == "customer")
+                    if (evt == "NEW_ORDER") {
+                        var orderId  = doc.RootElement.TryGetProperty("id",           out var oid) ? oid.GetString() ?? "" : "";
+                        var tableId  = doc.RootElement.TryGetProperty("table_id",     out var tid) ? tid.GetString() ?? "" : "";
+                        decimal total = 0m;
+                        if (doc.RootElement.TryGetProperty("total_amount", out var ta))
+                            ta.TryGetDecimal(out total);
+                        if (!string.IsNullOrEmpty(orderId))
+                            _ = ShowApprovalPopupAsync(orderId, tableId, total);
+                        else
                             _ = RefreshNotificationsFromWsAsync();
+                    } else if (evt == "ORDER_CONFIRMED") {
+                        _ = RefreshNotificationsFromWsAsync();
                     } else if (evt is "TABLE_OPENED" or "TABLE_CLOSED" or "TABLE_STATUS_CHANGED")
                         if (_tables != null) _ = _tables.TriggerRefreshAsync();
                 }
@@ -102,6 +109,28 @@ public partial class DashboardPage : ContentPage {
         } catch (Exception ex) {
             System.Diagnostics.Debug.WriteLine($"WS notification refresh error: {ex.Message}");
             CrashLogger.Log(ex, "DashboardPage.RefreshNotificationsFromWsAsync");
+        }
+    }
+
+    private async Task ShowApprovalPopupAsync(string orderId, string tableId, decimal totalAmount) {
+        // Deduplicate: only one popup per order at a time.
+        bool added;
+        lock (_pendingApprovals) { added = _pendingApprovals.Add(orderId); }
+        if (!added) return;
+
+        try {
+            await MainThread.InvokeOnMainThreadAsync(async () => {
+                try {
+                    var popup = new OrderApprovalPage(_api, orderId, tableId, totalAmount);
+                    popup.Dismissed += () => _ = RefreshNotificationsFromWsAsync();
+                    await Application.Current!.Windows[0].Page!.Navigation.PushModalAsync(popup, animated: false);
+                } catch (Exception ex) {
+                    CrashLogger.Log(ex, "DashboardPage.ShowApprovalPopupAsync.Push");
+                    _ = RefreshNotificationsFromWsAsync();
+                }
+            });
+        } finally {
+            lock (_pendingApprovals) { _pendingApprovals.Remove(orderId); }
         }
     }
 }

@@ -1993,3 +1993,220 @@ Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMes
    at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 59
 Inner: No connection could be made because the target machine actively refused it. (192.168.1.7:8000)
 ---
+[2026-05-19 10:11:50] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: The remote party closed the WebSocket connection without completing the close handshake.
+Stack:    at System.Net.WebSockets.ManagedWebSocket.ReceiveAsyncPrivate[TResult](Memory`1 payloadBuffer, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+   at System.Threading.Tasks.ValueTask`1.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct)
+Inner: Unable to read data from the transport connection: An existing connection was forcibly closed by the remote host..
+---
+[2026-05-19 10:33:56] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct)
+Inner: No connection could be made because the target machine actively refused it. (192.168.1.7:8000)
+---
+[2026-05-19 10:34:03] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct)
+Inner: No connection could be made because the target machine actively refused it. (192.168.1.7:8000)
+---
+[2026-05-19 10:34:10] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct)
+Inner: No connection could be made because the target machine actively refused it. (192.168.1.7:8000)
+---
+[2026-05-20 00:57:06] App.CheckBackendConnectivity
+Type: System.Net.Http.HttpRequestException
+Message: No connection could be made because the target machine actively refused it. (127.0.0.1:8000)
+Stack:    at System.Net.Http.HttpConnectionPool.ConnectToTcpHostAsync(String host, Int32 port, HttpRequestMessage initialRequest, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionPool.ConnectAsync(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionPool.CreateHttp11ConnectionAsync(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionPool.InjectNewHttp11ConnectionAsync(QueueItem queueItem)
+   at System.Threading.Tasks.TaskCompletionSourceWithCancellation`1.WaitWithCancellationAsync(CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionWaiter`1.WaitForConnectionWithTelemetryAsync(HttpRequestMessage request, HttpConnectionPool pool, Boolean async, CancellationToken requestCancellationToken)
+   at System.Net.Http.HttpConnectionPool.SendWithVersionDetectionAndRetryAsync(HttpRequestMessage request, Boolean async, Boolean doRequestAuth, CancellationToken cancellationToken)
+   at System.Net.Http.DiagnosticsHandler.SendAsyncCore(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.RedirectHandler.SendAsync(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.SocketsHttpHandler.<SendAsync>g__CreateHandlerAndSendAsync|115_0(HttpRequestMessage request, CancellationToken cancellationToken)
+   at System.Net.Http.HttpClient.<SendAsync>g__Core|83_0(HttpRequestMessage request, HttpCompletionOption completionOption, CancellationTokenSource cts, Boolean disposeCts, CancellationTokenSource pendingRequestsCts, CancellationToken originalCancellationToken)
+   at GustoWaiter.App.CheckBackendConnectivity() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\App.xaml.cs:line 15
+Inner: No connection could be made because the target machine actively refused it.
+---
+[2026-05-20 01:03:33] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: The remote party closed the WebSocket connection without completing the close handshake.
+Stack:    at System.Net.WebSockets.ManagedWebSocket.ReceiveAsyncPrivate[TResult](Memory`1 payloadBuffer, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+   at System.Threading.Tasks.ValueTask`1.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 62
+Inner: Unable to read data from the transport connection: An existing connection was forcibly closed by the remote host..
+---
+[2026-05-20 01:03:40] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 60
+Inner: No connection could be made because the target machine actively refused it. (192.168.1.7:8000)
+---
+[2026-05-20 01:03:47] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 60
+Inner: No connection could be made because the target machine actively refused it. (192.168.1.7:8000)
+---
+[2026-05-20 01:03:55] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 60
+Inner: No connection could be made because the target machine actively refused it. (192.168.1.7:8000)
+---
+[2026-05-20 01:04:02] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 60
+Inner: No connection could be made because the target machine actively refused it. (192.168.1.7:8000)
+---
+[2026-05-20 01:04:09] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 60
+Inner: No connection could be made because the target machine actively refused it. (192.168.1.7:8000)
+---
+[2026-05-20 01:04:16] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 60
+Inner: No connection could be made because the target machine actively refused it. (192.168.1.7:8000)
+---
+[2026-05-20 11:15:19] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: The remote party closed the WebSocket connection without completing the close handshake.
+Stack:    at System.Net.WebSockets.ManagedWebSocket.ReceiveAsyncPrivate[TResult](Memory`1 payloadBuffer, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+   at System.Threading.Tasks.ValueTask`1.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 62
+Inner: Unable to read data from the transport connection: An established connection was aborted by the software in your host machine..
+---
+[2026-05-20 11:15:25] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 60
+Inner: A socket operation was attempted to an unreachable network. (192.168.1.7:8000)
+---
+[2026-05-20 11:15:30] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 60
+Inner: A socket operation was attempted to an unreachable network. (192.168.1.7:8000)
+---
+[2026-05-20 11:15:35] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 60
+Inner: A socket operation was attempted to an unreachable network. (192.168.1.7:8000)
+---
+[2026-05-20 11:15:40] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 60
+Inner: A socket operation was attempted to an unreachable network. (192.168.1.7:8000)
+---
+[2026-05-20 11:15:45] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 60
+Inner: A socket operation was attempted to an unreachable network. (192.168.1.7:8000)
+---
+[2026-05-20 11:15:50] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 60
+Inner: A socket operation was attempted to an unreachable network. (192.168.1.7:8000)
+---
+[2026-05-20 11:15:55] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 60
+Inner: A socket operation was attempted to an unreachable network. (192.168.1.7:8000)
+---
+[2026-05-20 11:16:00] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 60
+Inner: A socket operation was attempted to an unreachable network. (192.168.1.7:8000)
+---
+[2026-05-20 11:16:05] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 60
+Inner: A socket operation was attempted to an unreachable network. (192.168.1.7:8000)
+---
+[2026-05-20 11:16:10] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 60
+Inner: A socket operation was attempted to an unreachable network. (192.168.1.7:8000)
+---
+[2026-05-20 12:41:27] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 60
+Inner: A socket operation was attempted to an unreachable network. (192.168.1.7:8000)
+---
+[2026-05-21 11:16:08] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: The remote party closed the WebSocket connection without completing the close handshake.
+Stack:    at System.Net.WebSockets.ManagedWebSocket.ReceiveAsyncPrivate[TResult](Memory`1 payloadBuffer, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+   at System.Threading.Tasks.ValueTask`1.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 62
+Inner: Unable to read data from the transport connection: An existing connection was forcibly closed by the remote host..
+---

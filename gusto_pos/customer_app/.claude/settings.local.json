@@ -8,7 +8,8 @@
       "Bash(taskkill /F /IM node.exe)",
       "Bash(timeout 20 npm run dev)",
       "Bash(taskkill //F //PID 26148)",
-      "Bash(taskkill //F //IM node.exe)"
+      "Bash(taskkill //F //IM node.exe)",
+      "Bash(npm run *)"
     ]
   }
 }
