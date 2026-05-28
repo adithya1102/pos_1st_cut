@@ -11,7 +11,6 @@
 
     <Grid RowDefinitions="Auto,*,Auto">
 
-        <!-- ── Header ──────────────────────────────────────────────────────── -->
         <Grid Grid.Row="0" BackgroundColor="#1B4332"
               Padding="8,0,16,0" HeightRequest="64"
               ColumnDefinitions="Auto,*">
@@ -33,11 +32,9 @@
             </StackLayout>
         </Grid>
 
-        <!-- ── Scrollable body ────────────────────────────────────────────── -->
         <ScrollView Grid.Row="1">
             <StackLayout Padding="16,12,16,24" Spacing="0">
 
-                <!-- Customer banner -->
                 <Border BackgroundColor="#E8F5E9"
                         StrokeThickness="0"
                         StrokeShape="RoundRectangle 8"
@@ -52,12 +49,10 @@
                     </Label>
                 </Border>
 
-                <!-- Section: Order Items -->
                 <Label Text="Customer's Order"
                        FontSize="16" FontAttributes="Bold"
                        TextColor="#1B4332" Margin="0,0,0,8"/>
 
-                <!-- Items list via BindableLayout (avoids nested-scroll issues) -->
                 <StackLayout BindableLayout.ItemsSource="{Binding OrderItems}"
                              Spacing="8">
                     <BindableLayout.ItemTemplate>
@@ -66,7 +61,6 @@
                                     StrokeShape="RoundRectangle 10"
                                     Padding="12,10">
 
-                                <!-- Green tint when verified, white otherwise -->
                                 <Border.Triggers>
                                     <DataTrigger TargetType="Border"
                                                  Binding="{Binding IsVerified}" Value="True">
@@ -82,10 +76,8 @@
 
                                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
 
-                                    <!-- Left: name, modifiers, note -->
                                     <StackLayout Grid.Column="0" Spacing="4">
 
-                                        <!-- Name + qty + price -->
                                         <Grid ColumnDefinitions="*,Auto">
                                             <Label Grid.Column="0"
                                                    Text="{Binding Name}"
@@ -99,7 +91,6 @@
                                                    VerticalOptions="Center"/>
                                         </Grid>
 
-                                        <!-- Modifier chips -->
                                         <FlexLayout BindableLayout.ItemsSource="{Binding Modifiers}"
                                                     Wrap="Wrap" Direction="Row"
                                                     IsVisible="{Binding HasModifiers}">
@@ -117,7 +108,6 @@
                                             </BindableLayout.ItemTemplate>
                                         </FlexLayout>
 
-                                        <!-- Custom note -->
                                         <Label Text="{Binding NoteDisplay}"
                                                FontSize="12" TextColor="#6C757D"
                                                FontAttributes="Italic"
@@ -125,11 +115,10 @@
 
                                     </StackLayout>
 
-                                    <!-- Right: Verify checkbox + remove -->
                                     <VerticalStackLayout Grid.Column="1"
-                                                        VerticalOptions="Center"
-                                                        Spacing="2"
-                                                        MinimumWidthRequest="56">
+                                                         VerticalOptions="Center"
+                                                         Spacing="2"
+                                                         MinimumWidthRequest="56">
 
                                         <CheckBox IsChecked="{Binding IsVerified, Mode=TwoWay}"
                                                   Color="#28A745"
@@ -153,10 +142,10 @@
                                             </Label.Triggers>
                                         </Label>
 
-                                        <!-- Remove button -->
                                         <Button Text="🗑"
                                                 FontSize="14"
                                                 BackgroundColor="Transparent"
+                                                TextColor="#DC3545"
                                                 WidthRequest="36" HeightRequest="30"
                                                 Padding="0"
                                                 Command="{Binding Source={RelativeSource AncestorType={x:Type local:ApprovalChecklistPage}},
@@ -170,7 +159,6 @@
                     </BindableLayout.ItemTemplate>
                 </StackLayout>
 
-                <!-- ── Section: Add New Dish ──────────────────────────────── -->
                 <Label Text="Add New Dish"
                        FontSize="16" FontAttributes="Bold"
                        TextColor="#1B4332" Margin="0,20,0,8"/>
@@ -186,33 +174,34 @@
                            Text="{Binding SearchQuery, Mode=TwoWay}"/>
                 </Border>
 
-                <!-- Search results -->
                 <StackLayout BindableLayout.ItemsSource="{Binding SearchResults}"
                              Spacing="4">
                     <BindableLayout.ItemTemplate>
                         <DataTemplate x:DataType="models:MenuItem">
-                            <Button HorizontalOptions="Fill"
-                                    HeightRequest="44" CornerRadius="8"
-                                    BackgroundColor="#E8F5E9"
-                                    TextColor="#1B4332"
-                                    FontSize="13"
-                                    Command="{Binding Source={RelativeSource AncestorType={x:Type local:ApprovalChecklistPage}},
-                                                      Path=BindingContext.AddItemCommand}"
-                                    CommandParameter="{Binding .}">
-                                <Button.FormattedText>
-                                    <FormattedString>
-                                        <Span Text="+ "/>
-                                        <Span Text="{Binding Name}"/>
-                                        <Span Text="  ₹"/>
-                                        <Span Text="{Binding DisplayPrice, StringFormat='{0:F0}'}"/>
-                                    </FormattedString>
-                                </Button.FormattedText>
-                            </Button>
+                            <Border StrokeThickness="0" BackgroundColor="#E8F5E9" Padding="4,0">
+                                <Border.StrokeShape>
+                                    <RoundRectangle CornerRadius="8"/>
+                                </Border.StrokeShape>
+                                <Grid ColumnDefinitions="*, Auto" HeightRequest="44" Padding="12,0">
+                                    <StackLayout Grid.Column="0" Orientation="Horizontal" VerticalOptions="Center" Spacing="4">
+                                        <Label Text="+ " TextColor="#1B4332" FontSize="13" FontAttributes="Bold"/>
+                                        <Label Text="{Binding Name}" TextColor="#1B4332" FontSize="13" FontAttributes="Bold"/>
+                                    </StackLayout>
+                                    <Label Grid.Column="1" Text="{Binding DisplayPrice, StringFormat='₹{0:F0}'}" TextColor="#1B4332" FontSize="13" FontAttributes="Bold" VerticalOptions="Center"/>
+
+                                    <Button Grid.Column="0" Grid.ColumnSpan="2"
+                                            BackgroundColor="Transparent"
+                                            BorderWidth="0"
+                                            Padding="0"
+                                            Command="{Binding Source={RelativeSource AncestorType={x:Type local:ApprovalChecklistPage}},
+                                                              Path=BindingContext.AddItemCommand}"
+                                            CommandParameter="{Binding .}"/>
+                                </Grid>
+                            </Border>
                         </DataTemplate>
                     </BindableLayout.ItemTemplate>
                 </StackLayout>
 
-                <!-- ── Summary ───────────────────────────────────────────── -->
                 <Border BackgroundColor="White" StrokeThickness="1"
                         Stroke="#DEE2E6"
                         StrokeShape="RoundRectangle 10"
@@ -226,14 +215,12 @@
             </StackLayout>
         </ScrollView>
 
-        <!-- ── Sticky footer ──────────────────────────────────────────────── -->
         <Grid Grid.Row="2" BackgroundColor="White" Padding="16,8">
             <Grid.Shadow>
                 <Shadow Brush="Black" Offset="0,-4" Radius="12" Opacity="0.08"/>
             </Grid.Shadow>
 
             <StackLayout Spacing="6">
-                <!-- Busy overlay -->
                 <ActivityIndicator IsRunning="{Binding IsBusy}"
                                    IsVisible="{Binding IsBusy}"
                                    Color="#28A745"
@@ -250,3 +237,5 @@
 
     </Grid>
 </ContentPage>
+    
+    

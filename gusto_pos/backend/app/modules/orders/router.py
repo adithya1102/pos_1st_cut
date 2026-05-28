@@ -1,68 +1,51 @@
+import uuid
+from typing import List, Optional
+
+from fastapi import APIRouter
+from pydantic import BaseModel
+from sqlalchemy import text
+
+from app.core.database import AsyncSessionLocal
+
+router = APIRouter(prefix="/orders")
 
 
-@router.get("/history/{outlet_id}")
-async def get_order_history(outlet_id: str, date: str = None, table_id: str = None, db: AsyncSession = Depends(get_db)):
-    from datetime import datetime, date as date_type
-    import datetime as dt
-    if date:
-        target_date = datetime.strptime(date, "%Y-%m-%d").date()
-    else:
-        target_date = dt.date.today()
-    start = datetime.combine(target_date, dt.time.min)
-    end = datetime.combine(target_date, dt.time.max)
-    query = select(Order).where(
-        Order.outlet_id == outlet_id,
-        Order.created_at >= start,
-        Order.created_at <= end
-    ).order_by(Order.created_at.asc())
-    if table_id:
-        query = query.where(Order.table_id == table_id)
-    result = await db.execute(query)
-    orders = result.scalars().all()
-    return [
-        {
-            "id": str(o.id),
-            "readable_id": getattr(o, "readable_id", None),
-            "table_id": o.table_id,
-            "total_amount": float(o.total_amount) if o.total_amount else 0,
-            "status": o.status,
-            "payment_method": getattr(o, "payment_method", "cash"),
-            "created_at": o.created_at.isoformat() if o.created_at else None
+class OrderCreateSchema(BaseModel):
+    table_id: str
+    items: List = []
+    total_amount: float
+    outlet_id: Optional[str] = None
+
+
+@router.post("/")
+async def create_order(payload: OrderCreateSchema):
+    order_id = str(uuid.uuid4())
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                text(
+                    "INSERT INTO orders "
+                    "(id, outlet_id, table_id, total_amount, order_status, created_at) "
+                    "VALUES (:id, :outlet_id, :table_id, :total_amount, 'pending', NOW())"
+                ),
+                {
+                    "id": order_id,
+                    "outlet_id": payload.outlet_id,
+                    "table_id": payload.table_id,
+                    "total_amount": payload.total_amount,
+                },
+            )
+            await session.commit()
+    except Exception as exc:
+        return {
+            "status": "error",
+            "detail": str(exc),
+            "order_id": None,
+            "total_amount": payload.total_amount,
         }
-        for o in orders
-    ]
 
-
-@router.get("/summary/{outlet_id}")
-async def get_order_summary(outlet_id: str, date: str = None, db: AsyncSession = Depends(get_db)):
-    from datetime import datetime, date as date_type
-    import datetime as dt
-    if date:
-        target_date = datetime.strptime(date, "%Y-%m-%d").date()
-    else:
-        target_date = dt.date.today()
-    start = datetime.combine(target_date, dt.time.min)
-    end = datetime.combine(target_date, dt.time.max)
-    result = await db.execute(
-        select(Order).where(
-            Order.outlet_id == outlet_id,
-            Order.created_at >= start,
-            Order.created_at <= end
-        )
-    )
-    orders = result.scalars().all()
-    total_revenue = sum(float(o.total_amount or 0) for o in orders)
-    cash = sum(float(o.total_amount or 0) for o in orders if getattr(o, "payment_method", "cash") == "cash")
-    card = sum(float(o.total_amount or 0) for o in orders if getattr(o, "payment_method", "cash") == "card")
-    upi = sum(float(o.total_amount or 0) for o in orders if getattr(o, "payment_method", "cash") == "upi")
-    active = sum(1 for o in orders if o.status != "paid")
-    settled = sum(1 for o in orders if o.status == "paid")
     return {
-        "total_orders": len(orders),
-        "total_revenue": total_revenue,
-        "cash_total": cash,
-        "card_total": card,
-        "upi_total": upi,
-        "active_orders": active,
-        "settled_orders": settled
+        "status": "ok",
+        "order_id": order_id,
+        "total_amount": payload.total_amount,
     }

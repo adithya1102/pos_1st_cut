@@ -290,7 +290,14 @@ public partial class PosTerminalPage : ContentView
     {
         var ex = _cart.FirstOrDefault(c => c.MenuItemId == item.Id);
         if (ex != null) ex.Quantity++;
-        else _cart.Add(new CartItem { MenuItemId = item.Id, Name = item.Name, BasePrice = item.DisplayPrice });
+        else
+        {
+            var effectivePrice = item.DisplayPrice > 0 ? item.DisplayPrice
+                : item.Price > 0 ? item.Price
+                : item.UnitPrice > 0 ? item.UnitPrice
+                : 0m;
+            _cart.Add(new CartItem { MenuItemId = item.Id, Name = item.Name, BasePrice = effectivePrice });
+        }
         RefreshCart();
     }
 

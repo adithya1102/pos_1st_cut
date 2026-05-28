@@ -32,6 +32,13 @@ public class MenuItem : INotifyPropertyChanged {
         set => _basePrice = value;
     }
 
+    // Zone/order endpoints may emit "unit_price"; also aliases the same backing field.
+    [JsonPropertyName("unit_price")]
+    public decimal UnitPrice {
+        get => _basePrice;
+        set => _basePrice = value;
+    }
+
     public bool IsVeg { get; set; }
     public string CategoryId { get; set; } = "";
 

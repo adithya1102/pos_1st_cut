@@ -1,4 +1,4 @@
-<api type="debug" assembly-name="GustoWaiter" mvid="55fe06a82a9e4657a2a17d82d98760e4">
+<api type="debug" assembly-name="GustoWaiter" mvid="c1ec7b0138854bdd8f0dcab1e77be557">
   <java-to-managed>
     <entry java-name="crc64edc724e3347d089b/MainActivity" managed-name="GustoWaiter.MainActivity, GustoWaiter" managed-type-token-id="33554450" />
     <entry java-name="crc64edc724e3347d089b/MainApplication" managed-name="GustoWaiter.MainApplication, GustoWaiter" managed-type-token-id="33554451" />
