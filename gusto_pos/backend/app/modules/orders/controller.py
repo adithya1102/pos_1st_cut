@@ -2,6 +2,7 @@ import traceback
 from typing import Any
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Body
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -118,13 +119,20 @@ async def create_order(payload: OrderCreate, db: AsyncSession = Depends(get_db))
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-@router.post("/bill/{table_id}", response_model=BillResponse)
+@router.post("/bill/{table_id}")
 async def generate_bill(table_id: str, db: AsyncSession = Depends(get_db)):
-    """Generate a PDF bill for all unpaid orders on a table."""
+    """Generate a PDF bill and stream it directly to the caller as application/pdf."""
     result = await OrderService.generate_bill(db, table_id)
     if not result:
         raise HTTPException(status_code=404, detail="No unpaid orders found for this table")
-    return result
+    response = FileResponse(
+        path=result["pdf_path"],
+        media_type="application/pdf",
+        filename=f"Bill_Table_{table_id}.pdf",
+    )
+    response.headers["X-Bill-Total"] = str(result["total"])
+    response.headers["X-Bill-No"] = str(result["bill_no"])
+    return response
 
 
 @router.post("/settle/{table_id}", response_model=SettleResponse)

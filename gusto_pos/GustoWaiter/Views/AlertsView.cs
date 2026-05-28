@@ -64,6 +64,8 @@ public AlertsView(ApiService api, DashboardPage dash) {
         }
 
         foreach (var n in notifs) {
+            // Skip notifications that are already confirmed (e.g. auto-confirmed waiter/POS orders)
+            if (n.IsConfirmed == true) continue;
             if (n.Type == "order_placed")
                 _list.Children.Add(BuildOrderPlacedCard(n));
             else

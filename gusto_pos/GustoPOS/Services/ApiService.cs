@@ -429,6 +429,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
@@ -614,7 +615,22 @@ public class ApiService
         {
             var res = await _http.PostAsync($"{Base}/orders/bill/{tableId}/", null);
             if (!res.IsSuccessStatusCode) return null;
-            return JsonSerializer.Deserialize<BillResponse>(await res.Content.ReadAsStringAsync(), Opts);
+
+            decimal total = 0;
+            if (res.Headers.TryGetValues("X-Bill-Total", out var tv))
+                decimal.TryParse(tv.FirstOrDefault(), System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture, out total);
+            var billNo = res.Headers.TryGetValues("X-Bill-No", out var bv) ? bv.FirstOrDefault() ?? "" : "";
+
+            var bytes = await res.Content.ReadAsByteArrayAsync();
+            var dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Gusto_Bills");
+            Directory.CreateDirectory(dir);
+            var localPath = Path.Combine(dir,
+                $"Bill_Table_{tableId}_{DateTime.Now:yyyyMMdd_HHmmss}.pdf");
+            await File.WriteAllBytesAsync(localPath, bytes);
+
+            return new BillResponse { PdfPath = localPath, Total = total, BillNo = billNo };
         }
         catch (Exception ex)
         {
@@ -662,7 +678,22 @@ public class ApiService
             var res = await _http.PostAsync($"{Base}/orders/bill/{tableId}/",
                 new StringContent(body, Encoding.UTF8, "application/json"));
             if (!res.IsSuccessStatusCode) return null;
-            return JsonSerializer.Deserialize<BillResponse>(await res.Content.ReadAsStringAsync(), Opts);
+
+            decimal total = 0;
+            if (res.Headers.TryGetValues("X-Bill-Total", out var tv))
+                decimal.TryParse(tv.FirstOrDefault(), System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture, out total);
+            var billNo = res.Headers.TryGetValues("X-Bill-No", out var bv) ? bv.FirstOrDefault() ?? "" : "";
+
+            var bytes = await res.Content.ReadAsByteArrayAsync();
+            var dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Gusto_Bills");
+            Directory.CreateDirectory(dir);
+            var localPath = Path.Combine(dir,
+                $"Bill_Table_{tableId}_{DateTime.Now:yyyyMMdd_HHmmss}.pdf");
+            await File.WriteAllBytesAsync(localPath, bytes);
+
+            return new BillResponse { PdfPath = localPath, Total = total, BillNo = billNo };
         }
         catch (Exception ex)
         {

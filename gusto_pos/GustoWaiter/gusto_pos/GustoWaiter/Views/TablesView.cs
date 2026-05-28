@@ -37,7 +37,7 @@ public class TablesView : ContentView {
         _refreshTimer = new System.Threading.Timer(async _ => {
             try { await RefreshTables(); }
             catch (Exception ex) { CrashLogger.Log(ex, "TablesView.Timer"); }
-        }, null, 10000, 10000);
+        }, null, 5000, 5000);
     }
 
 

@@ -29,6 +29,9 @@ public class Notification {
     [JsonPropertyName("total_amount")]
     public decimal? TotalAmount { get; set; }
 
+    [JsonPropertyName("is_confirmed")]
+    public bool? IsConfirmed { get; set; }
+
     [JsonPropertyName("order_items")]
     public List<OrderItemInfo>? OrderItems { get; set; }
 }

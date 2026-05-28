@@ -1,25 +1,26 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 namespace GustoPOS.Models;
 public class Order {
-    public string Id { get; set; } = "";
-    public int ReadableId { get; set; }
-    public string OutletId { get; set; } = "";
-    public string? TableId { get; set; }
-    public decimal TotalAmount { get; set; }
-    public string OrderStatus { get; set; } = "pending";
-    public string? KitchenToken { get; set; }
-    public string? PaymentMethod { get; set; }
-    public DateTime CreatedAt { get; set; }
-    public List<OrderItemDto> Items { get; set; } = new();
+    [JsonPropertyName("id")]          public string Id { get; set; } = "";
+    [JsonPropertyName("readable_id")] public int ReadableId { get; set; }
+    [JsonPropertyName("outlet_id")]   public string OutletId { get; set; } = "";
+    [JsonPropertyName("table_id")]    public string? TableId { get; set; }
+    [JsonPropertyName("total_amount")]public decimal TotalAmount { get; set; }
+    [JsonPropertyName("order_status")]public string OrderStatus { get; set; } = "pending";
+    [JsonPropertyName("kitchen_token")]public string? KitchenToken { get; set; }
+    [JsonPropertyName("payment_method")]public string? PaymentMethod { get; set; }
+    [JsonPropertyName("created_at")]  public DateTime CreatedAt { get; set; }
+    [JsonPropertyName("items")]       public List<OrderItemDto> Items { get; set; } = new();
 }
 public class OrderItemDto {
-    public string Id { get; set; } = "";
-    public string OrderId { get; set; } = "";
-    public string? MenuItemId { get; set; }
-    public string? NameSnap { get; set; }
-    public decimal? PriceSnap { get; set; }
-    public int Quantity { get; set; } = 1;
+    [JsonPropertyName("id")]          public string Id { get; set; } = "";
+    [JsonPropertyName("order_id")]    public string OrderId { get; set; } = "";
+    [JsonPropertyName("menu_item_id")]public string? MenuItemId { get; set; }
+    [JsonPropertyName("name_snap")]   public string? NameSnap { get; set; }
+    [JsonPropertyName("price_snap")]  public decimal? PriceSnap { get; set; }
+    [JsonPropertyName("quantity")]    public int Quantity { get; set; } = 1;
 }
 public class BillResponse {
     public string PdfPath { get; set; } = "";
@@ -54,6 +55,6 @@ public class BillResult {
     public string BillNo { get; set; } = "";
 }
 public class OutletConfig {
-    public int NormalTableCount { get; set; } = 10;
-    public int AcTableCount { get; set; } = 10;
+    [JsonPropertyName("normal_table_count")] public int NormalTableCount { get; set; } = 10;
+    [JsonPropertyName("ac_table_count")]     public int AcTableCount { get; set; } = 10;
 }

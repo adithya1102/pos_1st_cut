@@ -36,7 +36,7 @@ public partial class BillingPage : ContentView
         _api = api;
         LoadConfigAndBuildAsync();
         _refreshTimer = Application.Current!.Dispatcher.CreateTimer();
-        _refreshTimer.Interval = TimeSpan.FromSeconds(30);
+        _refreshTimer.Interval = TimeSpan.FromSeconds(5);
         _refreshTimer.Tick += (s, e) => LoadTableStatusParallelAsync();
         _refreshTimer.Start();
         _ = ConnectBillingWsAsync();
@@ -417,6 +417,7 @@ public partial class BillingPage : ContentView
         if (result != null)
         {
             _billGenerated = true;
+            LoadTableStatusParallelAsync();
             var zoneLabel = _selectedZone == "ac" ? "AC Dining ❄️" : "Regular Dining";
             await Application.Current!.Windows[0].Page!.DisplayAlertAsync(
                 "Bill Saved!",
