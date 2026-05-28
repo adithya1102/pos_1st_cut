@@ -18,7 +18,7 @@
 //    };
 //    public async Task<Menu?> GetMenuAsync() {
 //        try {
-//            var json = await _http.GetStringAsync($"{Base}/menus/{MenuId}");
+//            var json = await _http.GetStringAsync($"{Base}/menus/{MenuId}/");
 //            return JsonSerializer.Deserialize<Menu>(json, Opts);
 //        } catch (Exception ex) {
 //            System.Diagnostics.Debug.WriteLine($"GetMenu: {ex.Message}");
@@ -27,7 +27,7 @@
 //    }
 //    public async Task<Menu?> GetMenuByZoneAsync(string zone) {
 //        try {
-//            var json = await _http.GetStringAsync($"{Base}/menus/zone/{OutletId}/{zone}");
+//            var json = await _http.GetStringAsync($"{Base}/menus/zone/{OutletId}/{zone}/");
 //            return JsonSerializer.Deserialize<Menu>(json, Opts);
 //        } catch (Exception ex) {
 //            System.Diagnostics.Debug.WriteLine($"GetMenuByZone: {ex.Message}");
@@ -61,7 +61,7 @@
 //    public async Task<bool> ToggleItemAvailabilityAsync(string itemId, bool isActive) {
 //        try {
 //            var body = JsonSerializer.Serialize(new { is_active = isActive }, Opts);
-//            var res = await _http.PutAsync($"{Base}/menus/items/{itemId}",
+//            var res = await _http.PutAsync($"{Base}/menus/items/{itemId}/",
 //                new StringContent(body, Encoding.UTF8, "application/json"));
 //            return res.IsSuccessStatusCode;
 //        } catch (Exception ex) {
@@ -108,7 +108,7 @@
 //    public async Task<Order?> UpdateOrderStatusAsync(string orderId, string status) {
 //        try {
 //            var body = JsonSerializer.Serialize(new { order_status = status }, Opts);
-//            var res = await _http.PutAsync($"{Base}/orders/{orderId}",
+//            var res = await _http.PutAsync($"{Base}/orders/{orderId}/",
 //                new StringContent(body, Encoding.UTF8, "application/json"));
 //            return JsonSerializer.Deserialize<Order>(await res.Content.ReadAsStringAsync(), Opts);
 //        } catch (Exception ex) {
@@ -118,7 +118,7 @@
 //    }
 //    public async Task<List<Order>> GetTableOrdersAsync(string tableId) {
 //        try {
-//            var json = await _http.GetStringAsync($"{Base}/orders/table/{tableId}");
+//            var json = await _http.GetStringAsync($"{Base}/orders/table/{tableId}/");
 //            return JsonSerializer.Deserialize<List<Order>>(json, Opts) ?? new();
 //        } catch (Exception ex) {
 //            System.Diagnostics.Debug.WriteLine($"GetTableOrders: {ex.Message}");
@@ -127,7 +127,7 @@
 //    }
 //    public async Task<BillResponse?> GenerateBillAsync(string tableId) {
 //        try {
-//            var res = await _http.PostAsync($"{Base}/orders/bill/{tableId}", null);
+//            var res = await _http.PostAsync($"{Base}/orders/bill/{tableId}/", null);
 //            if (!res.IsSuccessStatusCode) return null;
 //            return JsonSerializer.Deserialize<BillResponse>(await res.Content.ReadAsStringAsync(), Opts);
 //        } catch (Exception ex) {
@@ -137,7 +137,7 @@
 //    }
 //    public async Task<SettleResponse?> SettleTableAsync(string tableId) {
 //        try {
-//            var res = await _http.PostAsync($"{Base}/orders/settle/{tableId}", null);
+//            var res = await _http.PostAsync($"{Base}/orders/settle/{tableId}/", null);
 //            if (!res.IsSuccessStatusCode) return null;
 //            return JsonSerializer.Deserialize<SettleResponse>(await res.Content.ReadAsStringAsync(), Opts);
 //        } catch (Exception ex) {
@@ -148,7 +148,7 @@
 //    public async Task<bool> CloseTableAsync(string tableId) {
 //        try {
 //            var res = await _http.PostAsync(
-//                $"{Base}/tables/close/{tableId}?outlet_id={OutletId}",
+//                $"{Base}/tables/close/{tableId}/?outlet_id={OutletId}",
 //                new StringContent("", Encoding.UTF8, "application/json"));
 //            return res.IsSuccessStatusCode;
 //        } catch (Exception ex) {
@@ -159,7 +159,7 @@
 //    public async Task<BillResponse?> GenerateBillAutoAsync(string tableId, string paymentMethod, string? zone = null) {
 //        try {
 //            var body = JsonSerializer.Serialize(new { payment_method = paymentMethod, zone = zone }, Opts);
-//            var res = await _http.PostAsync($"{Base}/orders/bill/{tableId}",
+//            var res = await _http.PostAsync($"{Base}/orders/bill/{tableId}/",
 //                new StringContent(body, Encoding.UTF8, "application/json"));
 //            if (!res.IsSuccessStatusCode) return null;
 //            return JsonSerializer.Deserialize<BillResponse>(await res.Content.ReadAsStringAsync(), Opts);
@@ -195,7 +195,7 @@
 //    }
 //    public async Task<OutletConfig> GetOutletConfigAsync() {
 //        try {
-//            var json = await _http.GetStringAsync($"{Base}/config/{OutletId}");
+//            var json = await _http.GetStringAsync($"{Base}/config/{OutletId}/");
 //            return JsonSerializer.Deserialize<OutletConfig>(json, Opts) ?? new OutletConfig();
 //        } catch (Exception ex) {
 //            System.Diagnostics.Debug.WriteLine($"GetOutletConfig: {ex.Message}");
@@ -205,7 +205,7 @@
 //    public async Task<bool> UpdateOutletConfigAsync(string key, string value) {
 //        try {
 //            var body = JsonSerializer.Serialize(new { config_key = key, config_value = value }, Opts);
-//            var res = await _http.PostAsync($"{Base}/config/{OutletId}",
+//            var res = await _http.PostAsync($"{Base}/config/{OutletId}/",
 //                new StringContent(body, Encoding.UTF8, "application/json"));
 //            return res.IsSuccessStatusCode;
 //        } catch (Exception ex) {
@@ -243,7 +243,7 @@
 //    public async Task<bool> ResetStaffPinAsync(string staffId, string pin) {
 //        try {
 //            var body = JsonSerializer.Serialize(new { pin }, Opts);
-//            var res = await _http.PutAsync($"{Base}/staff/{staffId}/pin",
+//            var res = await _http.PutAsync($"{Base}/staff/{staffId}/pin/",
 //                new StringContent(body, Encoding.UTF8, "application/json"));
 //            return res.IsSuccessStatusCode;
 //        } catch (Exception ex) {
@@ -254,7 +254,7 @@
 
 //    public async Task<bool> DeleteStaffAsync(string staffId) {
 //        try {
-//            var res = await _http.DeleteAsync($"{Base}/staff/{staffId}");
+//            var res = await _http.DeleteAsync($"{Base}/staff/{staffId}/");
 //            return res.IsSuccessStatusCode;
 //        } catch (Exception ex) {
 //            System.Diagnostics.Debug.WriteLine($"DeleteStaff: {ex.Message}");
@@ -269,7 +269,7 @@
 //                shift_start = shiftStart,
 //                shift_end = shiftEnd
 //            }, Opts);
-//            var res = await _http.PutAsync($"{Base}/staff/{staffId}",
+//            var res = await _http.PutAsync($"{Base}/staff/{staffId}/",
 //                new StringContent(body, Encoding.UTF8, "application/json"));
 //            if (!res.IsSuccessStatusCode) return null;
 //            return JsonSerializer.Deserialize<StaffMember>(await res.Content.ReadAsStringAsync(), Opts);
@@ -281,7 +281,7 @@
 
 //    public async Task<List<CategoryItem>> GetCategoriesForMenuAsync() {
 //        try {
-//            var json = await _http.GetStringAsync($"{Base}/menus/categories/menu/{MenuId}");
+//            var json = await _http.GetStringAsync($"{Base}/menus/categories/menu/{MenuId}/");
 //            var cats = JsonSerializer.Deserialize<List<CategoryItem>>(json, Opts) ?? new();
 //            return cats;
 //        } catch (Exception ex) {
@@ -306,7 +306,7 @@
 //    public async Task<bool> UpdateCategoryAsync(string categoryId, string name) {
 //        try {
 //            var body = JsonSerializer.Serialize(new { name }, Opts);
-//            var res = await _http.PutAsync($"{Base}/categories/{categoryId}",
+//            var res = await _http.PutAsync($"{Base}/categories/{categoryId}/",
 //                new StringContent(body, Encoding.UTF8, "application/json"));
 //            return res.IsSuccessStatusCode;
 //        } catch (Exception ex) {
@@ -317,7 +317,7 @@
 
 //    public async Task<bool> DeleteCategoryAsync(string categoryId) {
 //        try {
-//            var res = await _http.DeleteAsync($"{Base}/categories/{categoryId}");
+//            var res = await _http.DeleteAsync($"{Base}/categories/{categoryId}/");
 //            return res.IsSuccessStatusCode;
 //        } catch (Exception ex) {
 //            System.Diagnostics.Debug.WriteLine($"DeleteCategory: {ex.Message}");
@@ -328,7 +328,7 @@
 //    public async Task<bool> UpdateMenuItemPriceAsync(string itemId, decimal newPrice) {
 //        try {
 //            var body = JsonSerializer.Serialize(new { base_price = newPrice }, Opts);
-//            var res = await _http.PutAsync($"{Base}/menus/items/{itemId}",
+//            var res = await _http.PutAsync($"{Base}/menus/items/{itemId}/",
 //                new StringContent(body, Encoding.UTF8, "application/json"));
 //            return res.IsSuccessStatusCode;
 //        } catch (Exception ex) {
@@ -339,7 +339,7 @@
 
 //    public async Task<string> GetFreeTablesAsync() {
 //        try {
-//            var json = await _http.GetStringAsync($"{Base}/analytics/free-tables?outlet_id={OutletId}");
+//            var json = await _http.GetStringAsync($"{Base}/analytics/free-tables/?outlet_id={OutletId}");
 //            var resp = JsonSerializer.Deserialize<FreeTablesResponse>(json, Opts);
 //            if (resp == null) return "No data returned.";
 //            if (resp.Count == 0) return "All tables are currently occupied.";
@@ -352,7 +352,7 @@
 //    }
 //    public async Task<string> GetTotalTablesAsync() {
 //        try {
-//            var json = await _http.GetStringAsync($"{Base}/analytics/total-tables?outlet_id={OutletId}");
+//            var json = await _http.GetStringAsync($"{Base}/analytics/total-tables/?outlet_id={OutletId}");
 //            var resp = JsonSerializer.Deserialize<TotalTablesResponse>(json, Opts);
 //            return resp == null ? "No data returned." : $"{resp.Count} total tables";
 //        } catch (Exception ex) {
@@ -362,7 +362,7 @@
 //    }
 //    public async Task<string> GetTopDishAsync() {
 //        try {
-//            var json = await _http.GetStringAsync($"{Base}/analytics/top-dish?outlet_id={OutletId}");
+//            var json = await _http.GetStringAsync($"{Base}/analytics/top-dish/?outlet_id={OutletId}");
 //            var resp = JsonSerializer.Deserialize<TopDishResponse>(json, Opts);
 //            if (resp?.Dish == null) return "No orders recorded today yet.";
 //            return $"{resp.Dish}  —  {resp.Quantity} sold today";
@@ -373,7 +373,7 @@
 //    }
 //    public async Task<string> GetTodaysRevenueAsync() {
 //        try {
-//            var json = await _http.GetStringAsync($"{Base}/analytics/todays-revenue?outlet_id={OutletId}");
+//            var json = await _http.GetStringAsync($"{Base}/analytics/todays-revenue/?outlet_id={OutletId}");
 //            var resp = JsonSerializer.Deserialize<RevenueResponse>(json, Opts);
 //            return resp == null ? "No data returned." : $"₹{resp.Revenue:N2}";
 //        } catch (Exception ex) {
@@ -385,7 +385,7 @@
 //    public async Task<ChatResponse?> ChatQueryAsync(string question) {
 //        try {
 //            var body = JsonSerializer.Serialize(new { question }, Opts);
-//            var res = await _http.PostAsync($"{Base}/chat/query",
+//            var res = await _http.PostAsync($"{Base}/chat/query/",
 //                new StringContent(body, Encoding.UTF8, "application/json"));
 //            return JsonSerializer.Deserialize<ChatResponse>(await res.Content.ReadAsStringAsync(), Opts);
 //        } catch (Exception ex) {
@@ -397,7 +397,7 @@
 //    public async Task<ChatResponse?> AskGustoAsync(string query) {
 //        try {
 //            var body = JsonSerializer.Serialize(new { query, outlet_id = OutletId }, Opts);
-//            var res = await _http.PostAsync($"{Base}/chat/ask",
+//            var res = await _http.PostAsync($"{Base}/chat/ask/",
 //                new StringContent(body, Encoding.UTF8, "application/json"));
 //            if (!res.IsSuccessStatusCode)
 //                return new ChatResponse { Answer = "Server returned an error. Please try again." };
@@ -411,7 +411,7 @@
 //    public async Task<(PinLoginResponse? Response, string? Error)> PinLoginAsync(string pin) {
 //        try {
 //            var body = JsonSerializer.Serialize(new { pin }, Opts);
-//            var res = await _http.PostAsync($"{Base}/auth/pin-login",
+//            var res = await _http.PostAsync($"{Base}/auth/pin-login/",
 //                new StringContent(body, Encoding.UTF8, "application/json"));
 //            if (!res.IsSuccessStatusCode) {
 //                var errorBody = await res.Content.ReadAsStringAsync();
@@ -455,7 +455,7 @@ public class ApiService
     {
         try
         {
-            var json = await _http.GetStringAsync($"{Base}/menus/{MenuId}");
+            var json = await _http.GetStringAsync($"{Base}/menus/{MenuId}/");
             return JsonSerializer.Deserialize<Menu>(json, Opts);
         }
         catch (Exception ex)
@@ -469,7 +469,7 @@ public class ApiService
     {
         try
         {
-            var json = await _http.GetStringAsync($"{Base}/menus/zone/{OutletId}/{zone}");
+            var json = await _http.GetStringAsync($"{Base}/menus/zone/{OutletId}/{zone}/");
             return JsonSerializer.Deserialize<Menu>(json, Opts);
         }
         catch (Exception ex)
@@ -514,7 +514,7 @@ public class ApiService
         try
         {
             var body = JsonSerializer.Serialize(new { is_active = isActive }, Opts);
-            var res = await _http.PutAsync($"{Base}/menus/items/{itemId}",
+            var res = await _http.PutAsync($"{Base}/menus/items/{itemId}/",
                 new StringContent(body, Encoding.UTF8, "application/json"));
             return res.IsSuccessStatusCode;
         }
@@ -583,7 +583,7 @@ public class ApiService
         try
         {
             var body = JsonSerializer.Serialize(new { order_status = status }, Opts);
-            var res = await _http.PutAsync($"{Base}/orders/{orderId}",
+            var res = await _http.PutAsync($"{Base}/orders/{orderId}/",
                 new StringContent(body, Encoding.UTF8, "application/json"));
             return JsonSerializer.Deserialize<Order>(await res.Content.ReadAsStringAsync(), Opts);
         }
@@ -598,7 +598,7 @@ public class ApiService
     {
         try
         {
-            var json = await _http.GetStringAsync($"{Base}/orders/table/{tableId}");
+            var json = await _http.GetStringAsync($"{Base}/orders/table/{tableId}/");
             return JsonSerializer.Deserialize<List<Order>>(json, Opts) ?? new();
         }
         catch (Exception ex)
@@ -612,7 +612,7 @@ public class ApiService
     {
         try
         {
-            var res = await _http.PostAsync($"{Base}/orders/bill/{tableId}", null);
+            var res = await _http.PostAsync($"{Base}/orders/bill/{tableId}/", null);
             if (!res.IsSuccessStatusCode) return null;
             return JsonSerializer.Deserialize<BillResponse>(await res.Content.ReadAsStringAsync(), Opts);
         }
@@ -627,7 +627,7 @@ public class ApiService
     {
         try
         {
-            var res = await _http.PostAsync($"{Base}/orders/settle/{tableId}", null);
+            var res = await _http.PostAsync($"{Base}/orders/settle/{tableId}/", null);
             if (!res.IsSuccessStatusCode) return null;
             return JsonSerializer.Deserialize<SettleResponse>(await res.Content.ReadAsStringAsync(), Opts);
         }
@@ -643,7 +643,7 @@ public class ApiService
         try
         {
             var res = await _http.PostAsync(
-                $"{Base}/tables/close/{tableId}?outlet_id={OutletId}",
+                $"{Base}/tables/close/{tableId}/?outlet_id={OutletId}",
                 new StringContent("", Encoding.UTF8, "application/json"));
             return res.IsSuccessStatusCode;
         }
@@ -659,7 +659,7 @@ public class ApiService
         try
         {
             var body = JsonSerializer.Serialize(new { payment_method = paymentMethod, zone = zone }, Opts);
-            var res = await _http.PostAsync($"{Base}/orders/bill/{tableId}",
+            var res = await _http.PostAsync($"{Base}/orders/bill/{tableId}/",
                 new StringContent(body, Encoding.UTF8, "application/json"));
             if (!res.IsSuccessStatusCode) return null;
             return JsonSerializer.Deserialize<BillResponse>(await res.Content.ReadAsStringAsync(), Opts);
@@ -706,7 +706,7 @@ public class ApiService
     {
         try
         {
-            var json = await _http.GetStringAsync($"{Base}/config/{OutletId}");
+            var json = await _http.GetStringAsync($"{Base}/config/{OutletId}/");
             return JsonSerializer.Deserialize<OutletConfig>(json, Opts) ?? new OutletConfig();
         }
         catch (Exception ex)
@@ -721,7 +721,7 @@ public class ApiService
         try
         {
             var body = JsonSerializer.Serialize(new { config_key = key, config_value = value }, Opts);
-            var res = await _http.PostAsync($"{Base}/config/{OutletId}",
+            var res = await _http.PostAsync($"{Base}/config/{OutletId}/",
                 new StringContent(body, Encoding.UTF8, "application/json"));
             return res.IsSuccessStatusCode;
         }
@@ -771,7 +771,7 @@ public class ApiService
         try
         {
             var body = JsonSerializer.Serialize(new { pin }, Opts);
-            var res = await _http.PutAsync($"{Base}/staff/{staffId}/pin",
+            var res = await _http.PutAsync($"{Base}/staff/{staffId}/pin/",
                 new StringContent(body, Encoding.UTF8, "application/json"));
             return res.IsSuccessStatusCode;
         }
@@ -786,7 +786,7 @@ public class ApiService
     {
         try
         {
-            var res = await _http.DeleteAsync($"{Base}/staff/{staffId}");
+            var res = await _http.DeleteAsync($"{Base}/staff/{staffId}/");
             return res.IsSuccessStatusCode;
         }
         catch (Exception ex)
@@ -806,7 +806,7 @@ public class ApiService
                 shift_start = shiftStart,
                 shift_end = shiftEnd
             }, Opts);
-            var res = await _http.PutAsync($"{Base}/staff/{staffId}",
+            var res = await _http.PutAsync($"{Base}/staff/{staffId}/",
                 new StringContent(body, Encoding.UTF8, "application/json"));
             if (!res.IsSuccessStatusCode) return null;
             return JsonSerializer.Deserialize<StaffMember>(await res.Content.ReadAsStringAsync(), Opts);
@@ -822,7 +822,7 @@ public class ApiService
     {
         try
         {
-            var json = await _http.GetStringAsync($"{Base}/menus/categories/menu/{MenuId}");
+            var json = await _http.GetStringAsync($"{Base}/menus/categories/menu/{MenuId}/");
             return JsonSerializer.Deserialize<List<CategoryItem>>(json, Opts) ?? new();
         }
         catch (Exception ex)
@@ -854,7 +854,7 @@ public class ApiService
         try
         {
             var body = JsonSerializer.Serialize(new { name }, Opts);
-            var res = await _http.PutAsync($"{Base}/categories/{categoryId}",
+            var res = await _http.PutAsync($"{Base}/categories/{categoryId}/",
                 new StringContent(body, Encoding.UTF8, "application/json"));
             return res.IsSuccessStatusCode;
         }
@@ -869,7 +869,7 @@ public class ApiService
     {
         try
         {
-            var res = await _http.DeleteAsync($"{Base}/categories/{categoryId}");
+            var res = await _http.DeleteAsync($"{Base}/categories/{categoryId}/");
             return res.IsSuccessStatusCode;
         }
         catch (Exception ex)
@@ -884,7 +884,7 @@ public class ApiService
         try
         {
             var body = JsonSerializer.Serialize(new { base_price = newPrice }, Opts);
-            var res = await _http.PutAsync($"{Base}/menus/items/{itemId}",
+            var res = await _http.PutAsync($"{Base}/menus/items/{itemId}/",
                 new StringContent(body, Encoding.UTF8, "application/json"));
             return res.IsSuccessStatusCode;
         }
@@ -899,7 +899,7 @@ public class ApiService
     {
         try
         {
-            var json = await _http.GetStringAsync($"{Base}/analytics/free-tables?outlet_id={OutletId}");
+            var json = await _http.GetStringAsync($"{Base}/analytics/free-tables/?outlet_id={OutletId}");
             var resp = JsonSerializer.Deserialize<FreeTablesResponse>(json, Opts);
             if (resp == null) return "No data returned.";
             if (resp.Count == 0) return "All tables are currently occupied.";
@@ -916,7 +916,7 @@ public class ApiService
     {
         try
         {
-            var json = await _http.GetStringAsync($"{Base}/analytics/total-tables?outlet_id={OutletId}");
+            var json = await _http.GetStringAsync($"{Base}/analytics/total-tables/?outlet_id={OutletId}");
             var resp = JsonSerializer.Deserialize<TotalTablesResponse>(json, Opts);
             return resp == null ? "No data returned." : $"{resp.Count} total tables";
         }
@@ -930,7 +930,7 @@ public class ApiService
     {
         try
         {
-            var json = await _http.GetStringAsync($"{Base}/analytics/top-dish?outlet_id={OutletId}");
+            var json = await _http.GetStringAsync($"{Base}/analytics/top-dish/?outlet_id={OutletId}");
             var resp = JsonSerializer.Deserialize<TopDishResponse>(json, Opts);
             if (resp?.Dish == null) return "No orders recorded today yet.";
             return $"{resp.Dish}  —  {resp.Quantity} sold today";
@@ -945,7 +945,7 @@ public class ApiService
     {
         try
         {
-            var json = await _http.GetStringAsync($"{Base}/analytics/todays-revenue?outlet_id={OutletId}");
+            var json = await _http.GetStringAsync($"{Base}/analytics/todays-revenue/?outlet_id={OutletId}");
             var resp = JsonSerializer.Deserialize<RevenueResponse>(json, Opts);
             return resp == null ? "No data returned." : $"₹{resp.Revenue:N2}";
         }
@@ -961,7 +961,7 @@ public class ApiService
         try
         {
             var body = JsonSerializer.Serialize(new { question }, Opts);
-            var res = await _http.PostAsync($"{Base}/chat/query",
+            var res = await _http.PostAsync($"{Base}/chat/query/",
                 new StringContent(body, Encoding.UTF8, "application/json"));
             return JsonSerializer.Deserialize<ChatResponse>(await res.Content.ReadAsStringAsync(), Opts);
         }
@@ -977,7 +977,7 @@ public class ApiService
         try
         {
             var body = JsonSerializer.Serialize(new { query, outlet_id = OutletId }, Opts);
-            var res = await _http.PostAsync($"{Base}/chat/ask",
+            var res = await _http.PostAsync($"{Base}/chat/ask/",
                 new StringContent(body, Encoding.UTF8, "application/json"));
             if (!res.IsSuccessStatusCode)
                 return new ChatResponse { Answer = "Server returned an error. Please try again." };
@@ -995,7 +995,7 @@ public class ApiService
         try
         {
             var body = JsonSerializer.Serialize(new { pin }, Opts);
-            var res = await _http.PostAsync($"{Base}/auth/pin-login",
+            var res = await _http.PostAsync($"{Base}/auth/pin-login/",
                 new StringContent(body, Encoding.UTF8, "application/json"));
             if (!res.IsSuccessStatusCode)
             {

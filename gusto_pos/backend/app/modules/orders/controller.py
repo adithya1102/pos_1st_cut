@@ -1,3 +1,4 @@
+import traceback
 from typing import Any
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Body
@@ -110,7 +111,11 @@ async def get_order(item_id: UUID, db: AsyncSession = Depends(get_db)):
 @router.post("/", response_model=OrderRead, status_code=status.HTTP_201_CREATED)
 async def create_order(payload: OrderCreate, db: AsyncSession = Depends(get_db)):
     """Create a new order."""
-    return await OrderService.create_order(db, payload)
+    try:
+        return await OrderService.create_order(db, payload)
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.post("/bill/{table_id}", response_model=BillResponse)

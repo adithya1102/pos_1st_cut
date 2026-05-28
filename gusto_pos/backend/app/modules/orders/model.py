@@ -14,13 +14,13 @@ class Order(Base):
         server_default=text("nextval('orders_readable_id_seq'::regclass)"),
     )
     outlet_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("outlets.id"), nullable=False)
-    table_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("tables.id"), nullable=True)
+    # table_id stores human-readable labels like "N-1", "A-3" — not a UUID FK
+    table_id: Mapped[str | None] = mapped_column(String(20), nullable=True)
     customer_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("customers.id"))
     total_amount: Mapped[float] = mapped_column(DECIMAL(10, 2), default=0.00)
     order_status: Mapped[str] = mapped_column(String(20), default="Pending")
 
     outlet = relationship("Outlet", back_populates="orders", lazy="raise")
-    table = relationship("Table", back_populates="orders", lazy="raise")
     customer = relationship("Customer", back_populates="orders", lazy="raise")
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan", lazy="raise")
     payments = relationship("Payment", back_populates="order", cascade="all, delete-orphan", lazy="raise")

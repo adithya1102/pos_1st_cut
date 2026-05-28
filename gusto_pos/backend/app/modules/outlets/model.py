@@ -30,4 +30,3 @@ class Table(Base):
     status: Mapped[int] = mapped_column(Integer, default=0)
 
     outlet = relationship("Outlet", back_populates="tables", lazy="selectin")
-    orders = relationship("Order", back_populates="table", lazy="selectin")
