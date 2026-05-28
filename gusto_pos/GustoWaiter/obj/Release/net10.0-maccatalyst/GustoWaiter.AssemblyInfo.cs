@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("GustoWaiter")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0+4c06cf0e8bc7a82706edb8493325ae12e7a8a08c")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0+868099ba8392c1aed10aa0589fa397f7bb0b1eab")]
 [assembly: System.Reflection.AssemblyProductAttribute("GustoWaiter")]
 [assembly: System.Reflection.AssemblyTitleAttribute("GustoWaiter")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

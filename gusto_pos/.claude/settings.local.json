@@ -62,7 +62,11 @@
       "Bash(Select-Object FullName)",
       "Bash(Format-Table -HideTableHeaders)",
       "PowerShell(Get-ChildItem -Recurse \"C:\\\\Users\\\\Adithya\\\\Desktop\\\\demo1\\\\pos_1st_cut\\\\gusto_pos\\\\GustoPOS\" | Where-Object { $_.Extension -in \".cs\",\".xaml\" } | Select-Object -ExpandProperty FullName)",
-      "PowerShell(git *)"
+      "PowerShell(git *)",
+      "Bash(Stop-Process -Name \"GustoWaiter\" -Force -ErrorAction SilentlyContinue)",
+      "Bash(Start-Sleep -Seconds 2)",
+      "Bash(Write-Host \"Stopped\")",
+      "PowerShell(Test-Path *)"
     ]
   }
 }

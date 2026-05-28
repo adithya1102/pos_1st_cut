@@ -20,7 +20,7 @@
 //    public async Task<List<Notification>> GetNotificationsAsync() {
 //        try {
 //            Debug.WriteLine($">>> [DIAGNOSTIC]: GetNotificationsAsync START");
-//            var json = await _http.GetStringAsync($"{Base}/sessions/waiter/notifications/{OutletId}");
+//            var json = await _http.GetStringAsync($"{Base}/sessions/waiter/notifications/{OutletId}/");
 //            Debug.WriteLine($">>> [DIAGNOSTIC]: GetNotificationsAsync got {json.Length} chars");
 //            return JsonSerializer.Deserialize<List<Notification>>(json, J) ?? new();
 //        } catch (Exception ex) {
@@ -34,7 +34,7 @@
 //            var body = JsonSerializer.Serialize(new { notification_id = id, confirmed = confirm });
 //            Debug.WriteLine($">>> [DIAGNOSTIC]: RespondToNotification id={id} confirm={confirm} body={body}");
 //            var r = await _http.PostAsync(
-//                $"{Base}/sessions/waiter/action",
+//                $"{Base}/sessions/waiter/action/",
 //                new StringContent(body, Encoding.UTF8, "application/json"));
 //            Debug.WriteLine($">>> [DIAGNOSTIC]: RespondToNotification status={r.StatusCode}");
 //            return r.IsSuccessStatusCode;
@@ -47,7 +47,7 @@
 //    public async Task<ZoneMenuResponse?> GetMenuByZoneAsync(string zone) {
 //        try {
 //            Debug.WriteLine($">>> [DIAGNOSTIC]: GetMenuByZoneAsync START zone={zone}");
-//            var json = await _http.GetStringAsync($"{Base}/menus/zone/{OutletId}/{zone}");
+//            var json = await _http.GetStringAsync($"{Base}/menus/zone/{OutletId}/{zone}/");
 //            Debug.WriteLine($">>> [DIAGNOSTIC]: GetMenuByZoneAsync got {json.Length} chars");
 //            try {
 //                var result = JsonSerializer.Deserialize<ZoneMenuResponse>(json, J);
@@ -71,7 +71,7 @@
 //        }
 
 //        try {
-//            var json = await _http.GetStringAsync($"{Base}/menus/{MenuId}");
+//            var json = await _http.GetStringAsync($"{Base}/menus/{MenuId}/");
 //            return JsonSerializer.Deserialize<MenuResponse>(json, J);
 //        } catch (Exception ex) {
 //            Debug.WriteLine($"GetMenuAsync error: {ex.Message}");
@@ -83,7 +83,7 @@
 //        try {
 //            Debug.WriteLine($">>> [DIAGNOSTIC]: ConfirmOrderAsync orderId={orderId}");
 //            var r = await _http.PostAsync(
-//                $"{Base}/orders/{orderId}/confirm",
+//                $"{Base}/orders/{orderId}/confirm/",
 //                new StringContent("{}", Encoding.UTF8, "application/json"));
 //            var resp = await r.Content.ReadAsStringAsync();
 //            Debug.WriteLine($">>> [DIAGNOSTIC]: ConfirmOrderAsync status={r.StatusCode} resp={resp}");
@@ -99,7 +99,7 @@
 //            Debug.WriteLine($">>> [DIAGNOSTIC]: RejectOrderAsync orderId={orderId}");
 //            var body = JsonSerializer.Serialize(new { order_status = "cancelled" });
 //            var r = await _http.PutAsync(
-//                $"{Base}/orders/{orderId}",
+//                $"{Base}/orders/{orderId}/",
 //                new StringContent(body, Encoding.UTF8, "application/json"));
 //            Debug.WriteLine($">>> [DIAGNOSTIC]: RejectOrderAsync status={r.StatusCode}");
 //            return r.IsSuccessStatusCode;
@@ -111,7 +111,7 @@
 
 //    public async Task<JsonElement?> GetOrderDetailsAsync(string orderId) {
 //        try {
-//            var json = await _http.GetStringAsync($"{Base}/orders/{orderId}");
+//            var json = await _http.GetStringAsync($"{Base}/orders/{orderId}/");
 //            using var doc = JsonDocument.Parse(json);
 //            return doc.RootElement.Clone();
 //        } catch (Exception ex) {
@@ -135,7 +135,7 @@
 //            };
 //            var body = JsonSerializer.Serialize(payload);
 //            var r = await _http.PutAsync(
-//                $"{Base}/orders/{orderId}",
+//                $"{Base}/orders/{orderId}/",
 //                new StringContent(body, Encoding.UTF8, "application/json"));
 //            return r.IsSuccessStatusCode;
 //        } catch (Exception ex) {
@@ -174,7 +174,7 @@
 
 //    public async Task<OutletConfig> GetOutletConfigAsync() {
 //        try {
-//            var json = await _http.GetStringAsync($"{Base}/config/{OutletId}");
+//            var json = await _http.GetStringAsync($"{Base}/config/{OutletId}/");
 //            return JsonSerializer.Deserialize<OutletConfig>(json, J) ?? new OutletConfig();
 //        } catch (Exception ex) {
 //            Debug.WriteLine($"GetOutletConfigAsync error: {ex.Message}");
@@ -188,7 +188,7 @@
 
 //            // Fetch sessions and all orders in parallel — a table is occupied if it has
 //            // an active session OR unpaid orders (covers waiter-placed orders with no session)
-//            var sessionsTask = _http.GetStringAsync($"{Base}/tables/all");
+//            var sessionsTask = _http.GetStringAsync($"{Base}/tables/all/");
 //            var ordersTask = _http.GetStringAsync($"{Base}/orders/");
 //            await Task.WhenAll(sessionsTask, ordersTask);
 
@@ -243,7 +243,7 @@
 //        try {
 //            var body = JsonSerializer.Serialize(new { outlet_id = OutletId, table_id = tableId });
 //            var r = await _http.PostAsync(
-//                $"{Base}/tables/open",
+//                $"{Base}/tables/open/",
 //                new StringContent(body, Encoding.UTF8, "application/json"));
 //            var resp = await r.Content.ReadAsStringAsync();
 //            if (r.IsSuccessStatusCode) {
@@ -262,7 +262,7 @@
 //    public async Task<bool> CloseTableAsync(string tableId) {
 //        try {
 //            var r = await _http.PostAsync(
-//                $"{Base}/tables/close/{tableId}?outlet_id={OutletId}",
+//                $"{Base}/tables/close/{tableId}/?outlet_id={OutletId}",
 //                new StringContent("", Encoding.UTF8, "application/json"));
 //            return r.IsSuccessStatusCode;
 //        } catch (Exception ex) {
@@ -273,7 +273,7 @@
 
 //    public async Task<(int count, decimal total)> GetTableOrdersAsync(string tableId) {
 //        try {
-//            var json = await _http.GetStringAsync($"{Base}/orders/table/{tableId}");
+//            var json = await _http.GetStringAsync($"{Base}/orders/table/{tableId}/");
 //            using var doc = JsonDocument.Parse(json);
 //            int count = 0;
 //            decimal total = 0;
@@ -299,7 +299,7 @@
 //        try {
 //            var body = """{"lat":12.982713061267125,"lng":80.1900068666091,"radius_meters":100}""";
 //            await _http.PostAsync(
-//                $"{Base}/tables/set-location",
+//                $"{Base}/tables/set-location/",
 //                new StringContent(body, Encoding.UTF8, "application/json"));
 //        } catch (Exception ex) {
 //            Debug.WriteLine($"SetGpsAsync error: {ex.Message}");
@@ -309,7 +309,7 @@
 //    public async Task<(Models.PinLoginResponse? Response, string? Error)> PinLoginAsync(string pin) {
 //        try {
 //            var body = JsonSerializer.Serialize(new { pin }, J);
-//            var res = await _http.PostAsync($"{Base}/auth/pin-login",
+//            var res = await _http.PostAsync($"{Base}/auth/pin-login/",
 //                new StringContent(body, Encoding.UTF8, "application/json"));
 //            if (!res.IsSuccessStatusCode) {
 //                var errorBody = await res.Content.ReadAsStringAsync();
@@ -353,7 +353,7 @@ public class ApiService
         try
         {
             Debug.WriteLine($">>> [DIAGNOSTIC]: GetNotificationsAsync START");
-            var json = await _http.GetStringAsync($"{Base}/sessions/waiter/notifications/{OutletId}");
+            var json = await _http.GetStringAsync($"{Base}/sessions/waiter/notifications/{OutletId}/");
             Debug.WriteLine($">>> [DIAGNOSTIC]: GetNotificationsAsync got {json.Length} chars");
             return JsonSerializer.Deserialize<List<Notification>>(json, J) ?? new();
         }
@@ -371,7 +371,7 @@ public class ApiService
             var body = JsonSerializer.Serialize(new { notification_id = id, confirmed = confirm });
             Debug.WriteLine($">>> [DIAGNOSTIC]: RespondToNotification id={id} confirm={confirm} body={body}");
             var r = await _http.PostAsync(
-                $"{Base}/sessions/waiter/action",
+                $"{Base}/sessions/waiter/action/",
                 new StringContent(body, Encoding.UTF8, "application/json"));
             Debug.WriteLine($">>> [DIAGNOSTIC]: RespondToNotification status={r.StatusCode}");
             return r.IsSuccessStatusCode;
@@ -388,7 +388,7 @@ public class ApiService
         try
         {
             Debug.WriteLine($">>> [DIAGNOSTIC]: GetMenuByZoneAsync START zone={zone}");
-            var json = await _http.GetStringAsync($"{Base}/menus/zone/{OutletId}/{zone}");
+            var json = await _http.GetStringAsync($"{Base}/menus/zone/{OutletId}/{zone}/");
             Debug.WriteLine($">>> [DIAGNOSTIC]: GetMenuByZoneAsync got {json.Length} chars");
             try
             {
@@ -420,7 +420,7 @@ public class ApiService
 
         try
         {
-            var json = await _http.GetStringAsync($"{Base}/menus/{MenuId}");
+            var json = await _http.GetStringAsync($"{Base}/menus/{MenuId}/");
             return JsonSerializer.Deserialize<MenuResponse>(json, J);
         }
         catch (Exception ex)
@@ -436,7 +436,7 @@ public class ApiService
         {
             Debug.WriteLine($">>> [DIAGNOSTIC]: ConfirmOrderAsync orderId={orderId}");
             var r = await _http.PostAsync(
-                $"{Base}/orders/{orderId}/confirm",
+                $"{Base}/orders/{orderId}/confirm/",
                 new StringContent("{}", Encoding.UTF8, "application/json"));
             var resp = await r.Content.ReadAsStringAsync();
             Debug.WriteLine($">>> [DIAGNOSTIC]: ConfirmOrderAsync status={r.StatusCode} resp={resp}");
@@ -456,7 +456,7 @@ public class ApiService
             Debug.WriteLine($">>> [DIAGNOSTIC]: RejectOrderAsync orderId={orderId}");
             var body = JsonSerializer.Serialize(new { order_status = "cancelled" });
             var r = await _http.PutAsync(
-                $"{Base}/orders/{orderId}",
+                $"{Base}/orders/{orderId}/",
                 new StringContent(body, Encoding.UTF8, "application/json"));
             Debug.WriteLine($">>> [DIAGNOSTIC]: RejectOrderAsync status={r.StatusCode}");
             return r.IsSuccessStatusCode;
@@ -472,7 +472,7 @@ public class ApiService
     {
         try
         {
-            var json = await _http.GetStringAsync($"{Base}/orders/{orderId}");
+            var json = await _http.GetStringAsync($"{Base}/orders/{orderId}/");
             using var doc = JsonDocument.Parse(json);
             return doc.RootElement.Clone();
         }
@@ -501,7 +501,7 @@ public class ApiService
             };
             var body = JsonSerializer.Serialize(payload);
             var r = await _http.PutAsync(
-                $"{Base}/orders/{orderId}",
+                $"{Base}/orders/{orderId}/",
                 new StringContent(body, Encoding.UTF8, "application/json"));
             return r.IsSuccessStatusCode;
         }
@@ -549,7 +549,7 @@ public class ApiService
     {
         try
         {
-            var json = await _http.GetStringAsync($"{Base}/config/{OutletId}");
+            var json = await _http.GetStringAsync($"{Base}/config/{OutletId}/");
             return JsonSerializer.Deserialize<OutletConfig>(json, J) ?? new OutletConfig();
         }
         catch (Exception ex)
@@ -564,7 +564,7 @@ public class ApiService
         try
         {
             var config = await GetOutletConfigAsync();
-            var sessionsTask = _http.GetStringAsync($"{Base}/tables/all");
+            var sessionsTask = _http.GetStringAsync($"{Base}/tables/all/");
             var ordersTask = _http.GetStringAsync($"{Base}/orders/");
             await Task.WhenAll(sessionsTask, ordersTask);
 
@@ -632,7 +632,7 @@ public class ApiService
         {
             var body = JsonSerializer.Serialize(new { outlet_id = OutletId, table_id = tableId });
             var r = await _http.PostAsync(
-                $"{Base}/tables/open",
+                $"{Base}/tables/open/",
                 new StringContent(body, Encoding.UTF8, "application/json"));
             var resp = await r.Content.ReadAsStringAsync();
             if (r.IsSuccessStatusCode)
@@ -655,7 +655,7 @@ public class ApiService
         try
         {
             var r = await _http.PostAsync(
-                $"{Base}/tables/close/{tableId}?outlet_id={OutletId}",
+                $"{Base}/tables/close/{tableId}/?outlet_id={OutletId}",
                 new StringContent("", Encoding.UTF8, "application/json"));
             return r.IsSuccessStatusCode;
         }
@@ -670,7 +670,7 @@ public class ApiService
     {
         try
         {
-            var json = await _http.GetStringAsync($"{Base}/orders/table/{tableId}");
+            var json = await _http.GetStringAsync($"{Base}/orders/table/{tableId}/");
             using var doc = JsonDocument.Parse(json);
             int count = 0;
             decimal total = 0;
@@ -700,7 +700,7 @@ public class ApiService
         {
             var body = """{"lat":12.982713061267125,"lng":80.1900068666091,"radius_meters":100}""";
             await _http.PostAsync(
-                $"{Base}/tables/set-location",
+                $"{Base}/tables/set-location/",
                 new StringContent(body, Encoding.UTF8, "application/json"));
         }
         catch (Exception ex)
@@ -714,7 +714,7 @@ public class ApiService
         try
         {
             var body = JsonSerializer.Serialize(new { pin }, J);
-            var res = await _http.PostAsync($"{Base}/auth/pin-login",
+            var res = await _http.PostAsync($"{Base}/auth/pin-login/",
                 new StringContent(body, Encoding.UTF8, "application/json"));
             if (!res.IsSuccessStatusCode)
             {

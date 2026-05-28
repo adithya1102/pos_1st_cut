@@ -12,7 +12,7 @@ public partial class App : Application {
         private async Task CheckBackendConnectivity() {
             try {
                 using var http = new System.Net.Http.HttpClient() { Timeout = TimeSpan.FromSeconds(3) };
-                var resp = await http.GetAsync("http://127.0.0.1:8000/");
+                var resp = await http.GetAsync("https://pos-1st-cut.onrender.com/");
                 if (!resp.IsSuccessStatusCode) {
                     await ShowBackendAlert();
                 }
@@ -27,7 +27,7 @@ public partial class App : Application {
                 try {
                     var page = Current?.Windows.FirstOrDefault()?.Page;
                     if (page != null)
-                        await page.DisplayAlertAsync("Backend unreachable", "Backend unreachable. Make sure the server is running on port 8000.", "OK");
+                        await page.DisplayAlertAsync("Backend unreachable", "Backend unreachable. Make sure you have internet access and the server is online.", "OK");
                 } catch { }
             });
         }
