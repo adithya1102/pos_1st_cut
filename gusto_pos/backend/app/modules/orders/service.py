@@ -87,6 +87,7 @@ class OrderService:
         obj.total_amount = float(obj.total_amount) + new_items_total
         db.add(obj)
 
+        is_staff_order = getattr(payload, "source", "customer") in ("waiter", "pos")
         db.add(WaiterNotification(
             outlet_id=obj.outlet_id,
             table_id=str(obj.table_id) if obj.table_id else "",
@@ -96,6 +97,8 @@ class OrderService:
             order_id=obj.id,
             total_amount=obj.total_amount,
             order_preview=_json.dumps(notif_items),
+            is_confirmed=True if is_staff_order else None,
+            is_read=True if is_staff_order else False,
         ))
 
         await db.commit()
@@ -121,6 +124,7 @@ class OrderService:
             "table_id": str(order.table_id) if order.table_id else None,
             "order_status": order.order_status,
             "total_amount": float(order.total_amount),
+            "source": getattr(payload, "source", "customer"),
         }
         await pos_manager.broadcast_order_event(
             outlet_id=str(order.outlet_id),

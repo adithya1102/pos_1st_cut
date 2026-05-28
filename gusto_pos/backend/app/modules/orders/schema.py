@@ -33,6 +33,7 @@ class OrderCreate(BaseModel):
     total_amount: float
     order_status: OrderStatusEnum = OrderStatusEnum.PENDING
     items: Optional[List[OrderItemCreate]] = []
+    source: str = "customer"
 
 
 class OrderUpdate(BaseModel):

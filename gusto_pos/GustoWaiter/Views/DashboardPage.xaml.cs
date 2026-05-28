@@ -67,10 +67,12 @@ public partial class DashboardPage : ContentPage {
                     if (evt == "NEW_ORDER") {
                         var orderId  = doc.RootElement.TryGetProperty("id",           out var oid) ? oid.GetString() ?? "" : "";
                         var tableId  = doc.RootElement.TryGetProperty("table_id",     out var tid) ? tid.GetString() ?? "" : "";
+                        var source   = doc.RootElement.TryGetProperty("source",       out var src) ? src.GetString() ?? "" : "";
                         decimal total = 0m;
                         if (doc.RootElement.TryGetProperty("total_amount", out var ta))
                             ta.TryGetDecimal(out total);
-                        if (!string.IsNullOrEmpty(orderId))
+                        bool isStaffOrder = source == "waiter" || source == "pos";
+                        if (!string.IsNullOrEmpty(orderId) && !isStaffOrder)
                             _ = ShowApprovalPopupAsync(orderId, tableId, total);
                         else
                             _ = RefreshNotificationsFromWsAsync();
