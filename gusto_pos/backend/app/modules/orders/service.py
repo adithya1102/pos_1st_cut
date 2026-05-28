@@ -12,6 +12,7 @@ from app.modules.orders.model import Order
 from app.modules.order_items.model import OrderItem
 from app.modules.sessions.models import WaiterNotification
 from app.modules.tables.models import TableSession
+from app.modules.outlets.model import Table
 from app.core.websocket_manager import kitchen_manager, customer_manager, pos_manager, waiter_manager
 from app.modules.orders.schema import OrderCreate, OrderUpdate, OrderItemCreate
 
@@ -442,6 +443,36 @@ class OrderService:
 
         c.showPage()
         c.save()
+
+        # Settle all orders and free the table so floor views clear immediately
+        for order in orders:
+            order.order_status = "paid"
+
+        sessions_q = await db.execute(
+            select(TableSession).where(
+                TableSession.outlet_id == UUID(OUTLET_ID),
+                TableSession.table_id == table_id,
+                TableSession.is_active == True,
+            )
+        )
+        for session in sessions_q.scalars().all():
+            session.is_active = False
+            session.closed_at = datetime.utcnow()
+
+        tbl_q = await db.execute(
+            select(Table).where(
+                Table.outlet_id == UUID(OUTLET_ID),
+                Table.table_number == table_id,
+            )
+        )
+        tbl = tbl_q.scalar_one_or_none()
+        if tbl:
+            tbl.status = 0  # 0 = Free
+
+        await db.commit()
+
+        await pos_manager.broadcast_order_event(OUTLET_ID, "TABLE_CLOSED", {"table_id": table_id})
+        await waiter_manager.broadcast_order_event(OUTLET_ID, "TABLE_CLOSED", {"table_id": table_id})
 
         return {
             "pdf_path": pdf_path,

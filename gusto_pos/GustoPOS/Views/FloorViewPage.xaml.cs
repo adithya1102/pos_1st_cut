@@ -75,18 +75,26 @@ public partial class FloorViewPage : ContentView
                     var msg = Encoding.UTF8.GetString(buf, 0, result.Count);
                     using var doc = JsonDocument.Parse(msg);
                     var evt = doc.RootElement.TryGetProperty("event", out var ep) ? ep.GetString() : null;
-                    if (evt is "TABLE_CLOSED" or "TABLE_STATUS_CHANGED")
+                    if (evt == "TABLE_CLOSED")
                     {
-                        // Capture the table_id string before the JsonDocument is disposed
+                        // Capture table_id before the JsonDocument is disposed
                         var closedTableId = doc.RootElement.TryGetProperty("table_id", out var tidProp)
                             ? tidProp.GetString() : null;
                         MainThread.BeginInvokeOnMainThread(() =>
                         {
-                            if (closedTableId != null) _tableTokens.Remove(closedTableId);
+                            if (closedTableId != null)
+                            {
+                                _tableTokens.Remove(closedTableId);
+                                // Immediately reset the in-memory status so BuildGrid renders neutral now
+                                var tbl = _normalTables.Concat(_acTables)
+                                    .FirstOrDefault(t => t.Id == closedTableId);
+                                if (tbl != null) tbl.Status = "free";
+                                BuildGrid();
+                            }
                             RefreshTableStatusFromDbAsync();
                         });
                     }
-                    else if (evt is "NEW_ORDER" or "ORDER_CONFIRMED" or "ORDER_STATUS_UPDATED" or "TABLE_OPENED")
+                    else if (evt is "TABLE_STATUS_CHANGED" or "NEW_ORDER" or "ORDER_CONFIRMED" or "ORDER_STATUS_UPDATED" or "TABLE_OPENED")
                         MainThread.BeginInvokeOnMainThread(() => RefreshTableStatusFromDbAsync());
                 }
             }
