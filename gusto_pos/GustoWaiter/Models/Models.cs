@@ -139,6 +139,10 @@ public class TableInfo {
 
     [JsonPropertyName("capacity")]
     public string Capacity { get; set; } = "4";
+
+    // Computed by ApiService — not from JSON
+    public string TableVisualStatus { get; set; } = "free"; // free | seated | ordered | ready | delayed
+    public string OrderCreatedAt { get; set; } = "";
 }
 public class OrderNotification {
     [JsonPropertyName("id")]
@@ -184,6 +188,40 @@ public class OutletConfig {
 
     [JsonPropertyName("ac_table_count")]
     public int AcTableCount { get; set; } = 10;
+}
+
+// ── Order canvas models ───────────────────────────────────────────────────────
+
+public class TableActiveOrder {
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = "";
+
+    [JsonPropertyName("order_status")]
+    public string OrderStatus { get; set; } = "";
+
+    [JsonPropertyName("created_at")]
+    public string CreatedAt { get; set; } = "";
+
+    [JsonPropertyName("total_amount")]
+    public decimal TotalAmount { get; set; }
+
+    [JsonPropertyName("items")]
+    public List<OrderItemInfo> Items { get; set; } = new();
+}
+
+public class OrderItemDisplay {
+    public int Serial { get; set; }
+    public string Name { get; set; } = "";
+    public decimal Price { get; set; }
+    public string OrderStatus { get; set; } = "";
+
+    public string StatusDot => OrderStatus switch {
+        "cooking"   => "🟡",
+        "ready"     => "🔵",
+        _           => "🟢"
+    };
+    public string PriceDisplay  => $"₹{Price:F0}";
+    public string SerialDisplay => $"#{Serial}";
 }
 
 // ── Approval Checklist models ─────────────────────────────────────────────────

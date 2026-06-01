@@ -583,38 +583,51 @@ public class ApiService
             }
 
             var occupiedByOrders = new HashSet<string>();
+            var tableOrderInfo = new Dictionary<string, (string Status, string CreatedAt)>();
             using (var doc = JsonDocument.Parse(ordersTask.Result))
             {
                 foreach (var el in doc.RootElement.EnumerateArray())
                 {
-                    var status = el.TryGetProperty("order_status", out var sp) ? sp.GetString() : null;
-                    var tableId = el.TryGetProperty("table_id", out var tp) ? tp.GetString() : null;
+                    var status  = el.TryGetProperty("order_status", out var sp) ? sp.GetString() ?? "" : "";
+                    var tableId = el.TryGetProperty("table_id",     out var tp) ? tp.GetString() : null;
+                    var created = el.TryGetProperty("created_at",   out var ca) ? ca.GetString() ?? "" : "";
                     if (!string.IsNullOrEmpty(tableId) && status != "paid" && status != "cancelled")
+                    {
                         occupiedByOrders.Add(tableId);
+                        if (!tableOrderInfo.TryGetValue(tableId, out var prev) ||
+                            OrderStatusPriority(status) > OrderStatusPriority(prev.Status))
+                            tableOrderInfo[tableId] = (status, created);
+                    }
                 }
             }
 
             var tables = new List<TableInfo>();
             for (int i = 1; i <= config.NormalTableCount; i++)
             {
-                var tid = $"N-{i}";
-                tables.Add(new TableInfo
-                {
+                var tid    = $"N-{i}";
+                var isOpen = activeSessions.ContainsKey(tid) || occupiedByOrders.Contains(tid);
+                tableOrderInfo.TryGetValue(tid, out var oi);
+                tables.Add(new TableInfo {
                     TableId = tid,
                     Slug = activeSessions.TryGetValue(tid, out var tok) ? tok : "",
-                    IsOpen = activeSessions.ContainsKey(tid) || occupiedByOrders.Contains(tid),
-                    Capacity = "4"
+                    IsOpen = isOpen,
+                    Capacity = "4",
+                    TableVisualStatus = ComputeTableVisualStatus(isOpen, oi.Status ?? "", oi.CreatedAt ?? ""),
+                    OrderCreatedAt = oi.CreatedAt ?? ""
                 });
             }
             for (int i = 1; i <= config.AcTableCount; i++)
             {
-                var tid = $"A-{i}";
-                tables.Add(new TableInfo
-                {
+                var tid    = $"A-{i}";
+                var isOpen = activeSessions.ContainsKey(tid) || occupiedByOrders.Contains(tid);
+                tableOrderInfo.TryGetValue(tid, out var oi);
+                tables.Add(new TableInfo {
                     TableId = tid,
                     Slug = activeSessions.TryGetValue(tid, out var tok) ? tok : "",
-                    IsOpen = activeSessions.ContainsKey(tid) || occupiedByOrders.Contains(tid),
-                    Capacity = "4"
+                    IsOpen = isOpen,
+                    Capacity = "4",
+                    TableVisualStatus = ComputeTableVisualStatus(isOpen, oi.Status ?? "", oi.CreatedAt ?? ""),
+                    OrderCreatedAt = oi.CreatedAt ?? ""
                 });
             }
             return tables;
@@ -624,6 +637,80 @@ public class ApiService
             Debug.WriteLine($"GetTablesAsync error: {ex.Message}");
             return new();
         }
+    }
+
+    public async Task<TableActiveOrder?> GetTableActiveOrderSummaryAsync(string tableId)
+    {
+        try
+        {
+            var listJson = await _http.GetStringAsync($"{Base}/orders/table/{tableId}/");
+            string? activeId = null;
+            string  activeStatus = "";
+            using (var doc = JsonDocument.Parse(listJson))
+            {
+                foreach (var el in doc.RootElement.EnumerateArray())
+                {
+                    var s = el.TryGetProperty("order_status", out var sp) ? sp.GetString() ?? "" : "";
+                    if (s == "paid" || s == "cancelled") continue;
+                    activeId     = el.TryGetProperty("id", out var id) ? id.GetString() : null;
+                    activeStatus = s;
+                    break;
+                }
+            }
+            if (activeId == null) return null;
+
+            var detailJson = await _http.GetStringAsync($"{Base}/orders/{activeId}/");
+            using var detail = JsonDocument.Parse(detailJson);
+            var root = detail.RootElement;
+
+            var order = new TableActiveOrder {
+                Id          = activeId,
+                OrderStatus = activeStatus,
+                CreatedAt   = root.TryGetProperty("created_at",   out var ca) ? ca.GetString() ?? "" : "",
+                TotalAmount = root.TryGetProperty("total_amount", out var ta) ? ta.GetDecimal() : 0m
+            };
+
+            // The detail endpoint may expose items under "items" or "order_items"
+            var itemsKey = root.TryGetProperty("items", out var items) ? "items"
+                         : root.TryGetProperty("order_items", out items) ? "order_items" : null;
+            if (itemsKey != null)
+            {
+                foreach (var item in items.EnumerateArray())
+                {
+                    order.Items.Add(new OrderItemInfo {
+                        Name      = item.TryGetProperty("name",       out var n)  ? n.GetString()  ?? "" : "",
+                        Quantity  = item.TryGetProperty("quantity",   out var q)  ? q.GetInt32()        : 1,
+                        UnitPrice = item.TryGetProperty("unit_price", out var up) ? up.GetDecimal()     : 0m
+                    });
+                }
+            }
+            return order;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"GetTableActiveOrderSummaryAsync error: {ex.Message}");
+            return null;
+        }
+    }
+
+    private static int OrderStatusPriority(string s) => s switch {
+        "ready" => 5, "cooking" => 4, "confirmed" => 3, "pending" => 2, _ => 0
+    };
+
+    private static string ComputeTableVisualStatus(bool isOpen, string orderStatus, string createdAt)
+    {
+        if (!isOpen) return "free";
+        if (string.IsNullOrEmpty(orderStatus)) return "seated";
+        if (orderStatus == "ready") return "ready";
+        if (orderStatus is "cooking" or "confirmed")
+        {
+            if (DateTime.TryParse(createdAt, null,
+                    System.Globalization.DateTimeStyles.RoundtripKind, out var t) &&
+                (DateTime.UtcNow - t.ToUniversalTime()).TotalMinutes > 20)
+                return "delayed";
+            return "ordered";
+        }
+        return "seated";
     }
 
     public async Task<(bool ok, string token)> OpenTableAsync(string tableId)
