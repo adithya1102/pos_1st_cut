@@ -249,7 +249,7 @@ public class MenuPickerPage : ContentPage {
                     Padding = new Thickness(16, 10, 16, 8)
                 });
                 foreach (var item in items)
-                    _menuStack.Children.Add(BuildMenuItemCard(item));
+                    _menuStack.Children.Add(BuildMenuItemCard(item, cat.Name));
             }
 
             if (!any)
@@ -263,7 +263,7 @@ public class MenuPickerPage : ContentPage {
         }
     }
 
-    private View BuildMenuItemCard(Models.MenuItem item) {
+    private View BuildMenuItemCard(Models.MenuItem item, string categoryName = "") {
         var vegBadge = new Border {
             BackgroundColor = item.IsVeg ? Color.FromArgb("#28A745") : Color.FromArgb("#DC3545"),
             StrokeThickness = 0,
@@ -294,14 +294,14 @@ public class MenuPickerPage : ContentPage {
         nameRow.Add(nameLbl,  1, 0);
         nameRow.Add(priceLbl, 2, 0);
 
-        // Qty stepper (hidden until item added)
+        // Permanent stationary stepper [−] 0 [+] — always visible, starts at 0
         var minus = new Button {
             Text = "−", WidthRequest = 32, HeightRequest = 32, FontSize = 16,
-            CornerRadius = 8, BackgroundColor = Color.FromArgb("#F0F0F0"),
-            TextColor = Colors.Black, Padding = new Thickness(0)
+            CornerRadius = 8, BackgroundColor = Color.FromArgb("#E0E0E0"),
+            TextColor = Color.FromArgb("#AAAAAA"), Padding = new Thickness(0)
         };
         var qtyLbl = new Label {
-            FontSize = 14, FontAttributes = FontAttributes.Bold, TextColor = Colors.Black,
+            Text = "0", FontSize = 14, FontAttributes = FontAttributes.Bold, TextColor = Colors.Black,
             VerticalOptions = LayoutOptions.Center, MinimumWidthRequest = 24,
             HorizontalTextAlignment = TextAlignment.Center
         };
@@ -311,67 +311,115 @@ public class MenuPickerPage : ContentPage {
             TextColor = Colors.White, Padding = new Thickness(0)
         };
         var stepper = new HorizontalStackLayout {
-            Spacing = 6, VerticalOptions = LayoutOptions.Center, IsVisible = false,
+            Spacing = 6, VerticalOptions = LayoutOptions.Center,
             Children = { minus, qtyLbl, plus }
-        };
-
-        var addBtn = new Button {
-            Text = "+  Add", BackgroundColor = Color.FromArgb("#28A745"), TextColor = Colors.White,
-            CornerRadius = 8, FontSize = 12, FontAttributes = FontAttributes.Bold,
-            HeightRequest = 34, Padding = new Thickness(12, 0),
-            HorizontalOptions = LayoutOptions.End
         };
 
         var actionRow = new Grid {
             ColumnDefinitions = { new(GridLength.Star), new(GridLength.Auto) }
         };
-        actionRow.Add(stepper, 0, 0);
-        actionRow.Add(addBtn,  1, 0);
+        actionRow.Add(stepper, 1, 0);
 
-        addBtn.Clicked += (_, _) => {
+        // Whipped cream modifier declared before click handlers so both can reference it
+        Button? wcBtn = null;
+        bool wcSelected = false;
+
+        plus.Clicked += (_, _) => {
             var ci = _cart.FirstOrDefault(c => c.MenuItemId == item.Id);
             if (ci == null) {
-                ci = new CartItem { MenuItemId = item.Id, Name = item.Name, BasePrice = item.DisplayPrice };
+                ci = new CartItem { MenuItemId = item.Id, Name = item.Name, BasePrice = item.DisplayPrice, Quantity = 1 };
                 _cart.Add(ci);
             } else {
                 ci.Quantity++;
             }
             qtyLbl.Text = ci.Quantity.ToString();
-            stepper.IsVisible = true;
-            addBtn.IsVisible  = false;
+            minus.BackgroundColor = Color.FromArgb("#F0F0F0");
+            minus.TextColor = Colors.Black;
+            if (wcBtn != null) { wcBtn.IsEnabled = true; wcBtn.Opacity = 1.0; }
             UpdateCartBadge();
         };
 
         minus.Clicked += (_, _) => {
             var ci = _cart.FirstOrDefault(c => c.MenuItemId == item.Id);
-            if (ci == null) return;
+            if (ci == null || ci.Quantity <= 0) return;
             ci.Quantity--;
             if (ci.Quantity <= 0) {
                 _cart.Remove(ci);
-                stepper.IsVisible = false;
-                addBtn.IsVisible  = true;
+                qtyLbl.Text = "0";
+                minus.BackgroundColor = Color.FromArgb("#E0E0E0");
+                minus.TextColor = Color.FromArgb("#AAAAAA");
+                if (wcBtn != null) {
+                    wcBtn.IsEnabled = false;
+                    wcBtn.Opacity = 0.45;
+                    if (wcSelected) {
+                        wcSelected = false;
+                        wcBtn.BackgroundColor = Colors.White;
+                        wcBtn.TextColor = Color.FromArgb("#6C757D");
+                        wcBtn.BorderColor = Color.FromArgb("#DEE2E6");
+                        wcBtn.Text = "+ Add Whipped Cream  ₹40";
+                    }
+                }
             } else {
                 qtyLbl.Text = ci.Quantity.ToString();
             }
             UpdateCartBadge();
         };
 
-        plus.Clicked += (_, _) => {
-            var ci = _cart.FirstOrDefault(c => c.MenuItemId == item.Id);
-            if (ci == null) return;
-            ci.Quantity++;
-            qtyLbl.Text = ci.Quantity.ToString();
-            UpdateCartBadge();
-        };
+        var cardChildren = new List<View> { nameRow, actionRow };
 
-        var card = new Border {
+        if (IsWhippedCreamCategory(categoryName)) {
+            wcBtn = new Button {
+                Text = "+ Add Whipped Cream  ₹40",
+                FontSize = 11, CornerRadius = 6,
+                HeightRequest = 30, Padding = new Thickness(10, 0),
+                BackgroundColor = Colors.White, TextColor = Color.FromArgb("#6C757D"),
+                BorderColor = Color.FromArgb("#DEE2E6"), BorderWidth = 1,
+                HorizontalOptions = LayoutOptions.Start,
+                IsEnabled = false, Opacity = 0.45
+            };
+            wcBtn.Clicked += (_, _) => {
+                var ci = _cart.FirstOrDefault(c => c.MenuItemId == item.Id);
+                if (ci == null) return;
+                wcSelected = !wcSelected;
+                if (wcSelected) {
+                    ci.ModifierPrice = 40m;
+                    if (!ci.Customizations.Contains("Whipped Cream +₹40"))
+                        ci.Customizations.Add("Whipped Cream +₹40");
+                    wcBtn.BackgroundColor = Color.FromArgb("#E8F5E9");
+                    wcBtn.TextColor = Color.FromArgb("#1B4332");
+                    wcBtn.BorderColor = Color.FromArgb("#28A745");
+                    wcBtn.Text = "✓ Whipped Cream  +₹40";
+                } else {
+                    ci.ModifierPrice = 0m;
+                    ci.Customizations.Remove("Whipped Cream +₹40");
+                    wcBtn.BackgroundColor = Colors.White;
+                    wcBtn.TextColor = Color.FromArgb("#6C757D");
+                    wcBtn.BorderColor = Color.FromArgb("#DEE2E6");
+                    wcBtn.Text = "+ Add Whipped Cream  ₹40";
+                }
+                UpdateCartBadge();
+            };
+            cardChildren.Add(wcBtn);
+        }
+
+        var contentStack = new StackLayout { Spacing = 8 };
+        foreach (var child in cardChildren) contentStack.Children.Add(child);
+
+        return new Border {
             BackgroundColor = Colors.White,
             StrokeThickness = 1, Stroke = Color.FromArgb("#DEE2E6"),
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 8 },
             Padding = new Thickness(12, 8), Margin = new Thickness(0, 2),
-            Content = new StackLayout { Spacing = 8, Children = { nameRow, actionRow } }
+            Content = contentStack
         };
-        return card;
+    }
+
+    private static bool IsWhippedCreamCategory(string name) {
+        var lower = name.ToLowerInvariant();
+        return lower.Contains("drink") || lower.Contains("beverage") ||
+               lower.Contains("dessert") || lower.Contains("sweet") ||
+               lower.Contains("coffee") || lower.Contains("juice") ||
+               lower.Contains("shake")  || lower.Contains("smoothie");
     }
 
     // ── Cart ──────────────────────────────────────────────────────────────────
@@ -380,7 +428,7 @@ public class MenuPickerPage : ContentPage {
         var totalItems = _cart.Sum(c => c.Quantity);
         var total = _cart.Sum(c => c.ItemTotal);
         _cartBadge.Text = totalItems > 0 ? $"{totalItems} item{(totalItems > 1 ? "s" : "")} · ₹{total:F0}" : "0 items in cart";
-        _placeBtn.Text = totalItems > 0 ? $"Place Order  ₹{total:F0}" : "Place Order";
+        _placeBtn.Text = totalItems > 0 ? $"Place Order · ₹{total:F0}" : "Place Order";
         _placeBtn.IsEnabled = totalItems > 0;
     }
 
@@ -465,17 +513,24 @@ public class MenuPickerPage : ContentPage {
         try {
             var (ok, msg) = await _api.PlaceOrderAsync(_cart, _tableId, "dine_in");
             if (ok) {
+                await Application.Current!.Windows[0].Page!.DisplayAlertAsync(
+                    "Order Placed!", $"Order for {_tableId} placed successfully.", "OK");
                 OrderPlaced?.Invoke();
                 await Application.Current!.Windows[0].Page!.Navigation.PopModalAsync(true);
             } else {
-                _placeBtn.Text = $"Place Order  ₹{_cart.Sum(c => c.ItemTotal):F0}";
+                var total = _cart.Sum(c => c.ItemTotal);
+                _placeBtn.Text = $"Place Order · ₹{total:F0}";
                 _placeBtn.IsEnabled = true;
-                await Application.Current!.Windows[0].Page!.DisplayAlertAsync("Error", msg, "OK");
+                await Application.Current!.Windows[0].Page!.DisplayAlertAsync(
+                    "Order Failed", msg ?? "Something went wrong. Please try again.", "OK");
             }
         } catch (Exception ex) {
             CrashLogger.Log(ex, "MenuPickerPage.OnPlaceOrder");
-            _placeBtn.Text = "Place Order";
+            var total = _cart.Sum(c => c.ItemTotal);
+            _placeBtn.Text = _cart.Any() ? $"Place Order · ₹{total:F0}" : "Place Order";
             _placeBtn.IsEnabled = _cart.Any();
+            await Application.Current!.Windows[0].Page!.DisplayAlertAsync(
+                "Network Error", "Could not connect to server. Your selections are still saved.", "OK");
         }
     }
 }

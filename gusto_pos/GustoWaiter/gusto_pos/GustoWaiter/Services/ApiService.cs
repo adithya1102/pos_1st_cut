@@ -527,7 +527,9 @@ public class ApiService
                 items = items.Select(i => new {
                     name = i.Name,
                     quantity = i.Quantity,
-                    unit_price = i.BasePrice
+                    unit_price = i.BasePrice + i.ModifierPrice,
+                    customizations = i.Customizations ?? new List<string>(),
+                    custom_note = i.Note ?? ""
                 }).ToArray()
             });
             Debug.WriteLine($">>> [DIAGNOSTIC]: PlaceOrderAsync table={tableId} body={body}");

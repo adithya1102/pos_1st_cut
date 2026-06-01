@@ -39,10 +39,8 @@ public class TablesView : ContentView {
         var legend = new HorizontalStackLayout {
             Spacing = 14, Padding = new Thickness(16, 0, 16, 10),
             Children = {
-                LegendDot("🟢", "Order Taken"),
-                LegendDot("🔵", "Ready"),
-                LegendDot("🟡", "Delayed"),
-                LegendDot("🔴", "Seated"),
+                LegendDot("🟢", "Occupied"),
+                LegendDot("⬜", "Free"),
             }
         };
 
@@ -236,19 +234,13 @@ public class TablesView : ContentView {
 
     // ── Color helpers ─────────────────────────────────────────────────────────
 
-    private static (Color Stroke, Color Bg) TableColors(TableInfo t) => t.TableVisualStatus switch {
-        "ordered" => (Color.FromArgb("#28A745"), Color.FromArgb("#E8F5E9")),
-        "ready"   => (Color.FromArgb("#0D6EFD"), Color.FromArgb("#EFF6FF")),
-        "delayed" => (Color.FromArgb("#FFC107"), Color.FromArgb("#FFFBEB")),
-        "seated"  => (Color.FromArgb("#DC3545"), Color.FromArgb("#FFF5F5")),
-        _         => (Color.FromArgb("#E0E0E0"), Colors.White)
-    };
+    private static (Color Stroke, Color Bg) TableColors(TableInfo t) =>
+        t.IsOpen
+            ? (Color.FromArgb("#28A745"), Colors.White)
+            : (Color.FromArgb("#E0E0E0"), Colors.White);
 
-    private static (string Text, Color Color) StatusLabel(TableInfo t) => t.TableVisualStatus switch {
-        "ordered" => ("ORDERED",  Color.FromArgb("#1B4332")),
-        "ready"   => ("READY",    Color.FromArgb("#0D6EFD")),
-        "delayed" => ("DELAYED",  Color.FromArgb("#856404")),
-        "seated"  => ("SEATED",   Color.FromArgb("#DC3545")),
-        _         => ("FREE",     Color.FromArgb("#28A745"))
-    };
+    private static (string Text, Color Color) StatusLabel(TableInfo t) =>
+        t.IsOpen
+            ? ("OCCUPIED", Color.FromArgb("#28A745"))
+            : ("FREE",     Color.FromArgb("#9E9E9E"));
 }

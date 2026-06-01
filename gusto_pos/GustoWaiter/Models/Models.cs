@@ -122,10 +122,11 @@ public class CartItem {
     public string MenuItemId { get; set; } = "";
     public string Name { get; set; } = "";
     public decimal BasePrice { get; set; }
+    public decimal ModifierPrice { get; set; } = 0m;
     public int Quantity { get; set; } = 1;
     public string Note { get; set; } = "";
     public List<string> Customizations { get; set; } = new();
-    public decimal ItemTotal => BasePrice * Quantity;
+    public decimal ItemTotal => (BasePrice + ModifierPrice) * Quantity;
 }
 public class TableInfo {
     [JsonPropertyName("table_id")]
