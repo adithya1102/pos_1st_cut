@@ -1,5 +1,5 @@
-<api type="release" assembly-name="GustoPOS" mvid="0f1e0beea436483e8c0f1e9e12cce9ba">
-  <module assembly-name="GustoPOS" mvid="0f1e0beea436483e8c0f1e9e12cce9ba" mvid-bytes="7gseDzakPkiMDx6eEszpug==">
+<api type="release" assembly-name="GustoPOS" mvid="3bfd301dca1c4222a1371e96030ab9aa">
+  <module assembly-name="GustoPOS" mvid="3bfd301dca1c4222a1371e96030ab9aa" mvid-bytes="HTD9OxzKIkKhNx6WAwq5qg==">
     <types-scratch>
       <entry key="crc6473d1dbc3fab4acc0/MainActivity" java-name="crc6473d1dbc3fab4acc0/MainActivity" managed-type-name="GustoPOS.MainActivity" token="33554458" />
       <entry key="crc6473d1dbc3fab4acc0/MainApplication" java-name="crc6473d1dbc3fab4acc0/MainApplication" managed-type-name="GustoPOS.MainApplication" token="33554459" />

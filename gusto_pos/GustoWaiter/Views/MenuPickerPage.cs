@@ -278,6 +278,8 @@ public class MenuPickerPage : ContentPage {
         var nameLbl = new Label {
             Text = item.Name, FontSize = 14, FontAttributes = FontAttributes.Bold,
             TextColor = Color.FromArgb("#212529"), VerticalOptions = LayoutOptions.Center,
+            HorizontalOptions = LayoutOptions.Fill,
+            LineBreakMode = LineBreakMode.TailTruncation, MaxLines = 1,
             Margin = new Thickness(8, 0, 0, 0)
         };
 

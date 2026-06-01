@@ -46,6 +46,8 @@ public class OrderView : ContentView {
 
     // Canvas visibility
     private readonly Grid _menuCanvas = new();
+    private Grid _floatingPendingPanel = new();
+    private Button _viewActiveBtn = new();
     private readonly Label _emptyLabel = new() {
         HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center,
         HorizontalTextAlignment = TextAlignment.Center,
@@ -159,10 +161,27 @@ public class OrderView : ContentView {
         _vegNon.Clicked += (_, _) => ApplyVegFilter("Non-Veg");
         UpdateVegBtnStyles();
 
-        var vegRow = new HorizontalStackLayout {
-            Spacing = 8, Margin = new Thickness(12, 4, 12, 8),
+        _viewActiveBtn = new Button {
+            Text = "📋 Active Items", FontSize = 11, CornerRadius = 8, HeightRequest = 34,
+            Padding = new Thickness(12, 0),
+            BackgroundColor = Color.FromArgb("#1B4332"), TextColor = Colors.White
+        };
+        _viewActiveBtn.Clicked += (_, _) => {
+            _floatingPendingPanel.IsVisible = true;
+            _ = LoadPendingItemsAsync();
+        };
+
+        var vegBtnRow = new HorizontalStackLayout {
+            Spacing = 8, VerticalOptions = LayoutOptions.Center,
             Children = { _vegAll, _vegVeg, _vegNon }
         };
+
+        var filterBarGrid = new Grid {
+            Margin = new Thickness(12, 4, 12, 8), ColumnSpacing = 8,
+            ColumnDefinitions = { new(GridLength.Star), new(GridLength.Auto) }
+        };
+        filterBarGrid.Add(vegBtnRow, 0, 0);
+        filterBarGrid.Add(_viewActiveBtn, 1, 0);
 
         var catScroll = new ScrollView {
             Orientation = ScrollOrientation.Horizontal,
@@ -173,26 +192,16 @@ public class OrderView : ContentView {
 
         var searchPanel = new VerticalStackLayout {
             BackgroundColor = Colors.White, Spacing = 0,
-            Children = { _searchBar, vegRow, catScroll }
+            Children = { _searchBar, filterBarGrid, catScroll }
         };
         searchPanel.Shadow = new Shadow { Brush = Brush.Black, Offset = new Point(0, 2), Radius = 6, Opacity = 0.06f };
 
-        // Menu scroll (left side)
+        // Menu scroll (fluid left column)
         var menuScroll = new ScrollView {
             Content = new StackLayout { Padding = new Thickness(12, 4, 12, 12), Children = { _menuStack } }
         };
 
-        // Pending panel (right side — 270px fixed width)
-        var pendingPanel = BuildPendingPanel();
-
-        var mainArea = new Grid {
-            BackgroundColor = Color.FromArgb("#F8F9FA"),
-            ColumnDefinitions = { new(GridLength.Star), new(270) }
-        };
-        mainArea.Add(menuScroll,   0, 0);
-        mainArea.Add(pendingPanel, 1, 0);
-
-        // Cart footer
+        // Cart footer (scoped to the fluid column, not spanning full width)
         _cartBadge.Text = "0 items in cart";
         _cartBadge.FontSize = 12;
         _cartBadge.TextColor = Color.FromArgb("#6C757D");
@@ -218,16 +227,38 @@ public class OrderView : ContentView {
         footer.Add(_cartBadge, 0, 0);
         footer.Add(_placeBtn,  0, 1);
 
-        _menuCanvas.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        // Left fluid column: search panel + scrollable menu list + cart footer stacked vertically
+        var leftColumn = new Grid {
+            BackgroundColor = Colors.White,
+            RowDefinitions = {
+                new(GridLength.Auto),
+                new(GridLength.Star),
+                new(GridLength.Auto)
+            }
+        };
+        leftColumn.Add(searchPanel, 0, 0);
+        leftColumn.Add(menuScroll,  0, 1);
+        leftColumn.Add(footer,      0, 2);
+
+        // Build the floating pending overlay (anchored right, overlaid on menu)
+        BuildFloatingPendingPanel();
+
+        // Single fluid column: full-width menu browser with floating overlay on top
+        _menuCanvas.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
         _menuCanvas.RowDefinitions.Add(new RowDefinition(GridLength.Star));
-        _menuCanvas.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-        _menuCanvas.BackgroundColor = Colors.White;
-        _menuCanvas.Add(searchPanel, 0, 0);
-        _menuCanvas.Add(mainArea,    0, 1);
-        _menuCanvas.Add(footer,      0, 2);
+        _menuCanvas.BackgroundColor = Color.FromArgb("#F8F9FA");
+        _menuCanvas.Add(leftColumn,            0, 0);
+        _menuCanvas.Add(_floatingPendingPanel, 0, 0); // overlay: same cell, anchored right
     }
 
-    private View BuildPendingPanel() {
+    private void BuildFloatingPendingPanel() {
+        var closeBtn = new Button {
+            Text = "✕", FontSize = 14, BackgroundColor = Colors.Transparent,
+            TextColor = Colors.White, Padding = new Thickness(0),
+            WidthRequest = 32, HeightRequest = 32
+        };
+        closeBtn.Clicked += (_, _) => { _floatingPendingPanel.IsVisible = false; };
+
         var refreshBtn = new Button {
             Text = "↻", FontSize = 16, BackgroundColor = Colors.Transparent,
             TextColor = Colors.White, Padding = new Thickness(0),
@@ -240,13 +271,14 @@ public class OrderView : ContentView {
 
         var panelHeader = new Grid {
             BackgroundColor = Color.FromArgb("#1B4332"), Padding = new Thickness(12, 8),
-            ColumnDefinitions = { new(GridLength.Star), new(GridLength.Auto) }
+            ColumnDefinitions = { new(GridLength.Star), new(GridLength.Auto), new(GridLength.Auto) }
         };
         panelHeader.Add(new Label {
-            Text = "Pending Items", FontSize = 13, FontAttributes = FontAttributes.Bold,
+            Text = "📋 Pending Items", FontSize = 13, FontAttributes = FontAttributes.Bold,
             TextColor = Colors.White, VerticalOptions = LayoutOptions.Center
         }, 0, 0);
         panelHeader.Add(refreshBtn, 1, 0);
+        panelHeader.Add(closeBtn,   2, 0);
 
         _pendingEmptyLabel.Text = "No active orders";
         _pendingEmptyLabel.FontSize = 12;
@@ -262,18 +294,25 @@ public class OrderView : ContentView {
 
         var pendingScroll = new ScrollView { Content = pendingContent };
 
-        var panelGrid = new Grid {
+        var innerGrid = new Grid {
             BackgroundColor = Colors.White,
             RowDefinitions = { new(GridLength.Auto), new(GridLength.Star) }
         };
-        panelGrid.Add(panelHeader,   0, 0);
-        panelGrid.Add(pendingScroll, 0, 1);
+        innerGrid.Add(panelHeader,   0, 0);
+        innerGrid.Add(pendingScroll, 0, 1);
 
-        return new Border {
+        var panelBorder = new Border {
             StrokeThickness = 1, Stroke = Color.FromArgb("#DEE2E6"),
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 0 },
-            Content = panelGrid
+            Content = innerGrid
         };
+        panelBorder.Shadow = new Shadow { Brush = Brush.Black, Offset = new Point(-4, 0), Radius = 16, Opacity = 0.15f };
+
+        _floatingPendingPanel.WidthRequest = 280;
+        _floatingPendingPanel.HorizontalOptions = LayoutOptions.End;
+        _floatingPendingPanel.VerticalOptions = LayoutOptions.Fill;
+        _floatingPendingPanel.IsVisible = false;
+        _floatingPendingPanel.Children.Add(panelBorder);
     }
 
     // ── Pending items ─────────────────────────────────────────────────────────
@@ -476,6 +515,8 @@ public class OrderView : ContentView {
         var nameLbl = new Label {
             Text = item.Name, FontSize = 14, FontAttributes = FontAttributes.Bold,
             TextColor = Color.FromArgb("#212529"), VerticalOptions = LayoutOptions.Center,
+            HorizontalOptions = LayoutOptions.Fill,
+            LineBreakMode = LineBreakMode.TailTruncation, MaxLines = 1,
             Margin = new Thickness(8, 0, 0, 0)
         };
 
