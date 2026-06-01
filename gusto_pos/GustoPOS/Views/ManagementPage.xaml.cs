@@ -1,4 +1,4 @@
-﻿using GustoPOS.Services;
+using GustoPOS.Services;
 
 namespace GustoPOS.Views;
 
@@ -19,6 +19,47 @@ public partial class ManagementPage : ContentView
         NormalCountEntry.Text = config.NormalTableCount.ToString();
         AcCountEntry.Text = config.AcTableCount.ToString();
     }
+
+    // ── Tile navigation ──────────────────────────────────────
+
+    private void OnStaffManagementTapped(object? s, TappedEventArgs e)
+    {
+        var page = new StaffRosterPage(_api);
+        page.BackRequested += OnSubViewBack;
+        SubViewHost.Content = page;
+        DashboardPanel.IsVisible = false;
+        SubViewHost.IsVisible = true;
+        page.OnTabShown();
+    }
+
+    private void OnMenuManagementTapped(object? s, TappedEventArgs e)
+    {
+        var page = new MenuManagementPage(_api);
+        page.BackRequested += OnSubViewBack;
+        SubViewHost.Content = page;
+        DashboardPanel.IsVisible = false;
+        SubViewHost.IsVisible = true;
+        page.OnTabShown();
+    }
+
+    private void OnSystemSettingsTapped(object? s, TappedEventArgs e)
+    {
+        var page = new CategoryManagementPage(_api);
+        page.BackRequested += OnSubViewBack;
+        SubViewHost.Content = page;
+        DashboardPanel.IsVisible = false;
+        SubViewHost.IsVisible = true;
+        page.OnTabShown();
+    }
+
+    private void OnSubViewBack()
+    {
+        SubViewHost.Content = null;
+        SubViewHost.IsVisible = false;
+        DashboardPanel.IsVisible = true;
+    }
+
+    // ── Table config ─────────────────────────────────────────
 
     private async void OnSaveNormalClicked(object? s, EventArgs e)
     {

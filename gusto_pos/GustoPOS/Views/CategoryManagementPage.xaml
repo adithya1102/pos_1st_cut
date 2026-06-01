@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="GustoPOS.Views.CategoryManagementPage"
+             BackgroundColor="#F8F9FA">
+    <Grid>
+
+        <!-- ═══════════════════ MAIN CONTENT ═══════════════════ -->
+        <ScrollView>
+            <StackLayout Padding="24" Spacing="20">
+
+                <!-- Header -->
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="16">
+                    <Button Grid.Column="0" Text="← Back"
+                            BackgroundColor="Transparent" TextColor="#1B4332"
+                            FontSize="14" FontAttributes="Bold"
+                            HeightRequest="44" Clicked="OnBackClicked"/>
+                    <StackLayout Grid.Column="1" VerticalOptions="Center" Spacing="2">
+                        <Label Text="Category Management"
+                               FontSize="24" FontAttributes="Bold" TextColor="#212529"/>
+                        <Label Text="Add, rename, or remove menu categories. Changes reflect instantly in the Add Dish picker."
+                               FontSize="13" TextColor="#6C757D"/>
+                    </StackLayout>
+                    <Button Grid.Column="2" Text="+ Add Category"
+                            BackgroundColor="#1B4332" TextColor="White"
+                            CornerRadius="8" FontSize="13" FontAttributes="Bold"
+                            HeightRequest="44" Padding="16,0"
+                            Clicked="OnAddCategoryClicked"/>
+                </Grid>
+
+                <Label x:Name="StatusLabel" Text="" FontSize="13" TextColor="#28A745" MinimumHeightRequest="18"/>
+
+                <!-- Category list card -->
+                <Border BackgroundColor="White" Stroke="#DEE2E6" StrokeShape="RoundRectangle 12">
+                    <StackLayout>
+                        <!-- Column headers -->
+                        <Grid ColumnDefinitions="*,80,80"
+                              Padding="20,12" BackgroundColor="#F8F9FA" ColumnSpacing="12">
+                            <Label Grid.Column="0" Text="CATEGORY NAME"
+                                   FontSize="11" FontAttributes="Bold" TextColor="#6C757D"/>
+                            <Label Grid.Column="1" Text="RENAME"
+                                   FontSize="11" FontAttributes="Bold" TextColor="#6C757D"
+                                   HorizontalTextAlignment="Center"/>
+                            <Label Grid.Column="2" Text="DELETE"
+                                   FontSize="11" FontAttributes="Bold" TextColor="#6C757D"
+                                   HorizontalTextAlignment="Center"/>
+                        </Grid>
+                        <BoxView Color="#DEE2E6" HeightRequest="1"/>
+
+                        <CollectionView x:Name="CategoryCollectionView">
+                            <CollectionView.EmptyView>
+                                <StackLayout Padding="24" HorizontalOptions="Center">
+                                    <Label Text="No categories yet."
+                                           FontSize="14" TextColor="#6C757D"
+                                           HorizontalTextAlignment="Center"/>
+                                    <Label Text="Tap '+ Add Category' to create one."
+                                           FontSize="12" TextColor="#ADB5BD"
+                                           HorizontalTextAlignment="Center"/>
+                                </StackLayout>
+                            </CollectionView.EmptyView>
+                            <CollectionView.ItemTemplate>
+                                <DataTemplate>
+                                    <StackLayout>
+                                        <Grid ColumnDefinitions="*,80,80"
+                                              Padding="20,14" ColumnSpacing="12">
+                                            <Label Grid.Column="0"
+                                                   Text="{Binding Name}"
+                                                   FontSize="15" FontAttributes="Bold"
+                                                   TextColor="#212529" VerticalOptions="Center"/>
+                                            <Button Grid.Column="1"
+                                                    Text="✏️ Rename"
+                                                    BackgroundColor="#FFF9E6" TextColor="#856404"
+                                                    CornerRadius="6" FontSize="11" FontAttributes="Bold"
+                                                    HeightRequest="36" Padding="4,0"
+                                                    CommandParameter="{Binding Id}"
+                                                    Clicked="OnRenameCategoryClicked"/>
+                                            <Button Grid.Column="2"
+                                                    Text="Delete"
+                                                    BackgroundColor="#FFF0F0" TextColor="#DC3545"
+                                                    CornerRadius="6" FontSize="12" FontAttributes="Bold"
+                                                    HeightRequest="36" Padding="8,0"
+                                                    CommandParameter="{Binding Id}"
+                                                    Clicked="OnDeleteCategoryClicked"/>
+                                        </Grid>
+                                        <BoxView Color="#DEE2E6" HeightRequest="1" Margin="0"/>
+                                    </StackLayout>
+                                </DataTemplate>
+                            </CollectionView.ItemTemplate>
+                        </CollectionView>
+
+                    </StackLayout>
+                </Border>
+
+            </StackLayout>
+        </ScrollView>
+
+        <!-- ═══════════════════ ADD CATEGORY MODAL ═══════════════════ -->
+        <Grid x:Name="AddCategoryOverlay" IsVisible="False" BackgroundColor="#80000000">
+            <Border BackgroundColor="White" Stroke="#DEE2E6" StrokeShape="RoundRectangle 16"
+                    WidthRequest="380" VerticalOptions="Center" HorizontalOptions="Center" Padding="32">
+                <StackLayout Spacing="20">
+                    <Label Text="Add New Category"
+                           FontSize="20" FontAttributes="Bold" TextColor="#212529"/>
+                    <StackLayout Spacing="6">
+                        <Label Text="CATEGORY NAME" FontSize="11" FontAttributes="Bold" TextColor="#6C757D"/>
+                        <Border Stroke="#DEE2E6" StrokeShape="RoundRectangle 8" BackgroundColor="White" Padding="12,4">
+                            <Entry x:Name="NewCategoryName"
+                                   Placeholder="e.g. Starters, Main Course, Breads"
+                                   FontSize="14" TextColor="#212529" BackgroundColor="Transparent"/>
+                        </Border>
+                    </StackLayout>
+                    <Label x:Name="AddCategoryError" Text="" TextColor="#DC3545" FontSize="12" MinimumHeightRequest="16"/>
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                        <Button Grid.Column="0" Text="Cancel"
+                                BackgroundColor="#F8F9FA" TextColor="#6C757D"
+                                CornerRadius="8" FontSize="14" HeightRequest="44"
+                                Clicked="OnAddCategoryCancel"/>
+                        <Button Grid.Column="1" Text="Create"
+                                BackgroundColor="#1B4332" TextColor="White"
+                                CornerRadius="8" FontSize="14" FontAttributes="Bold"
+                                HeightRequest="44" Clicked="OnAddCategoryConfirm"/>
+                    </Grid>
+                </StackLayout>
+            </Border>
+        </Grid>
+
+        <!-- ═══════════════════ RENAME CATEGORY MODAL ═══════════════════ -->
+        <Grid x:Name="RenameCategoryOverlay" IsVisible="False" BackgroundColor="#80000000">
+            <Border BackgroundColor="White" Stroke="#DEE2E6" StrokeShape="RoundRectangle 16"
+                    WidthRequest="380" VerticalOptions="Center" HorizontalOptions="Center" Padding="32">
+                <StackLayout Spacing="20">
+                    <Label Text="Rename Category"
+                           FontSize="20" FontAttributes="Bold" TextColor="#212529"/>
+                    <StackLayout Spacing="6">
+                        <Label Text="NEW NAME" FontSize="11" FontAttributes="Bold" TextColor="#6C757D"/>
+                        <Border Stroke="#DEE2E6" StrokeShape="RoundRectangle 8" BackgroundColor="White" Padding="12,4">
+                            <Entry x:Name="RenameCategoryEntry"
+                                   Placeholder="Enter new name"
+                                   FontSize="14" TextColor="#212529" BackgroundColor="Transparent"/>
+                        </Border>
+                    </StackLayout>
+                    <Label x:Name="RenameCategoryError" Text="" TextColor="#DC3545" FontSize="12" MinimumHeightRequest="16"/>
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                        <Button Grid.Column="0" Text="Cancel"
+                                BackgroundColor="#F8F9FA" TextColor="#6C757D"
+                                CornerRadius="8" FontSize="14" HeightRequest="44"
+                                Clicked="OnRenameCategoryCancel"/>
+                        <Button Grid.Column="1" Text="Save"
+                                BackgroundColor="#1B4332" TextColor="White"
+                                CornerRadius="8" FontSize="14" FontAttributes="Bold"
+                                HeightRequest="44" Clicked="OnRenameCategoryConfirm"/>
+                    </Grid>
+                </StackLayout>
+            </Border>
+        </Grid>
+
+    </Grid>
+</ContentView>

@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:conv="clr-namespace:GustoPOS.Converters"
+             x:Class="GustoPOS.Views.AskGustoPage"
+             BackgroundColor="#F8F9FA">
+
+    <ContentView.Resources>
+        <conv:ChatBubbleAlignmentConverter x:Key="AlignConv"/>
+        <conv:ChatBubbleColorConverter     x:Key="ColorConv"/>
+        <conv:ChatBubbleTextColorConverter x:Key="TextColorConv"/>
+    </ContentView.Resources>
+
+    <Grid RowDefinitions="Auto,*,Auto,Auto" Padding="16,16,16,16" RowSpacing="0">
+
+        <!-- Header -->
+        <StackLayout Grid.Row="0" Spacing="2" Margin="0,0,0,12">
+            <Label Text="Ask Gusto AI" FontSize="22" FontAttributes="Bold" TextColor="#1B1B1B"/>
+            <Label Text="Instant restaurant insights" TextColor="#6C757D" FontSize="13"/>
+        </StackLayout>
+
+        <!-- Chat thread -->
+        <CollectionView Grid.Row="1"
+                        x:Name="ChatCollectionView"
+                        ItemsSource="{Binding ChatHistory}"
+                        Margin="0,0,0,8">
+            <CollectionView.ItemTemplate>
+                <DataTemplate>
+                    <Grid Padding="0,3">
+                        <Border BackgroundColor="{Binding IsUser, Converter={StaticResource ColorConv}}"
+                                HorizontalOptions="{Binding IsUser, Converter={StaticResource AlignConv}}"
+                                StrokeShape="RoundRectangle 16"
+                                StrokeThickness="0"
+                                Padding="12,8"
+                                MaximumWidthRequest="300"
+                                Margin="4,0">
+                            <VerticalStackLayout Spacing="6">
+                                <Label Text="{Binding Text}"
+                                       TextColor="{Binding IsUser, Converter={StaticResource TextColorConv}}"
+                                       FontSize="14"
+                                       LineBreakMode="WordWrap"/>
+                                <VerticalStackLayout Spacing="4"
+                                                     IsVisible="{Binding HasSuggestions}"
+                                                     BindableLayout.ItemsSource="{Binding Suggestions}">
+                                    <BindableLayout.ItemTemplate>
+                                        <DataTemplate>
+                                            <Button Text="{Binding .}"
+                                                    FontSize="12"
+                                                    BackgroundColor="Transparent"
+                                                    TextColor="#1B4332"
+                                                    BorderColor="#1B4332"
+                                                    BorderWidth="1"
+                                                    CornerRadius="8"
+                                                    Padding="10,4"
+                                                    HeightRequest="34"
+                                                    HorizontalOptions="Start"
+                                                    Command="{Binding BindingContext.AskGustoCommand, Source={x:Reference ChatCollectionView}}"
+                                                    CommandParameter="{Binding .}"/>
+                                        </DataTemplate>
+                                    </BindableLayout.ItemTemplate>
+                                </VerticalStackLayout>
+                            </VerticalStackLayout>
+                        </Border>
+                    </Grid>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+
+        <!-- Suggestion chips -->
+        <ScrollView Grid.Row="2"
+                    Orientation="Horizontal"
+                    HorizontalScrollBarVisibility="Never"
+                    Margin="0,0,0,10">
+            <HorizontalStackLayout Spacing="8" Padding="0,4">
+                <Button Text="🔓 Free Tables"
+                        Command="{Binding FreeTablesCommand}"
+                        BackgroundColor="#28A745" TextColor="White"
+                        FontSize="12" CornerRadius="20"
+                        Padding="12,0" HeightRequest="34"/>
+                <Button Text="📊 Total Tables"
+                        Command="{Binding TotalTablesCommand}"
+                        BackgroundColor="#17A2B8" TextColor="White"
+                        FontSize="12" CornerRadius="20"
+                        Padding="12,0" HeightRequest="34"/>
+                <Button Text="🍽 Top Dish"
+                        Command="{Binding TopDishCommand}"
+                        BackgroundColor="#FD7E14" TextColor="White"
+                        FontSize="12" CornerRadius="20"
+                        Padding="12,0" HeightRequest="34"/>
+                <Button Text="💰 Revenue"
+                        Command="{Binding RevenueCommand}"
+                        BackgroundColor="#1B4332" TextColor="White"
+                        FontSize="12" CornerRadius="20"
+                        Padding="12,0" HeightRequest="34"/>
+            </HorizontalStackLayout>
+        </ScrollView>
+
+        <!-- Input bar -->
+        <Grid Grid.Row="3" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+            <Border Grid.Column="0"
+                    BackgroundColor="White"
+                    StrokeShape="RoundRectangle 12"
+                    StrokeThickness="1"
+                    Stroke="#DEE2E6"
+                    Padding="4,0">
+                <Entry Placeholder="Ask Gusto anything..."
+                       Text="{Binding ChatQuery}"
+                       TextColor="Black"
+                       PlaceholderColor="#ADB5BD"
+                       FontSize="14"
+                       ReturnCommand="{Binding AskGustoCommand}"
+                       BackgroundColor="Transparent"/>
+            </Border>
+            <Button Grid.Column="1"
+                    Text="Send"
+                    BackgroundColor="#1B4332"
+                    TextColor="White"
+                    FontAttributes="Bold"
+                    FontSize="14"
+                    CornerRadius="12"
+                    WidthRequest="72"
+                    HeightRequest="44"
+                    Command="{Binding AskGustoCommand}"/>
+        </Grid>
+
+    </Grid>
+</ContentView>

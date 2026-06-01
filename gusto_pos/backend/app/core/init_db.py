@@ -1,9 +1,22 @@
 """Database seeding script for initial data setup."""
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, text
 from app.modules.roles.model import Role
 from app.modules.staff.model import Staff, StaffRole
 from app.core.security import get_password_hash
+
+
+async def run_column_migrations(session: AsyncSession) -> None:
+    """Add new columns to existing tables if they don't already exist."""
+    migrations = [
+        "ALTER TABLE staff ADD COLUMN IF NOT EXISTS assigned_table VARCHAR(20)",
+        "ALTER TABLE staff ADD COLUMN IF NOT EXISTS shift_start VARCHAR(5)",
+        "ALTER TABLE staff ADD COLUMN IF NOT EXISTS shift_end VARCHAR(5)",
+        "ALTER TABLE orders ADD COLUMN IF NOT EXISTS staff_id UUID REFERENCES staff(id) ON DELETE SET NULL",
+    ]
+    for sql in migrations:
+        await session.execute(text(sql))
+    await session.commit()
 
 
 async def init_initial_data(session: AsyncSession) -> None:
@@ -13,6 +26,8 @@ async def init_initial_data(session: AsyncSession) -> None:
     Args:
         session: AsyncSession for database operations
     """
+    await run_column_migrations(session)
+
     try:
         # Check if roles already exist
         result = await session.execute(select(Role))

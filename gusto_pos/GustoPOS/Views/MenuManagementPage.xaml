@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="GustoPOS.Views.MenuManagementPage"
+             BackgroundColor="#F8F9FA">
+    <Grid>
+
+        <!-- ═══════════════════ MAIN CONTENT ═══════════════════ -->
+        <Grid RowDefinitions="Auto,*">
+
+            <!-- Toolbar -->
+            <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto"
+                  ColumnSpacing="12" Padding="24,20,24,12">
+                <Button Grid.Column="0" Text="← Back"
+                        BackgroundColor="Transparent" TextColor="#1B4332"
+                        FontSize="14" FontAttributes="Bold"
+                        HeightRequest="44" Clicked="OnBackClicked"/>
+                <StackLayout Grid.Column="1" VerticalOptions="Center" Spacing="2">
+                    <Label Text="Menu Management"
+                           FontSize="22" FontAttributes="Bold" TextColor="#212529"/>
+                    <Label Text="Edit prices and manage item availability. Add dishes to specific categories."
+                           FontSize="12" TextColor="#6C757D"/>
+                </StackLayout>
+                <Label Grid.Column="2" x:Name="StatusLabel"
+                       Text="" FontSize="13" TextColor="#28A745"
+                       VerticalOptions="Center" MinimumWidthRequest="180"/>
+                <Button Grid.Column="3" Text="+ Add Dish"
+                        BackgroundColor="#28A745" TextColor="White"
+                        CornerRadius="8" FontSize="13" FontAttributes="Bold"
+                        HeightRequest="44" Padding="16,0"
+                        Clicked="OnAddDishClicked"/>
+            </Grid>
+
+            <!-- Item list -->
+            <ScrollView Grid.Row="1" Padding="24,0,24,24">
+                <StackLayout x:Name="ItemListPanel" Spacing="16"/>
+            </ScrollView>
+        </Grid>
+
+        <!-- ═══════════════════ ADD DISH MODAL ═══════════════════ -->
+        <Grid x:Name="AddDishOverlay" IsVisible="False" BackgroundColor="#80000000">
+            <Border BackgroundColor="White" StrokeShape="RoundRectangle 16"
+                    Padding="28" HorizontalOptions="Center" VerticalOptions="Center" WidthRequest="420">
+                <StackLayout Spacing="14">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <Label Grid.Column="0" Text="Add New Dish"
+                               FontSize="20" FontAttributes="Bold" TextColor="#000000"/>
+                        <Button Grid.Column="1" Text="✕" BackgroundColor="Transparent"
+                                TextColor="#333333" FontSize="16" WidthRequest="36"
+                                HeightRequest="36" Padding="0" Clicked="OnCloseAddDishClicked"/>
+                    </Grid>
+                    <StackLayout Spacing="4">
+                        <Label Text="Dish Name" FontSize="13" FontAttributes="Bold" TextColor="#333333"/>
+                        <Border Stroke="#DEE2E6" StrokeShape="RoundRectangle 8" Padding="12,10">
+                            <Entry x:Name="NewDishName" Placeholder="e.g. Dal Makhani"
+                                   PlaceholderColor="#999999" TextColor="#000000"/>
+                        </Border>
+                    </StackLayout>
+                    <StackLayout Spacing="4">
+                        <Label Text="Price (₹)" FontSize="13" FontAttributes="Bold" TextColor="#333333"/>
+                        <Border Stroke="#DEE2E6" StrokeShape="RoundRectangle 8" Padding="12,10">
+                            <Entry x:Name="NewDishPrice" Placeholder="e.g. 250"
+                                   Keyboard="Numeric" PlaceholderColor="#999999" TextColor="#000000"/>
+                        </Border>
+                    </StackLayout>
+                    <StackLayout Spacing="4">
+                        <Label Text="Category" FontSize="13" FontAttributes="Bold" TextColor="#333333"/>
+                        <Border Stroke="#DEE2E6" StrokeShape="RoundRectangle 8" Padding="4,2">
+                            <Picker x:Name="NewDishCategory" Title="Select category"
+                                    TextColor="#000000" TitleColor="#999999"/>
+                        </Border>
+                    </StackLayout>
+                    <StackLayout Spacing="4">
+                        <Label Text="Dietary Type" FontSize="13" FontAttributes="Bold" TextColor="#333333"/>
+                        <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                            <Button Grid.Column="0" x:Name="BtnVegSelect" Text="VEG"
+                                    BackgroundColor="#28A745" TextColor="White"
+                                    CornerRadius="8" FontSize="13" Clicked="OnVegSelectClicked"/>
+                            <Button Grid.Column="1" x:Name="BtnNonVegSelect" Text="NON-VEG"
+                                    BackgroundColor="#E8E8E8" TextColor="#333333"
+                                    CornerRadius="8" FontSize="13" Clicked="OnNonVegSelectClicked"/>
+                        </Grid>
+                    </StackLayout>
+                    <Button Text="Add to Menu" BackgroundColor="#28A745" TextColor="White"
+                            FontSize="15" FontAttributes="Bold" CornerRadius="10"
+                            HeightRequest="48" Clicked="OnConfirmAddDishClicked"/>
+                    <Label x:Name="AddDishStatus" Text="" FontSize="12"
+                           HorizontalOptions="Center" TextColor="#28A745"/>
+                </StackLayout>
+            </Border>
+        </Grid>
+
+        <!-- ═══════════════════ EDIT PRICE MODAL ═══════════════════ -->
+        <Grid x:Name="EditPriceOverlay" IsVisible="False" BackgroundColor="#80000000">
+            <Border BackgroundColor="White" StrokeShape="RoundRectangle 16"
+                    Padding="32" HorizontalOptions="Center" VerticalOptions="Center" WidthRequest="360">
+                <StackLayout Spacing="16">
+                    <Label Text="Edit Price" FontSize="20" FontAttributes="Bold" TextColor="#212529"/>
+                    <Label x:Name="EditPriceItemName" Text="" FontSize="14" TextColor="#6C757D"/>
+                    <StackLayout Spacing="6">
+                        <Label Text="NEW PRICE (₹)" FontSize="11" FontAttributes="Bold" TextColor="#6C757D"/>
+                        <Border Stroke="#DEE2E6" StrokeShape="RoundRectangle 8" BackgroundColor="White" Padding="12,4">
+                            <Entry x:Name="EditPriceEntry" Keyboard="Numeric"
+                                   Placeholder="Enter new price"
+                                   FontSize="16" TextColor="#212529"
+                                   BackgroundColor="Transparent"/>
+                        </Border>
+                    </StackLayout>
+                    <Label x:Name="EditPriceError" Text="" TextColor="#DC3545" FontSize="12" MinimumHeightRequest="16"/>
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                        <Button Grid.Column="0" Text="Cancel"
+                                BackgroundColor="#F8F9FA" TextColor="#6C757D"
+                                CornerRadius="8" FontSize="14" HeightRequest="44"
+                                Clicked="OnEditPriceCancel"/>
+                        <Button Grid.Column="1" Text="Save Price"
+                                BackgroundColor="#1B4332" TextColor="White"
+                                CornerRadius="8" FontSize="14" FontAttributes="Bold"
+                                HeightRequest="44" Clicked="OnEditPriceConfirm"/>
+                    </Grid>
+                </StackLayout>
+            </Border>
+        </Grid>
+
+    </Grid>
+</ContentView>

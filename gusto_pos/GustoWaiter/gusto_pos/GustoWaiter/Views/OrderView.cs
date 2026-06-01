@@ -42,6 +42,9 @@ public class OrderView : ContentView {
     private bool _filterUiInitialized;
     private bool _isRendering;
     private CancellationTokenSource? _searchDebounceCts;
+    private string _selectedCategory = "All";
+    private readonly List<Button> _categoryButtons = new();
+    private readonly HorizontalStackLayout _categoryRow = new() { Spacing = 6, Padding = new Thickness(12, 0) };
 
     public OrderView(ApiService api, DashboardPage dash) {
         _api = api;
@@ -181,7 +184,6 @@ public class OrderView : ContentView {
             catch (Exception ex) { CrashLogger.Log(ex, "OrderView.AcBtnClicked"); }
         };
 
-
         var zoneToggle = new HorizontalStackLayout {
             Spacing = 10, Margin = new Thickness(16, 8, 16, 0),
             Children = { _regularBtn, _acBtn }
@@ -204,20 +206,39 @@ public class OrderView : ContentView {
             Content = tableScrollContent
         };
 
+        // Category pill row \u2014 populated dynamically after menu loads
+        var categoryScroll = new ScrollView {
+            Orientation = ScrollOrientation.Horizontal,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Never,
+            HeightRequest = 46,
+            Margin = new Thickness(0, 0, 0, 4),
+            Content = _categoryRow
+        };
+
+        // \u2500\u2500 Row 0: everything that must stay visible while the menu scrolls \u2500\u2500
+        var stickyHeader = new VerticalStackLayout {
+            BackgroundColor = Colors.White,
+            Spacing = 0,
+            Children = { zoneToggle, _zoneBanner, tableScroll, _filterContainer, categoryScroll }
+        };
+        stickyHeader.Shadow = new Shadow {
+            Brush = Brush.Black, Offset = new Point(0, 2), Radius = 8, Opacity = 0.06f
+        };
+
+        // \u2500\u2500 Row 1: the only part that actually scrolls \u2500\u2500
         var menuScroll = new ScrollView {
             Content = new StackLayout {
                 Padding = new Thickness(12, 4, 12, 12),
-                Children = { _filterContainer, _menuContainer }
+                Children = { _menuContainer }
             }
         };
 
+        // \u2500\u2500 Row 2: always-visible order summary and place button \u2500\u2500
         var cartHeader = new Label {
             Text = "Current Order", FontSize = 15,
             FontAttributes = FontAttributes.Bold, TextColor = Color.FromArgb("#1B4332")
         };
-
         var cartScrollArea = new ScrollView { MaximumHeightRequest = 130, Content = _cartStack };
-
         var totalRow = new Grid {
             ColumnDefinitions = { new(GridLength.Star), new(GridLength.Auto) },
             Margin = new Thickness(0, 4)
@@ -237,7 +258,10 @@ public class OrderView : ContentView {
 
         var cartPanel = new Grid {
             BackgroundColor = Colors.White, Padding = new Thickness(16, 12),
-            RowDefinitions = { new(GridLength.Auto), new(GridLength.Auto), new(GridLength.Auto), new(GridLength.Auto) }
+            RowDefinitions = {
+                new(GridLength.Auto), new(GridLength.Auto),
+                new(GridLength.Auto), new(GridLength.Auto)
+            }
         };
         cartPanel.Shadow = new Shadow { Brush = Brush.Black, Offset = new Point(0, -4), Radius = 12, Opacity = 0.1f };
         cartPanel.Add(cartHeader, 0, 0);
@@ -245,21 +269,18 @@ public class OrderView : ContentView {
         cartPanel.Add(totalRow, 0, 2);
         cartPanel.Add(placeBtn, 0, 3);
 
+        // 3-row root: sticky header | scrollable menu | sticky cart
         var root = new Grid {
             RowDefinitions = {
                 new(GridLength.Auto),
-                new(GridLength.Auto),
-                new(new GridLength(65)),
                 new(GridLength.Star),
                 new(GridLength.Auto)
             },
             BackgroundColor = Color.FromArgb("#F8F9FA")
         };
-        root.Add(zoneToggle, 0, 0);
-        root.Add(_zoneBanner, 0, 1);
-        root.Add(tableScroll, 0, 2);
-        root.Add(menuScroll, 0, 3);
-        root.Add(cartPanel, 0, 4);
+        root.Add(stickyHeader, 0, 0);
+        root.Add(menuScroll, 0, 1);
+        root.Add(cartPanel, 0, 2);
 
         Content = root;
     }
@@ -349,7 +370,7 @@ public class OrderView : ContentView {
         try {
             var cached = zone == "normal" ? _normalMenuCache : _acMenuCache;
             if (cached != null) {
-                await MainThread.InvokeOnMainThreadAsync(() => RenderMenu(cached));
+                await MainThread.InvokeOnMainThreadAsync(() => { RebuildCategoryBar(cached); RenderMenu(cached); });
                 return;
             }
             await MainThread.InvokeOnMainThreadAsync(() => {
@@ -366,7 +387,7 @@ public class OrderView : ContentView {
                 if (zone == "normal") _normalMenuCache = response;
                 else _acMenuCache = response;
             }
-            await MainThread.InvokeOnMainThreadAsync(() => RenderMenu(response));
+            await MainThread.InvokeOnMainThreadAsync(() => { RebuildCategoryBar(response); RenderMenu(response); });
         } catch (Exception ex) {
             Debug.WriteLine($"LoadMenuForZone error: {ex.Message}");
             Debug.WriteLine($"LoadMenuForZone error: {ex.Message}");
@@ -402,6 +423,8 @@ public class OrderView : ContentView {
             _categories = response.Categories;
             var hasResults = false;
             foreach (var cat in _categories) {
+                // Category filter: skip any category that isn't the selected one
+                if (_selectedCategory != "All" && cat.Name != _selectedCategory) continue;
                 var activeItems = cat.Items
                     .Where(i => i.IsAvailable)
                     .Where(i => string.IsNullOrWhiteSpace(_searchText) ||
@@ -562,6 +585,48 @@ public class OrderView : ContentView {
         } catch (Exception ex) {
             CrashLogger.Log(ex, "OrderView.OnPlaceOrder");
         }
+    }
+
+    // \u2500\u2500 Category bar \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+
+    private void RebuildCategoryBar(ZoneMenuResponse? response) {
+        _categoryRow.Children.Clear();
+        _categoryButtons.Clear();
+        _selectedCategory = "All";
+
+        var allBtn = BuildCategoryButton("All", isSelected: true);
+        _categoryButtons.Add(allBtn);
+        _categoryRow.Children.Add(allBtn);
+
+        if (response != null) {
+            foreach (var cat in response.Categories.Where(c => c.Items.Any(i => i.IsAvailable))) {
+                var btn = BuildCategoryButton(cat.Name, isSelected: false);
+                _categoryButtons.Add(btn);
+                _categoryRow.Children.Add(btn);
+            }
+        }
+    }
+
+    private Button BuildCategoryButton(string name, bool isSelected) {
+        var btn = new Button {
+            Text = name, FontSize = 12, CornerRadius = 16,
+            HeightRequest = 32, Padding = new Thickness(14, 0),
+            BackgroundColor = isSelected ? Color.FromArgb("#1B4332") : Colors.White,
+            TextColor = isSelected ? Colors.White : Color.FromArgb("#1B4332"),
+            BorderColor = Color.FromArgb("#1B4332"), BorderWidth = 1
+        };
+        btn.Clicked += (s, e) => ApplyCategoryFilter(name);
+        return btn;
+    }
+
+    private void ApplyCategoryFilter(string category) {
+        _selectedCategory = category;
+        foreach (var btn in _categoryButtons) {
+            bool active = btn.Text == category;
+            btn.BackgroundColor = active ? Color.FromArgb("#1B4332") : Colors.White;
+            btn.TextColor = active ? Colors.White : Color.FromArgb("#1B4332");
+        }
+        RenderCurrentZoneMenu();
     }
 
 }

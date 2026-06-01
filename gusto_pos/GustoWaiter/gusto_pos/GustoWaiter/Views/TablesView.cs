@@ -25,6 +25,8 @@ public class TablesView : ContentView {
         Unloaded += OnUnloaded;
     }
 
+    public Task TriggerRefreshAsync() => RefreshTables();
+
     private async void OnLoaded(object? sender, EventArgs e) {
         try {
             await RefreshTables();

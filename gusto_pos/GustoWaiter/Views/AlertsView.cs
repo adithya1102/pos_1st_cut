@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Maui.Controls;
 using Microsoft.Maui.Graphics;
@@ -13,33 +14,23 @@ public class AlertsView : ContentView {
 private readonly ApiService _api;
 private readonly DashboardPage _dash;
 private readonly StackLayout _list = new() { Spacing = 12, Padding = new Thickness(16) };
-private readonly System.Threading.Timer _pollTimer;
 
 public AlertsView(ApiService api, DashboardPage dash) {
     _api = api; _dash = dash;
     Content = new ScrollView { Content = _list, BackgroundColor = Color.FromArgb("#F8F9FA") };
-    _pollTimer = new System.Threading.Timer(async _ => {
-        try {
-            var notifs = await _api.GetNotificationsAsync();
-            await MainThread.InvokeOnMainThreadAsync(() => {
-                try {
-                    _dash.SetBadge(notifs.Count);
-                    BuildList(notifs);
-                } catch (Exception uiEx) {
-                    System.Diagnostics.Debug.WriteLine($"UI update error: {uiEx.Message}");
-                    CrashLogger.Log(uiEx, "AlertsView.UIUpdate");
-                }
-            });
-        } catch (Exception ex) {
-            Debug.WriteLine($"AlertsView poll error: {ex.Message}");
-            CrashLogger.Log(ex, "AlertsView.Poll");
-        }
-    }, null, 0, 3000);
+    _ = LoadAsync();
 }
 
-    public void Refresh(List<Notification> notifs) => BuildList(notifs);
+    public void Refresh(List<Notification> notifs) {
+        _dash.SetBadge(notifs.Count);
+        BuildList(notifs);
+    }
 
-    private async Task LoadAsync() => BuildList(await _api.GetNotificationsAsync());
+    private async Task LoadAsync() {
+        var notifs = await _api.GetNotificationsAsync();
+        _dash.SetBadge(notifs.Count);
+        BuildList(notifs);
+    }
 
     private void BuildList(List<Notification> notifs) {
         _list.Children.Clear();
@@ -233,10 +224,18 @@ public AlertsView(ApiService api, DashboardPage dash) {
                     });
             }
         } else if (!string.IsNullOrEmpty(n.OrderPreview)) {
-            foreach (var line in n.OrderPreview.Split('\n'))
-                itemsStack.Children.Add(new Label {
-                    Text = $"• {line}", FontSize = 13, TextColor = Color.FromArgb("#495057")
-                });
+            var parsed = ParseOrderPreviewJson(n.OrderPreview);
+            if (parsed.Count > 0) {
+                foreach (var (name, qty) in parsed)
+                    itemsStack.Children.Add(new Label {
+                        Text = $"• {qty}x {name}", FontSize = 13, TextColor = Color.FromArgb("#495057")
+                    });
+            } else {
+                foreach (var line in n.OrderPreview.Split('\n'))
+                    itemsStack.Children.Add(new Label {
+                        Text = $"• {line}", FontSize = 13, TextColor = Color.FromArgb("#495057")
+                    });
+            }
         }
 
         var totalLabel = new Label {
@@ -253,10 +252,8 @@ public AlertsView(ApiService api, DashboardPage dash) {
         };
         openBtn.Clicked += async (s, e) => {
             try {
-                await _api.RespondToNotificationAsync(n.Id, true);
-                var page = new ApprovalChecklistPage(_api, n);
+                var page = new OrderReviewPage(_api, n);
                 await Application.Current!.Windows[0].Page!.Navigation.PushAsync(page);
-                await LoadAsync();
             } catch (Exception ex) {
                 CrashLogger.Log(ex, "AlertsView.OpenReview");
             }
@@ -284,6 +281,21 @@ public AlertsView(ApiService api, DashboardPage dash) {
         var content = new StackLayout { Spacing = 4, Children = { headerRow, customerLabel, itemsStack, totalLabel, btnRow } };
         card.Content = content;
         return card;
+    }
+
+    private static List<(string Name, int Qty)> ParseOrderPreviewJson(string preview) {
+        var result = new List<(string, int)>();
+        try {
+            if (!preview.TrimStart().StartsWith("[")) return result;
+            using var doc = JsonDocument.Parse(preview);
+            foreach (var el in doc.RootElement.EnumerateArray()) {
+                var name = el.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+                var qty  = el.TryGetProperty("quantity", out var q) ? q.GetInt32() : 1;
+                if (!string.IsNullOrEmpty(name))
+                    result.Add((name, qty));
+            }
+        } catch { }
+        return result;
     }
 }
 
