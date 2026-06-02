@@ -230,27 +230,27 @@ class OrderService:
 
     @staticmethod
     async def get_orders_by_table(db: AsyncSession, table_id: str):
-        """Get all unpaid orders for a table with their items."""
+        """Get all active (non-paid, non-cancelled) orders for a table with their items."""
         result = await db.execute(
             select(Order)
             .options(selectinload(Order.items))
             .where(
                 Order.table_id == table_id,
                 Order.outlet_id == UUID(OUTLET_ID),
-                Order.order_status != "paid",
+                Order.order_status.notin_(["paid", "cancelled"]),
             )
         )
         return result.scalars().all()
 
     @staticmethod
     async def settle_table(db: AsyncSession, table_id: str):
-        """Mark all unpaid orders as paid, close the table session, and broadcast availability."""
+        """Mark all active orders as paid, close the table session, and broadcast availability."""
         result = await db.execute(
             select(Order)
             .where(
                 Order.table_id == table_id,
                 Order.outlet_id == UUID(OUTLET_ID),
-                Order.order_status != "paid",
+                Order.order_status.notin_(["paid", "cancelled"]),
             )
         )
         orders = result.scalars().all()
@@ -282,14 +282,14 @@ class OrderService:
 
     @staticmethod
     async def generate_bill(db: AsyncSession, table_id: str):
-        """Generate a professional PDF bill for all unpaid orders on a table."""
+        """Generate a professional PDF bill for all active orders on a table."""
         result = await db.execute(
             select(Order)
             .options(selectinload(Order.items))
             .where(
                 Order.table_id == table_id,
                 Order.outlet_id == UUID(OUTLET_ID),
-                Order.order_status != "paid",
+                Order.order_status.notin_(["paid", "cancelled"]),
             )
         )
         orders = result.scalars().all()

@@ -48,6 +48,7 @@ public class OrderView : ContentView {
     private readonly Grid _menuCanvas = new();
     private Grid _floatingPendingPanel = new();
     private Button _viewActiveBtn = new();
+    private Label _panelTableLabel = new();
     private readonly Label _emptyLabel = new() {
         HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center,
         HorizontalTextAlignment = TextAlignment.Center,
@@ -269,14 +270,16 @@ public class OrderView : ContentView {
             catch (Exception ex) { CrashLogger.Log(ex, "OrderView.PendingRefresh"); }
         };
 
+        _panelTableLabel = new Label {
+            Text = "📋 Pending Items", FontSize = 13, FontAttributes = FontAttributes.Bold,
+            TextColor = Colors.White, VerticalOptions = LayoutOptions.Center
+        };
+
         var panelHeader = new Grid {
             BackgroundColor = Color.FromArgb("#1B4332"), Padding = new Thickness(12, 8),
             ColumnDefinitions = { new(GridLength.Star), new(GridLength.Auto), new(GridLength.Auto) }
         };
-        panelHeader.Add(new Label {
-            Text = "📋 Pending Items", FontSize = 13, FontAttributes = FontAttributes.Bold,
-            TextColor = Colors.White, VerticalOptions = LayoutOptions.Center
-        }, 0, 0);
+        panelHeader.Add(_panelTableLabel, 0, 0);
         panelHeader.Add(refreshBtn, 1, 0);
         panelHeader.Add(closeBtn,   2, 0);
 
@@ -331,6 +334,16 @@ public class OrderView : ContentView {
     private void RebuildPendingStack(List<OrderItemInfo> items) {
         _pendingStack.Children.Clear();
         _pendingEmptyLabel.IsVisible = !items.Any();
+
+        // Update panel header: show table ID and total item count
+        var totalQty = items.Sum(i => i.Quantity);
+        _panelTableLabel.Text = string.IsNullOrEmpty(_table)
+            ? "📋 Pending Items"
+            : $"📋 {_table} — {totalQty} item{(totalQty != 1 ? "s" : "")}";
+
+        // Auto-show panel when the selected table has active orders
+        if (items.Any())
+            _floatingPendingPanel.IsVisible = true;
 
         foreach (var item in items) {
             var nameLbl = new Label {
@@ -397,6 +410,8 @@ public class OrderView : ContentView {
     private async Task OnTableSelected() {
         _cart.Clear();
         UpdateCartBadge();
+        // Hide panel until we confirm there are pending orders for this table
+        _floatingPendingPanel.IsVisible = false;
         ShowMenuCanvas();
 
         var cache = _currentZone == "normal" ? _normalMenuCache : _acMenuCache;

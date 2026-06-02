@@ -197,7 +197,7 @@ public class TablesView : ContentView {
 
             var actionBtn = new Button {
                 Text = t.IsOpen ? "Close" : "Open",
-                BackgroundColor = t.IsOpen ? Color.FromArgb("#DC3545") : Color.FromArgb("#1B4332"),
+                BackgroundColor = t.IsOpen ? Color.FromArgb("#28A745") : Color.FromArgb("#1B4332"),
                 TextColor = Colors.White, CornerRadius = 8,
                 FontSize = 11, FontAttributes = FontAttributes.Bold, HeightRequest = 32,
                 Margin = new Thickness(0, 6, 0, 0)

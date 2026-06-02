@@ -219,24 +219,15 @@ public partial class FloorViewPage : ContentView
         bool occupied = table.Status == "occupied";
         bool hasToken = _tableTokens.ContainsKey(table.Id);
 
-        Color cardBg;
-        Color borderColor;
-        if (occupied)
-        {
-            cardBg = Color.FromArgb("#FFEBEE");
-            borderColor = Color.FromArgb("#DC3545");
-        }
-        else
-        {
-            cardBg = isAc ? Color.FromArgb("#E3F2FD") : Colors.White;
-            borderColor = Color.FromArgb("#DEE2E6");
-        }
+        // Binary: white/neutral when free, solid green border when occupied
+        Color cardBg = Colors.White;
+        Color borderColor = occupied ? Color.FromArgb("#28A745") : Color.FromArgb("#DEE2E6");
 
         var statusLbl = new Label
         {
             Text = occupied ? "OCCUPIED" : "FREE",
             FontSize = 10, FontAttributes = FontAttributes.Bold,
-            TextColor = occupied ? Color.FromArgb("#DC3545") : Color.FromArgb("#28A745"),
+            TextColor = occupied ? Color.FromArgb("#28A745") : Color.FromArgb("#9E9E9E"),
             HorizontalOptions = LayoutOptions.Center
         };
 
@@ -251,7 +242,7 @@ public partial class FloorViewPage : ContentView
         var openBtn = new Button
         {
             Text = occupied ? "Close Table" : "Open Table",
-            BackgroundColor = occupied ? Color.FromArgb("#DC3545") : Color.FromArgb("#1B4332"),
+            BackgroundColor = occupied ? Color.FromArgb("#28A745") : Color.FromArgb("#1B4332"),
             TextColor = Colors.White,
             CornerRadius = 6, FontSize = 11, HeightRequest = 32,
             Margin = new Thickness(0, 4, 0, 0)
@@ -267,7 +258,7 @@ public partial class FloorViewPage : ContentView
         var qrBtn = new Button
         {
             Text = "Show QR",
-            BackgroundColor = Color.FromArgb("#28A745"),
+            BackgroundColor = Color.FromArgb("#1B4332"),
             TextColor = Colors.White,
             CornerRadius = 6, FontSize = 11, HeightRequest = 32,
             IsVisible = hasToken && occupied,
@@ -283,7 +274,7 @@ public partial class FloorViewPage : ContentView
         {
             BackgroundColor = cardBg,
             Stroke = borderColor,
-            StrokeThickness = occupied ? 2 : 1,
+            StrokeThickness = occupied ? 2.5 : 1,
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 12 },
             Padding = new Thickness(14)
         };

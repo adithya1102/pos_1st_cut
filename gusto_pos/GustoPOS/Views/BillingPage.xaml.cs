@@ -76,9 +76,21 @@ public partial class BillingPage : ContentView
                 var msg = Encoding.UTF8.GetString(buf, 0, result.Count);
                 using var doc = JsonDocument.Parse(msg);
                 var evt = doc.RootElement.TryGetProperty("event", out var ep) ? ep.GetString() : null;
+                // Extract table_id before JsonDocument is disposed
+                var affectedTableId = doc.RootElement.TryGetProperty("table_id", out var tp)
+                    ? tp.GetString() : null;
                 if (evt is "NEW_ORDER" or "ORDER_CONFIRMED" or "ORDER_STATUS_UPDATED"
                         or "TABLE_CLOSED" or "TABLE_STATUS_CHANGED")
-                    MainThread.BeginInvokeOnMainThread(() => LoadTableStatusParallelAsync());
+                {
+                    var capturedTableId = affectedTableId;
+                    MainThread.BeginInvokeOnMainThread(() =>
+                    {
+                        LoadTableStatusParallelAsync();
+                        // If the affected table is already selected in the sidebar, refresh its orders immediately
+                        if (!string.IsNullOrEmpty(capturedTableId) && capturedTableId == _selectedTable)
+                            _ = LoadOrdersForTable(_selectedTable);
+                    });
+                }
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)

@@ -9,6 +9,8 @@ from app.core.database import get_db
 from app.core.websocket_manager import pos_manager, waiter_manager
 from app.modules.tables.models import TableSession
 from app.modules.tables.schemas import TableSessionCreate, TableSessionResponse, TableSessionValidate
+from app.modules.outlets.model import Table
+from app.modules.orders.model import Order
 
 router = APIRouter(prefix="/tables", tags=["Tables"])
 
@@ -158,6 +160,34 @@ async def validate_token(token: str, db: AsyncSession = Depends(get_db)):
         is_valid=True,
         message="Valid",
     )
+
+
+@router.post("/cleanup")
+async def cleanup_stale_tables(outlet_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """Reset table.status to 0 for tables that have status=1 but no active orders.
+
+    Call this on POS startup to fix stale occupied flags left from a previous session.
+    """
+    tables_result = await db.execute(
+        select(Table).where(Table.outlet_id == outlet_id, Table.status == 1)
+    )
+    stale_tables = tables_result.scalars().all()
+
+    reset_count = 0
+    for table in stale_tables:
+        active_orders = await db.execute(
+            select(Order).where(
+                Order.table_id == table.table_number,
+                Order.outlet_id == outlet_id,
+                Order.order_status.notin_(["paid", "cancelled"]),
+            ).limit(1)
+        )
+        if not active_orders.scalar_one_or_none():
+            table.status = 0
+            reset_count += 1
+
+    await db.commit()
+    return {"reset_count": reset_count, "message": f"Reset {reset_count} stale table(s) to free"}
 
 
 @router.get("/all")
