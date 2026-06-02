@@ -100,7 +100,7 @@ async def get_order_summary(outlet_id: str, date: str = None, db: AsyncSession =
     }
 
 
-@router.get("/{item_id}", response_model=OrderRead)
+@router.get("/{item_id}", response_model=OrderWithItemsRead)
 async def get_order(item_id: UUID, db: AsyncSession = Depends(get_db)):
     """Get an order by ID."""
     obj = await OrderService.get_order_by_id(db, item_id)
