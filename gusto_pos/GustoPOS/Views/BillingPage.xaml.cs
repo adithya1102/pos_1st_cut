@@ -424,8 +424,9 @@ public partial class BillingPage : ContentView
                 $"{zoneLabel} — Total: ₹{result.Total:F0}",
                 "OK");
 
-            LoadTableStatusParallelAsync();
-            await LoadOrdersForTable(_selectedTable);
+            await LoadTableStatusParallelAsync();
+            _selectedTable = null;
+            SummaryPanel.Children.Clear();
         }
         else
         {
