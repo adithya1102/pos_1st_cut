@@ -137,13 +137,17 @@ async def generate_bill(table_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.post("/settle/{table_id}", response_model=SettleResponse)
 async def settle_table(table_id: str, db: AsyncSession = Depends(get_db)):
-    """Mark all unpaid orders for a table as paid."""
-    count, total = await OrderService.settle_table(db, table_id)
-    return SettleResponse(
-        settled_count=count,
-        total_amount=total,
-        message=f"Table {table_id} settled. {count} orders totalling Rs.{total:.0f}",
-    )
+    """Mark all unpaid orders for a table as paid. Succeeds even when no open orders exist."""
+    try:
+        count, total = await OrderService.settle_table(db, table_id)
+        return SettleResponse(
+            settled_count=count,
+            total_amount=total,
+            message=f"Table {table_id} settled. {count} orders totalling Rs.{total:.0f}",
+        )
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.put("/{item_id}", response_model=OrderRead)

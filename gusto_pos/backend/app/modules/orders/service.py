@@ -244,7 +244,7 @@ class OrderService:
 
     @staticmethod
     async def settle_table(db: AsyncSession, table_id: str):
-        """Mark all active orders as paid, close the table session, and broadcast availability."""
+        """Mark all active orders as paid, reset table status, close the session, and broadcast availability."""
         result = await db.execute(
             select(Order)
             .where(
@@ -260,6 +260,18 @@ class OrderService:
             total += float(order.total_amount)
             db.add(order)
 
+        # Reset table to vacant (status 0)
+        tbl_result = await db.execute(
+            select(Table).where(
+                Table.outlet_id == UUID(OUTLET_ID),
+                Table.table_number == table_id,
+            )
+        )
+        tbl = tbl_result.scalar_one_or_none()
+        if tbl:
+            tbl.status = 0
+            db.add(tbl)
+
         # Close any active table session so the table shows as available everywhere
         sessions_result = await db.execute(
             select(TableSession).where(
@@ -271,10 +283,11 @@ class OrderService:
         for session in sessions_result.scalars().all():
             session.is_active = False
             session.closed_at = datetime.utcnow()
+            db.add(session)
 
         await db.commit()
 
-        # Notify all floor views to turn the table Green
+        # Notify all floor views to turn the table back to vacant
         await pos_manager.broadcast_order_event(OUTLET_ID, "TABLE_CLOSED", {"table_id": table_id})
         await waiter_manager.broadcast_order_event(OUTLET_ID, "TABLE_CLOSED", {"table_id": table_id})
 

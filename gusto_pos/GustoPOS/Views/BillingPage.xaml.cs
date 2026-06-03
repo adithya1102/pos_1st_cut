@@ -23,7 +23,6 @@ public partial class BillingPage : ContentView
     private readonly Dictionary<string, Button> _tableButtons = new();
     private string? _selectedTable;
     private string _selectedZone = "";
-    private bool _billGenerated;
     private IDispatcherTimer? _refreshTimer;
     private ClientWebSocket? _billingWs;
     private CancellationTokenSource? _billingWsCts;
@@ -247,7 +246,6 @@ public partial class BillingPage : ContentView
     {
         if (sender is not Button btn) return;
         _selectedTable = btn.Text;
-        _billGenerated = false;
 
         if (_selectedTable.StartsWith("N-"))
             _selectedZone = "normal";
@@ -377,10 +375,10 @@ public partial class BillingPage : ContentView
         var grandLabel = CreateTotalRow("GRAND TOTAL:", $"₹{grandTotal:F0}", 18, true);
         SummaryPanel.Children.Add(grandLabel);
 
-        // Generate Bill button
+        // Generate Bill button — also auto-settles the table on success
         var billBtn = new Button
         {
-            Text = "Generate Bill & Save PDF",
+            Text = "Generate Bill & Close Table",
             BackgroundColor = Color.FromArgb("#1B4332"),
             TextColor = Colors.White,
             FontAttributes = FontAttributes.Bold,
@@ -391,23 +389,6 @@ public partial class BillingPage : ContentView
         };
         billBtn.Clicked += OnGenerateBillClicked;
         SummaryPanel.Children.Add(billBtn);
-
-        // Settle button (hidden until bill generated)
-        var settleBtn = new Button
-        {
-            Text = "Settle & Close Table",
-            BackgroundColor = Color.FromArgb("#28A745"),
-            TextColor = Colors.White,
-            FontAttributes = FontAttributes.Bold,
-            FontSize = 14,
-            CornerRadius = 10,
-            HeightRequest = 48,
-            IsVisible = false,
-            Margin = new Thickness(0, 4, 0, 0),
-            AutomationId = "SettleBtn",
-        };
-        settleBtn.Clicked += OnSettleClicked;
-        SummaryPanel.Children.Add(settleBtn);
     }
 
     private Grid CreateTotalRow(string label, string value, int size, bool bold)
@@ -428,51 +409,27 @@ public partial class BillingPage : ContentView
         var result = await _api.GenerateBillAsync(_selectedTable);
         if (result != null)
         {
-            _billGenerated = true;
-            LoadTableStatusParallelAsync();
-            var zoneLabel = _selectedZone == "ac" ? "AC Dining ❄️" : "Regular Dining";
-            await Application.Current!.Windows[0].Page!.DisplayAlertAsync(
-                "Bill Saved!",
-                $"{zoneLabel}\nPDF saved. Total: ₹{result.Total:F0}\nOpening PDF...",
-                "OK");
-
             try
             {
                 Process.Start(new ProcessStartInfo(result.PdfPath) { UseShellExecute = true });
             }
             catch { /* PDF viewer not available */ }
 
-            var settleBtn = SummaryPanel.Children.OfType<Button>().FirstOrDefault(b => b.AutomationId == "SettleBtn");
-            if (settleBtn != null) settleBtn.IsVisible = true;
-        }
-        else
-        {
-            await Application.Current!.Windows[0].Page!.DisplayAlertAsync("Error", "Could not generate bill.", "OK");
-        }
+            // Auto-settle: mark all orders paid and reset the table in one shot
+            await _api.SettleTableAsync(_selectedTable);
 
-        if (sender is Button b2) b2.IsEnabled = true;
-    }
-
-    private async void OnSettleClicked(object? sender, EventArgs e)
-    {
-        if (_selectedTable == null) return;
-        if (sender is Button btn) btn.IsEnabled = false;
-
-        var result = await _api.SettleTableAsync(_selectedTable);
-        if (result != null)
-        {
+            var zoneLabel = _selectedZone == "ac" ? "AC Dining ❄️" : "Regular Dining";
             await Application.Current!.Windows[0].Page!.DisplayAlertAsync(
-                "Table Settled",
-                $"Table {_selectedTable} settled.\nTotal collected: ₹{result.TotalAmount:F0}",
+                "Bill generated & table closed",
+                $"{zoneLabel} — Total: ₹{result.Total:F0}",
                 "OK");
 
-            _billGenerated = false;
             LoadTableStatusParallelAsync();
             await LoadOrdersForTable(_selectedTable);
         }
         else
         {
-            await Application.Current!.Windows[0].Page!.DisplayAlertAsync("Error", "Could not settle table.", "OK");
+            await Application.Current!.Windows[0].Page!.DisplayAlertAsync("Error", "Could not generate bill.", "OK");
             if (sender is Button b2) b2.IsEnabled = true;
         }
     }
