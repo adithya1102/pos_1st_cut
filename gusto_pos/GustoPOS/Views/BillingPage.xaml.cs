@@ -198,7 +198,7 @@ public partial class BillingPage : ContentView
         return btn;
     }
 
-    private async void LoadTableStatusParallelAsync()
+    private async Task LoadTableStatusParallelAsync()
     {
         var tasks = _allTableIds.Select(async tid =>
         {
