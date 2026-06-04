@@ -658,9 +658,15 @@ public partial class PosTerminalPage : ContentView
             bool hasOrders = _tableHasOrders.TryGetValue(b.Text, out var v) && v;
             if (hasOrders && b.Text != _selectedTable)
             {
-                b.BackgroundColor = Color.FromArgb("#E8F5E9");
+                b.BackgroundColor = Color.FromArgb("#FFEBEE");
                 b.TextColor = Color.FromArgb("#212529");
-                b.BorderColor = Color.FromArgb("#28A745");
+                b.BorderColor = Color.FromArgb("#DC3545");
+
+
+
+                //b.BackgroundColor = Color.FromArgb("#E8F5E9");
+                //b.TextColor = Color.FromArgb("#212529");
+                //b.BorderColor = Color.FromArgb("#28A745");
             }
             else
             {

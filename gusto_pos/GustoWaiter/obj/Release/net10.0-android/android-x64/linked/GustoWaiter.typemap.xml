@@ -1,0 +1,8 @@
+<api type="release" assembly-name="GustoWaiter" mvid="cfe3b24e2d8a4f868c4010708ce990ec">
+  <module assembly-name="GustoWaiter" mvid="cfe3b24e2d8a4f868c4010708ce990ec" mvid-bytes="TrLjz4othk+MQBBwjOmQ7A==">
+    <types-scratch>
+      <entry key="crc64edc724e3347d089b/MainActivity" java-name="crc64edc724e3347d089b/MainActivity" managed-type-name="GustoWaiter.MainActivity" token="33554454" />
+      <entry key="crc64edc724e3347d089b/MainApplication" java-name="crc64edc724e3347d089b/MainApplication" managed-type-name="GustoWaiter.MainApplication" token="33554455" />
+    </types-scratch>
+  </module>
+</api>

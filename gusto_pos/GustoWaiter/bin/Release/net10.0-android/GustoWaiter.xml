@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<doc>
+    <assembly>
+        <name>GustoWaiter</name>
+    </assembly>
+    <members>
+        <member name="T:GustoWaiter.Views.MenuPickerPage">
+            <summary>
+            Full-screen modal that lets a waiter browse the zone menu, build a cart,
+            and place an order directly for the selected table.
+            </summary>
+        </member>
+        <member name="T:GustoWaiter.Resource">
+            <summary>
+            Android Resource Designer class.
+            Exposes the Android Resource designer assembly into the project Namespace.
+            </summary>
+        </member>
+    </members>
+</doc>

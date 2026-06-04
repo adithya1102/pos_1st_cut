@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("GustoPOS")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0+089cedd284774116020c754a1b9df36d2b913665")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0+ab892ebd28ee2c34e0e434b8c230651aad2d5a87")]
 [assembly: System.Reflection.AssemblyProductAttribute("GustoPOS")]
 [assembly: System.Reflection.AssemblyTitleAttribute("GustoPOS")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

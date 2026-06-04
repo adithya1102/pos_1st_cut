@@ -260,7 +260,6 @@ C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoPOS\bin\Release\net10.
 C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoPOS\bin\Release\net10.0-ios\iossimulator-x64\libxamarin-dotnet-nativeaot.a
 C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoPOS\bin\Release\net10.0-ios\iossimulator-x64\libxamarin-dotnet.a
 C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoPOS\bin\Release\net10.0-ios\iossimulator-x64\libxamarin-dotnet.dylib
-C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoPOS\obj\Release\net10.0-ios\iossimulator-x64\build-signature\signature
 C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoPOS\obj\Release\net10.0-ios\iossimulator-x64\GustoPOS.csproj.AssemblyReference.cache
 C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoPOS\obj\Release\net10.0-ios\iossimulator-x64\partialappmanifest\_PartialAppManifests.items
 C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoPOS\obj\Release\net10.0-ios\iossimulator-x64\unpack\Microsoft.Maui.Essentials\BundleResource\xml\microsoft_maui_essentials_fileprovider_file_paths.xml

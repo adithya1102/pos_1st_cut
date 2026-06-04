@@ -1,0 +1,236 @@
+[2026-06-03 10:09:06] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: The remote party closed the WebSocket connection without completing the close handshake.
+Stack:    at System.Net.WebSockets.ManagedWebSocket.ReceiveAsyncPrivate[TResult](Memory`1 payloadBuffer, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+   at System.Threading.Tasks.ValueTask`1.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 62
+Inner: Unable to read data from the transport connection: An existing connection was forcibly closed by the remote host..
+---
+[2026-06-03 10:40:52] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: The remote party closed the WebSocket connection without completing the close handshake.
+Stack:    at System.Net.WebSockets.ManagedWebSocket.ThrowEOFUnexpected()
+   at System.Net.WebSockets.ManagedWebSocket.EnsureBufferContainsAsync(Int32 minimumRequiredBytes, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+   at System.Net.WebSockets.ManagedWebSocket.ReceiveAsyncPrivate[TResult](Memory`1 payloadBuffer, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+   at System.Threading.Tasks.ValueTask`1.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 62
+Inner: none
+---
+[2026-06-03 10:56:07] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: The remote party closed the WebSocket connection without completing the close handshake.
+Stack:    at System.Net.WebSockets.ManagedWebSocket.ThrowEOFUnexpected()
+   at System.Net.WebSockets.ManagedWebSocket.EnsureBufferContainsAsync(Int32 minimumRequiredBytes, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+   at System.Net.WebSockets.ManagedWebSocket.ReceiveAsyncPrivate[TResult](Memory`1 payloadBuffer, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+   at System.Threading.Tasks.ValueTask`1.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 62
+Inner: none
+---
+[2026-06-03 12:27:38] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: The remote party closed the WebSocket connection without completing the close handshake.
+Stack:    at System.Net.WebSockets.ManagedWebSocket.ReceiveAsyncPrivate[TResult](Memory`1 payloadBuffer, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+   at System.Threading.Tasks.ValueTask`1.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 62
+Inner: Unable to read data from the transport connection: An existing connection was forcibly closed by the remote host..
+---
+[2026-06-03 13:17:24] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: The remote party closed the WebSocket connection without completing the close handshake.
+Stack:    at System.Net.WebSockets.ManagedWebSocket.ThrowEOFUnexpected()
+   at System.Net.WebSockets.ManagedWebSocket.EnsureBufferContainsAsync(Int32 minimumRequiredBytes, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+   at System.Net.WebSockets.ManagedWebSocket.ReceiveAsyncPrivate[TResult](Memory`1 payloadBuffer, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+   at System.Threading.Tasks.ValueTask`1.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 62
+Inner: none
+---
+[2026-06-03 23:08:23] App.CheckBackendConnectivity
+Type: System.Threading.Tasks.TaskCanceledException
+Message: The request was canceled due to the configured HttpClient.Timeout of 3 seconds elapsing.
+Stack:    at System.Net.Http.HttpClient.HandleFailure(Exception e, Boolean telemetryStarted, HttpResponseMessage response, CancellationTokenSource cts, CancellationToken cancellationToken, CancellationTokenSource pendingRequestsCts)
+   at System.Net.Http.HttpClient.<SendAsync>g__Core|83_0(HttpRequestMessage request, HttpCompletionOption completionOption, CancellationTokenSource cts, Boolean disposeCts, CancellationTokenSource pendingRequestsCts, CancellationToken originalCancellationToken)
+   at GustoWaiter.App.CheckBackendConnectivity() in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\App.xaml.cs:line 15
+Inner: A task was canceled.
+---
+[2026-06-03 23:31:54] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: The remote party closed the WebSocket connection without completing the close handshake.
+Stack:    at System.Net.WebSockets.ManagedWebSocket.ThrowEOFUnexpected()
+   at System.Net.WebSockets.ManagedWebSocket.EnsureBufferContainsAsync(Int32 minimumRequiredBytes, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+   at System.Net.WebSockets.ManagedWebSocket.ReceiveAsyncPrivate[TResult](Memory`1 payloadBuffer, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+   at System.Threading.Tasks.ValueTask`1.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 62
+Inner: none
+---
+[2026-06-03 23:48:01] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: The remote party closed the WebSocket connection without completing the close handshake.
+Stack:    at System.Net.WebSockets.ManagedWebSocket.ThrowEOFUnexpected()
+   at System.Net.WebSockets.ManagedWebSocket.EnsureBufferContainsAsync(Int32 minimumRequiredBytes, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+   at System.Net.WebSockets.ManagedWebSocket.ReceiveAsyncPrivate[TResult](Memory`1 payloadBuffer, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+   at System.Threading.Tasks.ValueTask`1.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 62
+Inner: none
+---
+[2026-06-03 23:56:41] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: The remote party closed the WebSocket connection without completing the close handshake.
+Stack:    at System.Net.WebSockets.ManagedWebSocket.ThrowEOFUnexpected()
+   at System.Net.WebSockets.ManagedWebSocket.EnsureBufferContainsAsync(Int32 minimumRequiredBytes, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+   at System.Net.WebSockets.ManagedWebSocket.ReceiveAsyncPrivate[TResult](Memory`1 payloadBuffer, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+   at System.Threading.Tasks.ValueTask`1.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 62
+Inner: none
+---
+[2026-06-04 00:09:13] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: The remote party closed the WebSocket connection without completing the close handshake.
+Stack:    at System.Net.WebSockets.ManagedWebSocket.ThrowEOFUnexpected()
+   at System.Net.WebSockets.ManagedWebSocket.EnsureBufferContainsAsync(Int32 minimumRequiredBytes, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+   at System.Net.WebSockets.ManagedWebSocket.ReceiveAsyncPrivate[TResult](Memory`1 payloadBuffer, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+   at System.Threading.Tasks.ValueTask`1.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 62
+Inner: none
+---
+[2026-06-04 00:43:52] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: The remote party closed the WebSocket connection without completing the close handshake.
+Stack:    at System.Net.WebSockets.ManagedWebSocket.ThrowEOFUnexpected()
+   at System.Net.WebSockets.ManagedWebSocket.EnsureBufferContainsAsync(Int32 minimumRequiredBytes, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+   at System.Net.WebSockets.ManagedWebSocket.ReceiveAsyncPrivate[TResult](Memory`1 payloadBuffer, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+   at System.Threading.Tasks.ValueTask`1.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 62
+Inner: none
+---
+[2026-06-04 00:59:51] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: The remote party closed the WebSocket connection without completing the close handshake.
+Stack:    at System.Net.WebSockets.ManagedWebSocket.ThrowEOFUnexpected()
+   at System.Net.WebSockets.ManagedWebSocket.EnsureBufferContainsAsync(Int32 minimumRequiredBytes, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+   at System.Net.WebSockets.ManagedWebSocket.ReceiveAsyncPrivate[TResult](Memory`1 payloadBuffer, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+   at System.Threading.Tasks.ValueTask`1.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 62
+Inner: none
+---
+[2026-06-04 01:15:49] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: The remote party closed the WebSocket connection without completing the close handshake.
+Stack:    at System.Net.WebSockets.ManagedWebSocket.ThrowEOFUnexpected()
+   at System.Net.WebSockets.ManagedWebSocket.EnsureBufferContainsAsync(Int32 minimumRequiredBytes, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+   at System.Net.WebSockets.ManagedWebSocket.ReceiveAsyncPrivate[TResult](Memory`1 payloadBuffer, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+   at System.Threading.Tasks.ValueTask`1.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 62
+Inner: none
+---
+[2026-06-04 01:31:47] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: The remote party closed the WebSocket connection without completing the close handshake.
+Stack:    at System.Net.WebSockets.ManagedWebSocket.ThrowEOFUnexpected()
+   at System.Net.WebSockets.ManagedWebSocket.EnsureBufferContainsAsync(Int32 minimumRequiredBytes, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+   at System.Net.WebSockets.ManagedWebSocket.ReceiveAsyncPrivate[TResult](Memory`1 payloadBuffer, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+   at System.Threading.Tasks.ValueTask`1.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 62
+Inner: none
+---
+[2026-06-04 01:47:35] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: The remote party closed the WebSocket connection without completing the close handshake.
+Stack:    at System.Net.WebSockets.ManagedWebSocket.ThrowEOFUnexpected()
+   at System.Net.WebSockets.ManagedWebSocket.EnsureBufferContainsAsync(Int32 minimumRequiredBytes, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+   at System.Net.WebSockets.ManagedWebSocket.ReceiveAsyncPrivate[TResult](Memory`1 payloadBuffer, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+   at System.Threading.Tasks.ValueTask`1.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 62
+Inner: none
+---
+[2026-06-04 02:03:33] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: The remote party closed the WebSocket connection without completing the close handshake.
+Stack:    at System.Net.WebSockets.ManagedWebSocket.ThrowEOFUnexpected()
+   at System.Net.WebSockets.ManagedWebSocket.EnsureBufferContainsAsync(Int32 minimumRequiredBytes, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+   at System.Net.WebSockets.ManagedWebSocket.ReceiveAsyncPrivate[TResult](Memory`1 payloadBuffer, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+   at System.Threading.Tasks.ValueTask`1.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 62
+Inner: none
+---
+[2026-06-04 02:19:25] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: The remote party closed the WebSocket connection without completing the close handshake.
+Stack:    at System.Net.WebSockets.ManagedWebSocket.ThrowEOFUnexpected()
+   at System.Net.WebSockets.ManagedWebSocket.EnsureBufferContainsAsync(Int32 minimumRequiredBytes, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+   at System.Net.WebSockets.ManagedWebSocket.ReceiveAsyncPrivate[TResult](Memory`1 payloadBuffer, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+   at System.Threading.Tasks.ValueTask`1.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 62
+Inner: none
+---
+[2026-06-04 02:49:20] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: The remote party closed the WebSocket connection without completing the close handshake.
+Stack:    at System.Net.WebSockets.ManagedWebSocket.ThrowEOFUnexpected()
+   at System.Net.WebSockets.ManagedWebSocket.EnsureBufferContainsAsync(Int32 minimumRequiredBytes, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+   at System.Net.WebSockets.ManagedWebSocket.ReceiveAsyncPrivate[TResult](Memory`1 payloadBuffer, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+   at System.Threading.Tasks.ValueTask`1.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 62
+Inner: none
+---
+[2026-06-04 03:05:18] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: The remote party closed the WebSocket connection without completing the close handshake.
+Stack:    at System.Net.WebSockets.ManagedWebSocket.ThrowEOFUnexpected()
+   at System.Net.WebSockets.ManagedWebSocket.EnsureBufferContainsAsync(Int32 minimumRequiredBytes, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+   at System.Net.WebSockets.ManagedWebSocket.ReceiveAsyncPrivate[TResult](Memory`1 payloadBuffer, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+   at System.Threading.Tasks.ValueTask`1.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 62
+Inner: none
+---
