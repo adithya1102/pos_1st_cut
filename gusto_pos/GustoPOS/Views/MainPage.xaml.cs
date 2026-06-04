@@ -14,6 +14,7 @@ public partial class MainPage : ContentPage {
     private BillingPage? _billing;
     private AskGustoPage? _askGusto;
     private ManagementPage? _mgmt;
+    private SalesAndProfitPage? _salesAndProfit;
     private ClientWebSocket? _ws;
     private CancellationTokenSource? _wsCts;
 
@@ -56,8 +57,9 @@ public partial class MainPage : ContentPage {
     private void ShowBilling() { _billing ??= new BillingPage(_api); ContentArea.Content = _billing; _billing.OnTabShown(); SetActive(BtnBilling); }
     private void ShowAskGusto() { _askGusto ??= new AskGustoPage(_api); ContentArea.Content = _askGusto; _askGusto.OnTabShown(); SetActive(BtnAskGusto); }
     private void ShowMgmt() { _mgmt ??= new ManagementPage(_api); ContentArea.Content = _mgmt; SetActive(BtnMgmt); }
+    private void ShowSalesAndProfit() { _salesAndProfit ??= new SalesAndProfitPage(_api); ContentArea.Content = _salesAndProfit; _salesAndProfit.OnTabShown(); SetActive(BtnSales); }
     private void SetActive(Button active) {
-        foreach (var b in new[] { BtnPOS, BtnFloor, BtnBilling, BtnAskGusto, BtnMgmt })
+        foreach (var b in new[] { BtnPOS, BtnFloor, BtnBilling, BtnAskGusto, BtnMgmt, BtnSales })
             b.BackgroundColor = Color.FromArgb("#00000000");
         active.BackgroundColor = Color.FromArgb("#28A745");
     }
@@ -66,6 +68,7 @@ public partial class MainPage : ContentPage {
     private void OnBillingClicked(object s, EventArgs e) => ShowBilling();
     private void OnAskGustoClicked(object s, EventArgs e) => ShowAskGusto();
     private void OnMgmtClicked(object s, EventArgs e) => ShowMgmt();
+    private void OnSalesClicked(object s, EventArgs e) => ShowSalesAndProfit();
 
     private void OnLogoutClicked(object s, EventArgs e)
     {

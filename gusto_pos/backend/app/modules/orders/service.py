@@ -294,6 +294,64 @@ class OrderService:
         return len(orders), total
 
     @staticmethod
+    async def get_sales_summary(db: AsyncSession):
+        today = datetime.now().date()
+        start = datetime.combine(today, datetime.min.time())
+        end = datetime.combine(today, datetime.max.time())
+
+        timeline_rows = await db.execute(
+            select(OrderItem, Order.table_id)
+            .join(Order, OrderItem.order_id == Order.id)
+            .where(OrderItem.created_at >= start, OrderItem.created_at <= end)
+            .order_by(OrderItem.created_at.desc())
+        )
+        timeline = [
+            {
+                "dish_name": row.OrderItem.name_snap or "Item",
+                "table_id": row.table_id or "",
+                "quantity": row.OrderItem.quantity,
+                "price": float(row.OrderItem.price_snap or 0),
+                "created_at": row.OrderItem.created_at.isoformat() if row.OrderItem.created_at else None,
+            }
+            for row in timeline_rows.all()
+        ]
+
+        paid_rows = await db.execute(
+            select(OrderItem)
+            .join(Order, OrderItem.order_id == Order.id)
+            .where(
+                Order.created_at >= start,
+                Order.created_at <= end,
+                Order.order_status == "paid",
+            )
+        )
+        agg: dict = {}
+        for item in paid_rows.scalars().all():
+            name = item.name_snap or "Item"
+            qty = item.quantity or 1
+            price = float(item.price_snap or 0)
+            if name not in agg:
+                agg[name] = {"dish_name": name, "total_qty": 0, "total_revenue": 0.0}
+            agg[name]["total_qty"] += qty
+            agg[name]["total_revenue"] += price * qty
+
+        paid_result = await db.execute(
+            select(Order).where(
+                Order.created_at >= start,
+                Order.created_at <= end,
+                Order.order_status == "paid",
+            )
+        )
+        paid_orders = paid_result.scalars().all()
+
+        return {
+            "total_bills_today": len(paid_orders),
+            "revenue_today": sum(float(o.total_amount or 0) for o in paid_orders),
+            "timeline": timeline,
+            "aggregates": list(agg.values()),
+        }
+
+    @staticmethod
     async def generate_bill(db: AsyncSession, table_id: str):
         """Generate a professional PDF bill for all active orders on a table."""
         result = await db.execute(

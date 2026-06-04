@@ -177,6 +177,12 @@ async def update_order_items(order_id: UUID, payload: OrderItemsUpdate, db: Asyn
     return obj
 
 
+@router.get("/sales-summary/")
+async def get_sales_summary(db: AsyncSession = Depends(get_db)):
+    """Today-only sales dashboard: timeline of order items and paid-order dish aggregates."""
+    return await OrderService.get_sales_summary(db)
+
+
 @router.post("/{order_id}/confirm")
 async def confirm_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
     """Confirm an order - updates status from pending to confirmed."""

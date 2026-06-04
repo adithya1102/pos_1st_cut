@@ -40,6 +40,10 @@
                         BackgroundColor="Transparent" TextColor="White"
                         HorizontalOptions="Fill" CornerRadius="8"
                         HeightRequest="40" FontSize="13" Clicked="OnAskGustoClicked"/>
+                <Button x:Name="BtnSales" Text="📊  Sales &amp; Profit"
+                        BackgroundColor="Transparent" TextColor="White"
+                        HorizontalOptions="Fill" CornerRadius="8"
+                        HeightRequest="40" FontSize="13" Clicked="OnSalesClicked"/>
                 <Label Text="SYSTEM" TextColor="#6FCF97" FontSize="10"
                        FontAttributes="Bold" Margin="8,16,0,6"/>
                 <Button x:Name="BtnMgmt" Text="⚙️  Management"
