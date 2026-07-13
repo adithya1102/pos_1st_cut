@@ -441,7 +441,9 @@ namespace GustoPOS.Services;
 
 public class ApiService
 {
-    private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(15) };
+    // Render free-tier cold starts can take 30-45s to wake up; 15s was silently
+    // timing out and making synced orders look like they never arrived.
+    private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(60) };
     private const string Base = "https://pos-1st-cut.onrender.com/api/v1";
     private const string MenuId = "1cde6491-e17a-45be-91e1-e905bcce7732";
     private const string OutletId = "0b8a8349-6144-41a8-b028-b9089bd8eaea";

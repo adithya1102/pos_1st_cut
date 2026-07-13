@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 
-const API = 'http://192.168.1.7:8000/api/v1';
+const API = 'https://pos-1st-cut.onrender.com/api/v1';
 
 type Step = 'loading' | 'error' | 'login';
 

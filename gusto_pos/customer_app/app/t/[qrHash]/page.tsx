@@ -26,7 +26,7 @@ export default function QRHashPage() {
       async (position) => {
         const { latitude, longitude } = position.coords;
         try {
-          const API_BASE = 'http://192.168.1.7:8000';
+          const API_BASE = 'https://pos-1st-cut.onrender.com';
           const res = await fetch(
             `${API_BASE}/api/v1/tables/${qrHash}/session`,
             {

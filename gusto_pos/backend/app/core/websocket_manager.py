@@ -5,54 +5,176 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-class KitchenWebSocketManager:
+
+class ConnectionManager:
     """
-    Manages WebSocket connections for kitchen displays.
-    Each outlet has its own channel (keyed by outlet_id).
-    Multiple kitchen screens can connect to the same outlet channel.
+    Single registry for every live socket in the system.
+
+    Three channels:
+      - waiter_connections:   outlet_id -> [WebSocket]   (GustoWaiter tablets)
+      - pos_connections:      outlet_id -> [WebSocket]   (GustoPOS terminals)
+      - customer_connections: table_id  -> WebSocket     (one phone per table)
     """
 
     def __init__(self):
-        # outlet_id -> list of connected websockets
+        self.waiter_connections: Dict[str, List[WebSocket]] = {}
+        self.pos_connections: Dict[str, List[WebSocket]] = {}
+        self.customer_connections: Dict[str, WebSocket] = {}
+
+    # ---- connect ---------------------------------------------------------
+    async def connect_waiter(self, websocket: WebSocket, outlet_id: str):
+        await websocket.accept()
+        self.waiter_connections.setdefault(outlet_id, []).append(websocket)
+        logger.info(f"Waiter connected to outlet {outlet_id} "
+                    f"({len(self.waiter_connections[outlet_id])} live)")
+
+    async def connect_pos(self, websocket: WebSocket, outlet_id: str):
+        await websocket.accept()
+        self.pos_connections.setdefault(outlet_id, []).append(websocket)
+        logger.info(f"POS connected to outlet {outlet_id} "
+                    f"({len(self.pos_connections[outlet_id])} live)")
+
+    async def connect_customer(self, websocket: WebSocket, table_id: str):
+        await websocket.accept()
+        self.customer_connections[table_id] = websocket
+        logger.info(f"Customer connected at table {table_id}")
+
+    # ---- disconnect ------------------------------------------------------
+    def disconnect_waiter(self, websocket: WebSocket, outlet_id: str):
+        if outlet_id in self.waiter_connections:
+            self.waiter_connections[outlet_id] = [
+                ws for ws in self.waiter_connections[outlet_id] if ws != websocket
+            ]
+
+    def disconnect_pos(self, websocket: WebSocket, outlet_id: str):
+        if outlet_id in self.pos_connections:
+            self.pos_connections[outlet_id] = [
+                ws for ws in self.pos_connections[outlet_id] if ws != websocket
+            ]
+
+    def disconnect_customer(self, table_id: str):
+        self.customer_connections.pop(table_id, None)
+
+    # ---- broadcast -------------------------------------------------------
+    async def _broadcast(self, bucket: Dict[str, List[WebSocket]], key: str, event: dict):
+        sockets = bucket.get(key)
+        if not sockets:
+            return
+        dead = []
+        for ws in sockets:
+            try:
+                await ws.send_json(event)
+            except Exception as exc:
+                logger.warning(f"Dropping dead socket on {key}: {exc}")
+                dead.append(ws)
+        for ws in dead:
+            if ws in bucket.get(key, []):
+                bucket[key].remove(ws)
+
+    async def notify_waiters(self, outlet_id: str, event: dict):
+        """Push event to ALL waiters for this outlet."""
+        await self._broadcast(self.waiter_connections, outlet_id, event)
+
+    async def notify_pos(self, outlet_id: str, event: dict):
+        """Push event to ALL POS terminals for this outlet."""
+        await self._broadcast(self.pos_connections, outlet_id, event)
+
+    async def notify_customer(self, table_id: str, event: dict):
+        """Push event to the customer sitting at a specific table."""
+        ws = self.customer_connections.get(table_id)
+        if not ws:
+            return
+        try:
+            await ws.send_json(event)
+        except Exception as exc:
+            logger.warning(f"Dropping dead customer socket at table {table_id}: {exc}")
+            self.customer_connections.pop(table_id, None)
+
+
+manager = ConnectionManager()
+
+
+class OutletChannel:
+    """
+    Legacy `{"event": NAME, ...}` broadcaster for the C# GustoPOS / GustoWaiter
+    clients, backed by ConnectionManager's socket registry so both message
+    formats reach the same sockets.
+    """
+
+    def __init__(self, bucket: str):
+        self._bucket = bucket  # "pos" | "waiter"
+
+    @property
+    def active_connections(self) -> Dict[str, List[WebSocket]]:
+        return getattr(manager, f"{self._bucket}_connections")
+
+    async def connect(self, websocket: WebSocket, outlet_id: str):
+        connect = getattr(manager, f"connect_{self._bucket}")
+        await connect(websocket, outlet_id)
+
+    def disconnect(self, websocket: WebSocket, outlet_id: str):
+        getattr(manager, f"disconnect_{self._bucket}")(websocket, outlet_id)
+
+    async def broadcast_to_outlet(self, outlet_id: str, message: dict):
+        await manager._broadcast(self.active_connections, outlet_id, message)
+
+    async def broadcast_order_event(self, outlet_id: str, event: str, order: dict):
+        await self.broadcast_to_outlet(outlet_id, {"event": event, **order})
+
+    async def broadcast_new_order(self, outlet_id: str, order: dict):
+        await self.broadcast_to_outlet(outlet_id, {"event": "NEW_ORDER", **order})
+
+    async def broadcast_status_update(self, outlet_id: str, order: dict):
+        await self.broadcast_to_outlet(outlet_id, {
+            "event": "ORDER_STATUS_UPDATED",
+            "order_id": order.get("id"),
+            "order_status": order.get("order_status"),
+        })
+
+
+# POS terminals and Waiter tablets — legacy event format, shared registry
+pos_manager = OutletChannel("pos")
+waiter_manager = OutletChannel("waiter")
+
+
+class KitchenWebSocketManager:
+    """
+    Kitchen display sockets, keyed by outlet_id. Separate from ConnectionManager
+    because kitchen screens speak their own event vocabulary.
+    """
+
+    def __init__(self):
         self.active_connections: Dict[str, List[WebSocket]] = {}
 
     async def connect(self, websocket: WebSocket, outlet_id: str):
         await websocket.accept()
-        if outlet_id not in self.active_connections:
-            self.active_connections[outlet_id] = []
-        self.active_connections[outlet_id].append(websocket)
+        self.active_connections.setdefault(outlet_id, []).append(websocket)
         logger.info(f"Kitchen display connected to outlet {outlet_id}. "
                     f"Total screens: {len(self.active_connections[outlet_id])}")
 
     def disconnect(self, websocket: WebSocket, outlet_id: str):
         if outlet_id in self.active_connections:
-            self.active_connections[outlet_id].remove(websocket)
+            if websocket in self.active_connections[outlet_id]:
+                self.active_connections[outlet_id].remove(websocket)
             if not self.active_connections[outlet_id]:
                 del self.active_connections[outlet_id]
-        logger.info(f"Kitchen display disconnected from outlet {outlet_id}")
 
     async def broadcast_to_outlet(self, outlet_id: str, message: dict):
-        """Send a message to all kitchen screens connected to this outlet."""
         if outlet_id not in self.active_connections:
-            logger.info(f"No kitchen screens connected to outlet {outlet_id}")
             return
-
         disconnected = []
         payload = json.dumps(message)
-
         for websocket in self.active_connections[outlet_id]:
             try:
                 await websocket.send_text(payload)
             except Exception as e:
-                logger.warning(f"Failed to send to screen: {e}")
+                logger.warning(f"Failed to send to kitchen screen: {e}")
                 disconnected.append(websocket)
-
-        # Clean up dead connections
         for ws in disconnected:
-            self.active_connections[outlet_id].remove(ws)
+            if ws in self.active_connections.get(outlet_id, []):
+                self.active_connections[outlet_id].remove(ws)
 
     async def broadcast_new_order(self, outlet_id: str, order: dict):
-        """Notify kitchen of a new order."""
         await self.broadcast_to_outlet(outlet_id, {
             "event": "NEW_ORDER",
             "order_id": order.get("id"),
@@ -65,7 +187,6 @@ class KitchenWebSocketManager:
         })
 
     async def broadcast_status_update(self, outlet_id: str, order: dict):
-        """Notify kitchen of an order status change."""
         await self.broadcast_to_outlet(outlet_id, {
             "event": "ORDER_STATUS_UPDATED",
             "order_id": order.get("id"),
@@ -74,29 +195,24 @@ class KitchenWebSocketManager:
         })
 
     async def broadcast_order_event(self, outlet_id: str, event: str, order: dict):
-        """Generic broadcast for POS/Waiter terminals (NEW_ORDER, ORDER_CONFIRMED, TABLE_OPENED, TABLE_CLOSED)."""
         await self.broadcast_to_outlet(outlet_id, {"event": event, **order})
 
-# Singleton instance — shared across all requests
+
 kitchen_manager = KitchenWebSocketManager()
 
 
 class CustomerWebSocketManager:
     """
-    Manages WebSocket connections for customer phones.
-    Each order has its own channel (keyed by order_id).
-    The customer connects to track THEIR order status only.
+    Customer phone sockets keyed by order_id (order-tracking page).
+    Table-keyed customer sockets live on ConnectionManager instead.
     """
 
     def __init__(self):
-        # order_id -> list of connected websockets (usually just 1)
         self.active_connections: Dict[str, List[WebSocket]] = {}
 
     async def connect(self, websocket: WebSocket, order_id: str):
         await websocket.accept()
-        if order_id not in self.active_connections:
-            self.active_connections[order_id] = []
-        self.active_connections[order_id].append(websocket)
+        self.active_connections.setdefault(order_id, []).append(websocket)
         logger.info(f"Customer connected for order {order_id}")
 
     def disconnect(self, websocket: WebSocket, order_id: str):
@@ -105,30 +221,23 @@ class CustomerWebSocketManager:
                 self.active_connections[order_id].remove(websocket)
             if not self.active_connections[order_id]:
                 del self.active_connections[order_id]
-        logger.info(f"Customer disconnected from order {order_id}")
 
     async def send_order_update(self, order_id: str, message: dict):
-        """Send order status update to the customer's phone."""
         if order_id not in self.active_connections:
-            logger.info(f"No customer connected for order {order_id}")
             return
-
         disconnected = []
         payload = json.dumps(message)
-
         for websocket in self.active_connections[order_id]:
             try:
                 await websocket.send_text(payload)
             except Exception as e:
                 logger.warning(f"Failed to send to customer: {e}")
                 disconnected.append(websocket)
-
         for ws in disconnected:
             if ws in self.active_connections.get(order_id, []):
                 self.active_connections[order_id].remove(ws)
 
     async def notify_order_confirmed(self, order_id: str, order: dict):
-        """Tell customer their order was confirmed by restaurant."""
         await self.send_order_update(order_id, {
             "event": "ORDER_CONFIRMED",
             "order_id": order_id,
@@ -138,7 +247,6 @@ class CustomerWebSocketManager:
         })
 
     async def notify_status_changed(self, order_id: str, order: dict):
-        """Tell customer their order status changed."""
         status = order.get("order_status", "")
         messages = {
             "confirmed":   "Your order is confirmed!",
@@ -156,7 +264,6 @@ class CustomerWebSocketManager:
         })
 
     async def notify_bill_ready(self, order_id: str, amount: float):
-        """Tell customer their bill is ready."""
         await self.send_order_update(order_id, {
             "event": "BILL_READY",
             "order_id": order_id,
@@ -165,11 +272,4 @@ class CustomerWebSocketManager:
         })
 
 
-# Singleton instance for customer connections
 customer_manager = CustomerWebSocketManager()
-
-# Singleton instance for POS terminal connections (outlet-keyed, same pattern as kitchen_manager)
-pos_manager = KitchenWebSocketManager()
-
-# Singleton instance for Waiter tablet connections
-waiter_manager = KitchenWebSocketManager()

@@ -1,6 +1,7 @@
 from uuid import UUID
 from typing import Any, List
 from datetime import datetime
+import asyncio
 import os
 import json as _json
 from sqlalchemy import select, update, delete as sa_delete
@@ -13,10 +14,22 @@ from app.modules.order_items.model import OrderItem
 from app.modules.sessions.models import WaiterNotification
 from app.modules.tables.models import TableSession
 from app.modules.outlets.model import Table
-from app.core.websocket_manager import kitchen_manager, customer_manager, pos_manager, waiter_manager
+from app.core.websocket_manager import (
+    kitchen_manager, customer_manager, pos_manager, waiter_manager, manager,
+)
 from app.modules.orders.schema import OrderCreate, OrderUpdate, OrderItemCreate
 
 OUTLET_ID = "0b8a8349-6144-41a8-b028-b9089bd8eaea"
+
+# Tasks are garbage collected if nothing holds a reference to them.
+_pending_pushes: set[asyncio.Task] = set()
+
+
+def fire(coro) -> None:
+    """Push a WebSocket event without blocking the HTTP response."""
+    task = asyncio.create_task(coro)
+    _pending_pushes.add(task)
+    task.add_done_callback(_pending_pushes.discard)
 
 
 class OrderService:
@@ -155,6 +168,32 @@ class OrderService:
                 str(order.outlet_id), "TABLE_STATUS_CHANGED", table_occupied
             )
 
+        # Item-level alert for the waiter tablet — includes what was actually ordered
+        fire(manager.notify_waiters(str(order.outlet_id), {
+            "type": "new_order",
+            "order_id": str(order.id),
+            "table_id": order.table_id,
+            "zone": (payload.zone or "normal"),
+            "readable_id": order.readable_id,
+            "total": float(order.total_amount),
+            "items": [
+                {
+                    "name": i["name"],
+                    "quantity": i["quantity"],
+                    "notes": ", ".join(
+                        [c for c in i["customizations"] if c] + ([i["custom_note"]] if i["custom_note"] else [])
+                    ),
+                }
+                for i in notif_items
+            ],
+        }))
+        if order.table_id:
+            fire(manager.notify_pos(str(order.outlet_id), {
+                "type": "table_update",
+                "table_id": order.table_id,
+                "status": "occupied",
+            }))
+
         return order
 
     @staticmethod
@@ -191,6 +230,68 @@ class OrderService:
                 }
             )
         return order
+
+    @staticmethod
+    async def confirm_order(db: AsyncSession, order_id: UUID):
+        """Waiter accepts the order → fire it to the kitchen and mark the table occupied."""
+        obj = await OrderService.get_order_by_id(db, order_id)
+        if not obj:
+            return None
+
+        obj.order_status = "in_kitchen"
+
+        # Persist table occupancy in DB so floor views stay correct after restarts
+        if obj.table_id:
+            tbl_result = await db.execute(
+                select(Table).where(
+                    Table.outlet_id == obj.outlet_id,
+                    Table.table_number == str(obj.table_id),
+                )
+            )
+            tbl = tbl_result.scalar_one_or_none()
+            if tbl:
+                tbl.status = 1  # 1 = Occupied
+
+        await db.commit()
+
+        outlet_id = str(obj.outlet_id)
+        confirm_payload = {
+            "id": str(obj.id),
+            "table_id": str(obj.table_id) if obj.table_id else None,
+            "order_status": "in_kitchen",
+            "total_amount": float(obj.total_amount),
+        }
+        await pos_manager.broadcast_order_event(outlet_id, "ORDER_CONFIRMED", confirm_payload)
+        await waiter_manager.broadcast_order_event(outlet_id, "ORDER_CONFIRMED", confirm_payload)
+
+        if obj.table_id:
+            table_payload = {"table_id": str(obj.table_id), "status": "occupied"}
+            await pos_manager.broadcast_order_event(outlet_id, "TABLE_STATUS_CHANGED", table_payload)
+            await waiter_manager.broadcast_order_event(outlet_id, "TABLE_STATUS_CHANGED", table_payload)
+
+        # Order-keyed customer socket (order tracking page)
+        await customer_manager.notify_status_changed(
+            order_id=str(obj.id), order={"order_status": "in_kitchen"}
+        )
+
+        # Table-keyed customer socket (menu/cart page)
+        if obj.table_id:
+            fire(manager.notify_customer(obj.table_id, {
+                "type": "order_confirmed",
+                "order_id": str(obj.id),
+                "message": "Your order is being prepared!",
+            }))
+            fire(manager.notify_pos(outlet_id, {
+                "type": "table_update",
+                "table_id": obj.table_id,
+                "status": "in_kitchen",
+            }))
+
+        return {
+            "message": "Order fired to kitchen",
+            "order_id": str(obj.id),
+            "status": "in_kitchen",
+        }
 
     @staticmethod
     async def replace_order_items(db: AsyncSession, order_id: UUID, items: List[OrderItemCreate]):
@@ -290,6 +391,16 @@ class OrderService:
         # Notify all floor views to turn the table back to vacant
         await pos_manager.broadcast_order_event(OUTLET_ID, "TABLE_CLOSED", {"table_id": table_id})
         await waiter_manager.broadcast_order_event(OUTLET_ID, "TABLE_CLOSED", {"table_id": table_id})
+
+        fire(manager.notify_pos(OUTLET_ID, {
+            "type": "table_update",
+            "table_id": table_id,
+            "status": "free",
+        }))
+        fire(manager.notify_customer(table_id, {
+            "type": "bill_ready",
+            "message": "Thank you for dining with us!",
+        }))
 
         return len(orders), total
 

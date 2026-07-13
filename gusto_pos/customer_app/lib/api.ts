@@ -1,6 +1,6 @@
-export const API_BASE = 'http://192.168.1.7:8000';
+export const API_BASE = 'https://pos-1st-cut.onrender.com';
 
-const DEFAULT_MENU_ID = process.env.NEXT_PUBLIC_MENU_ID || 'dc88b6a6-129c-479f-8609-07b8525f4310';
+const DEFAULT_MENU_ID = process.env.NEXT_PUBLIC_MENU_ID || '1cde6491-e17a-45be-91e1-e905bcce7732';
 
 export async function fetchMenu(menuId: string = DEFAULT_MENU_ID) {
   const res = await fetch(`${API_BASE}/api/v1/menus/${menuId}`);

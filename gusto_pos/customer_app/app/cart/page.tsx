@@ -2,9 +2,27 @@
 
 import { useCart } from '@/lib/cart-store';
 import { createOrder } from '@/lib/api';
+import { createCustomerWS } from '@/lib/websocket';
 import { useGeofence } from '@/lib/use-geofence';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState, useEffect, Suspense } from 'react';
+
+type LiveStatus = 'pending' | 'confirmed' | 'complete';
+
+const STATUS_BANNER: Record<LiveStatus, { message: string; className: string }> = {
+  pending: {
+    message: 'Waiting for waiter to confirm...',
+    className: 'bg-[#1e293b] text-slate-300',
+  },
+  confirmed: {
+    message: 'Your order is being prepared! 🍳',
+    className: 'bg-[#f97316]/15 text-[#fdba74]',
+  },
+  complete: {
+    message: 'Thank you for dining with us! 🙏',
+    className: 'bg-[#22c55e]/15 text-[#86efac]',
+  },
+};
 
 // TODO: Replace with real outlet coordinates fetched from the API once the
 // outlet endpoint exposes lat/lon. These are placeholders for local testing.
@@ -47,6 +65,7 @@ function CartContent() {
   const [error, setError] = useState<string | null>(null);
   const [orderSuccess, setOrderSuccess] = useState<OrderResult | null>(null);
   const [zone, setZone] = useState('normal');
+  const [orderStatus, setOrderStatus] = useState<LiveStatus>('pending');
 
   const { status: geofenceStatus, distanceMeters, checkLocation, reset: resetGeofence } =
     useGeofence({
@@ -59,6 +78,17 @@ function CartContent() {
     const z = searchParams.get('zone') || localStorage.getItem('table_zone') || 'normal';
     setZone(z);
   }, [searchParams]);
+
+  // Track the order live once it has been sent to the waiter
+  useEffect(() => {
+    if (!orderSuccess || !tableId) return;
+
+    const ws = createCustomerWS(tableId);
+    ws.on('order_confirmed', () => setOrderStatus('confirmed'));
+    ws.on('bill_ready', () => setOrderStatus('complete'));
+
+    return () => ws.disconnect();
+  }, [orderSuccess, tableId]);
 
   const handlePlaceOrder = async () => {
     if (items.length === 0) return;
@@ -116,6 +146,14 @@ function CartContent() {
           <p className="mt-2 text-sm text-slate-400">Your waiter has been notified</p>
           <p className="mt-1 text-sm text-slate-500">Estimated time: 20-30 minutes</p>
         </div>
+
+        {/* Live status — updated over the table's WebSocket channel */}
+        <div
+          className={`mt-8 w-full max-w-md rounded-xl px-4 py-3 text-center text-sm font-medium ${STATUS_BANNER[orderStatus].className}`}
+        >
+          {STATUS_BANNER[orderStatus].message}
+        </div>
+
         <button
           onClick={() => router.push('/menu')}
           className="mt-8 rounded-xl bg-[#f97316] px-8 py-3 text-base font-bold text-white hover:bg-[#ea580c]"

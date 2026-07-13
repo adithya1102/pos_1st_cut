@@ -34,6 +34,15 @@ class OrderCreate(BaseModel):
     order_status: OrderStatusEnum = OrderStatusEnum.PENDING
     items: Optional[List[OrderItemCreate]] = []
     source: str = "customer"
+    # Carried on the event payloads only — orders are not zone-scoped in the DB
+    zone: Optional[str] = "normal"
+    order_type: Optional[str] = "dine_in"
+
+
+class ConfirmResponse(BaseModel):
+    message: str
+    order_id: str
+    status: str
 
 
 class OrderUpdate(BaseModel):

@@ -7,12 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.websocket_manager import pos_manager, waiter_manager
 from app.modules.orders.model import Order
-from app.modules.outlets.model import Table
 from app.modules.orders.schema import (
     OrderRead, OrderCreate, OrderUpdate, OrderItemsUpdate,
-    OrderWithItemsRead, SettleResponse, BillResponse,
+    OrderWithItemsRead, SettleResponse, BillResponse, ConfirmResponse,
 )
 from app.modules.orders.service import OrderService
 
@@ -183,65 +181,10 @@ async def get_sales_summary(db: AsyncSession = Depends(get_db)):
     return await OrderService.get_sales_summary(db)
 
 
-@router.post("/{order_id}/confirm")
+@router.post("/{order_id}/confirm", response_model=ConfirmResponse)
 async def confirm_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
-    """Confirm an order - updates status from pending to confirmed."""
-    obj = await OrderService.get_order_by_id(db, order_id)
-
-    if not obj:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Order not found"
-        )
-
-    obj.order_status = "in_kitchen"
-
-    # Persist table occupancy in DB so floor views stay correct after restarts
-    if obj.table_id:
-        tbl_result = await db.execute(
-            select(Table).where(
-                Table.outlet_id == obj.outlet_id,
-                Table.table_number == str(obj.table_id),
-            )
-        )
-        tbl = tbl_result.scalar_one_or_none()
-        if tbl:
-            tbl.status = 1  # 1 = Occupied
-
-    await db.commit()
-
-    confirm_payload = {
-        "id": str(obj.id),
-        "table_id": str(obj.table_id) if obj.table_id else None,
-        "order_status": "in_kitchen",
-        "total_amount": float(obj.total_amount),
-    }
-    await pos_manager.broadcast_order_event(
-        outlet_id=str(obj.outlet_id),
-        event="ORDER_CONFIRMED",
-        order=confirm_payload,
-    )
-    await waiter_manager.broadcast_order_event(
-        outlet_id=str(obj.outlet_id),
-        event="ORDER_CONFIRMED",
-        order=confirm_payload,
-    )
-
-    if obj.table_id:
-        table_payload = {"table_id": str(obj.table_id), "status": "occupied"}
-        await pos_manager.broadcast_order_event(
-            outlet_id=str(obj.outlet_id),
-            event="TABLE_STATUS_CHANGED",
-            order=table_payload,
-        )
-        await waiter_manager.broadcast_order_event(
-            outlet_id=str(obj.outlet_id),
-            event="TABLE_STATUS_CHANGED",
-            order=table_payload,
-        )
-
-    return {
-        "message": "Order fired to kitchen",
-        "order_id": str(order_id),
-        "status": "in_kitchen"
-    }
+    """Waiter confirms an order — fires it to the kitchen."""
+    result = await OrderService.confirm_order(db, order_id)
+    if not result:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+    return result

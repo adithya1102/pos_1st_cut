@@ -146,6 +146,16 @@ build_metadata.AdditionalFiles.NoWarn =
 build_metadata.AdditionalFiles.EnableDiagnostics = 
 build_metadata.AdditionalFiles.LineInfo = 
 
+[C:/Users/Adithya/Desktop/demo1/pos_1st_cut/gusto_pos/GustoPOS/Views/SalesAndProfitPage.xaml]
+build_metadata.AdditionalFiles.GenKind = Xaml
+build_metadata.AdditionalFiles.ManifestResourceName = GustoPOS.Views.SalesAndProfitPage.xaml
+build_metadata.AdditionalFiles.TargetPath = Views\SalesAndProfitPage.xaml
+build_metadata.AdditionalFiles.RelativePath = Views\SalesAndProfitPage.xaml
+build_metadata.AdditionalFiles.Inflator = XamlC
+build_metadata.AdditionalFiles.NoWarn = 
+build_metadata.AdditionalFiles.EnableDiagnostics = 
+build_metadata.AdditionalFiles.LineInfo = 
+
 [C:/Users/Adithya/Desktop/demo1/pos_1st_cut/gusto_pos/GustoPOS/Views/StaffRosterPage.xaml]
 build_metadata.AdditionalFiles.GenKind = Xaml
 build_metadata.AdditionalFiles.ManifestResourceName = GustoPOS.Views.StaffRosterPage.xaml
