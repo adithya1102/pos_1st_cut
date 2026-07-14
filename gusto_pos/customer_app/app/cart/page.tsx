@@ -3,7 +3,6 @@
 import { useCart } from '@/lib/cart-store';
 import { createOrder } from '@/lib/api';
 import { createCustomerWS } from '@/lib/websocket';
-import { useGeofence } from '@/lib/use-geofence';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState, useEffect, Suspense } from 'react';
 
@@ -23,12 +22,6 @@ const STATUS_BANNER: Record<LiveStatus, { message: string; className: string }> 
     className: 'bg-[#22c55e]/15 text-[#86efac]',
   },
 };
-
-// TODO: Replace with real outlet coordinates fetched from the API once the
-// outlet endpoint exposes lat/lon. These are placeholders for local testing.
-const RESTAURANT_LAT = 12.9716;
-const RESTAURANT_LON = 77.5946;
-const GEOFENCE_RADIUS_METERS = 100;
 
 interface OrderResult {
   id: string;
@@ -67,13 +60,6 @@ function CartContent() {
   const [zone, setZone] = useState('normal');
   const [orderStatus, setOrderStatus] = useState<LiveStatus>('pending');
 
-  const { status: geofenceStatus, distanceMeters, checkLocation, reset: resetGeofence } =
-    useGeofence({
-      targetLat: RESTAURANT_LAT,
-      targetLon: RESTAURANT_LON,
-      radiusMeters: GEOFENCE_RADIUS_METERS,
-    });
-
   useEffect(() => {
     const z = searchParams.get('zone') || localStorage.getItem('table_zone') || 'normal';
     setZone(z);
@@ -84,28 +70,39 @@ function CartContent() {
     if (!orderSuccess || !tableId) return;
 
     const ws = createCustomerWS(tableId);
-    ws.on('order_confirmed', () => setOrderStatus('confirmed'));
+    const updateStatus = (data: Record<string, unknown>) => {
+      const status = String(data.order_status || '');
+      if (status === 'confirmed' || status === 'in_kitchen') setOrderStatus('confirmed');
+    };
+    ws.on('order_confirmed', updateStatus);
+    ws.on('ORDER_CONFIRMED', updateStatus);
     ws.on('bill_ready', () => setOrderStatus('complete'));
 
-    return () => ws.disconnect();
+    let stopped = false;
+    const poll = async () => {
+      try {
+        const base = process.env.NEXT_PUBLIC_API_URL || 'https://pos-1st-cut.onrender.com';
+        const res = await fetch(`${base}/api/v1/orders/table/${encodeURIComponent(tableId)}`);
+        if (res.ok) {
+          const orders = await res.json();
+          const current = Array.isArray(orders)
+            ? orders.find((order: { id?: string }) => order.id === orderSuccess.id)
+            : null;
+          if (current && (current.order_status === 'confirmed' || current.order_status === 'in_kitchen')) {
+            setOrderStatus('confirmed');
+          }
+        }
+      } catch { /* WebSocket and the next poll remain available. */ }
+      if (!stopped) window.setTimeout(poll, 3000);
+    };
+    void poll();
+
+    return () => { stopped = true; ws.disconnect(); };
   }, [orderSuccess, tableId]);
 
   const handlePlaceOrder = async () => {
     if (items.length === 0) return;
     setError(null);
-
-    const locationResult = await checkLocation();
-
-    if (locationResult === 'denied' || locationResult === 'outside') {
-      return;
-    }
-
-    if (locationResult === 'error') {
-      setError('Could not verify your location. Please try again.');
-      return;
-    }
-
-    // locationResult === 'inside' — safe to proceed
     setPlacing(true);
     try {
       const orderData = {
@@ -114,7 +111,7 @@ function CartContent() {
         total_amount: totalAmount,
         order_type: 'dine_in',
         zone,
-        source: 'customer',
+        source: 'customer_app',
         items: items.map((item) => ({
           name: item.name,
           quantity: item.quantity,
@@ -180,7 +177,7 @@ function CartContent() {
     );
   }
 
-  const isBlocked = geofenceStatus === 'checking' || placing;
+  const isBlocked = placing;
 
   return (
     <div className="min-h-screen bg-[#0f172a] pb-40">
@@ -269,44 +266,6 @@ function CartContent() {
             <span className="text-lg font-bold text-[#f8fafc]">₹{totalAmount}</span>
           </div>
 
-          {/* Geofence: user is outside the restaurant */}
-          {geofenceStatus === 'outside' && (
-            <div className="mb-3 rounded-xl bg-[#7f1d1d] px-4 py-3">
-              <p className="text-center text-sm font-semibold text-[#fca5a5]">
-                It looks like you aren&apos;t at the restaurant!
-              </p>
-              <p className="mt-1 text-center text-xs text-[#fca5a5]/80">
-                You must be dining in to place an order.
-                {distanceMeters !== null && ` (${distanceMeters}m away)`}
-              </p>
-              <button
-                onClick={resetGeofence}
-                className="mt-2 w-full text-center text-xs text-[#fca5a5] underline underline-offset-2"
-              >
-                Try again
-              </button>
-            </div>
-          )}
-
-          {/* Geofence: location permission denied */}
-          {geofenceStatus === 'denied' && (
-            <div className="mb-3 rounded-xl bg-[#431407] px-4 py-3">
-              <p className="text-center text-sm font-semibold text-[#fdba74]">
-                Location access required
-              </p>
-              <p className="mt-1 text-center text-xs text-[#fdba74]/80">
-                Please enable location permissions in your browser settings to verify your table.
-              </p>
-              <button
-                onClick={resetGeofence}
-                className="mt-2 w-full text-center text-xs text-[#fdba74] underline underline-offset-2"
-              >
-                Try again
-              </button>
-            </div>
-          )}
-
-          {/* Generic location error */}
           {error && (
             <p className="mb-3 text-center text-sm text-[#ef4444]">{error}</p>
           )}
@@ -317,12 +276,7 @@ function CartContent() {
             className="w-full rounded-xl py-3.5 text-center text-lg font-bold text-white transition-colors hover:opacity-90 disabled:opacity-50 active:scale-[0.98]"
             style={{ backgroundColor: '#1B4332', height: '56px', fontSize: '18px' }}
           >
-            {geofenceStatus === 'checking' ? (
-              <span className="flex items-center justify-center gap-2">
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                Verifying location...
-              </span>
-            ) : placing ? (
+            {placing ? (
               <span className="flex items-center justify-center gap-2">
                 <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
                 Sending order...

@@ -36,7 +36,7 @@ public partial class BillingPage : ContentView
         LoadConfigAndBuildAsync();
         _refreshTimer = Application.Current!.Dispatcher.CreateTimer();
         _refreshTimer.Interval = TimeSpan.FromSeconds(5);
-        _refreshTimer.Tick += (s, e) => LoadTableStatusParallelAsync();
+        _refreshTimer.Tick += (s, e) => { _ = LoadTableStatusParallelAsync(); };
         _refreshTimer.Start();
         _ = ConnectBillingWsAsync();
     }
@@ -84,7 +84,7 @@ public partial class BillingPage : ContentView
                     var capturedTableId = affectedTableId;
                     MainThread.BeginInvokeOnMainThread(() =>
                     {
-                        LoadTableStatusParallelAsync();
+                        _ = LoadTableStatusParallelAsync();
                         // If the affected table is already selected in the sidebar, refresh its orders immediately
                         if (!string.IsNullOrEmpty(capturedTableId) && capturedTableId == _selectedTable)
                             _ = LoadOrdersForTable(_selectedTable);
@@ -107,7 +107,7 @@ public partial class BillingPage : ContentView
         _acCount = config.AcTableCount;
         RebuildTableIds();
         BuildTableGrid();
-        LoadTableStatusParallelAsync();
+        await LoadTableStatusParallelAsync();
     }
 
     private void RebuildTableIds()

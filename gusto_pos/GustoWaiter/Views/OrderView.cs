@@ -40,9 +40,10 @@ public class OrderView : ContentView {
     private readonly Label _cartBadge = new();
     private readonly Button _placeBtn = new();
 
-    // Pending stack (local manual fulfillment tracker — waiter clears items as served)
+    // Pending stack — mirrors the server's unserved items for the selected table
     private readonly VerticalStackLayout _pendingStack = new() { Spacing = 0 };
     private readonly Label _pendingEmptyLabel = new();
+    private List<OrderItemInfo> _pendingItems = new();
 
     // Canvas visibility
     private readonly Grid _menuCanvas = new();
@@ -323,23 +324,26 @@ public class OrderView : ContentView {
     private async Task LoadPendingItemsAsync() {
         if (string.IsNullOrEmpty(_table)) return;
         try {
-            var order = await _api.GetTableActiveOrderSummaryAsync(_table);
-            await MainThread.InvokeOnMainThreadAsync(() =>
-                RebuildPendingStack(order?.Items ?? new List<OrderItemInfo>()));
+            // Server-side filtered to unserved items, so a ticked item stays gone across reloads.
+            var items = await _api.GetTableActiveItemsAsync(_table);
+            await MainThread.InvokeOnMainThreadAsync(() => RebuildPendingStack(items));
         } catch (Exception ex) {
             CrashLogger.Log(ex, "OrderView.LoadPendingItems");
         }
     }
 
-    private void RebuildPendingStack(List<OrderItemInfo> items) {
-        _pendingStack.Children.Clear();
-        _pendingEmptyLabel.IsVisible = !items.Any();
-
-        // Update panel header: show table ID and total item count
-        var totalQty = items.Sum(i => i.Quantity);
+    private void RefreshPendingHeader() {
+        _pendingEmptyLabel.IsVisible = !_pendingItems.Any();
+        var totalQty = _pendingItems.Sum(i => i.Quantity);
         _panelTableLabel.Text = string.IsNullOrEmpty(_table)
             ? "📋 Pending Items"
             : $"📋 {_table} — {totalQty} item{(totalQty != 1 ? "s" : "")}";
+    }
+
+    private void RebuildPendingStack(List<OrderItemInfo> items) {
+        _pendingStack.Children.Clear();
+        _pendingItems = items;
+        RefreshPendingHeader();
 
         // Auto-show panel when the selected table has active orders
         if (items.Any())
@@ -385,15 +389,30 @@ public class OrderView : ContentView {
             };
 
             var captured = rowBorder;
-            clearBtn.Clicked += (_, _) => {
-                // Strike through + fade, then remove after brief visual pause
-                nameLbl.TextDecorations = TextDecorations.Strikethrough;
-                nameLbl.TextColor = Color.FromArgb("#AAAAAA");
-                captured.Opacity = 0.35;
+            var capturedItem = item;
+            clearBtn.Clicked += async (_, _) => {
                 clearBtn.IsEnabled = false;
-                Task.Delay(500).ContinueWith(_ =>
-                    MainThread.BeginInvokeOnMainThread(() =>
-                        _pendingStack.Children.Remove(captured)));
+                try {
+                    var ok = await _api.MarkItemServedAsync(capturedItem.OrderId, capturedItem.ItemId);
+                    if (!ok) {
+                        // Leave the row in place — it's still pending as far as the kitchen knows.
+                        clearBtn.IsEnabled = true;
+                        await Application.Current!.Windows[0].Page!.DisplayAlertAsync(
+                            "Not Saved", "Could not mark the item as served. Please try again.", "OK");
+                        return;
+                    }
+                    // Strike through + fade, then remove after brief visual pause
+                    nameLbl.TextDecorations = TextDecorations.Strikethrough;
+                    nameLbl.TextColor = Color.FromArgb("#AAAAAA");
+                    captured.Opacity = 0.35;
+                    await Task.Delay(500);
+                    _pendingStack.Children.Remove(captured);
+                    _pendingItems.Remove(capturedItem);
+                    RefreshPendingHeader();
+                } catch (Exception ex) {
+                    CrashLogger.Log(ex, "OrderView.MarkItemServed");
+                    clearBtn.IsEnabled = true;
+                }
             };
 
             var sep = new BoxView {

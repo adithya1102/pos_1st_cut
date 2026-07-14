@@ -64,9 +64,9 @@ function MenuContent() {
           const z = data.zone || 'normal';
           setResolvedOutletId(data.outlet_id);
           setResolvedZone(z);
-          setValidatedTableId(data.table_name || '');
+          setValidatedTableId(data.table_id || '');
           setOutletId(data.outlet_id);
-          setTableId(data.table_name || '');
+          setTableId(data.table_id || '');
           localStorage.setItem('table_zone', z);
           setTokenValid(true);
         })

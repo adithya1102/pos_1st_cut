@@ -12,6 +12,8 @@ router = APIRouter(prefix="/sessions", tags=["Sessions"])
 
 class SendOtpReq(BaseModel):
     phone: str
+    table_id: Optional[str] = None
+    outlet_id: Optional[str] = None
 
 
 class VerifyOtpReq(BaseModel):

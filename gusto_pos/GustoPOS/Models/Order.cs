@@ -21,6 +21,7 @@ public class OrderItemDto {
     [JsonPropertyName("name_snap")]   public string? NameSnap { get; set; }
     [JsonPropertyName("price_snap")]  public decimal? PriceSnap { get; set; }
     [JsonPropertyName("quantity")]    public int Quantity { get; set; } = 1;
+    [JsonPropertyName("notes")]      public string Notes { get; set; } = "";
 }
 public class BillResponse {
     public string PdfPath { get; set; } = "";
@@ -57,4 +58,24 @@ public class BillResult {
 public class OutletConfig {
     [JsonPropertyName("normal_table_count")] public int NormalTableCount { get; set; } = 10;
     [JsonPropertyName("ac_table_count")]     public int AcTableCount { get; set; } = 10;
+}
+public class CombinedTableOrders {
+    [JsonPropertyName("table_id")] public string TableId { get; set; } = "";
+    [JsonPropertyName("orders")] public List<OrderSummaryWithItems> Orders { get; set; } = new();
+    [JsonPropertyName("combined_total")] public decimal CombinedTotal { get; set; }
+    [JsonPropertyName("item_count")] public int ItemCount { get; set; }
+}
+public class OrderSummaryWithItems {
+    [JsonPropertyName("id")] public string Id { get; set; } = "";
+    [JsonPropertyName("readable_id")] public int ReadableId { get; set; }
+    [JsonPropertyName("source")] public string Source { get; set; } = "";
+    [JsonPropertyName("order_status")] public string Status { get; set; } = "";
+    [JsonPropertyName("total_amount")] public decimal Total { get; set; }
+    [JsonPropertyName("items")] public List<CombinedItem> Items { get; set; } = new();
+}
+public class CombinedItem {
+    [JsonPropertyName("name")] public string Name { get; set; } = "";
+    [JsonPropertyName("quantity")] public int Quantity { get; set; }
+    [JsonPropertyName("unit_price")] public decimal UnitPrice { get; set; }
+    [JsonPropertyName("notes")] public string Notes { get; set; } = "";
 }

@@ -340,7 +340,7 @@ public class ApiService
     // Render free-tier cold starts can take 30-45s to wake up; 15s was silently
     // timing out and making synced orders look like they never arrived.
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(60) };
-    private const string Base = "https://pos-1st-cut.onrender.com/api/v1";
+    private const string Base = "http://192.168.1.6:8000/api/v1";
     public const string OutletId = "0b8a8349-6144-41a8-b028-b9089bd8eaea";
     private const string MenuId = "1cde6491-e17a-45be-91e1-e905bcce7732";
 
@@ -382,6 +382,52 @@ public class ApiService
         {
             Debug.WriteLine($"RespondToNotificationAsync error: {ex.Message}");
             return false;
+        }
+    }
+
+    public async Task<bool> ApproveOrderAsync(string orderId)
+    {
+        try
+        {
+            var res = await _http.PostAsync(
+                $"{Base}/orders/{orderId}/approve",
+                new StringContent("{}", Encoding.UTF8, "application/json"));
+            return res.IsSuccessStatusCode;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Approve error: {ex.Message}");
+            return false;
+        }
+    }
+
+    public async Task<bool> CancelOrderAsync(string orderId)
+    {
+        try
+        {
+            var res = await _http.PostAsync(
+                $"{Base}/orders/{orderId}/cancel",
+                new StringContent("{}", Encoding.UTF8, "application/json"));
+            return res.IsSuccessStatusCode;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Cancel error: {ex.Message}");
+            return false;
+        }
+    }
+
+    public async Task<List<PendingOrder>> GetPendingApprovalsAsync()
+    {
+        try
+        {
+            var json = await _http.GetStringAsync($"{Base}/orders/pending-approval?outlet_id={OutletId}");
+            return JsonSerializer.Deserialize<List<PendingOrder>>(json, J) ?? new();
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"GetPending error: {ex.Message}");
+            return new();
         }
     }
 
@@ -697,6 +743,36 @@ public class ApiService
         }
     }
 
+    public async Task<List<OrderItemInfo>> GetTableActiveItemsAsync(string tableId)
+    {
+        try
+        {
+            var json = await _http.GetStringAsync($"{Base}/orders/table/{tableId}/active-items");
+            return JsonSerializer.Deserialize<List<OrderItemInfo>>(json, J) ?? new();
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"GetTableActiveItemsAsync error: {ex.Message}");
+            return new();
+        }
+    }
+
+    public async Task<bool> MarkItemServedAsync(string orderId, string itemId)
+    {
+        try
+        {
+            var res = await _http.PatchAsync(
+                $"{Base}/orders/{orderId}/items/{itemId}/serve",
+                new StringContent("{}", Encoding.UTF8, "application/json"));
+            return res.IsSuccessStatusCode;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"MarkItemServedAsync error: {ex.Message}");
+            return false;
+        }
+    }
+
     private static int OrderStatusPriority(string s) => s switch {
         "ready" => 5, "cooking" => 4, "confirmed" => 3, "pending" => 2, _ => 0
     };
@@ -783,7 +859,7 @@ public class ApiService
     }
 
     public string GetWaiterWsUrl() =>
-        $"wss://pos-1st-cut.onrender.com/ws/waiter/{OutletId}";
+        $"ws://192.168.1.6:8000/ws/waiter/{OutletId}";
 
     public async Task SetGpsAsync()
     {

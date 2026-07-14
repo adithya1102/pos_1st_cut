@@ -1,0 +1,12 @@
+
+> customer_app@0.1.0 dev
+> next dev -H 0.0.0.0 --hostname 0.0.0.0 --port 3000
+
+▲ Next.js 16.1.6 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://0.0.0.0:3000
+- Environments: .env.local
+
+✓ Starting...
+✓ Ready in 4.7s
+ HEAD / 200 in 2.4s (compile: 1991ms, proxy.ts: 316ms, render: 134ms)

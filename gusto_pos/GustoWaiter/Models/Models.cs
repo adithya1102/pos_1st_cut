@@ -36,6 +36,12 @@ public class Notification {
     public List<OrderItemInfo>? OrderItems { get; set; }
 }
 public class OrderItemInfo {
+    [JsonPropertyName("id")]
+    public string ItemId { get; set; } = "";
+
+    [JsonPropertyName("order_id")]
+    public string OrderId { get; set; } = "";
+
     [JsonPropertyName("name")]
     public string Name { get; set; } = "";
 
@@ -45,11 +51,29 @@ public class OrderItemInfo {
     [JsonPropertyName("unit_price")]
     public decimal UnitPrice { get; set; }
 
+    [JsonPropertyName("is_served")]
+    public bool IsServed { get; set; }
+
     [JsonPropertyName("customizations")]
     public List<string> Customizations { get; set; } = new();
 
     [JsonPropertyName("custom_note")]
     public string CustomNote { get; set; } = "";
+}
+
+public class PendingOrder {
+    [JsonPropertyName("id")] public string Id { get; set; } = "";
+    [JsonPropertyName("table_id")] public string TableId { get; set; } = "";
+    [JsonPropertyName("total_amount")] public decimal Total { get; set; }
+    [JsonPropertyName("source")] public string Source { get; set; } = "";
+    [JsonPropertyName("items")] public List<OrderItemSummary> Items { get; set; } = new();
+}
+
+public class OrderItemSummary {
+    [JsonPropertyName("name")] public string Name { get; set; } = "";
+    [JsonPropertyName("quantity")] public int Quantity { get; set; }
+    [JsonPropertyName("unit_price")] public decimal UnitPrice { get; set; }
+    [JsonPropertyName("notes")] public string Notes { get; set; } = "";
 }
 public class ModifierOption {
     [JsonPropertyName("id")]

@@ -10,6 +10,7 @@ class OrderItemRead(BaseModel):
     name_snap: Optional[str] = None
     price_snap: Optional[float] = None
     quantity: int
+    item_notes: Optional[str] = None
 
     @computed_field
     @property
@@ -20,6 +21,11 @@ class OrderItemRead(BaseModel):
     @property
     def unit_price(self) -> float:
         return self.price_snap or 0.0
+
+    @computed_field
+    @property
+    def notes(self) -> str:
+        return self.item_notes or ""
 
     class Config:
         from_attributes = True

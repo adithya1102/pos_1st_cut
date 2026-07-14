@@ -444,7 +444,7 @@ public class ApiService
     // Render free-tier cold starts can take 30-45s to wake up; 15s was silently
     // timing out and making synced orders look like they never arrived.
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(60) };
-    private const string Base = "https://pos-1st-cut.onrender.com/api/v1";
+    private const string Base = "http://192.168.1.6:8000/api/v1";
     private const string MenuId = "1cde6491-e17a-45be-91e1-e905bcce7732";
     private const string OutletId = "0b8a8349-6144-41a8-b028-b9089bd8eaea";
 
@@ -601,13 +601,56 @@ public class ApiService
     {
         try
         {
-            var json = await _http.GetStringAsync($"{Base}/orders/table/{tableId}/");
+            // exclude_pending=true — the POS table console should only show orders
+            // once a waiter has approved them, not the moment a customer submits one.
+            var json = await _http.GetStringAsync($"{Base}/orders/table/{tableId}/?exclude_pending=true");
             return JsonSerializer.Deserialize<List<Order>>(json, Opts) ?? new();
         }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"GetTableOrders: {ex.Message}");
             return new();
+        }
+    }
+
+    public async Task<CombinedTableOrders?> GetCombinedTableOrdersAsync(string tableId)
+    {
+        try
+        {
+            var json = await _http.GetStringAsync($"{Base}/orders/table/{tableId}/combined");
+            return JsonSerializer.Deserialize<CombinedTableOrders>(json, Opts);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Combined orders error: {ex.Message}");
+            return null;
+        }
+    }
+
+    public async Task<BillResponse?> GenerateCombinedBillAsync(string tableId, IEnumerable<string> orderIds)
+    {
+        try
+        {
+            var body = JsonSerializer.Serialize(new { table_id = tableId, order_ids = orderIds }, Opts);
+            var res = await _http.PostAsync($"{Base}/orders/bill/combined",
+                new StringContent(body, Encoding.UTF8, "application/json"));
+            if (!res.IsSuccessStatusCode) return null;
+            decimal total = 0;
+            if (res.Headers.TryGetValues("X-Bill-Total", out var values))
+                decimal.TryParse(values.FirstOrDefault(), out total);
+            var billNo = res.Headers.TryGetValues("X-Bill-No", out var bills)
+                ? bills.FirstOrDefault() ?? "" : "";
+            var bytes = await res.Content.ReadAsByteArrayAsync();
+            var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Gusto_Bills");
+            Directory.CreateDirectory(dir);
+            var path = Path.Combine(dir, $"Bill_Table_{tableId}_{DateTime.Now:yyyyMMdd_HHmmss}.pdf");
+            await File.WriteAllBytesAsync(path, bytes);
+            return new BillResponse { PdfPath = path, Total = total, BillNo = billNo };
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Combined bill error: {ex.Message}");
+            return null;
         }
     }
 
@@ -766,7 +809,7 @@ public class ApiService
     }
 
     public string GetPosWsUrl() =>
-        $"wss://pos-1st-cut.onrender.com/ws/pos/{OutletId}";
+        $"ws://192.168.1.6:8000/ws/pos/{OutletId}";
 
     public async Task<List<StaffMember>> GetStaffAsync()
     {

@@ -1,0 +1,14 @@
+
+> customer_app@0.1.0 dev
+> next dev -H 0.0.0.0 --hostname 0.0.0.0
+
+⚠ Port 3000 is in use by process 20504, using available port 3001 instead.
+▲ Next.js 16.1.6 (Turbopack)
+- Local:         http://localhost:3001
+- Network:       http://0.0.0.0:3001
+- Environments: .env.local
+
+✓ Starting...
+⨯ Unable to acquire lock at C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\customer_app\.next\dev\lock, is another instance of next dev running?
+  Suggestion: If you intended to restart next dev, terminate the other process, and then try again.
+[?25h

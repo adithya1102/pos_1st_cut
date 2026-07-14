@@ -26,6 +26,89 @@ public AlertsView(ApiService api, DashboardPage dash) {
         BuildList(notifs);
     }
 
+    public void RefreshPending(List<PendingOrder> orders) {
+        try {
+            MainThread.BeginInvokeOnMainThread(() => {
+                try {
+                    _list.Children.Clear();
+                    _list.Children.Add(new Label {
+                        Text = "Pending Customer Orders", FontSize = 18,
+                        FontAttributes = FontAttributes.Bold, TextColor = Colors.Black
+                    });
+                    if (orders.Count == 0) {
+                        _list.Children.Add(new Label {
+                            Text = "No pending approvals", TextColor = Color.FromArgb("#6C757D"),
+                            HorizontalOptions = LayoutOptions.Center, Margin = new Thickness(0, 20)
+                        });
+                        return;
+                    }
+                    foreach (var order in orders) {
+                        try { _list.Children.Add(BuildPendingCard(order)); }
+                        catch (Exception ex) { Debug.WriteLine($"Card error: {ex.Message}"); }
+                    }
+                } catch (Exception ex) { Debug.WriteLine($"RefreshPending UI error: {ex.Message}"); }
+            });
+        } catch (Exception ex) { Debug.WriteLine($"RefreshPending error: {ex.Message}"); }
+    }
+
+    private View BuildPendingCard(PendingOrder order) {
+        try {
+            var items = new StackLayout { Spacing = 2 };
+            foreach (var item in order.Items) {
+                items.Children.Add(new Label {
+                    Text = $"• {item.Name} x{item.Quantity}" +
+                           (string.IsNullOrWhiteSpace(item.Notes) ? "" : $" - {item.Notes}"),
+                    TextColor = Color.FromArgb("#495057"), FontSize = 13
+                });
+            }
+            var approve = new Button {
+                Text = "Approve", BackgroundColor = Color.FromArgb("#28A745"),
+                TextColor = Colors.White, HeightRequest = 44
+            };
+            var reject = new Button {
+                Text = "Reject", BackgroundColor = Color.FromArgb("#DC3545"),
+                TextColor = Colors.White, HeightRequest = 44
+            };
+            Border? card = null;
+            approve.Clicked += async (_, _) => {
+                approve.IsEnabled = reject.IsEnabled = false;
+                if (await _api.ApproveOrderAsync(order.Id)) {
+                    if (card != null) await MainThread.InvokeOnMainThreadAsync(() => _list.Children.Remove(card));
+                    _dash.SetBadge(Math.Max(0, _dash.PendingApprovalCount - 1));
+                } else { approve.IsEnabled = reject.IsEnabled = true; }
+            };
+            reject.Clicked += async (_, _) => {
+                reject.IsEnabled = approve.IsEnabled = false;
+                if (await _api.CancelOrderAsync(order.Id)) {
+                    if (card != null) await MainThread.InvokeOnMainThreadAsync(() => _list.Children.Remove(card));
+                    _dash.SetBadge(Math.Max(0, _dash.PendingApprovalCount - 1));
+                } else { approve.IsEnabled = reject.IsEnabled = true; }
+            };
+            var buttons = new Grid { ColumnDefinitions = { new(GridLength.Star), new(GridLength.Star) }, ColumnSpacing = 8 };
+            buttons.Add(approve, 0, 0); buttons.Add(reject, 1, 0);
+            card = new Border {
+                BackgroundColor = Color.FromArgb("#FFFBF0"), Stroke = Color.FromArgb("#856404"),
+                StrokeThickness = 2,
+                StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 12 },
+                Padding = 16, Content = new StackLayout {
+                    Spacing = 6, Children = {
+                        new Label { Text = $"NEW ORDER - Table {order.TableId}", FontSize = 16,
+                            FontAttributes = FontAttributes.Bold, TextColor = Color.FromArgb("#856404") },
+                        new Label { Text = "From: Customer App", FontSize = 12, TextColor = Color.FromArgb("#6C757D") },
+                        items,
+                        new Label { Text = $"Total: Rs.{order.Total:F0}", FontSize = 15,
+                            FontAttributes = FontAttributes.Bold, TextColor = Color.FromArgb("#1B4332") },
+                        buttons
+                    }
+                }
+            };
+            return card;
+        } catch (Exception ex) {
+            Debug.WriteLine($"Card build error: {ex.Message}");
+            return new Label { Text = $"New order for {order.TableId}", TextColor = Color.FromArgb("#856404") };
+        }
+    }
+
     private async Task LoadAsync() {
         var notifs = await _api.GetNotificationsAsync();
         _dash.SetBadge(notifs.Count);

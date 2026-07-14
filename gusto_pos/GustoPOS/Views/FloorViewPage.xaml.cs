@@ -15,9 +15,9 @@ namespace GustoPOS.Views;
 
 public partial class FloorViewPage : ContentView
 {
-    private const string BackendBase = "https://pos-1st-cut.onrender.com/api/v1";
+    private const string BackendBase = "http://192.168.1.6:8000/api/v1";
     private const string OutletId = "0b8a8349-6144-41a8-b028-b9089bd8eaea";
-    private const string CustomerBase = "https://pos-1st-cut.onrender.com/menu";
+    private const string CustomerBase = "http://192.168.1.6:3000/menu";
     private readonly HttpClient _http = new();
     private readonly ApiService _api;
     private IDispatcherTimer? _refreshTimer;

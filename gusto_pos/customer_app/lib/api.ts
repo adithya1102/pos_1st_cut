@@ -1,4 +1,4 @@
-export const API_BASE = 'https://pos-1st-cut.onrender.com';
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://pos-1st-cut.onrender.com';
 
 const DEFAULT_MENU_ID = process.env.NEXT_PUBLIC_MENU_ID || '1cde6491-e17a-45be-91e1-e905bcce7732';
 

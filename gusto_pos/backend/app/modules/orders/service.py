@@ -4,7 +4,7 @@ from datetime import datetime
 import asyncio
 import os
 import json as _json
-from sqlalchemy import select, update, delete as sa_delete
+from sqlalchemy import select, update, delete as sa_delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from reportlab.pdfgen import canvas
@@ -51,7 +51,8 @@ class OrderService:
     async def create_order(db: AsyncSession, payload: OrderCreate):
         # "One Active Table = One Active Order" — merge into existing open order if present.
         existing = None
-        if payload.table_id:
+        is_customer_order = payload.source == "customer_app"
+        if payload.table_id and not is_customer_order:
             r = await db.execute(
                 select(Order)
                 .options(selectinload(Order.items))
@@ -73,7 +74,11 @@ class OrderService:
                 table_id=payload.table_id,
                 customer_id=payload.customer_id,
                 total_amount=0,
-                order_status=payload.order_status.value if payload.order_status else "pending",
+                order_status=("pending_approval" if is_customer_order else
+                              (payload.order_status.value if payload.order_status else "pending")),
+                source=payload.source,
+                waiter_order_id=payload.waiter_order_id,
+                needs_waiter_approval=is_customer_order,
             )
             db.add(obj)
             await db.flush()
@@ -88,6 +93,7 @@ class OrderService:
                     name_snap=item_data.name,
                     price_snap=item_data.unit_price,
                     quantity=item_data.quantity,
+                    item_notes=", ".join((item_data.customizations or []) + ([item_data.custom_note] if item_data.custom_note else [])),
                 ))
                 new_items_total += item_data.unit_price * item_data.quantity
                 notif_items.append({
@@ -99,9 +105,13 @@ class OrderService:
                 })
 
         obj.total_amount = float(obj.total_amount) + new_items_total
+        if is_customer_order:
+            obj.source = "customer_app"
+            obj.needs_waiter_approval = True
+            obj.order_status = "pending_approval"
         db.add(obj)
 
-        is_staff_order = getattr(payload, "source", "customer") in ("waiter", "pos")
+        is_staff_order = payload.source in ("waiter", "waiter_app", "pos")
         db.add(WaiterNotification(
             outlet_id=obj.outlet_id,
             table_id=str(obj.table_id) if obj.table_id else "",
@@ -138,7 +148,7 @@ class OrderService:
             "table_id": str(order.table_id) if order.table_id else None,
             "order_status": order.order_status,
             "total_amount": float(order.total_amount),
-            "source": getattr(payload, "source", "customer"),
+            "source": payload.source,
         }
         await pos_manager.broadcast_order_event(
             outlet_id=str(order.outlet_id),
@@ -151,12 +161,11 @@ class OrderService:
             order=order_event_payload,
         )
 
-        await customer_manager.notify_order_confirmed(
-            order_id=str(order.id),
-            order={
-                "order_status": str(order.order_status),
-            }
-        )
+        if not is_customer_order:
+            await customer_manager.notify_order_confirmed(
+                order_id=str(order.id),
+                order={"order_status": str(order.order_status)},
+            )
 
         # Mark table occupied on all floor views so the UI turns Red immediately
         if order.table_id:
@@ -238,6 +247,11 @@ class OrderService:
         if not obj:
             return None
 
+        # A stale notification or double-click can trigger confirm on an
+        # order that's already settled — don't let that un-settle it.
+        if obj.order_status in ("paid", "cancelled"):
+            return obj
+
         obj.order_status = "in_kitchen"
 
         # Persist table occupancy in DB so floor views stay correct after restarts
@@ -294,6 +308,147 @@ class OrderService:
         }
 
     @staticmethod
+    async def approve_order(db: AsyncSession, order_id: UUID):
+        obj = await OrderService.get_order_by_id(db, order_id)
+        if not obj:
+            return None
+        obj.needs_waiter_approval = False
+        obj.waiter_approved_at = datetime.utcnow()
+        obj.order_status = "confirmed"
+        db.add(obj)
+        await db.commit()
+
+        outlet_id = str(obj.outlet_id)
+        payload = {
+            "id": str(obj.id),
+            "order_id": str(obj.id),
+            "table_id": obj.table_id,
+            "order_status": "confirmed",
+            "source": obj.source,
+            "total_amount": float(obj.total_amount or 0),
+        }
+        await pos_manager.broadcast_order_event(outlet_id, "ORDER_CONFIRMED", payload)
+        await waiter_manager.broadcast_order_event(outlet_id, "ORDER_CONFIRMED", payload)
+        if obj.table_id:
+            await pos_manager.broadcast_order_event(
+                outlet_id, "TABLE_STATUS_CHANGED", {"table_id": obj.table_id, "status": "occupied"}
+            )
+            fire(manager.notify_customer(obj.table_id, {
+                "type": "order_confirmed",
+                "order_id": str(obj.id),
+                "order_status": "confirmed",
+                "message": "Your order is confirmed! Kitchen is preparing it.",
+            }))
+            fire(manager.notify_pos(outlet_id, {
+                "type": "table_update", "table_id": obj.table_id, "status": "occupied"
+            }))
+        await customer_manager.notify_order_confirmed(
+            str(obj.id), {"order_status": "confirmed"}
+        )
+        return {"message": "Order approved", "order_id": str(obj.id), "status": "confirmed"}
+
+    @staticmethod
+    async def cancel_order(db: AsyncSession, order_id: UUID):
+        obj = await OrderService.get_order_by_id(db, order_id)
+        if not obj:
+            return None
+        obj.order_status = "cancelled"
+        obj.needs_waiter_approval = False
+        db.add(obj)
+        await db.commit()
+        if obj.table_id:
+            fire(manager.notify_customer(obj.table_id, {
+                "type": "order_cancelled", "order_id": str(obj.id)
+            }))
+        return {"message": "Order cancelled", "order_id": str(obj.id), "status": "cancelled"}
+
+    @staticmethod
+    async def get_pending_approval_orders(db: AsyncSession, outlet_id: str):
+        result = await db.execute(
+            select(Order).options(selectinload(Order.items)).where(
+                Order.outlet_id == UUID(outlet_id),
+                Order.needs_waiter_approval.is_(True),
+                Order.order_status == "pending_approval",
+            ).order_by(Order.created_at.desc())
+        )
+        return [
+            {
+                "id": str(order.id),
+                "table_id": order.table_id or "",
+                "total_amount": float(order.total_amount or 0),
+                "created_at": order.created_at.isoformat() if order.created_at else None,
+                "order_status": order.order_status,
+                "source": order.source,
+                "items": [
+                    {
+                        "name": item.name_snap or "",
+                        "quantity": item.quantity,
+                        "unit_price": float(item.price_snap or 0),
+                        "notes": item.item_notes or "",
+                    }
+                    for item in order.items
+                ],
+            }
+            for order in result.scalars().all()
+        ]
+
+    @staticmethod
+    async def get_combined_table_orders(db: AsyncSession, table_id: str):
+        result = await db.execute(
+            select(Order).options(selectinload(Order.items)).where(
+                Order.table_id == table_id,
+                Order.order_status.notin_(["paid", "settled", "cancelled"]),
+            ).order_by(Order.created_at.asc())
+        )
+        orders = result.scalars().all()
+        payload = []
+        item_count = 0
+        for order in orders:
+            items = [
+                {
+                    "name": item.name_snap or "",
+                    "quantity": item.quantity,
+                    "unit_price": float(item.price_snap or 0),
+                    "notes": item.item_notes or "",
+                }
+                for item in order.items
+            ]
+            item_count += len(items)
+            payload.append({
+                "id": str(order.id),
+                "readable_id": order.readable_id,
+                "source": order.source,
+                "order_status": order.order_status,
+                "total_amount": float(order.total_amount or 0),
+                "items": items,
+            })
+        return {
+            "table_id": table_id,
+            "orders": payload,
+            "combined_total": sum(order["total_amount"] for order in payload),
+            "item_count": item_count,
+        }
+
+    @staticmethod
+    async def generate_combined_bill(db: AsyncSession, table_id: str, order_ids: list[str] | None = None):
+        result = await OrderService.generate_bill(db, table_id)
+        if not result:
+            return None
+        query = select(Order).where(
+            Order.table_id == table_id,
+            Order.order_status.notin_(["paid", "settled", "cancelled"]),
+        )
+        if order_ids:
+            query = query.where(Order.id.in_([UUID(value) for value in order_ids]))
+        orders = (await db.execute(query)).scalars().all()
+        for order in orders:
+            order.order_status = "paid"
+            order.needs_waiter_approval = False
+            db.add(order)
+        await db.commit()
+        return result
+
+    @staticmethod
     async def replace_order_items(db: AsyncSession, order_id: UUID, items: List[OrderItemCreate]):
         """Delete all existing order items, insert the new list, and recalculate total_amount."""
         order = await OrderService.get_order_by_id(db, order_id)
@@ -307,6 +462,7 @@ class OrderService:
                 name_snap=item_data.name,
                 price_snap=item_data.unit_price,
                 quantity=item_data.quantity,
+                item_notes=", ".join((item_data.customizations or []) + ([item_data.custom_note] if item_data.custom_note else [])),
             ))
             total += item_data.unit_price * item_data.quantity
         order.total_amount = total
@@ -330,18 +486,76 @@ class OrderService:
         return True
 
     @staticmethod
-    async def get_orders_by_table(db: AsyncSession, table_id: str):
-        """Get all active (non-paid, non-cancelled) orders for a table with their items."""
+    async def get_orders_by_table(db: AsyncSession, table_id: str, exclude_pending: bool = False, status: str | None = None):
+        """Get active orders for a table with their items.
+
+        exclude_pending=True also hides orders the waiter hasn't confirmed yet —
+        used by the POS table console, which should only show orders once a
+        waiter has approved them. The waiter's own review screen keeps seeing
+        pending orders (exclude_pending=False, the default) so it can display
+        and approve them in the first place.
+        """
+        excluded_statuses = ["paid", "cancelled"]
+        if exclude_pending:
+            excluded_statuses.append("pending")
+        query = select(Order).options(selectinload(Order.items)).where(
+            Order.table_id == table_id,
+            Order.outlet_id == UUID(OUTLET_ID),
+            Order.order_status.notin_(excluded_statuses),
+        )
+        if status:
+            query = query.where(Order.order_status == status)
+        result = await db.execute(query)
+        return result.scalars().all()
+
+    @staticmethod
+    async def get_table_active_items(db: AsyncSession, table_id: str) -> list[dict]:
+        """Unserved items across every open order for a table, oldest first.
+
+        Spans all open orders, not just one — a table that ordered twice has two
+        open orders, and the waiter's panel needs to show items from both.
+        """
         result = await db.execute(
-            select(Order)
-            .options(selectinload(Order.items))
+            select(OrderItem, Order.id)
+            .join(Order, Order.id == OrderItem.order_id)
             .where(
                 Order.table_id == table_id,
                 Order.outlet_id == UUID(OUTLET_ID),
                 Order.order_status.notin_(["paid", "cancelled"]),
+                # Legacy rows predating the column can be NULL — treat those as unserved.
+                or_(OrderItem.is_served.is_(False), OrderItem.is_served.is_(None)),
+            )
+            .order_by(OrderItem.created_at.asc())
+        )
+        return [
+            {
+                "id": str(item.id),
+                "order_id": str(order_id),
+                "name": item.name_snap or "",
+                "quantity": item.quantity,
+                "unit_price": float(item.price_snap or 0),
+                "is_served": bool(item.is_served),
+            }
+            for item, order_id in result.all()
+        ]
+
+    @staticmethod
+    async def mark_item_served(db: AsyncSession, order_id: UUID, item_id: UUID) -> bool:
+        """Persist a waiter's tick. Returns False when the item doesn't belong to the order."""
+        result = await db.execute(
+            select(OrderItem).where(
+                OrderItem.id == item_id,
+                OrderItem.order_id == order_id,
             )
         )
-        return result.scalars().all()
+        item = result.scalar_one_or_none()
+        if item is None:
+            return False
+        item.is_served = True
+        item.served_at = datetime.utcnow()
+        db.add(item)
+        await db.commit()
+        return True
 
     @staticmethod
     async def settle_table(db: AsyncSession, table_id: str):

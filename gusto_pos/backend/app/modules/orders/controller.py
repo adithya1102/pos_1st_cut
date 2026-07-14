@@ -24,10 +24,20 @@ async def list_orders(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/table/{table_id}", response_model=list[OrderWithItemsRead])
-async def get_table_orders(table_id: str, db: AsyncSession = Depends(get_db)):
+async def get_table_orders(table_id: str, exclude_pending: bool = False, status: str | None = None, db: AsyncSession = Depends(get_db)):
     """Get all unpaid orders for a table."""
-    orders = await OrderService.get_orders_by_table(db, table_id)
+    orders = await OrderService.get_orders_by_table(db, table_id, exclude_pending, status)
     return orders
+
+
+@router.get("/pending-approval")
+async def get_pending_approval_orders(outlet_id: str, db: AsyncSession = Depends(get_db)):
+    return await OrderService.get_pending_approval_orders(db, outlet_id)
+
+
+@router.get("/table/{table_id}/combined")
+async def get_combined_table_orders(table_id: str, db: AsyncSession = Depends(get_db)):
+    return await OrderService.get_combined_table_orders(db, table_id)
 
 
 @router.get("/history/{outlet_id}")
@@ -107,6 +117,22 @@ async def get_order(item_id: UUID, db: AsyncSession = Depends(get_db)):
     return obj
 
 
+@router.post("/{order_id}/approve")
+async def approve_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
+    result = await OrderService.approve_order(db, order_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return result
+
+
+@router.post("/{order_id}/cancel")
+async def cancel_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
+    result = await OrderService.cancel_order(db, order_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return result
+
+
 @router.post("/", response_model=OrderRead, status_code=status.HTTP_201_CREATED)
 async def create_order(payload: OrderCreate, db: AsyncSession = Depends(get_db)):
     """Create a new order."""
@@ -115,6 +141,26 @@ async def create_order(payload: OrderCreate, db: AsyncSession = Depends(get_db))
     except Exception as exc:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/bill/combined")
+async def generate_combined_bill(payload: dict = Body(...), db: AsyncSession = Depends(get_db)):
+    table_id = str(payload.get("table_id", "")).strip()
+    if not table_id:
+        raise HTTPException(status_code=400, detail="table_id is required")
+    result = await OrderService.generate_combined_bill(
+        db, table_id, payload.get("order_ids") or None
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="No open orders found for this table")
+    response = FileResponse(
+        path=result["pdf_path"],
+        media_type="application/pdf",
+        filename=f"Bill_Table_{table_id}.pdf",
+    )
+    response.headers["X-Bill-Total"] = str(result["total"])
+    response.headers["X-Bill-No"] = str(result["bill_no"])
+    return response
 
 
 @router.post("/bill/{table_id}")
@@ -188,3 +234,18 @@ async def confirm_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
     if not result:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
     return result
+
+
+@router.get("/table/{table_id}/active-items")
+async def get_table_active_items(table_id: str, db: AsyncSession = Depends(get_db)):
+    """Unserved items across every open order for a table — drives the waiter's pending panel."""
+    return await OrderService.get_table_active_items(db, table_id)
+
+
+@router.patch("/{order_id}/items/{item_id}/serve")
+async def mark_item_served(order_id: UUID, item_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Waiter ticked an item off the pending panel — persist it as served."""
+    served = await OrderService.mark_item_served(db, order_id, item_id)
+    if not served:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    return {"status": "served", "item_id": str(item_id)}

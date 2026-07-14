@@ -9,6 +9,7 @@ from enum import Enum
 
 class OrderStatusEnum(str, Enum):
     PENDING = "pending"
+    PENDING_APPROVAL = "pending_approval"
     CONFIRMED = "confirmed"
     IN_KITCHEN = "in_kitchen"
     READY = "ready"
@@ -33,7 +34,9 @@ class OrderCreate(BaseModel):
     total_amount: float
     order_status: OrderStatusEnum = OrderStatusEnum.PENDING
     items: Optional[List[OrderItemCreate]] = []
-    source: str = "customer"
+    source: str = "pos"
+    waiter_order_id: Optional[UUID] = None
+    needs_waiter_approval: Optional[bool] = None
     # Carried on the event payloads only — orders are not zone-scoped in the DB
     zone: Optional[str] = "normal"
     order_type: Optional[str] = "dine_in"
@@ -64,6 +67,8 @@ class OrderRead(BaseModel):
     customer_id: Optional[UUID]
     total_amount: float
     order_status: OrderStatusEnum
+    source: str = "pos"
+    needs_waiter_approval: bool = False
     created_at: datetime
 
     class Config:
@@ -77,6 +82,8 @@ class OrderWithItemsRead(BaseModel):
     table_id: Optional[str]
     total_amount: float
     order_status: str
+    source: str = "pos"
+    needs_waiter_approval: bool = False
     created_at: datetime
     items: list[OrderItemRead] = []
 

@@ -706,7 +706,17 @@ public partial class PosTerminalPage : ContentView
         _existingOrders.Clear();
         if (_selectedTable != "Direct")
         {
-            _existingOrders = await _api.GetTableOrdersAsync(_selectedTable);
+            var combined = await _api.GetCombinedTableOrdersAsync(_selectedTable);
+            _existingOrders = combined?.Orders.Select(o => new Order {
+                Id = o.Id,
+                ReadableId = o.ReadableId,
+                TableId = _selectedTable,
+                TotalAmount = o.Total,
+                OrderStatus = o.Status,
+                Items = o.Items.Select(i => new OrderItemDto {
+                    NameSnap = i.Name, Quantity = i.Quantity, PriceSnap = i.UnitPrice
+                }).ToList()
+            }).ToList() ?? new();
         }
         RefreshCart();
     }
@@ -805,7 +815,10 @@ public partial class PosTerminalPage : ContentView
         }
 
         // Step 2: Generate bill PDF with payment method
-        var bill = await _api.GenerateBillAutoAsync(tableId, _selectedPaymentMethod, _selectedZone);
+        var combined = await _api.GetCombinedTableOrdersAsync(tableId);
+        var bill = combined == null
+            ? null
+            : await _api.GenerateCombinedBillAsync(tableId, combined.Orders.Select(o => o.Id));
         if (bill == null)
         {
             await Application.Current!.Windows[0].Page!.DisplayAlertAsync("No Orders", "No pending orders found for this table.", "OK");

@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -18,6 +19,8 @@ public partial class DashboardPage : ContentPage {
     private ClientWebSocket? _waiterWs;
     private CancellationTokenSource? _waiterWsCts;
     private readonly HashSet<string> _pendingApprovals = new();
+    private System.Timers.Timer? _approvalTimer;
+    public int PendingApprovalCount { get; private set; }
 
     public DashboardPage() {
         InitializeComponent();
@@ -25,6 +28,10 @@ public partial class DashboardPage : ContentPage {
         _ = _api.SetGpsAsync();
         ShowAlerts();
         ConnectWaiterWs();
+        _approvalTimer = new System.Timers.Timer(3000);
+        _approvalTimer.Elapsed += async (_, _) => await PollPendingApprovalsAsync();
+        _approvalTimer.AutoReset = true;
+        _approvalTimer.Start();
     }
 
     private void ShowAlerts()  { _alerts ??= new AlertsView(_api, this); MainContent.Content = _alerts;  ActivateTab(TabAlerts); }
@@ -37,8 +44,22 @@ public partial class DashboardPage : ContentPage {
     }
 
     public void SetBadge(int count) {
+        PendingApprovalCount = count;
         BadgeBorder.IsVisible = count > 0;
         BadgeLabel.Text = count.ToString();
+    }
+
+    private async Task PollPendingApprovalsAsync() {
+        try {
+            var pending = await _api.GetPendingApprovalsAsync();
+            await MainThread.InvokeOnMainThreadAsync(() => {
+                try {
+                    PendingApprovalCount = pending.Count;
+                    SetBadge(pending.Count);
+                    _alerts?.RefreshPending(pending);
+                } catch (Exception uiEx) { Debug.WriteLine($"UI refresh error: {uiEx.Message}"); }
+            });
+        } catch (Exception ex) { Debug.WriteLine($"Poll error (safe): {ex.Message}"); }
     }
 
     private void OnAlertsTab(object s, EventArgs e) => ShowAlerts();

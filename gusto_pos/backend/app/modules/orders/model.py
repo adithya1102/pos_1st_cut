@@ -1,5 +1,6 @@
 import uuid
-from sqlalchemy import ForeignKey, Integer, DECIMAL, String, text
+from datetime import datetime
+from sqlalchemy import ForeignKey, Integer, DECIMAL, String, text, Boolean, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base
 
@@ -19,6 +20,10 @@ class Order(Base):
     customer_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("customers.id"))
     total_amount: Mapped[float] = mapped_column(DECIMAL(10, 2), default=0.00)
     order_status: Mapped[str] = mapped_column(String(20), default="Pending")
+    source: Mapped[str] = mapped_column(String(20), default="pos", server_default="pos")
+    waiter_order_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    needs_waiter_approval: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    waiter_approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     outlet = relationship("Outlet", back_populates="orders", lazy="raise")
     customer = relationship("Customer", back_populates="orders", lazy="raise")

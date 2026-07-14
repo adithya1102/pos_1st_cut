@@ -1,228 +1,99 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 
-const API = 'https://pos-1st-cut.onrender.com/api/v1';
+const API = `${process.env.NEXT_PUBLIC_API_URL || 'https://pos-1st-cut.onrender.com'}/api/v1`;
 
-type Step = 'loading' | 'error' | 'login';
+type Step = 'loading' | 'details' | 'otp' | 'error';
 
-function Wrapper({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{
-      minHeight: '100vh',
-      background: 'linear-gradient(135deg, #1B4332, #2d6a4f)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: 16,
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-    }}>
-      <div style={{
-        background: '#fff',
-        borderRadius: 20,
-        maxWidth: 380,
-        width: '100%',
-        padding: 32,
-        boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
-      }}>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function Header() {
-  return (
-    <div style={{ textAlign: 'center', marginBottom: 24 }}>
-      <div style={{ fontSize: 48, marginBottom: 8 }}>🍽️</div>
-      <h1 style={{ fontSize: 24, fontWeight: 700, color: '#1B4332', margin: 0 }}>
-        Rudrarthi
-      </h1>
-    </div>
-  );
-}
-
-function PrimaryButton({ onClick, disabled, children }: {
-  onClick: () => void; disabled?: boolean; children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        width: '100%',
-        padding: '14px 0',
-        background: disabled ? '#9ca3af' : '#1B4332',
-        color: '#fff',
-        border: 'none',
-        borderRadius: 10,
-        fontSize: 16,
-        fontWeight: 600,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        marginTop: 16,
-        transition: 'background 0.2s',
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-export default function QREntryPage() {
-  const params = useParams();
+export default function CustomerLoginPage() {
+  const { slug } = useParams<{ slug: string }>();
   const router = useRouter();
-  const slug = params.slug as string;
-
   const [step, setStep] = useState<Step>('loading');
-  const [errorMsg, setErrorMsg] = useState('');
   const [tableId, setTableId] = useState('');
   const [outletId, setOutletId] = useState('');
   const [zone, setZone] = useState('normal');
+  const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
-  const [phoneError, setPhoneError] = useState('');
-
-  // Pass only the static token — menu page resolves outlet/zone from backend
-  const goToMenu = useCallback((_oid: string, _tid: string, _z: string = 'normal') => {
-    router.push(`/menu?t=${slug}`);
-  }, [router, slug]);
+  const [otp, setOtp] = useState('');
+  const [devOtp, setDevOtp] = useState('');
+  const [error, setError] = useState('');
 
   useEffect(() => {
     if (!slug) return;
-
-    (async () => {
-      try {
-        const res = await fetch(`${API}/tables/validate/${slug}`);
+    fetch(`${API}/tables/validate/${encodeURIComponent(slug)}`)
+      .then(async (res) => {
         const data = await res.json();
-
-        if (!data.is_valid) {
-          const msg = (data.message || '').toLowerCase();
-          setErrorMsg(
-            msg.includes('expired') || msg.includes('closed') || msg.includes('reopen')
-              ? 'Table not active. Ask your waiter to open the table.'
-              : 'Invalid QR code. Please ask your waiter.'
-          );
-          setStep('error');
-          return;
-        }
-
+        if (!res.ok || !data.is_valid) throw new Error(data.message || 'Invalid or expired QR code.');
         setTableId(data.table_id);
         setOutletId(data.outlet_id);
-        const tableZone = data.zone || 'normal';
-        setZone(tableZone);
-        localStorage.setItem('table_zone', tableZone);
-
-        // Repeat customer: already identified for this QR session → go straight to menu
-        if (localStorage.getItem(`guest_${slug}`)) {
-          goToMenu(data.outlet_id, data.table_id, tableZone);
-          return;
-        }
-
-        setStep('login');
-      } catch {
-        setErrorMsg('Could not connect to server. Please try again.');
+        setZone(data.zone || 'normal');
+        localStorage.setItem('table_zone', data.zone || 'normal');
+        setStep('details');
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : 'Could not validate this table.');
         setStep('error');
-      }
-    })();
-  }, [slug, goToMenu]);
+      });
+  }, [slug]);
 
-  const handleStartOrdering = () => {
-    if (phone.length !== 10 || !/^\d{10}$/.test(phone)) {
-      setPhoneError('Enter a valid 10-digit phone number');
+  async function sendOtp() {
+    if (!name.trim() || !/^\d{10}$/.test(phone)) {
+      setError('Enter your name and a valid 10-digit phone number.');
       return;
     }
-    // Store guest identity keyed to this QR session slug
-    localStorage.setItem(`guest_${slug}`, JSON.stringify({ phone: `+91${phone}`, at: Date.now() }));
-    goToMenu(outletId, tableId, zone);
-  };
-
-  if (step === 'loading') {
-    return (
-      <Wrapper>
-        <Header />
-        <div style={{ textAlign: 'center' }}>
-          <div style={{
-            width: 40, height: 40, border: '4px solid #e5e7eb',
-            borderTopColor: '#1B4332', borderRadius: '50%',
-            animation: 'spin 1s linear infinite',
-            margin: '0 auto 16px',
-          }} />
-          <p style={{ color: '#6b7280', fontSize: 14 }}>Validating your table...</p>
-          <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
-        </div>
-      </Wrapper>
-    );
+    setError('');
+    try {
+      const res = await fetch(`${API}/sessions/send-otp`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: `+91${phone}`, table_id: tableId, outlet_id: outletId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Could not send OTP.');
+      setDevOtp(data.dev_otp || '');
+      setStep('otp');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not send OTP.');
+    }
   }
 
-  if (step === 'error') {
-    return (
-      <Wrapper>
-        <Header />
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>🚫</div>
-          <p style={{ color: '#dc2626', fontWeight: 600, fontSize: 16, margin: '0 0 8px' }}>
-            {errorMsg}
-          </p>
-          <p style={{ color: '#9ca3af', fontSize: 13 }}>
-            Please ask your server for assistance.
-          </p>
-        </div>
-      </Wrapper>
-    );
+  async function verifyOtp() {
+    if (!/^\d{6}$/.test(otp)) { setError('Enter the 6-digit OTP.'); return; }
+    setError('');
+    try {
+      const res = await fetch(`${API}/sessions/verify-otp`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: `+91${phone}`, otp, table_id: tableId, outlet_id: outletId, customer_name: name.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Invalid OTP.');
+      localStorage.setItem('customer_session_id', data.session_id || '');
+      localStorage.setItem('customer_phone', `+91${phone}`);
+      localStorage.setItem('customer_name', name.trim());
+      router.replace(`/menu?t=${encodeURIComponent(slug)}&zone=${encodeURIComponent(zone)}&outlet_id=${encodeURIComponent(outletId)}`);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not verify OTP.');
+    }
   }
 
-  return (
-    <Wrapper>
-      <Header />
-      <p style={{ textAlign: 'center', color: '#6b7280', fontSize: 15, marginBottom: 24, lineHeight: 1.5 }}>
-        Welcome to Rudrarthi!<br />
-        <span style={{ fontSize: 13 }}>Enter your phone number to start ordering.</span>
-      </p>
-
-      <div style={{ marginBottom: 6 }}>
-        <label style={{ display: 'block', fontSize: 13, color: '#374151', marginBottom: 4, fontWeight: 500 }}>
-          Phone Number
-        </label>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <div style={{
-            padding: '12px 14px', background: '#f3f4f6', borderRadius: 10,
-            fontSize: 15, color: '#374151', fontWeight: 600, whiteSpace: 'nowrap',
-          }}>
-            +91
-          </div>
-          <input
-            type="tel"
-            value={phone}
-            onChange={e => {
-              const v = e.target.value.replace(/\D/g, '').slice(0, 10);
-              setPhone(v);
-              setPhoneError('');
-            }}
-            onKeyDown={e => { if (e.key === 'Enter') handleStartOrdering(); }}
-            placeholder="9876543210"
-            maxLength={10}
-            autoFocus
-            style={{
-              flex: 1, padding: '12px 14px', border: '2px solid #e5e7eb',
-              borderRadius: 10, fontSize: 15, outline: 'none', boxSizing: 'border-box',
-              color: '#000', transition: 'border-color 0.2s',
-            }}
-            onFocus={e => e.target.style.borderColor = '#1B4332'}
-            onBlur={e => e.target.style.borderColor = '#e5e7eb'}
-          />
-        </div>
-        {phoneError && (
-          <p style={{ color: '#dc2626', fontSize: 12, marginTop: 4 }}>{phoneError}</p>
-        )}
-      </div>
-
-      <PrimaryButton onClick={handleStartOrdering} disabled={phone.length !== 10}>
-        Start Ordering →
-      </PrimaryButton>
-
-      <p style={{ textAlign: 'center', color: '#9ca3af', fontSize: 11, marginTop: 12 }}>
-        Your number is only used to keep track of your order.
-      </p>
-    </Wrapper>
-  );
+  const box = { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0f172a', padding: 20 };
+  const card = { width: '100%', maxWidth: 390, background: '#fff', borderRadius: 18, padding: 28 };
+  if (step === 'loading') return <div style={box}><div style={card}><p>Validating table...</p></div></div>;
+  if (step === 'error') return <div style={box}><div style={card}><h2>QR code unavailable</h2><p>{error}</p></div></div>;
+  return <div style={box}><div style={card}>
+    <h1 style={{ color: '#1B4332', marginTop: 0 }}>Rudrarthi</h1>
+    <p>Table {tableId}. Sign in to start ordering.</p>
+    {step === 'details' ? <>
+      <input value={name} onChange={e => setName(e.target.value)} placeholder="Your name" style={{ width: '100%', padding: 12, marginBottom: 10, boxSizing: 'border-box' }} />
+      <input value={phone} onChange={e => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))} placeholder="10-digit phone number" inputMode="numeric" style={{ width: '100%', padding: 12, boxSizing: 'border-box' }} />
+      <button onClick={sendOtp} style={{ width: '100%', padding: 13, marginTop: 16, background: '#1B4332', color: '#fff', border: 0, borderRadius: 8 }}>Send OTP</button>
+    </> : <>
+      <p>Enter the OTP sent to +91 {phone}.</p>
+      {devOtp && <p style={{ color: '#856404' }}>Development OTP: {devOtp}</p>}
+      <input value={otp} onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="6-digit OTP" inputMode="numeric" style={{ width: '100%', padding: 12, boxSizing: 'border-box' }} />
+      <button onClick={verifyOtp} style={{ width: '100%', padding: 13, marginTop: 16, background: '#1B4332', color: '#fff', border: 0, borderRadius: 8 }}>Verify and open menu</button>
+    </>}
+    {error && <p style={{ color: '#b91c1c', marginBottom: 0 }}>{error}</p>}
+  </div></div>;
 }

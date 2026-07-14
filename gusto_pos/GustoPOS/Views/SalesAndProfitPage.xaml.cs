@@ -7,7 +7,7 @@ namespace GustoPOS.Views;
 public partial class SalesAndProfitPage : ContentView
 {
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(20) };
-    private const string BaseUrl = "https://pos-1st-cut.onrender.com/api/v1";
+    private const string BaseUrl = "http://192.168.1.6:8000/api/v1";
 
     private static readonly JsonSerializerOptions Opts = new()
     {

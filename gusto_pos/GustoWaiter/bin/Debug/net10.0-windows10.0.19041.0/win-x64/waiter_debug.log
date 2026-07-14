@@ -1,0 +1,25 @@
+[2026-07-14 16:28:15] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: The remote party closed the WebSocket connection without completing the close handshake.
+Stack:    at System.Net.WebSockets.ManagedWebSocket.ReceiveAsyncPrivate[TResult](Memory`1 payloadBuffer, CancellationToken cancellationToken)
+   at System.Threading.Tasks.ValueTask`1.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 62
+Inner: Unable to read data from the transport connection: An existing connection was forcibly closed by the remote host..
+---
+[2026-07-14 16:28:39] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 60
+Inner: No connection could be made because the target machine actively refused it. (192.168.1.6:8000)
+---
+[2026-07-14 16:28:46] DashboardPage.ReceiveWaiterEventsAsync
+Type: System.Net.WebSockets.WebSocketException
+Message: Unable to connect to the remote server
+Stack:    at System.Net.WebSockets.WebSocketHandle.ConnectAsync(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken, ClientWebSocketOptions options)
+   at System.Net.WebSockets.ClientWebSocket.ConnectAsyncCore(Uri uri, HttpMessageInvoker invoker, CancellationToken cancellationToken)
+   at GustoWaiter.Views.DashboardPage.ReceiveWaiterEventsAsync(CancellationToken ct) in C:\Users\Adithya\Desktop\demo1\pos_1st_cut\gusto_pos\GustoWaiter\Views\DashboardPage.xaml.cs:line 60
+Inner: No connection could be made because the target machine actively refused it. (192.168.1.6:8000)
+---

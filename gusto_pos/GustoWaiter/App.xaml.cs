@@ -1,7 +1,15 @@
 using GustoWaiter.Views;
 namespace GustoWaiter;
 public partial class App : Application {
-    public App() { InitializeComponent(); }
+    public App() {
+        InitializeComponent();
+#if WINDOWS
+        Microsoft.UI.Xaml.Application.Current.UnhandledException += (_, e) => {
+            System.Diagnostics.Debug.WriteLine($"Global error: {e.Message}");
+            e.Handled = true;
+        };
+#endif
+    }
         protected override Window CreateWindow(IActivationState? s)
         {
             var win = new Window(new PinLoginPage()) { Title = "Gusto Waiter", Width = 420, Height = 860 };
@@ -12,7 +20,7 @@ public partial class App : Application {
         private async Task CheckBackendConnectivity() {
             try {
                 using var http = new System.Net.Http.HttpClient() { Timeout = TimeSpan.FromSeconds(3) };
-                var resp = await http.GetAsync("https://pos-1st-cut.onrender.com/");
+                var resp = await http.GetAsync("http://192.168.1.6:8000/");
                 if (!resp.IsSuccessStatusCode) {
                     await ShowBackendAlert();
                 }
