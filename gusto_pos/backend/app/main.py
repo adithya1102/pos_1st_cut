@@ -27,6 +27,10 @@ from app.modules.categories.controller import router as categories_router
 # from app.modules.chat.router import router as chat_router  # disabled: faiss not installed
 from app.modules.analytics.router import router as analytics_router
 
+# CareVo Skip (additive; customer pre-order / pickup)
+from app.modules.carevo_customer.controller import router as carevo_customer_router
+from app.modules.carevo_pos.controller import router as carevo_pos_router
+
 
 app = FastAPI(title="Gusto POS", version="2.0.0")
 
@@ -72,6 +76,10 @@ app.include_router(staff_router, prefix="/api/v1", tags=["Staff Management"])
 app.include_router(categories_router, prefix="/api/v1", tags=["Category Management"])
 # app.include_router(chat_router, prefix="/api/v1")  # disabled: faiss not installed
 app.include_router(analytics_router, prefix="/api/v1")
+
+# CareVo Skip routers → /api/v1/customer/... and /api/v1/pos/...
+app.include_router(carevo_customer_router, prefix="/api/v1")
+app.include_router(carevo_pos_router, prefix="/api/v1")
 
 @app.get("/")
 async def root():
