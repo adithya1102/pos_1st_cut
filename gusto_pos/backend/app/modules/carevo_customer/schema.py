@@ -144,3 +144,64 @@ class VerifyPickupOut(BaseModel):
     status: Optional[str] = None
     locked: Optional[bool] = None
     attempts_remaining: Optional[int] = None
+
+
+# --------------------- Owner App (staff-authed POS) -------------------------
+class OwnerOutletOut(BaseModel):
+    id: uuid.UUID
+    location_name: str
+    is_visible: bool
+
+
+class SetVisibilityIn(BaseModel):
+    is_visible: bool
+
+
+class SetVisibilityOut(BaseModel):
+    id: uuid.UUID
+    is_visible: bool
+
+
+class OwnerMenuItemOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    is_available: bool
+    is_active: bool
+    base_price: float
+
+
+class SetAvailabilityIn(BaseModel):
+    is_available: bool
+
+
+class SetAvailabilityOut(BaseModel):
+    id: uuid.UUID
+    is_available: bool
+
+
+class OwnerOrderLineOut(BaseModel):
+    id: uuid.UUID
+    name: Optional[str] = None
+    quantity: int
+
+
+class OwnerOrderOut(BaseModel):
+    order_id: uuid.UUID
+    status: str
+    is_locked: bool
+    total_amount: float
+    created_at: Optional[datetime] = None
+    items: list[OwnerOrderLineOut] = []
+
+
+class NotifyIn(BaseModel):
+    type: str
+    item_id: Optional[uuid.UUID] = None
+
+
+class NotifyOut(BaseModel):
+    ok: bool
+    delivered: bool
+    type: str
+    item_id: Optional[uuid.UUID] = None
+    item_name: Optional[str] = None

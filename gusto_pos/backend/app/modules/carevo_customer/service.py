@@ -86,7 +86,8 @@ class CarevoService:
     @staticmethod
     async def list_outlets(db: AsyncSession, lat: Optional[float], lng: Optional[float]) -> list[dict]:
         rows = (await db.execute(text(
-            "SELECT id, location_name, city, latitude, longitude FROM outlets"
+            "SELECT id, location_name, city, latitude, longitude FROM outlets "
+            "WHERE is_visible = true"
         ))).fetchall()
         out = []
         for r in rows:
@@ -394,3 +395,179 @@ class CarevoService:
         await db.refresh(order)
         attempts_remaining = max(0, 3 - order.failed_attempts)
         return {"verified": False, "attempts_remaining": attempts_remaining, "locked": locked}
+
+    # ------------------------- Owner App (staff) ---------------------------
+    @staticmethod
+    async def get_owner_outlet(db: AsyncSession, outlet_id: uuid.UUID) -> dict:
+        row = (await db.execute(text(
+            "SELECT id, location_name, is_visible FROM outlets WHERE id = :oid"
+        ), {"oid": str(outlet_id)})).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Outlet not found")
+        return {"id": row[0], "location_name": row[1], "is_visible": bool(row[2])}
+
+    @staticmethod
+    async def set_outlet_visibility(
+        db: AsyncSession, outlet_id: uuid.UUID, is_visible: bool
+    ) -> dict:
+        row = (await db.execute(text(
+            "UPDATE outlets SET is_visible = :v WHERE id = :oid RETURNING id, is_visible"
+        ), {"v": is_visible, "oid": str(outlet_id)})).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Outlet not found")
+        await db.commit()
+        return {"id": row[0], "is_visible": bool(row[1])}
+
+    @staticmethod
+    async def list_owner_menu_items(db: AsyncSession, outlet_id: uuid.UUID) -> list[dict]:
+        """Flat list of the outlet's latest-menu items (no category grouping)."""
+        rows = (await db.execute(text("""
+            SELECT mi.id, mi.name, mi.is_available, mi.is_active, mi.base_price
+            FROM menu_items mi
+            JOIN categories c ON c.id = mi.category_id
+            JOIN menus m ON m.id = c.menu_id
+            WHERE m.outlet_id = :oid AND m.is_latest = true
+              AND mi.is_active = true
+            ORDER BY mi.name
+        """), {"oid": str(outlet_id)})).fetchall()
+        return [
+            {
+                "id": r.id,
+                "name": r.name,
+                "is_available": bool(r.is_available),
+                "is_active": bool(r.is_active),
+                "base_price": float(r.base_price) if r.base_price is not None else 0.0,
+            }
+            for r in rows
+        ]
+
+    @staticmethod
+    async def set_item_availability(
+        db: AsyncSession, item_id: uuid.UUID, outlet_id: uuid.UUID, is_available: bool
+    ) -> dict:
+        # Ownership guard: item must belong to a latest menu of the caller's outlet.
+        owns = (await db.execute(text("""
+            SELECT 1 FROM menu_items mi
+            JOIN categories c ON c.id = mi.category_id
+            JOIN menus m ON m.id = c.menu_id
+            WHERE mi.id = :iid AND m.outlet_id = :oid
+            LIMIT 1
+        """), {"iid": str(item_id), "oid": str(outlet_id)})).first()
+        if not owns:
+            raise HTTPException(status_code=404, detail="Menu item not found for this outlet")
+        row = (await db.execute(text(
+            "UPDATE menu_items SET is_available = :v WHERE id = :iid RETURNING id, is_available"
+        ), {"v": is_available, "iid": str(item_id)})).first()
+        await db.commit()
+        return {"id": row[0], "is_available": bool(row[1])}
+
+    @staticmethod
+    async def list_active_orders(db: AsyncSession, outlet_id: uuid.UUID) -> list[dict]:
+        """Active customer_orders for the outlet, newest first. NAME-FREE."""
+        orders = (await db.execute(text("""
+            SELECT id, status, is_locked, total_amount, created_at
+            FROM customer_orders
+            WHERE outlet_id = :oid AND status NOT IN ('COMPLETED','CANCELLED')
+            ORDER BY created_at DESC
+        """), {"oid": str(outlet_id)})).fetchall()
+        if not orders:
+            return []
+        order_ids = [str(o.id) for o in orders]
+        items = (await db.execute(text("""
+            SELECT id, customer_order_id, name_snap, quantity
+            FROM customer_order_items
+            WHERE customer_order_id = ANY(:ids)
+            ORDER BY created_at
+        """), {"ids": order_ids})).fetchall()
+        by_order: dict = defaultdict(list)
+        for it in items:
+            by_order[str(it.customer_order_id)].append(
+                {"id": it.id, "name": it.name_snap, "quantity": it.quantity}
+            )
+        return [
+            {
+                "order_id": o.id,
+                "status": o.status,
+                "is_locked": bool(o.is_locked),
+                "total_amount": float(o.total_amount) if o.total_amount is not None else 0.0,
+                "created_at": o.created_at,
+                "items": by_order.get(str(o.id), []),
+            }
+            for o in orders
+        ]
+
+    @staticmethod
+    async def notify_order(
+        db: AsyncSession,
+        order_id: uuid.UUID,
+        outlet_id: uuid.UUID,
+        notify_type: str,
+        item_id: Optional[uuid.UUID],
+    ) -> dict:
+        valid = {"ready_now", "delayed_10", "item_unavailable"}
+        if notify_type not in valid:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid type. Must be one of: {sorted(valid)}",
+            )
+
+        # Order must exist and belong to the caller's outlet.
+        order = (await db.execute(text(
+            "SELECT id, outlet_id FROM customer_orders WHERE id = :oid"
+        ), {"oid": str(order_id)})).first()
+        if not order:
+            raise HTTPException(status_code=404, detail="Order not found")
+        if str(order.outlet_id) != str(outlet_id):
+            raise HTTPException(status_code=403, detail="Order does not belong to your outlet")
+
+        item_name: Optional[str] = None
+        resolved_item_id: Optional[uuid.UUID] = None
+
+        if notify_type == "item_unavailable":
+            if item_id is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="item_id is required when type is 'item_unavailable'",
+                )
+            line = (await db.execute(text("""
+                SELECT id, name_snap FROM customer_order_items
+                WHERE id = :iid AND customer_order_id = :oid
+            """), {"iid": str(item_id), "oid": str(order_id)})).first()
+            if not line:
+                raise HTTPException(
+                    status_code=400,
+                    detail="item_id is not a line item of this order",
+                )
+            resolved_item_id = line.id
+            item_name = line.name_snap
+        # For ready_now / delayed_10, item_id is ignored (kept null).
+
+        messages = {
+            "ready_now": "Your order is ready for pickup.",
+            "delayed_10": "Your order is delayed by about 10 minutes.",
+            "item_unavailable": f"'{item_name}' is unavailable and won't be prepared.",
+        }
+        payload = {
+            "event": "notify",
+            "order_id": str(order_id),
+            "type": notify_type,
+            "item_id": str(resolved_item_id) if resolved_item_id else None,
+            "item_name": item_name,
+            "message": messages[notify_type],
+            "ts": datetime.utcnow().isoformat(),
+        }
+
+        # Best-effort delivery: delivered reflects whether any socket is connected.
+        delivered = bool(customer_manager.active_connections.get(str(order_id)))
+        try:
+            await customer_manager.send_order_update(str(order_id), payload)
+        except Exception:
+            delivered = False
+
+        return {
+            "ok": True,
+            "delivered": delivered,
+            "type": notify_type,
+            "item_id": resolved_item_id,
+            "item_name": item_name,
+        }

@@ -26,6 +26,7 @@ dependencies:
 
   # Persistence (token + theme)
   shared_preferences: ^2.3.2
+  web_socket_channel: ^3.0.3
 
 dev_dependencies:
   flutter_test:

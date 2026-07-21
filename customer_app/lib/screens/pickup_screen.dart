@@ -6,6 +6,8 @@ import 'package:provider/provider.dart';
 
 import '../config/app_config.dart';
 import '../models/order.dart';
+import '../models/order_notify.dart';
+import '../services/order_notify_service.dart';
 import '../services/order_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
@@ -33,17 +35,52 @@ class _PickupScreenState extends State<PickupScreen> {
   String? _error;
   bool _loading = true;
 
+  // Staff → customer "notify" pushes (display-only), over a WebSocket that
+  // lives alongside — and never replaces — the polling loop above.
+  OrderNotifyClient? _notifyClient;
+  StreamSubscription<OrderNotify>? _notifySub;
+  OrderNotify? _banner;
+  Timer? _bannerTimer;
+
   @override
   void initState() {
     super.initState();
     _poll();
     _timer = Timer.periodic(AppConfig.pickupPollInterval, (_) => _poll());
+    _connectNotify();
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _bannerTimer?.cancel();
+    _notifySub?.cancel();
+    _notifyClient?.dispose();
     super.dispose();
+  }
+
+  void _connectNotify() {
+    final client = OrderNotifyClient(widget.orderId);
+    _notifyClient = client;
+    _notifySub = client.notifications.listen(_onNotify);
+    client.connect();
+  }
+
+  void _onNotify(OrderNotify notify) {
+    if (!mounted) return;
+    _bannerTimer?.cancel();
+    setState(() => _banner = notify);
+    // ready/delayed auto-dismiss; item_unavailable stays until dismissed.
+    if (!notify.isPersistent) {
+      _bannerTimer = Timer(const Duration(seconds: 6), () {
+        if (mounted) setState(() => _banner = null);
+      });
+    }
+  }
+
+  void _dismissBanner() {
+    _bannerTimer?.cancel();
+    setState(() => _banner = null);
   }
 
   Future<void> _poll() async {
@@ -89,6 +126,10 @@ class _PickupScreenState extends State<PickupScreen> {
             : ListView(
                 padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
                 children: [
+                  if (_banner != null) ...[
+                    _NotifyBanner(notify: _banner!, onDismiss: _dismissBanner),
+                    const SizedBox(height: 16),
+                  ],
                   Text(
                     step >= 2 ? 'Ready to\ncollect!' : 'Order\nconfirmed.',
                     style: textTheme.displaySmall,
@@ -136,6 +177,64 @@ class _PickupScreenState extends State<PickupScreen> {
                   ),
                 ],
               ),
+      ),
+    );
+  }
+}
+
+/// Prominent, read-only banner surfacing a staff "notify" push over the
+/// stepper. Reuses [NeoCard] so it looks native to the neobrutalist app.
+/// Display-only: the single button is an X that dismisses locally.
+class _NotifyBanner extends StatelessWidget {
+  const _NotifyBanner({required this.notify, required this.onDismiss});
+  final OrderNotify notify;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final textTheme = Theme.of(context).textTheme;
+
+    // Unavailable is a warning tone (sunny); ready/delayed use the accent.
+    final bool warn = notify.type == OrderNotify.itemUnavailable;
+    final Color bg = warn ? AppColors.sunny : c.accent;
+    final Color fg = warn ? AppColors.ink : c.onAccent;
+
+    return NeoCard(
+      color: bg,
+      shadowOffset: const Offset(5, 5),
+      padding: const EdgeInsets.fromLTRB(16, 14, 10, 14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'FROM THE KITCHEN',
+                  style: textTheme.labelLarge?.copyWith(
+                    color: fg.withValues(alpha: 0.75),
+                    letterSpacing: 2,
+                    fontSize: 11,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  notify.bannerText,
+                  style: textTheme.titleMedium?.copyWith(color: fg),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 4),
+          IconButton(
+            icon: Icon(Icons.close, color: fg, size: 22),
+            visualDensity: VisualDensity.compact,
+            tooltip: 'Dismiss',
+            onPressed: onDismiss,
+          ),
+        ],
       ),
     );
   }

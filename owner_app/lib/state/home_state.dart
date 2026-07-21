@@ -1,0 +1,91 @@
+import 'package:flutter/foundation.dart';
+
+import '../models/menu_item.dart';
+import '../models/outlet.dart';
+import '../services/menu_service.dart';
+import '../services/outlet_service.dart';
+
+/// Backs the Home screen: outlet visibility + the flat dish availability list.
+/// Toggles are optimistic and revert on failure.
+class HomeState extends ChangeNotifier {
+  final OutletService _outletService;
+  final MenuService _menuService;
+
+  HomeState(this._outletService, this._menuService);
+
+  bool _loading = false;
+  String? _error;
+  Outlet? _outlet;
+  List<MenuItem> _items = [];
+
+  bool get loading => _loading;
+  String? get error => _error;
+  Outlet? get outlet => _outlet;
+  List<MenuItem> get items => List.unmodifiable(_items);
+
+  Future<void> load() async {
+    _loading = true;
+    _error = null;
+    notifyListeners();
+    try {
+      final results = await Future.wait([
+        _outletService.getOutlet(),
+        _menuService.getMenuItems(),
+      ]);
+      _outlet = results[0] as Outlet;
+      _items = results[1] as List<MenuItem>;
+    } catch (_) {
+      _error = 'Could not load outlet and menu. Pull to retry.';
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Optimistically flips outlet visibility; reverts if the call fails.
+  Future<bool> toggleVisibility(bool next) async {
+    final current = _outlet;
+    if (current == null) return false;
+
+    _outlet = current.copyWith(isVisible: next);
+    notifyListeners();
+
+    try {
+      final confirmed = await _outletService.setVisibility(current.id, next);
+      _outlet = current.copyWith(isVisible: confirmed);
+      notifyListeners();
+      return true;
+    } catch (_) {
+      _outlet = current; // revert
+      _error = 'Could not update outlet visibility.';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Optimistically flips a dish's availability; reverts if the call fails.
+  Future<bool> toggleItemAvailability(int itemId, bool next) async {
+    final index = _items.indexWhere((i) => i.id == itemId);
+    if (index < 0) return false;
+    final original = _items[index];
+
+    _items[index] = original.copyWith(isAvailable: next);
+    notifyListeners();
+
+    try {
+      final confirmed = await _menuService.setAvailability(itemId, next);
+      _items[index] = original.copyWith(isAvailable: confirmed);
+      notifyListeners();
+      return true;
+    } catch (_) {
+      _items[index] = original; // revert
+      _error = 'Could not update "${original.name}".';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  void clearError() {
+    _error = null;
+  }
+}
