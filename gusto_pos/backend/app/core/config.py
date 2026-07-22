@@ -13,6 +13,11 @@ class Settings(BaseSettings):
     OTP_STUB_CODE: str = "000000"
     OTP_RATE_LIMIT_PER_HOUR: int = 5
 
+    # Master switch for the customer OTP login path. Set false on any publicly
+    # reachable deploy while OTP_STUB_MODE is still on, otherwise anyone can mint
+    # a customer token for an arbitrary phone number with the stub code.
+    CUSTOMER_AUTH_ENABLED: bool = True
+
     PAYMENT_GATEWAY: str = "stub"
     PAYMENT_GATEWAY_SHAPE: str = "razorpay"
     RAZORPAY_KEY_ID: Optional[str] = None

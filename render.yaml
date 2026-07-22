@@ -1,0 +1,46 @@
+# Render Blueprint for the Gusto POS FastAPI backend.
+#
+# Secrets are NOT stored here. Every `sync: false` var must be set by hand in the
+# Render dashboard (Environment tab) before the first deploy succeeds.
+services:
+  - type: web
+    name: gusto-pos-backend
+    runtime: python
+    rootDir: gusto_pos/backend
+    plan: free
+    region: singapore
+    branch: 21_7
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /docs
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+
+      # --- Secrets: set these in the Render dashboard, never in this file ---
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+
+      # --- Auth posture for a publicly reachable deploy ---
+      # The customer OTP path runs in stub mode (any phone + OTP_STUB_CODE is
+      # accepted, and an unknown phone creates a Customer row). That is an open
+      # login for anyone who finds this URL, so the whole path stays off here.
+      # Staff login (/api/v1/auth/login, real username+password) is unaffected.
+      - key: CUSTOMER_AUTH_ENABLED
+        value: "false"
+
+      - key: ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "1440"
+      - key: OTP_RATE_LIMIT_PER_HOUR
+        value: "5"
+
+      - key: PAYMENT_GATEWAY
+        value: stub
+      - key: PAYMENT_GATEWAY_SHAPE
+        value: razorpay
+      - key: FIREBASE_ENABLED
+        value: "false"

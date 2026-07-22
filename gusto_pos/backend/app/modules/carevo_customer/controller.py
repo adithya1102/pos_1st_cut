@@ -23,13 +23,23 @@ router = APIRouter(prefix="/customer", tags=["CareVo Skip — Customer"])
 
 
 # ------------------------------- Auth --------------------------------------
+def _require_customer_auth_enabled() -> None:
+    if not settings.CUSTOMER_AUTH_ENABLED:
+        raise HTTPException(
+            status_code=503,
+            detail="Customer login is disabled on this deployment",
+        )
+
+
 @router.post("/auth/request-otp", response_model=s.RequestOtpOut)
 async def request_otp(payload: s.RequestOtpIn):
+    _require_customer_auth_enabled()
     return CarevoService.request_otp(payload.phone_number)
 
 
 @router.post("/auth/verify-otp", response_model=s.VerifyOtpOut)
 async def verify_otp(payload: s.VerifyOtpIn, db: AsyncSession = Depends(get_db)):
+    _require_customer_auth_enabled()
     customer = await CarevoService.verify_otp(db, payload.phone_number, payload.otp)
     token = create_customer_token(str(customer.id))
     return {
