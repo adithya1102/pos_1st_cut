@@ -31,6 +31,13 @@ class OutletService:
     @staticmethod
     async def create_outlet(db: AsyncSession, payload: dict[str, Any]):
         try:
+            # New outlets created through the API enter the admin approval queue
+            # rather than going live immediately. Existing rows are unaffected —
+            # migration 003 backfilled them to 'active' via the column default,
+            # and non-API paths (seed scripts, reset_db) still inherit that
+            # default because the model sets none. An explicit value in the
+            # payload still wins.
+            payload = {"verification_status": "pending_verification", **payload}
             obj = Outlet(**payload)
             db.add(obj)
             await db.commit()

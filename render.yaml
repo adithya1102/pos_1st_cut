@@ -9,7 +9,8 @@ services:
     rootDir: gusto_pos/backend
     plan: free
     region: singapore
-    branch: 21_7
+    # Quoted: unquoted 21_7 is parsed as the integer 217 (YAML digit separators).
+    branch: "21_7"
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /docs
@@ -44,3 +45,37 @@ services:
         value: razorpay
       - key: FIREBASE_ENABLED
         value: "false"
+
+  # --------------------------------------------------------------------------
+  # CareVo Admin Dashboard (internal). PREPPED, NOT DEPLOYED.
+  #
+  # Before the first deploy:
+  #   1. Migration 003 must be applied (Checkpoint A) — until then every
+  #      /api/v1/admin/* route 500s on the missing verification_status column.
+  #   2. At least one staff user must hold the SUPER_ADMIN role, or nobody can
+  #      log in past the role check.
+  #   3. Set NEXT_PUBLIC_API_URL below to the real backend URL. It is baked in
+  #      at BUILD time (NEXT_PUBLIC_*), so changing it later needs a rebuild,
+  #      not just a restart.
+  #
+  # This dashboard is an internal tool with no IP allowlist and no second
+  # factor — its only gate is staff password + SUPER_ADMIN role. Worth deciding
+  # whether it should be public on the internet at all before clicking deploy.
+  # --------------------------------------------------------------------------
+  - type: web
+    name: carevo-admin-dashboard
+    runtime: node
+    rootDir: admin_app
+    plan: free
+    region: singapore
+    # Quoted: unquoted 21_7 is parsed as the integer 217 (YAML digit separators).
+    branch: "21_7"
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start -- -p $PORT
+    healthCheckPath: /login
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # Build-time public var — points the dashboard at the backend service.
+      - key: NEXT_PUBLIC_API_URL
+        sync: false

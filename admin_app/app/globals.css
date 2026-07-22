@@ -1,0 +1,11 @@
+@import "tailwindcss";
+
+/* Internal tool: clarity over polish. Neutral light theme, system font stack. */
+:root {
+  color-scheme: light;
+}
+
+body {
+  @apply bg-slate-100 text-slate-900 antialiased;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}

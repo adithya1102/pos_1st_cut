@@ -12,6 +12,12 @@ class Outlet(Base):
     longitude: Mapped[float | None] = mapped_column(DECIMAL(11, 8))
     geofence_radius_meters: Mapped[int] = mapped_column(Integer, default=100)
 
+    # Platform verification gate (migration 003). Deliberately NO Python-side
+    # default: when unset the DB default 'active' applies, so raw-SQL/seed/
+    # reset paths keep behaving exactly as before. Only OutletService.create_outlet
+    # sets 'pending_verification' explicitly — see the comment there.
+    verification_status: Mapped[str] = mapped_column(String(24), nullable=False)
+
     organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"))
 
     organization = relationship("Organization", back_populates="outlets", lazy="selectin")
