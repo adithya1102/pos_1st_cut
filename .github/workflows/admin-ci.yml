@@ -1,0 +1,46 @@
+name: admin_app CI (Linux)
+
+# Reproduces the Render build for admin_app on Linux so lockfile drift or
+# Linux-only build failures are caught on push instead of in the Render
+# dashboard. Mirrors render.yaml: Node 22, `npm ci && npm run build`.
+
+on:
+  push:
+    branches: [21_7]
+    paths:
+      - admin_app/**
+      - .github/workflows/admin-ci.yml
+  pull_request:
+    branches: [21_7]
+    paths:
+      - admin_app/**
+      - .github/workflows/admin-ci.yml
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: admin_app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 22 (matches render.yaml NODE_VERSION)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: admin_app/package-lock.json
+
+      # The real test: npm ci is exactly what Render runs, and it fails hard
+      # if package-lock.json is out of sync with package.json on Linux.
+      - name: npm ci
+        run: npm ci
+
+      # Full Render parity: build with the public API URL baked in, same as
+      # the deployed dashboard. NEXT_PUBLIC_* is a build-time value, not a secret.
+      - name: npm run build
+        env:
+          NEXT_PUBLIC_API_URL: https://gusto-pos-backend.onrender.com
+        run: npm run build
