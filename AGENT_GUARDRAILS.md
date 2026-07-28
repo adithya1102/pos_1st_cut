@@ -113,3 +113,19 @@ Permitted without a per-action prompt:
 - Writing **seed/demo data to a real DB** (explicit approval first).
 - Any **destructive** DB op (UPDATE/DELETE/DROP on existing rows), or modifying
   existing pre-CareVo tables, waiter/KDS/billing routes, or working files.
+
+---
+
+## 6. Render deploys — build-time env vars
+
+- `NEXT_PUBLIC_*` (admin_app / any Next.js) are baked at `next build`, not read at
+  runtime. Setting/changing one requires **Manual Deploy → "Clear build cache &
+  deploy"** — a restart or plain redeploy can reuse cached output and keep the
+  stale/absent value.
+- Keep exactly **one clean env row** per key; orphaned/duplicate rows can leave the
+  build without a usable value, shipping the localhost fallback → "Failed to fetch".
+- Verify before declaring success: fetch the deployed `/_next/static/chunks/*.js`
+  and confirm the real backend URL is inlined and `localhost:8000` is gone. New
+  chunk hashes prove a real rebuild; identical hashes mean nothing changed.
+- Backend env vars (`DATABASE_URL`, `SECRET_KEY`, `CUSTOMER_AUTH_ENABLED`) are
+  runtime — a restart suffices for those.
