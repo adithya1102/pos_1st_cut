@@ -1,16 +1,16 @@
 /// Central, swappable configuration for the CareVo Skip customer app.
 ///
-/// The base URL defaults to the Android emulator loopback host
-/// (`10.0.2.2`) which maps to the developer machine's `localhost`.
-/// Override at build time with:
-///   flutter run --dart-define=API_BASE_URL=http://192.168.1.10:8000/api/v1
+/// The base URL defaults to the deployed backend on Render.
+/// Override at build time to target a local backend, e.g.:
+///   flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8000/api/v1
+/// (`10.0.2.2` is the Android emulator's alias for the host's `localhost`.)
 class AppConfig {
   AppConfig._();
 
   /// Single source of truth for the backend base URL.
   static const String baseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://10.0.2.2:8000/api/v1',
+    defaultValue: 'https://gusto-pos-backend.onrender.com/api/v1',
   );
 
   /// Dev OTP code accepted by the stub auth service / backend stub.

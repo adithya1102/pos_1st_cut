@@ -73,7 +73,11 @@ class AdminService:
                    o.verification_status, o.is_visible, o.created_at
             FROM outlets o
             LEFT JOIN organizations org ON org.id = o.organization_id
-            WHERE (:status IS NULL OR o.verification_status = :status)
+            -- CAST is required: with a NULL bind, Postgres cannot infer the
+            -- parameter's type from `:status IS NULL` alone and aborts the
+            -- statement with AmbiguousParameterError.
+            WHERE (CAST(:status AS varchar) IS NULL
+                   OR o.verification_status = CAST(:status AS varchar))
             ORDER BY
                 -- pending first: that is the queue the admin actually works
                 CASE o.verification_status WHEN 'pending_verification' THEN 0 ELSE 1 END,
