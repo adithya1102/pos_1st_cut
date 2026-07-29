@@ -242,7 +242,42 @@ class CarevoService:
 
     # ---------------------------- Payment ----------------------------------
     @staticmethod
+    @staticmethod
+    async def _expire_stale_pickups(
+        db: AsyncSession, *, outlet_id=None, order_id=None
+    ) -> int:
+        """Check-on-read expiry: any live/waiting order untouched for longer than
+        PICKUP_TTL_MINUTES auto-transitions to ABANDONED, freeing its pickup_code.
+        Done in SQL (now()/interval vs the timestamptz column) to avoid naive-vs-
+        aware datetime bugs. Commits its own maintenance UPDATE. Returns rowcount.
+        Scope to one outlet or one order; at least one must be given.
+        """
+        clauses = [
+            "status = ANY(:live)",
+            "updated_at < now() - make_interval(mins => :ttl)",
+        ]
+        params = {
+            "live": list(_LIVE_STATUSES),
+            "ttl": settings.PICKUP_TTL_MINUTES,
+        }
+        if outlet_id is not None:
+            clauses.append("outlet_id = :oid")
+            params["oid"] = str(outlet_id)
+        if order_id is not None:
+            clauses.append("id = :iid")
+            params["iid"] = str(order_id)
+        res = await db.execute(text(
+            "UPDATE customer_orders SET status='ABANDONED', updated_at=now() "
+            "WHERE " + " AND ".join(clauses)
+        ), params)
+        if res.rowcount:
+            await db.commit()
+        return res.rowcount
+
+    @staticmethod
     async def _generate_pickup_code(db: AsyncSession, outlet_id) -> str:
+        # Free up any expired codes for this outlet first.
+        await CarevoService._expire_stale_pickups(db, outlet_id=outlet_id)
         # Digits 2-9 only: no visually ambiguous chars (0/O, 1/I/l) and easy to
         # type on a numeric keypad at verify time. 8^6 = 262k codes, and
         # uniqueness is only needed among an outlet's LIVE orders (a handful).
@@ -250,11 +285,12 @@ class CarevoService:
         alphabet = "23456789"
         for _ in range(30):
             code = "".join(secrets.choice(alphabet) for _ in range(6))
-            # Unique among LIVE orders for this outlet (matches partial unique index).
+            # Unique among LIVE orders for this outlet. ABANDONED is excluded so
+            # an expired order's code is immediately reusable.
             row = (await db.execute(text("""
                 SELECT 1 FROM customer_orders
                 WHERE outlet_id = :oid AND pickup_code = :code
-                  AND status NOT IN ('COMPLETED','CANCELLED')
+                  AND status NOT IN ('COMPLETED','CANCELLED','ABANDONED')
                 LIMIT 1
             """), {"oid": str(outlet_id), "code": code})).first()
             if not row:
@@ -372,6 +408,10 @@ class CarevoService:
     # ------------------------------ POS ------------------------------------
     @staticmethod
     async def verify_pickup(db: AsyncSession, order_id: uuid.UUID, pickup_code: str) -> dict:
+        # Expire this order first if its pickup window lapsed, so a stale code
+        # can't be verified (and doesn't cost the staff a failed attempt).
+        await CarevoService._expire_stale_pickups(db, order_id=order_id)
+
         res = await db.execute(select(CustomerOrder).where(CustomerOrder.id == order_id))
         order = res.scalars().first()
         if not order:
@@ -379,6 +419,13 @@ class CarevoService:
 
         if order.is_locked:
             raise HTTPException(status_code=423, detail={"verified": False, "locked": True})
+
+        if order.status.upper() == "ABANDONED":
+            return {
+                "verified": False,
+                "order_id": order.id,
+                "status": "ABANDONED",
+            }
 
         code_ok = bool(order.pickup_code) and order.pickup_code.upper() == pickup_code.strip().upper()
         status_ok = order.status.upper() in _LIVE_STATUSES
@@ -660,10 +707,12 @@ class CarevoService:
     @staticmethod
     async def list_active_orders(db: AsyncSession, outlet_id: uuid.UUID) -> list[dict]:
         """Active customer_orders for the outlet, newest first. NAME-FREE."""
+        # Sweep expired pickups so the queue never shows stale orders.
+        await CarevoService._expire_stale_pickups(db, outlet_id=outlet_id)
         orders = (await db.execute(text("""
             SELECT id, status, is_locked, total_amount, created_at
             FROM customer_orders
-            WHERE outlet_id = :oid AND status NOT IN ('COMPLETED','CANCELLED')
+            WHERE outlet_id = :oid AND status NOT IN ('COMPLETED','CANCELLED','ABANDONED')
             ORDER BY created_at DESC
         """), {"oid": str(outlet_id)})).fetchall()
         if not orders:

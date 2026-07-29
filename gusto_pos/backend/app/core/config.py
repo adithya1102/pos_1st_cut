@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     OTP_RATE_LIMIT_PER_HOUR: int = 5
     # Per-IP cap on public owner self-signups (POST /register) per hour.
     REGISTER_RATE_LIMIT_PER_HOUR: int = 5
+    # Pickup window: a PAID/live order untouched for this many minutes is
+    # auto-abandoned (check-on-read), freeing its pickup_code for reuse.
+    PICKUP_TTL_MINUTES: int = 45
 
     # Master switch for the customer OTP login path. Set false on any publicly
     # reachable deploy while OTP_STUB_MODE is still on, otherwise anyone can mint
