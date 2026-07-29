@@ -95,9 +95,11 @@ class HomeState extends ChangeNotifier {
   List<Category> _categories = [];
   List<Category> get categories => List.unmodifiable(_categories);
 
-  /// Loads categories for the dish form's picker (lazy — only when needed).
+  /// Loads categories for the dish form's picker. Always refetches: HomeState is
+  /// a singleton that survives logout, so a cached list could belong to a
+  /// previously-signed-in outlet — which would show wrong categories and make
+  /// dish-add fail (the category wouldn't belong to the current outlet).
   Future<List<Category>> ensureCategories() async {
-    if (_categories.isNotEmpty) return _categories;
     _categories = await _menuService.getCategories();
     return _categories;
   }

@@ -30,6 +30,10 @@ _otp_hits: dict[str, list[float]] = defaultdict(list)
 # Per-IP limiter for public owner self-signup (POST /register), same pattern.
 _register_hits: dict[str, list[float]] = defaultdict(list)
 
+# Default categories seeded for every self-registered outlet, so the owner has
+# real options in the dish form's category picker immediately. Order = display.
+DEFAULT_CATEGORIES = ["Starters", "Mains", "Sides", "Desserts", "Beverages"]
+
 # Status progression for the pickup flow
 _PROGRESSION = ["RECEIVED", "PREPARING", "READY"]
 _LIVE_STATUSES = {"PAID", "RECEIVED", "PREPARING", "READY"}
@@ -665,12 +669,16 @@ class CarevoService:
                 "VALUES (gen_random_uuid(), :oid, 'v1', true, now()) RETURNING id"
             ), {"oid": str(outlet_id)})).scalar()
 
-            await db.execute(text(
-                "INSERT INTO categories (id, menu_id, name, created_at) "
-                "VALUES (gen_random_uuid(), :mid, 'Menu', now())"
-            ), {"mid": str(menu_id)})
+            # Seed a sensible default set so the owner can add dishes immediately
+            # (the dish form's category picker has real options from the start).
+            # Owners can still add/rename their own categories on top of these.
+            for _pos, _name in enumerate(DEFAULT_CATEGORIES):
+                await db.execute(text(
+                    "INSERT INTO categories (id, menu_id, name, created_at) "
+                    "VALUES (gen_random_uuid(), :mid, :name, now())"
+                ), {"mid": str(menu_id), "name": _name})
 
-            # Single commit: all five rows persist together, or none do.
+            # Single commit: all rows persist together, or none do.
             await db.commit()
         except HTTPException:
             await db.rollback()
