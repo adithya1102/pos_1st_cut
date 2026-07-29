@@ -9,6 +9,7 @@ import '../models/order.dart';
 import '../models/order_notify.dart';
 import '../services/order_notify_service.dart';
 import '../services/order_service.dart';
+import '../services/upi_intent.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/widgets/neo_button.dart';
@@ -20,8 +21,21 @@ import 'location_screen.dart';
 /// Step 10: pickup screen — large pickup code + Received→Preparing→Ready
 /// stepper, polled every ~4s.
 class PickupScreen extends StatefulWidget {
-  const PickupScreen({super.key, required this.orderId});
+  const PickupScreen({
+    super.key,
+    required this.orderId,
+    this.upiVpa,
+    this.payeeName,
+    this.amount,
+  });
+
   final String orderId;
+
+  /// UPI-intent params (passed from checkout). When [upiVpa] is set and the
+  /// order is still unpaid, a tappable "Pay via UPI" button is shown.
+  final String? upiVpa;
+  final String? payeeName;
+  final double? amount;
 
   @override
   State<PickupScreen> createState() => _PickupScreenState();
@@ -111,6 +125,7 @@ class _PickupScreenState extends State<PickupScreen> {
     final textTheme = Theme.of(context).textTheme;
     final status = _status;
     final step = status?.stepIndex ?? 0;
+    final isPaid = status?.paymentStatus.toUpperCase() == 'PAID';
 
     return Scaffold(
       appBar: AppBar(
@@ -131,18 +146,33 @@ class _PickupScreenState extends State<PickupScreen> {
                     const SizedBox(height: 16),
                   ],
                   Text(
-                    step >= 2 ? 'Ready to\ncollect!' : 'Order\nconfirmed.',
+                    step >= 2
+                        ? 'Ready to\ncollect!'
+                        : (isPaid ? 'Order\nconfirmed.' : 'Almost\nthere.'),
                     style: textTheme.displaySmall,
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'Show or say your pickup code at the counter.',
+                    isPaid
+                        ? 'Show or say your pickup code at the counter.'
+                        : 'Pay via UPI, then the restaurant confirms your order.',
                     style: textTheme.bodyLarge?.copyWith(color: c.inkSoft),
                   ),
                   const SizedBox(height: 20),
+                  // Bug 1: a REAL tappable button that launches the upi:// intent.
+                  if (!isPaid && widget.upiVpa != null) ...[
+                    _UpiPayButton(
+                      vpa: widget.upiVpa!,
+                      payeeName: widget.payeeName ?? 'Restaurant',
+                      amount: status?.totalAmount ?? widget.amount ?? 0,
+                      orderId: widget.orderId,
+                    ),
+                    const SizedBox(height: 16),
+                  ],
                   _PickupCodeCard(
                     code: status?.pickupCode,
                     highlight: step >= 2,
+                    paid: isPaid,
                   ),
                   const SizedBox(height: 24),
                   Text('Order status', style: textTheme.headlineSmall),
@@ -240,15 +270,76 @@ class _NotifyBanner extends StatelessWidget {
   }
 }
 
+/// Tappable UPI pay button — actually launches the upi:// intent (bug 1 fix).
+class _UpiPayButton extends StatefulWidget {
+  const _UpiPayButton({
+    required this.vpa,
+    required this.payeeName,
+    required this.amount,
+    required this.orderId,
+  });
+  final String vpa;
+  final String payeeName;
+  final double amount;
+  final String orderId;
+
+  @override
+  State<_UpiPayButton> createState() => _UpiPayButtonState();
+}
+
+class _UpiPayButtonState extends State<_UpiPayButton> {
+  bool _busy = false;
+
+  Future<void> _pay() async {
+    setState(() => _busy = true);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final opened = await UpiIntent.launch(
+        payeeVpa: widget.vpa,
+        payeeName: widget.payeeName,
+        amount: widget.amount,
+        orderId: widget.orderId,
+      );
+      if (!opened && mounted) {
+        messenger.showSnackBar(SnackBar(
+          content: Text('No UPI app found. Pay ${widget.vpa} '
+              '${formatRupees(widget.amount)} from any UPI app.'),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return NeoButton(
+      label: _busy
+          ? 'Opening UPI…'
+          : 'Pay ${formatRupees(widget.amount)} via UPI',
+      icon: Icons.account_balance_wallet,
+      loading: _busy,
+      onPressed: _busy ? null : _pay,
+    );
+  }
+}
+
 class _PickupCodeCard extends StatelessWidget {
-  const _PickupCodeCard({required this.code, required this.highlight});
+  const _PickupCodeCard({
+    required this.code,
+    required this.highlight,
+    required this.paid,
+  });
   final String? code;
   final bool highlight;
+  final bool paid;
 
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final textTheme = Theme.of(context).textTheme;
+    final onColor = highlight ? c.onAccent : c.onPrimary;
+    final hasCode = code != null && code!.isNotEmpty;
     return NeoCard(
       color: highlight ? c.accent : c.primary,
       shadowOffset: const Offset(6, 6),
@@ -257,26 +348,27 @@ class _PickupCodeCard extends StatelessWidget {
         children: [
           Text(
             'PICKUP CODE',
-            style: textTheme.labelLarge?.copyWith(
-              color: highlight ? c.onAccent : c.onPrimary,
-              letterSpacing: 4,
-            ),
+            style: textTheme.labelLarge?.copyWith(color: onColor, letterSpacing: 4),
           ),
           const SizedBox(height: 12),
-          Text(
-            code ?? '••••',
-            style: GoogleFonts.bevan(
-              color: highlight ? c.onAccent : c.onPrimary,
-              fontSize: 56,
-              letterSpacing: 8,
-            ),
-          ),
+          if (hasCode)
+            Text(
+              code!,
+              style: GoogleFonts.bevan(color: onColor, fontSize: 56, letterSpacing: 8),
+            )
+          else ...[
+            Icon(Icons.lock_clock, color: onColor.withValues(alpha: 0.9), size: 40),
+            const SizedBox(height: 10),
+            Text('Appears after payment',
+                style: textTheme.titleMedium?.copyWith(color: onColor)),
+          ],
           const SizedBox(height: 6),
           Text(
-            highlight ? 'Your food is ready!' : 'Keep this handy',
-            style: textTheme.bodyMedium?.copyWith(
-              color: (highlight ? c.onAccent : c.onPrimary).withValues(alpha: 0.85),
-            ),
+            hasCode
+                ? (highlight ? 'Your food is ready!' : 'Keep this handy')
+                : 'The restaurant will confirm your payment shortly.',
+            textAlign: TextAlign.center,
+            style: textTheme.bodyMedium?.copyWith(color: onColor.withValues(alpha: 0.85)),
           ),
         ],
       ),
@@ -400,7 +492,15 @@ class _OrderSummaryCard extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Order #${status.id}', style: textTheme.titleMedium),
+              // Bug 3: truncate the UUID + Flexible so it can't overflow.
+              Flexible(
+                child: Text(
+                  'Order #${status.id.length > 8 ? '${status.id.substring(0, 8)}…' : status.id}',
+                  style: textTheme.titleMedium,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
               _PaymentBadge(paid: status.paymentStatus.toUpperCase() == 'PAID'),
             ],
           ),

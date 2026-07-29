@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../services/order_service.dart';
 import '../services/payment_service.dart';
-import '../services/upi_intent.dart';
 import '../state/cart_state.dart';
 import '../theme/app_colors.dart';
 import '../theme/widgets/neo_button.dart';
@@ -30,7 +29,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   Future<void> _payNow() async {
     final cart = context.read<CartState>();
     final outlet = cart.outlet;
-    final messenger = ScaffoldMessenger.of(context);
     setState(() => _placing = true);
     try {
       final order = await context.read<OrderService>().createOrder(
@@ -38,30 +36,20 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           );
       if (!mounted) return;
 
-      // UPI-intent MVP: open the user's UPI app with the outlet's VPA + amount
-      // locked, then wait on the pickup screen for staff to confirm payment.
+      // UPI-intent MVP: go to the pickup screen, which shows a tappable
+      // "Pay via UPI" button that opens the user's UPI app with the amount
+      // locked. Staff then confirm the payment manually.
       if (_method == PaymentMethod.upi) {
-        final vpa = outlet?.upiId;
-        if (vpa == null || vpa.isEmpty) {
-          messenger.showSnackBar(const SnackBar(
-              content: Text('This outlet has not set up UPI payments yet.')));
-        } else {
-          final opened = await UpiIntent.launch(
-            payeeVpa: vpa,
-            payeeName: outlet?.name ?? 'Restaurant',
-            amount: order.totalAmount,
-            orderId: order.id,
-          );
-          if (!opened) {
-            messenger.showSnackBar(SnackBar(
-                content: Text('Open your UPI app and pay $vpa '
-                    '${formatRupees(order.totalAmount)}.')));
-          }
-        }
-        if (!mounted) return;
         cart.clear();
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => PickupScreen(orderId: order.id)),
+          MaterialPageRoute(
+            builder: (_) => PickupScreen(
+              orderId: order.id,
+              upiVpa: outlet?.upiId,
+              payeeName: outlet?.name,
+              amount: order.totalAmount,
+            ),
+          ),
         );
         return;
       }
