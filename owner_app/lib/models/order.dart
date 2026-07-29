@@ -1,6 +1,6 @@
 /// A line item within an order. Deliberately carries NO customer data.
 class OrderLineItem {
-  final int id;
+  final String id;
   final String name;
   final int quantity;
 
@@ -12,7 +12,9 @@ class OrderLineItem {
 
   factory OrderLineItem.fromJson(Map<String, dynamic> json) {
     return OrderLineItem(
-      id: json['id'] as int,
+      // API returns a UUID string; parsing this as int threw and broke the
+      // whole Orders tab ("Could not load orders").
+      id: json['id']?.toString() ?? '',
       name: (json['name'] as String?) ?? '',
       quantity: (json['quantity'] as int?) ?? 0,
     );
