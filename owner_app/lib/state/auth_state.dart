@@ -51,6 +51,7 @@ class AuthState extends ChangeNotifier {
     String? city,
     required String username,
     required String password,
+    required String upiId,
   }) async {
     try {
       await _auth.register(
@@ -58,6 +59,7 @@ class AuthState extends ChangeNotifier {
         city: city,
         username: username.trim(),
         password: password,
+        upiId: upiId,
       );
       return null;
     } on ApiException catch (e) {

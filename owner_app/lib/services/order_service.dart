@@ -84,6 +84,11 @@ class OrderService {
     }
   }
 
+  /// `POST /pos/orders/{id}/mark-paid` — manual UPI-intent confirmation.
+  Future<void> markPaid(String orderId) async {
+    await _client.post('/pos/orders/$orderId/mark-paid');
+  }
+
   /// `POST /pos/orders/{id}/notify`
   ///
   /// For [NotifyType.itemUnavailable], [itemId] is REQUIRED and must be one of
@@ -91,7 +96,7 @@ class OrderService {
   Future<void> notify(
     String orderId,
     NotifyType type, {
-    int? itemId,
+    String? itemId,
   }) async {
     if (type == NotifyType.itemUnavailable && itemId == null) {
       throw ArgumentError('item_id is required for item_unavailable notify.');

@@ -31,12 +31,14 @@ class AuthService {
     String? city,
     required String username,
     required String password,
+    required String upiId,
   }) async {
     await _client.post('/register', body: {
       'restaurant_name': restaurantName,
       if (city != null && city.trim().isNotEmpty) 'city': city.trim(),
       'username': username,
       'password': password,
+      'upi_id': upiId.trim(),
     });
   }
 

@@ -22,7 +22,7 @@ class _NotifySectionState extends State<NotifySection> {
   bool _showItemPicker = false;
   String? _confirmation;
 
-  Future<void> _send(NotifyType type, {int? itemId}) async {
+  Future<void> _send(NotifyType type, {String? itemId}) async {
     setState(() {
       _busy = true;
       _confirmation = null;

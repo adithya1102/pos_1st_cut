@@ -28,6 +28,7 @@ class OrderLineItem {
 class Order {
   final String orderId;
   final String status;
+  final String paymentStatus;
   final bool isLocked;
   final double totalAmount;
   final String createdAt;
@@ -36,17 +37,22 @@ class Order {
   const Order({
     required this.orderId,
     required this.status,
+    required this.paymentStatus,
     required this.isLocked,
     required this.totalAmount,
     required this.createdAt,
     required this.items,
   });
 
+  /// True once staff have confirmed payment (manual UPI-intent tick).
+  bool get isPaid => paymentStatus.toUpperCase() == 'PAID';
+
   factory Order.fromJson(Map<String, dynamic> json) {
     final rawItems = (json['items'] as List<dynamic>?) ?? const [];
     return Order(
       orderId: json['order_id'].toString(),
       status: (json['status'] as String?) ?? '',
+      paymentStatus: (json['payment_status'] as String?) ?? '',
       isLocked: (json['is_locked'] as bool?) ?? false,
       totalAmount: _toDouble(json['total_amount']),
       createdAt: (json['created_at'] as String?) ?? '',

@@ -38,7 +38,19 @@ class OrdersState extends ChangeNotifier {
     return _orderService.verifyPickup(orderId, code);
   }
 
-  Future<void> notify(String orderId, NotifyType type, {int? itemId}) {
+  /// Manual UPI-intent payment confirmation, then refresh the queue.
+  /// Returns null on success or a staff-facing error message.
+  Future<String?> markPaid(String orderId) async {
+    try {
+      await _orderService.markPaid(orderId);
+      await load();
+      return null;
+    } catch (_) {
+      return 'Could not mark payment received.';
+    }
+  }
+
+  Future<void> notify(String orderId, NotifyType type, {String? itemId}) {
     return _orderService.notify(orderId, type, itemId: itemId);
   }
 }

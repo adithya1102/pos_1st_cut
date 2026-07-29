@@ -151,4 +151,26 @@ export const adminApi = {
 
   auditLogs: (limit = 100) =>
     api.get<AuditLog[]>(`/api/v1/admin/audit-logs?limit=${limit}`),
+
+  // Admin-assisted onboarding: reuses the public /register flow (same as
+  // owner_app self-signup) to create an outlet (pending_verification) + owner.
+  registerOutlet: (body: RegisterOutletBody) =>
+    api.post<RegisterOutletResult>("/api/v1/register", body),
 };
+
+export interface RegisterOutletBody {
+  restaurant_name: string;
+  city?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  username: string;
+  password: string;
+  upi_id: string;
+}
+
+export interface RegisterOutletResult {
+  outlet_id: string;
+  username: string;
+  verification_status: string;
+  message: string;
+}

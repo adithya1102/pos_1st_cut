@@ -16,9 +16,12 @@ class _SignupScreenState extends State<SignupScreen> {
   final _formKey = GlobalKey<FormState>();
   final _restaurant = TextEditingController();
   final _city = TextEditingController();
+  final _upi = TextEditingController();
   final _username = TextEditingController();
   final _password = TextEditingController();
   bool _obscure = true;
+
+  static final _vpaRe = RegExp(r'^[^@\s]+@[^@\s]+$');
   bool _submitting = false;
   String? _error;
 
@@ -26,6 +29,7 @@ class _SignupScreenState extends State<SignupScreen> {
   void dispose() {
     _restaurant.dispose();
     _city.dispose();
+    _upi.dispose();
     _username.dispose();
     _password.dispose();
     super.dispose();
@@ -43,6 +47,7 @@ class _SignupScreenState extends State<SignupScreen> {
           city: _city.text,
           username: _username.text,
           password: _password.text,
+          upiId: _upi.text,
         );
     if (!mounted) return;
     setState(() => _submitting = false);
@@ -103,6 +108,21 @@ class _SignupScreenState extends State<SignupScreen> {
                         labelText: 'City (optional)',
                         prefixIcon: Icon(Icons.location_city_outlined),
                       ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: _upi,
+                      autocorrect: false,
+                      enableSuggestions: false,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: const InputDecoration(
+                        labelText: 'Restaurant UPI ID',
+                        hintText: 'name@bank',
+                        prefixIcon: Icon(Icons.account_balance_wallet_outlined),
+                      ),
+                      validator: (v) => (v == null || !_vpaRe.hasMatch(v.trim()))
+                          ? 'Enter a valid UPI ID (e.g. name@bank)'
+                          : null,
                     ),
                     const SizedBox(height: 16),
                     TextFormField(

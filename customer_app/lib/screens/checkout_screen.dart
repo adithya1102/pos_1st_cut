@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../services/order_service.dart';
 import '../services/payment_service.dart';
+import '../services/upi_intent.dart';
 import '../state/cart_state.dart';
 import '../theme/app_colors.dart';
 import '../theme/widgets/neo_button.dart';
@@ -11,6 +12,7 @@ import '../theme/widgets/neo_card.dart';
 import '../widgets/price_text.dart';
 import '../widgets/theme_toggle_button.dart';
 import 'payment_processing_screen.dart';
+import 'pickup_screen.dart';
 
 /// Step 8: checkout with UPI / Card / Net Banking ONLY (no pay-at-counter).
 class CheckoutScreen extends StatefulWidget {
@@ -27,12 +29,43 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   Future<void> _payNow() async {
     final cart = context.read<CartState>();
+    final outlet = cart.outlet;
+    final messenger = ScaffoldMessenger.of(context);
     setState(() => _placing = true);
     try {
       final order = await context.read<OrderService>().createOrder(
             cart.toOrderPayload(customerNotes: widget.customerNotes),
           );
       if (!mounted) return;
+
+      // UPI-intent MVP: open the user's UPI app with the outlet's VPA + amount
+      // locked, then wait on the pickup screen for staff to confirm payment.
+      if (_method == PaymentMethod.upi) {
+        final vpa = outlet?.upiId;
+        if (vpa == null || vpa.isEmpty) {
+          messenger.showSnackBar(const SnackBar(
+              content: Text('This outlet has not set up UPI payments yet.')));
+        } else {
+          final opened = await UpiIntent.launch(
+            payeeVpa: vpa,
+            payeeName: outlet?.name ?? 'Restaurant',
+            amount: order.totalAmount,
+            orderId: order.id,
+          );
+          if (!opened) {
+            messenger.showSnackBar(SnackBar(
+                content: Text('Open your UPI app and pay $vpa '
+                    '${formatRupees(order.totalAmount)}.')));
+          }
+        }
+        if (!mounted) return;
+        cart.clear();
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => PickupScreen(orderId: order.id)),
+        );
+        return;
+      }
+
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => PaymentProcessingScreen(order: order, method: _method),

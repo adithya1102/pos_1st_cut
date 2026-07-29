@@ -6,6 +6,7 @@ class Outlet {
     required this.address,
     required this.isOpen,
     this.distanceKm,
+    this.upiId,
   });
 
   final String id;
@@ -13,15 +14,18 @@ class Outlet {
   final String address;
   final bool isOpen;
   final double? distanceKm;
+  final String? upiId;
 
   factory Outlet.fromJson(Map<String, dynamic> json) {
     final dist = json['distance_km'];
+    final upi = json['upi_id'] as String?;
     return Outlet(
       id: json['id']?.toString() ?? '',
       name: (json['name'] ?? '') as String,
       address: (json['address'] ?? '') as String,
       isOpen: (json['is_open'] ?? false) as bool,
       distanceKm: dist == null ? null : (dist as num).toDouble(),
+      upiId: (upi != null && upi.isNotEmpty) ? upi : null,
     );
   }
 }
