@@ -29,6 +29,12 @@ class UpiIntent {
   /// Returns true if a UPI app was opened. False if none could handle it
   /// (e.g. no UPI app installed) — the caller should fall back to showing
   /// the VPA/amount for a manual transfer.
+  ///
+  /// IMPORTANT: we do NOT gate on canLaunchUrl(). For the `upi://` scheme it
+  /// returns false-NEGATIVES on many devices even when GPay/Paytm/PhonePe are
+  /// installed (a known url_launcher limitation). Instead we attempt the launch
+  /// directly with externalApplication mode and treat only a real throw
+  /// (no activity can handle it) as "no UPI app".
   static Future<bool> launch({
     required String payeeVpa,
     required String payeeName,
@@ -41,7 +47,10 @@ class UpiIntent {
       amount: amount,
       orderId: orderId,
     );
-    if (!await canLaunchUrl(uri)) return false;
-    return launchUrl(uri, mode: LaunchMode.externalApplication);
+    try {
+      return await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      return false;
+    }
   }
 }
