@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../config/app_config.dart';
 import '../state/auth_state.dart';
+import 'signup_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -107,6 +108,16 @@ class _LoginScreenState extends State<LoginScreen> {
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Text('Log in'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextButton(
+                      onPressed: auth.loading
+                          ? null
+                          : () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                    builder: (_) => const SignupScreen()),
+                              ),
+                      child: const Text('Register your restaurant'),
                     ),
                   ],
                 ),

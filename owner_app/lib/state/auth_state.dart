@@ -44,6 +44,32 @@ class AuthState extends ChangeNotifier {
     }
   }
 
+  /// Owner self-signup. Returns null on success, or a staff-facing error.
+  /// Does not log in — the outlet is pending admin verification.
+  Future<String?> register({
+    required String restaurantName,
+    String? city,
+    required String username,
+    required String password,
+  }) async {
+    try {
+      await _auth.register(
+        restaurantName: restaurantName.trim(),
+        city: city,
+        username: username.trim(),
+        password: password,
+      );
+      return null;
+    } on ApiException catch (e) {
+      if (e.statusCode == 409) return 'That username is already taken.';
+      if (e.statusCode == 429) return 'Too many attempts. Please try again later.';
+      if (e.statusCode == 422) return 'Please check your details and try again.';
+      return 'Could not register. Please try again.';
+    } catch (_) {
+      return 'Could not reach the server. Check your connection.';
+    }
+  }
+
   Future<void> logout() async {
     await _auth.logout();
     _loggedIn = false;

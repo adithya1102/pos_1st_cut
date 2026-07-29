@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/menu_item.dart';
 import '../models/outlet.dart';
 import '../state/auth_state.dart';
 import '../state/home_state.dart';
 import '../state/orders_state.dart';
 import '../widgets/dish_row.dart';
+import 'dish_edit_screen.dart';
 import 'orders_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -44,6 +46,13 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       body: IndexedStack(index: _index, children: pages),
+      floatingActionButton: _index == 0
+          ? FloatingActionButton.extended(
+              onPressed: () => _openDishEditor(context, null),
+              icon: const Icon(Icons.add),
+              label: const Text('Add dish'),
+            )
+          : null,
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (i) => setState(() => _index = i),
@@ -134,6 +143,7 @@ class _DishesTab extends StatelessWidget {
             ...state.items.map(
               (item) => DishRow(
                 item: item,
+                onTap: () => _openDishEditor(context, item),
                 onChanged: (next) async {
                   final ok = await context
                       .read<HomeState>()
@@ -180,4 +190,12 @@ void _showError(BuildContext context, String message) {
   ScaffoldMessenger.of(context)
     ..hideCurrentSnackBar()
     ..showSnackBar(SnackBar(content: Text(message)));
+}
+
+/// Opens the add (item == null) / edit dish screen. HomeState reloads itself
+/// on a successful save, so no extra refresh is needed here.
+Future<void> _openDishEditor(BuildContext context, MenuItem? item) async {
+  await Navigator.of(context).push<bool>(
+    MaterialPageRoute(builder: (_) => DishEditScreen(item: item)),
+  );
 }

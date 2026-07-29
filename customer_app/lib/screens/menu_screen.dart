@@ -23,9 +23,29 @@ class MenuScreen extends StatefulWidget {
   State<MenuScreen> createState() => _MenuScreenState();
 }
 
+/// Veg/non-veg filter applied within the selected category.
+enum VegFilter {
+  all,
+  veg,
+  nonVeg;
+
+  bool matches(bool isVeg) => switch (this) {
+        VegFilter.all => true,
+        VegFilter.veg => isVeg,
+        VegFilter.nonVeg => !isVeg,
+      };
+
+  String get label => switch (this) {
+        VegFilter.all => 'All',
+        VegFilter.veg => 'Veg',
+        VegFilter.nonVeg => 'Non-veg',
+      };
+}
+
 class _MenuScreenState extends State<MenuScreen> {
   late Future<MenuResponse> _future;
   int _selectedCategory = 0;
+  VegFilter _vegFilter = VegFilter.all;
 
   @override
   void initState() {
@@ -86,6 +106,9 @@ class _MenuScreenState extends State<MenuScreen> {
             }
             final safeIndex = _selectedCategory.clamp(0, categories.length - 1);
             final activeCategory = categories[safeIndex];
+            final visibleItems = activeCategory.items
+                .where((it) => _vegFilter.matches(it.isVeg))
+                .toList();
 
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -104,23 +127,43 @@ class _MenuScreenState extends State<MenuScreen> {
                     ),
                   ),
                 ),
+                SizedBox(
+                  height: 50,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    children: [
+                      for (final f in VegFilter.values) ...[
+                        NeoChip(
+                          label: f.label,
+                          selected: f == _vegFilter,
+                          onTap: () => setState(() => _vegFilter = f),
+                        ),
+                        const SizedBox(width: 10),
+                      ],
+                    ],
+                  ),
+                ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
                   child: Text(activeCategory.name, style: textTheme.headlineSmall),
                 ),
                 Expanded(
-                  child: activeCategory.items.isEmpty
+                  child: visibleItems.isEmpty
                       ? Center(
-                          child: Text('No items in this section.',
+                          child: Text(
+                              _vegFilter == VegFilter.all
+                                  ? 'No items in this section.'
+                                  : 'No ${_vegFilter.label.toLowerCase()} items here.',
                               style: textTheme.bodyLarge),
                         )
                       : ListView.separated(
                           padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-                          itemCount: activeCategory.items.length,
+                          itemCount: visibleItems.length,
                           separatorBuilder: (_, _) => const SizedBox(height: 14),
                           itemBuilder: (_, i) => MenuItemCard(
-                            item: activeCategory.items[i],
-                            onTap: () => _openItem(activeCategory.items[i]),
+                            item: visibleItems[i],
+                            onTap: () => _openItem(visibleItems[i]),
                           ),
                         ),
                 ),

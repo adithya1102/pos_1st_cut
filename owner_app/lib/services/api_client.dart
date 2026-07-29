@@ -83,6 +83,11 @@ class ApiClient {
     return _decode(res);
   }
 
+  Future<dynamic> delete(String path) async {
+    final res = await _http.delete(_uri(path), headers: await _headers());
+    return _decode(res);
+  }
+
   /// Sends an OAuth2 form-encoded POST (used by the staff login endpoint).
   Future<dynamic> postForm(String path, Map<String, String> fields) async {
     final res = await _http.post(

@@ -13,7 +13,7 @@ class OutletService {
   }
 
   /// `POST /pos/outlets/{id}/visibility`
-  Future<bool> setVisibility(int outletId, bool isVisible) async {
+  Future<bool> setVisibility(String outletId, bool isVisible) async {
     final data = await _client.post(
       '/pos/outlets/$outletId/visibility',
       body: {'is_visible': isVisible},

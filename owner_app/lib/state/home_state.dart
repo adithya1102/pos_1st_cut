@@ -1,5 +1,6 @@
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' hide Category;
 
+import '../models/category.dart';
 import '../models/menu_item.dart';
 import '../models/outlet.dart';
 import '../services/menu_service.dart';
@@ -34,7 +35,12 @@ class HomeState extends ChangeNotifier {
       ]);
       _outlet = results[0] as Outlet;
       _items = results[1] as List<MenuItem>;
-    } catch (_) {
+    } catch (e, st) {
+      // Surface the real cause in debug builds — a swallowed cast/parse error
+      // here previously masked a data-fetch bug behind a generic message.
+      if (kDebugMode) {
+        debugPrint('HomeState.load failed: $e\n$st');
+      }
       _error = 'Could not load outlet and menu. Pull to retry.';
     } finally {
       _loading = false;
@@ -64,7 +70,7 @@ class HomeState extends ChangeNotifier {
   }
 
   /// Optimistically flips a dish's availability; reverts if the call fails.
-  Future<bool> toggleItemAvailability(int itemId, bool next) async {
+  Future<bool> toggleItemAvailability(String itemId, bool next) async {
     final index = _items.indexWhere((i) => i.id == itemId);
     if (index < 0) return false;
     final original = _items[index];
@@ -82,6 +88,84 @@ class HomeState extends ChangeNotifier {
       _error = 'Could not update "${original.name}".';
       notifyListeners();
       return false;
+    }
+  }
+
+  // --------------------------- Menu CRUD ---------------------------------
+  List<Category> _categories = [];
+  List<Category> get categories => List.unmodifiable(_categories);
+
+  /// Loads categories for the dish form's picker (lazy — only when needed).
+  Future<List<Category>> ensureCategories() async {
+    if (_categories.isNotEmpty) return _categories;
+    _categories = await _menuService.getCategories();
+    return _categories;
+  }
+
+  /// Creates a dish, then refreshes the list. Returns null on success, or a
+  /// staff-facing error message on failure.
+  Future<String?> createDish({
+    required String name,
+    required double basePrice,
+    required String categoryId,
+    required bool isVeg,
+    int? prepTimeMinutes,
+    String? imageUrl,
+  }) async {
+    try {
+      await _menuService.createItem(
+        name: name,
+        basePrice: basePrice,
+        categoryId: categoryId,
+        isVeg: isVeg,
+        prepTimeMinutes: prepTimeMinutes,
+        imageUrl: imageUrl,
+      );
+      await load();
+      return null;
+    } catch (e) {
+      if (kDebugMode) debugPrint('createDish failed: $e');
+      return 'Could not add dish.';
+    }
+  }
+
+  /// Updates a dish, then refreshes the list.
+  Future<String?> updateDish(
+    String itemId, {
+    String? name,
+    double? basePrice,
+    String? categoryId,
+    bool? isVeg,
+    int? prepTimeMinutes,
+    String? imageUrl,
+  }) async {
+    try {
+      await _menuService.updateItem(
+        itemId,
+        name: name,
+        basePrice: basePrice,
+        categoryId: categoryId,
+        isVeg: isVeg,
+        prepTimeMinutes: prepTimeMinutes,
+        imageUrl: imageUrl,
+      );
+      await load();
+      return null;
+    } catch (e) {
+      if (kDebugMode) debugPrint('updateDish failed: $e');
+      return 'Could not save changes.';
+    }
+  }
+
+  /// Deletes (deactivates) a dish, then refreshes the list.
+  Future<String?> deleteDish(String itemId) async {
+    try {
+      await _menuService.deleteItem(itemId);
+      await load();
+      return null;
+    } catch (e) {
+      if (kDebugMode) debugPrint('deleteDish failed: $e');
+      return 'Could not delete dish.';
     }
   }
 

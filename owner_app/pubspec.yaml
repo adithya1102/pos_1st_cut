@@ -44,6 +44,9 @@ dependencies:
   # Local persistence (auth token)
   shared_preferences: ^2.3.2
 
+  # Dish image picking (uploaded to Cloudinary via unsigned preset)
+  image_picker: ^1.1.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

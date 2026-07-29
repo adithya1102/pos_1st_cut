@@ -23,6 +23,23 @@ class AuthService {
     return token;
   }
 
+  /// Public owner self-signup via `POST /register`. Does NOT log the user in
+  /// (the new outlet is pending admin verification). Throws [ApiException] on
+  /// failure (409 username taken, 429 rate-limited, etc.).
+  Future<void> register({
+    required String restaurantName,
+    String? city,
+    required String username,
+    required String password,
+  }) async {
+    await _client.post('/register', body: {
+      'restaurant_name': restaurantName,
+      if (city != null && city.trim().isNotEmpty) 'city': city.trim(),
+      'username': username,
+      'password': password,
+    });
+  }
+
   Future<bool> hasToken() async {
     final token = await _client.readToken();
     return token != null && token.isNotEmpty;
