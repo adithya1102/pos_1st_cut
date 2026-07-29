@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     OTP_STUB_MODE: bool = True
     OTP_STUB_CODE: str = "000000"
     OTP_RATE_LIMIT_PER_HOUR: int = 5
+    # Per-IP cap on public owner self-signups (POST /register) per hour.
+    REGISTER_RATE_LIMIT_PER_HOUR: int = 5
 
     # Master switch for the customer OTP login path. Set false on any publicly
     # reachable deploy while OTP_STUB_MODE is still on, otherwise anyone can mint

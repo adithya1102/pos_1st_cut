@@ -27,6 +27,8 @@ from app.modules.carevo_payments.gateway import get_gateway
 # --- OTP rate limiter -------------------------------------------------------
 # NOTE: single-process limiter; use Redis in prod
 _otp_hits: dict[str, list[float]] = defaultdict(list)
+# Per-IP limiter for public owner self-signup (POST /register), same pattern.
+_register_hits: dict[str, list[float]] = defaultdict(list)
 
 # Status progression for the pickup flow
 _PROGRESSION = ["RECEIVED", "PREPARING", "READY"]
@@ -418,11 +420,34 @@ class CarevoService:
         await db.commit()
         return {"id": row[0], "is_visible": bool(row[1])}
 
+    # SELECT clause shared by the owner list + single-item reads, so responses
+    # are shaped identically everywhere.
+    _OWNER_ITEM_COLS = """
+        mi.id, mi.name, mi.is_available, mi.is_active, mi.base_price,
+        mi.is_veg, mi.prep_time_minutes, mi.image_url,
+        c.id AS category_id, c.name AS category_name
+    """
+
+    @staticmethod
+    def _owner_item_dict(r) -> dict:
+        return {
+            "id": r.id,
+            "name": r.name,
+            "is_available": bool(r.is_available),
+            "is_active": bool(r.is_active),
+            "base_price": float(r.base_price) if r.base_price is not None else 0.0,
+            "is_veg": bool(r.is_veg),
+            "prep_time_minutes": r.prep_time_minutes,
+            "image_url": r.image_url,
+            "category_id": r.category_id,
+            "category_name": r.category_name,
+        }
+
     @staticmethod
     async def list_owner_menu_items(db: AsyncSession, outlet_id: uuid.UUID) -> list[dict]:
         """Flat list of the outlet's latest-menu items (no category grouping)."""
-        rows = (await db.execute(text("""
-            SELECT mi.id, mi.name, mi.is_available, mi.is_active, mi.base_price
+        rows = (await db.execute(text(f"""
+            SELECT {CarevoService._OWNER_ITEM_COLS}
             FROM menu_items mi
             JOIN categories c ON c.id = mi.category_id
             JOIN menus m ON m.id = c.menu_id
@@ -430,16 +455,181 @@ class CarevoService:
               AND mi.is_active = true
             ORDER BY mi.name
         """), {"oid": str(outlet_id)})).fetchall()
-        return [
-            {
-                "id": r.id,
-                "name": r.name,
-                "is_available": bool(r.is_available),
-                "is_active": bool(r.is_active),
-                "base_price": float(r.base_price) if r.base_price is not None else 0.0,
-            }
-            for r in rows
-        ]
+        return [CarevoService._owner_item_dict(r) for r in rows]
+
+    @staticmethod
+    async def _owner_item_or_404(db: AsyncSession, item_id: uuid.UUID, outlet_id: uuid.UUID) -> dict:
+        """Read one item scoped to the caller's outlet, or 404."""
+        r = (await db.execute(text(f"""
+            SELECT {CarevoService._OWNER_ITEM_COLS}
+            FROM menu_items mi
+            JOIN categories c ON c.id = mi.category_id
+            JOIN menus m ON m.id = c.menu_id
+            WHERE mi.id = :iid AND m.outlet_id = :oid
+            LIMIT 1
+        """), {"iid": str(item_id), "oid": str(outlet_id)})).first()
+        if not r:
+            raise HTTPException(status_code=404, detail="Menu item not found for this outlet")
+        return CarevoService._owner_item_dict(r)
+
+    @staticmethod
+    async def _category_of_outlet_or_400(db: AsyncSession, category_id: uuid.UUID, outlet_id: uuid.UUID) -> None:
+        """Guard: a category must belong to the caller's latest menu."""
+        ok = (await db.execute(text("""
+            SELECT 1 FROM categories c
+            JOIN menus m ON m.id = c.menu_id
+            WHERE c.id = :cid AND m.outlet_id = :oid AND m.is_latest = true
+            LIMIT 1
+        """), {"cid": str(category_id), "oid": str(outlet_id)})).first()
+        if not ok:
+            raise HTTPException(status_code=400, detail="Category not found for this outlet")
+
+    @staticmethod
+    async def list_owner_categories(db: AsyncSession, outlet_id: uuid.UUID) -> list[dict]:
+        rows = (await db.execute(text("""
+            SELECT c.id, c.name FROM categories c
+            JOIN menus m ON m.id = c.menu_id
+            WHERE m.outlet_id = :oid AND m.is_latest = true
+            ORDER BY c.name
+        """), {"oid": str(outlet_id)})).fetchall()
+        return [{"id": r.id, "name": r.name} for r in rows]
+
+    @staticmethod
+    async def create_menu_item(db: AsyncSession, outlet_id: uuid.UUID, payload) -> dict:
+        await CarevoService._category_of_outlet_or_400(db, payload.category_id, outlet_id)
+        row = (await db.execute(text("""
+            INSERT INTO menu_items
+                (id, category_id, name, base_price, is_veg, prep_time_minutes,
+                 image_url, is_active, is_available, created_at)
+            VALUES
+                (gen_random_uuid(), :cid, :name, :price, :veg, :prep,
+                 :img, true, true, now())
+            RETURNING id
+        """), {
+            "cid": str(payload.category_id),
+            "name": payload.name,
+            "price": payload.base_price,
+            "veg": payload.is_veg,
+            "prep": payload.prep_time_minutes,
+            "img": payload.image_url,
+        })).first()
+        await db.commit()
+        return await CarevoService._owner_item_or_404(db, row[0], outlet_id)
+
+    @staticmethod
+    async def update_menu_item(db: AsyncSession, item_id: uuid.UUID, outlet_id: uuid.UUID, payload) -> dict:
+        # Ownership guard first (404 if not the caller's item).
+        await CarevoService._owner_item_or_404(db, item_id, outlet_id)
+        fields = payload.model_dump(exclude_unset=True)
+        if "category_id" in fields and fields["category_id"] is not None:
+            await CarevoService._category_of_outlet_or_400(db, fields["category_id"], outlet_id)
+        if not fields:
+            return await CarevoService._owner_item_or_404(db, item_id, outlet_id)
+        # Build a parameterized SET clause from whitelisted columns only.
+        allowed = {"name", "base_price", "category_id", "is_veg",
+                   "prep_time_minutes", "image_url", "is_available"}
+        sets, params = [], {"iid": str(item_id)}
+        for k, v in fields.items():
+            if k not in allowed:
+                continue
+            sets.append(f"{k} = :{k}")
+            params[k] = str(v) if k == "category_id" and v is not None else v
+        await db.execute(text(f"UPDATE menu_items SET {', '.join(sets)} WHERE id = :iid"), params)
+        await db.commit()
+        return await CarevoService._owner_item_or_404(db, item_id, outlet_id)
+
+    @staticmethod
+    async def delete_menu_item(db: AsyncSession, item_id: uuid.UUID, outlet_id: uuid.UUID) -> dict:
+        # Soft delete: deactivate rather than DROP, preserving order history refs.
+        await CarevoService._owner_item_or_404(db, item_id, outlet_id)
+        row = (await db.execute(text(
+            "UPDATE menu_items SET is_active = false, is_available = false "
+            "WHERE id = :iid RETURNING id, is_active"
+        ), {"iid": str(item_id)})).first()
+        await db.commit()
+        return {"ok": True, "id": row[0], "is_active": bool(row[1])}
+
+    # ------------------------- Owner self-signup ---------------------------
+    @staticmethod
+    def check_register_rate_limit(client_ip: str) -> None:
+        """Per-IP cap, mirroring check_otp_rate_limit (single-process; Redis in prod)."""
+        now = time.time()
+        window = 3600.0
+        hits = [t for t in _register_hits[client_ip] if now - t < window]
+        if len(hits) >= settings.REGISTER_RATE_LIMIT_PER_HOUR:
+            _register_hits[client_ip] = hits
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many registration attempts, try later",
+            )
+        hits.append(now)
+        _register_hits[client_ip] = hits
+
+    @staticmethod
+    async def register_owner(db: AsyncSession, payload, client_ip: str) -> dict:
+        """Public owner self-signup. Bootstraps organization + outlet
+        (pending_verification, hidden) + owner user + latest menu + a default
+        category, as ONE atomic transaction: every INSERT runs before a single
+        commit, and ANY failure rolls the whole thing back — no orphaned rows.
+        """
+        from app.core.security import get_password_hash
+
+        CarevoService.check_register_rate_limit(client_ip)
+
+        taken = (await db.execute(
+            text("SELECT 1 FROM users WHERE username = :u LIMIT 1"),
+            {"u": payload.username},
+        )).first()
+        if taken:
+            raise HTTPException(status_code=409, detail="Username already taken")
+
+        try:
+            org_id = (await db.execute(text(
+                "INSERT INTO organizations (id, name, created_at) "
+                "VALUES (gen_random_uuid(), :n, now()) RETURNING id"
+            ), {"n": payload.restaurant_name})).scalar()
+
+            outlet_id = (await db.execute(text(
+                "INSERT INTO outlets (id, location_name, city, latitude, longitude, "
+                "  geofence_radius_meters, organization_id, verification_status, is_visible, created_at) "
+                "VALUES (gen_random_uuid(), :ln, :city, :lat, :lng, 100, :org, "
+                "        'pending_verification', false, now()) RETURNING id"
+            ), {
+                "ln": payload.restaurant_name, "city": payload.city,
+                "lat": payload.latitude, "lng": payload.longitude, "org": str(org_id),
+            })).scalar()
+
+            await db.execute(text(
+                "INSERT INTO users (id, username, hashed_password, is_active, outlet_id, created_at) "
+                "VALUES (gen_random_uuid(), :u, :pw, true, :oid, now())"
+            ), {"u": payload.username, "pw": get_password_hash(payload.password), "oid": str(outlet_id)})
+
+            menu_id = (await db.execute(text(
+                "INSERT INTO menus (id, outlet_id, version_label, is_latest, created_at) "
+                "VALUES (gen_random_uuid(), :oid, 'v1', true, now()) RETURNING id"
+            ), {"oid": str(outlet_id)})).scalar()
+
+            await db.execute(text(
+                "INSERT INTO categories (id, menu_id, name, created_at) "
+                "VALUES (gen_random_uuid(), :mid, 'Menu', now())"
+            ), {"mid": str(menu_id)})
+
+            # Single commit: all five rows persist together, or none do.
+            await db.commit()
+        except HTTPException:
+            await db.rollback()
+            raise
+        except Exception:
+            # Includes the users.username UNIQUE race → clean rollback, no orphans.
+            await db.rollback()
+            raise HTTPException(status_code=500, detail="Registration failed")
+
+        return {
+            "outlet_id": outlet_id,
+            "username": payload.username,
+            "verification_status": "pending_verification",
+            "message": "Registered. Pending admin verification before your outlet is visible to customers.",
+        }
 
     @staticmethod
     async def set_item_availability(

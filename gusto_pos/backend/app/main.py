@@ -30,6 +30,7 @@ from app.modules.analytics.router import router as analytics_router
 # CareVo Skip (additive; customer pre-order / pickup)
 from app.modules.carevo_customer.controller import router as carevo_customer_router
 from app.modules.carevo_pos.controller import router as carevo_pos_router
+from app.modules.onboarding.controller import router as onboarding_router
 
 # CareVo Admin Dashboard (additive; SUPER_ADMIN-gated platform ops)
 from app.modules.carevo_admin.controller import router as carevo_admin_router
@@ -83,6 +84,8 @@ app.include_router(analytics_router, prefix="/api/v1")
 # CareVo Skip routers → /api/v1/customer/... and /api/v1/pos/...
 app.include_router(carevo_customer_router, prefix="/api/v1")
 app.include_router(carevo_pos_router, prefix="/api/v1")
+# Public owner self-signup → /api/v1/register (unauthenticated, rate-limited).
+app.include_router(onboarding_router, prefix="/api/v1")
 # CareVo Admin router → /api/v1/admin/...  (inert until migration 003 + a
 # SUPER_ADMIN role grant exist; every route 403s for ordinary staff.)
 app.include_router(carevo_admin_router, prefix="/api/v1")

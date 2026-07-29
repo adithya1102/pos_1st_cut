@@ -74,6 +74,43 @@ async def set_item_availability(
     )
 
 
+# ------------------------- Menu CRUD (Owner App) ---------------------------
+@router.get("/categories", response_model=list[s.OwnerCategoryOut])
+async def list_categories(
+    staff: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    return await CarevoService.list_owner_categories(db, _require_outlet(staff))
+
+
+@router.post("/menu-items", response_model=s.OwnerMenuItemOut, status_code=201)
+async def create_menu_item(
+    payload: s.CreateMenuItemIn,
+    staff: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    return await CarevoService.create_menu_item(db, _require_outlet(staff), payload)
+
+
+@router.patch("/menu-items/{item_id}", response_model=s.OwnerMenuItemOut)
+async def update_menu_item(
+    item_id: uuid.UUID,
+    payload: s.UpdateMenuItemIn,
+    staff: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    return await CarevoService.update_menu_item(db, item_id, _require_outlet(staff), payload)
+
+
+@router.delete("/menu-items/{item_id}", response_model=s.DeleteMenuItemOut)
+async def delete_menu_item(
+    item_id: uuid.UUID,
+    staff: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    return await CarevoService.delete_menu_item(db, item_id, _require_outlet(staff))
+
+
 @router.get("/orders", response_model=list[s.OwnerOrderOut])
 async def list_active_orders(
     staff: User = Depends(get_current_staff),

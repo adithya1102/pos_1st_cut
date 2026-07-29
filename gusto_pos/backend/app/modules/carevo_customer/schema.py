@@ -138,6 +138,22 @@ class VerifyPickupIn(BaseModel):
     pickup_code: str
 
 
+class RegisterIn(BaseModel):
+    restaurant_name: str = Field(..., min_length=2, max_length=100)
+    city: Optional[str] = Field(None, max_length=50)
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    username: str = Field(..., min_length=3, max_length=50)
+    password: str = Field(..., min_length=8, max_length=128)
+
+
+class RegisterOut(BaseModel):
+    outlet_id: uuid.UUID
+    username: str
+    verification_status: str
+    message: str
+
+
 class VerifyPickupOut(BaseModel):
     verified: bool
     order_id: Optional[uuid.UUID] = None
@@ -168,6 +184,42 @@ class OwnerMenuItemOut(BaseModel):
     is_available: bool
     is_active: bool
     base_price: float
+    is_veg: bool = True
+    prep_time_minutes: Optional[int] = None
+    image_url: Optional[str] = None
+    category_id: Optional[uuid.UUID] = None
+    category_name: Optional[str] = None
+
+
+class OwnerCategoryOut(BaseModel):
+    id: uuid.UUID
+    name: str
+
+
+class CreateMenuItemIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    base_price: float = Field(..., ge=0)
+    category_id: uuid.UUID
+    is_veg: bool = True
+    prep_time_minutes: Optional[int] = Field(None, ge=0, le=1440)
+    image_url: Optional[str] = Field(None, max_length=1024)
+
+
+class UpdateMenuItemIn(BaseModel):
+    # All optional — a PATCH updates only the fields provided.
+    name: Optional[str] = Field(None, min_length=1, max_length=200)
+    base_price: Optional[float] = Field(None, ge=0)
+    category_id: Optional[uuid.UUID] = None
+    is_veg: Optional[bool] = None
+    prep_time_minutes: Optional[int] = Field(None, ge=0, le=1440)
+    image_url: Optional[str] = Field(None, max_length=1024)
+    is_available: Optional[bool] = None
+
+
+class DeleteMenuItemOut(BaseModel):
+    ok: bool
+    id: uuid.UUID
+    is_active: bool
 
 
 class SetAvailabilityIn(BaseModel):
