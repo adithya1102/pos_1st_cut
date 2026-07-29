@@ -44,7 +44,8 @@ enum VegFilter {
 
 class _MenuScreenState extends State<MenuScreen> {
   late Future<MenuResponse> _future;
-  int _selectedCategory = 0;
+  // -1 = the cumulative "All" view; 0..n-1 = a specific category.
+  int _selectedCategory = -1;
   VegFilter _vegFilter = VegFilter.all;
 
   @override
@@ -104,11 +105,15 @@ class _MenuScreenState extends State<MenuScreen> {
             if (categories.isEmpty) {
               return const _MenuError(message: 'This menu is empty right now.');
             }
-            final safeIndex = _selectedCategory.clamp(0, categories.length - 1);
-            final activeCategory = categories[safeIndex];
-            final visibleItems = activeCategory.items
+            final isAll =
+                _selectedCategory < 0 || _selectedCategory >= categories.length;
+            final sourceItems = isAll
+                ? categories.expand((cat) => cat.items).toList()
+                : categories[_selectedCategory].items;
+            final visibleItems = sourceItems
                 .where((it) => _vegFilter.matches(it.isVeg))
                 .toList();
+            final sectionTitle = isAll ? 'All items' : categories[_selectedCategory].name;
 
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -118,13 +123,24 @@ class _MenuScreenState extends State<MenuScreen> {
                   child: ListView.separated(
                     scrollDirection: Axis.horizontal,
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    itemCount: categories.length,
+                    // +1 for the leading cumulative "All" chip.
+                    itemCount: categories.length + 1,
                     separatorBuilder: (_, _) => const SizedBox(width: 10),
-                    itemBuilder: (_, i) => NeoChip(
-                      label: categories[i].name,
-                      selected: i == safeIndex,
-                      onTap: () => setState(() => _selectedCategory = i),
-                    ),
+                    itemBuilder: (_, i) {
+                      if (i == 0) {
+                        return NeoChip(
+                          label: 'All',
+                          selected: isAll,
+                          onTap: () => setState(() => _selectedCategory = -1),
+                        );
+                      }
+                      final ci = i - 1;
+                      return NeoChip(
+                        label: categories[ci].name,
+                        selected: !isAll && ci == _selectedCategory,
+                        onTap: () => setState(() => _selectedCategory = ci),
+                      );
+                    },
                   ),
                 ),
                 SizedBox(
@@ -146,7 +162,7 @@ class _MenuScreenState extends State<MenuScreen> {
                 ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
-                  child: Text(activeCategory.name, style: textTheme.headlineSmall),
+                  child: Text(sectionTitle, style: textTheme.headlineSmall),
                 ),
                 Expanded(
                   child: visibleItems.isEmpty

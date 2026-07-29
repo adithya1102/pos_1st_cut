@@ -26,6 +26,10 @@ class MenuItemCard extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (item.imageUrl != null) ...[
+              _DishImage(url: item.imageUrl!),
+              const SizedBox(width: 12),
+            ],
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -73,6 +77,38 @@ class MenuItemCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Dish thumbnail with the neobrutalist bordered/shadowed treatment.
+class _DishImage extends StatelessWidget {
+  const _DishImage({required this.url});
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return Container(
+      width: 72,
+      height: 72,
+      decoration: BoxDecoration(
+        color: c.surfaceAlt,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: c.border, width: 3),
+        boxShadow: [
+          BoxShadow(color: c.shadow, offset: const Offset(3, 3), blurRadius: 0),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Image.network(
+        url,
+        fit: BoxFit.cover,
+        // Neutral placeholder while loading / on failure — never breaks layout.
+        loadingBuilder: (ctx, child, progress) =>
+            progress == null ? child : Center(child: Icon(Icons.restaurant, color: c.inkSoft)),
+        errorBuilder: (_, _, _) => Center(child: Icon(Icons.restaurant, color: c.inkSoft)),
       ),
     );
   }

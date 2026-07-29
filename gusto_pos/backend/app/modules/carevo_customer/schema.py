@@ -52,6 +52,7 @@ class MenuItemOut(BaseModel):
     is_veg: bool
     is_available: bool
     prep_time_minutes: Optional[int] = None
+    image_url: Optional[str] = None
     tags: Any = None
     customizations: list[str] = []
 

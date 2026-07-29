@@ -46,6 +46,7 @@ class MenuItem {
     required this.isVeg,
     required this.isAvailable,
     required this.prepTimeMinutes,
+    required this.imageUrl,
     required this.tags,
     required this.customizations,
   });
@@ -56,10 +57,12 @@ class MenuItem {
   final bool isVeg;
   final bool isAvailable;
   final int prepTimeMinutes;
+  final String? imageUrl;
   final List<String> tags;
   final List<CustomizationGroup> customizations;
 
   factory MenuItem.fromJson(Map<String, dynamic> json) {
+    final img = json['image_url'] as String?;
     return MenuItem(
       id: json['id']?.toString() ?? '',
       name: (json['name'] ?? '') as String,
@@ -67,6 +70,7 @@ class MenuItem {
       isVeg: (json['is_veg'] ?? true) as bool,
       isAvailable: (json['is_available'] ?? true) as bool,
       prepTimeMinutes: (json['prep_time_minutes'] as num?)?.toInt() ?? 0,
+      imageUrl: (img != null && img.isNotEmpty) ? img : null,
       tags: ((json['tags'] as List<dynamic>?) ?? [])
           .map((e) => e.toString())
           .toList(),

@@ -115,7 +115,8 @@ class CarevoService:
         rows = (await db.execute(text("""
             SELECT c.id AS cat_id, c.name AS cat_name,
                    mi.id AS item_id, mi.name AS item_name, mi.base_price,
-                   mi.is_veg, mi.is_available, mi.prep_time_minutes, mi.tags
+                   mi.is_veg, mi.is_available, mi.prep_time_minutes, mi.tags,
+                   mi.image_url
             FROM categories c
             JOIN menus m ON m.id = c.menu_id
             LEFT JOIN menu_items mi
@@ -152,6 +153,7 @@ class CarevoService:
                     "is_veg": bool(r.is_veg),
                     "is_available": bool(r.is_available),
                     "prep_time_minutes": r.prep_time_minutes,
+                    "image_url": r.image_url,
                     "tags": r.tags,
                     "customizations": mods.get(str(r.item_id), []),
                 })
@@ -241,7 +243,11 @@ class CarevoService:
     # ---------------------------- Payment ----------------------------------
     @staticmethod
     async def _generate_pickup_code(db: AsyncSession, outlet_id) -> str:
-        alphabet = string.ascii_uppercase + string.digits
+        # Digits 2-9 only: no visually ambiguous chars (0/O, 1/I/l) and easy to
+        # type on a numeric keypad at verify time. 8^6 = 262k codes, and
+        # uniqueness is only needed among an outlet's LIVE orders (a handful).
+        # Existing issued codes are unaffected — this only changes new ones.
+        alphabet = "23456789"
         for _ in range(30):
             code = "".join(secrets.choice(alphabet) for _ in range(6))
             # Unique among LIVE orders for this outlet (matches partial unique index).
