@@ -119,6 +119,16 @@ async def list_active_orders(
     return await CarevoService.list_active_orders(db, _require_outlet(staff))
 
 
+@router.post("/orders/{order_id}/mark-paid", response_model=s.MarkPaidOut)
+async def mark_order_paid(
+    order_id: uuid.UUID,
+    staff: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Manual payment confirmation for the UPI-intent flow."""
+    return await CarevoService.mark_order_paid_by_staff(db, order_id, _require_outlet(staff))
+
+
 @router.post("/orders/{order_id}/notify", response_model=s.NotifyOut)
 async def notify_order(
     order_id: uuid.UUID,

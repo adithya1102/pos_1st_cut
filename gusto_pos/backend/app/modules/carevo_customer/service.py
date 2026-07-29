@@ -88,12 +88,12 @@ class CarevoService:
     @staticmethod
     async def list_outlets(db: AsyncSession, lat: Optional[float], lng: Optional[float]) -> list[dict]:
         rows = (await db.execute(text(
-            "SELECT id, location_name, city, latitude, longitude FROM outlets "
+            "SELECT id, location_name, city, latitude, longitude, upi_id FROM outlets "
             "WHERE is_visible = true"
         ))).fetchall()
         out = []
         for r in rows:
-            oid, name, city, o_lat, o_lng = r
+            oid, name, city, o_lat, o_lng, upi_id = r
             distance = None
             if lat is not None and lng is not None and o_lat is not None and o_lng is not None:
                 distance = CarevoService._haversine_km(lat, lng, float(o_lat), float(o_lng))
@@ -103,6 +103,7 @@ class CarevoService:
                 "address": city,
                 "is_open": True,
                 "distance_km": distance,
+                "upi_id": upi_id,
             })
         if lat is not None and lng is not None:
             out.sort(key=lambda x: (x["distance_km"] is None, x["distance_km"] or 0))
@@ -644,12 +645,14 @@ class CarevoService:
 
             outlet_id = (await db.execute(text(
                 "INSERT INTO outlets (id, location_name, city, latitude, longitude, "
-                "  geofence_radius_meters, organization_id, verification_status, is_visible, created_at) "
+                "  geofence_radius_meters, organization_id, verification_status, is_visible, "
+                "  upi_id, created_at) "
                 "VALUES (gen_random_uuid(), :ln, :city, :lat, :lng, 100, :org, "
-                "        'pending_verification', false, now()) RETURNING id"
+                "        'pending_verification', false, :upi, now()) RETURNING id"
             ), {
                 "ln": payload.restaurant_name, "city": payload.city,
                 "lat": payload.latitude, "lng": payload.longitude, "org": str(org_id),
+                "upi": payload.upi_id,
             })).scalar()
 
             await db.execute(text(
@@ -710,7 +713,7 @@ class CarevoService:
         # Sweep expired pickups so the queue never shows stale orders.
         await CarevoService._expire_stale_pickups(db, outlet_id=outlet_id)
         orders = (await db.execute(text("""
-            SELECT id, status, is_locked, total_amount, created_at
+            SELECT id, status, payment_status, is_locked, total_amount, created_at
             FROM customer_orders
             WHERE outlet_id = :oid AND status NOT IN ('COMPLETED','CANCELLED','ABANDONED')
             ORDER BY created_at DESC
@@ -733,6 +736,7 @@ class CarevoService:
             {
                 "order_id": o.id,
                 "status": o.status,
+                "payment_status": o.payment_status,
                 "is_locked": bool(o.is_locked),
                 "total_amount": float(o.total_amount) if o.total_amount is not None else 0.0,
                 "created_at": o.created_at,
@@ -740,6 +744,26 @@ class CarevoService:
             }
             for o in orders
         ]
+
+    @staticmethod
+    async def mark_order_paid_by_staff(
+        db: AsyncSession, order_id: uuid.UUID, outlet_id: uuid.UUID
+    ) -> dict:
+        """Manual-tick payment confirmation (UPI-intent MVP). Staff confirm the
+        payment landed in their UPI app; this flips the order to PAID, issues the
+        pickup_code, and broadcasts — surfacing the order as confirmed to the
+        customer. Ownership-scoped and idempotent (via mark_paid)."""
+        res = await db.execute(select(CustomerOrder).where(CustomerOrder.id == order_id))
+        order = res.scalars().first()
+        if not order or str(order.outlet_id) != str(outlet_id):
+            raise HTTPException(status_code=404, detail="Order not found for this outlet")
+        order = await CarevoService.mark_paid(db, order, method="upi_manual")
+        return {
+            "order_id": order.id,
+            "status": order.status,
+            "payment_status": order.payment_status,
+            "pickup_code": order.pickup_code,
+        }
 
     @staticmethod
     async def notify_order(

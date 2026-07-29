@@ -42,6 +42,7 @@ class OutletOut(BaseModel):
     address: Optional[str] = None
     is_open: bool = True
     distance_km: Optional[float] = None
+    upi_id: Optional[str] = None
 
 
 # ------------------------------ Menu ----------------------------------------
@@ -146,6 +147,9 @@ class RegisterIn(BaseModel):
     longitude: Optional[float] = None
     username: str = Field(..., min_length=3, max_length=50)
     password: str = Field(..., min_length=8, max_length=128)
+    # Payee VPA (e.g. name@bank) for the upi://pay intent. Required for new
+    # signups so the outlet can accept payments; simple "x@y" shape check.
+    upi_id: str = Field(..., min_length=3, max_length=255, pattern=r"^[^@\s]+@[^@\s]+$")
 
 
 class RegisterOut(BaseModel):
@@ -241,10 +245,18 @@ class OwnerOrderLineOut(BaseModel):
 class OwnerOrderOut(BaseModel):
     order_id: uuid.UUID
     status: str
+    payment_status: Optional[str] = None
     is_locked: bool
     total_amount: float
     created_at: Optional[datetime] = None
     items: list[OwnerOrderLineOut] = []
+
+
+class MarkPaidOut(BaseModel):
+    order_id: uuid.UUID
+    status: str
+    payment_status: Optional[str] = None
+    pickup_code: Optional[str] = None
 
 
 class NotifyIn(BaseModel):
