@@ -25,12 +25,13 @@ services:
         sync: false
 
       # --- Auth posture for a publicly reachable deploy ---
-      # The customer OTP path runs in stub mode (any phone + OTP_STUB_CODE is
-      # accepted, and an unknown phone creates a Customer row). That is an open
-      # login for anyone who finds this URL, so the whole path stays off here.
-      # Staff login (/api/v1/auth/login, real username+password) is unaffected.
+      # TEMPORARY TEST-WINDOW SETTING — value is "true" to let 2-3 known testers
+      # log in via customer_app with stub OTP 000000. While true, the OTP path is
+      # an OPEN login for ANYONE who has the URL/APK (any phone + 000000 works and
+      # creates a Customer row). REVERT to "false" the moment the test window ends,
+      # before the APK reaches real testers/strangers. Staff login is unaffected.
       - key: CUSTOMER_AUTH_ENABLED
-        value: "false"
+        value: "true"
 
       - key: ALGORITHM
         value: HS256

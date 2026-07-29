@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -26,6 +27,14 @@ class _OtpScreenState extends State<OtpScreen> {
   void dispose() {
     _controller.dispose();
     super.dispose();
+  }
+
+  /// DEBUG-ONLY shortcut: auto-fill the stub code and verify. Compiled out of
+  /// release builds by the `kDebugMode` guards on its call sites.
+  Future<void> _skipDev() async {
+    _controller.text = AppConfig.devOtpCode;
+    setState(() {});
+    await _verify();
   }
 
   Future<void> _verify() async {
@@ -104,30 +113,42 @@ class _OtpScreenState extends State<OtpScreen> {
                       loading: auth.busy,
                       onPressed: _valid ? _verify : null,
                     ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 18),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: c.surfaceAlt,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: c.border, width: 2),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.info_outline, size: 18, color: c.inkSoft),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Dev build: use code ${AppConfig.devOtpCode} to sign in.',
-                        style: textTheme.bodySmall,
+                    // DEBUG-ONLY: skip straight through with the stub code.
+                    // Absent from release builds.
+                    if (kDebugMode) ...[
+                      const SizedBox(height: 12),
+                      OutlinedButton.icon(
+                        onPressed: auth.busy ? null : _skipDev,
+                        icon: const Icon(Icons.fast_forward),
+                        label: Text('Skip (dev · ${AppConfig.devOtpCode})'),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
+              if (kDebugMode) ...[
+                const SizedBox(height: 18),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: c.surfaceAlt,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: c.border, width: 2),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.info_outline, size: 18, color: c.inkSoft),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Dev build: use code ${AppConfig.devOtpCode} to sign in.',
+                          style: textTheme.bodySmall,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
               Center(
                 child: TextButton(
