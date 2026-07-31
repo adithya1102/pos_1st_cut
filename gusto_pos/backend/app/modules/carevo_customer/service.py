@@ -7,7 +7,7 @@ import string
 import time
 import uuid
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import HTTPException, status
@@ -23,6 +23,7 @@ from app.modules.carevo_customer.model import (
     PaymentTransaction,
 )
 from app.modules.carevo_payments.gateway import get_gateway
+from app.modules.prediction import events as pe
 
 # --- OTP rate limiter -------------------------------------------------------
 # NOTE: single-process limiter; use Redis in prod
@@ -220,6 +221,24 @@ class CarevoService:
             status="CREATED",
             method=None,
         ))
+
+        # FR-E1: ORDER_CREATED in the SAME transaction as the order insert.
+        await pe.write_event(
+            db, order.id, pe.ORDER_CREATED,
+            actor_type="customer", actor_id=customer.id, source="tap",
+            outlet_id=order.outlet_id,
+            payload={
+                "items": [
+                    {"menu_item_id": str(i.menu_item_id), "quantity": i.quantity}
+                    for i in payload.items
+                ],
+                # origin/transport are populated once Step 3 (customer_app) lands.
+                "transport_mode": getattr(payload, "transport_mode", None),
+                "origin_lat": getattr(payload, "origin_lat", None),
+                "origin_lng": getattr(payload, "origin_lng", None),
+                "origin_source": getattr(payload, "origin_source", None),
+            },
+        )
         await db.commit()
 
         return {
@@ -271,13 +290,21 @@ class CarevoService:
         if order_id is not None:
             clauses.append("id = :iid")
             params["iid"] = str(order_id)
-        res = await db.execute(text(
+        rows = (await db.execute(text(
             "UPDATE customer_orders SET status='ABANDONED', updated_at=now() "
-            "WHERE " + " AND ".join(clauses)
-        ), params)
-        if res.rowcount:
+            "WHERE " + " AND ".join(clauses) + " RETURNING id, outlet_id"
+        ), params)).fetchall()
+        if rows:
+            # FR-E1: one ORDER_ABANDONED per expired order, same transaction.
+            for r in rows:
+                await pe.write_event(
+                    db, r.id, pe.ORDER_ABANDONED,
+                    actor_type="system", source="system", outlet_id=r.outlet_id,
+                    payload={"reason": "pickup_ttl_expired",
+                             "ttl_minutes": settings.PICKUP_TTL_MINUTES},
+                )
             await db.commit()
-        return res.rowcount
+        return len(rows)
 
     @staticmethod
     async def _generate_pickup_code(db: AsyncSession, outlet_id) -> str:
@@ -349,14 +376,20 @@ class CarevoService:
         txn.method = method or txn.method or "upi"
         txn.status = "PAID"
         txn.raw_payload = raw_payload
-        txn.updated_at = datetime.utcnow()
+        txn.updated_at = datetime.now(timezone.utc)
 
         order.payment_status = "PAID"
         order.status = "PAID"
         if not order.pickup_code:
             order.pickup_code = await CarevoService._generate_pickup_code(db, order.outlet_id)
-        order.updated_at = datetime.utcnow()
+        order.updated_at = datetime.now(timezone.utc)
 
+        # FR-E1: ORDER_PAID in the same transaction as the PAID transition.
+        await pe.write_event(
+            db, order.id, pe.ORDER_PAID,
+            actor_type="staff", source="tap", outlet_id=order.outlet_id,
+            payload={"method": method or "upi_manual"},
+        )
         await db.commit()
         await db.refresh(order)
 
@@ -385,7 +418,7 @@ class CarevoService:
                 new_status = "RECEIVED"
 
         order.status = new_status
-        order.updated_at = datetime.utcnow()
+        order.updated_at = datetime.now(timezone.utc)
         await db.commit()
         await db.refresh(order)
         await CarevoService._broadcast_status(order)
@@ -437,8 +470,13 @@ class CarevoService:
 
         if code_ok and status_ok:
             order.status = "COMPLETED"
-            order.pickup_verified_at = datetime.utcnow()
-            order.updated_at = datetime.utcnow()
+            order.pickup_verified_at = datetime.now(timezone.utc)
+            order.updated_at = datetime.now(timezone.utc)
+            # FR-E1: PICKUP_VERIFIED in the same transaction as COMPLETED.
+            await pe.write_event(
+                db, order.id, pe.PICKUP_VERIFIED,
+                actor_type="staff", source="tap", outlet_id=order.outlet_id,
+            )
             await db.commit()
             await db.refresh(order)
             await CarevoService._broadcast_status(order)
@@ -450,7 +488,7 @@ class CarevoService:
         if order.failed_attempts >= 3:
             order.is_locked = True
             locked = True
-        order.updated_at = datetime.utcnow()
+        order.updated_at = datetime.now(timezone.utc)
         await db.commit()
         await db.refresh(order)
         attempts_remaining = max(0, 3 - order.failed_attempts)
@@ -831,8 +869,18 @@ class CarevoService:
             "item_id": str(resolved_item_id) if resolved_item_id else None,
             "item_name": item_name,
             "message": messages[notify_type],
-            "ts": datetime.utcnow().isoformat(),
+            "ts": datetime.now(timezone.utc).isoformat(),
         }
+
+        # Record the item-unavailability as a first-class event (affects order
+        # composition + hold tolerance). ready_now/delayed_10 have no §9 event.
+        if notify_type == "item_unavailable":
+            await pe.write_event(
+                db, order_id, pe.ITEM_UNAVAILABLE,
+                actor_type="staff", source="tap", outlet_id=outlet_id,
+                payload={"item_id": str(resolved_item_id) if resolved_item_id else None},
+            )
+            await db.commit()
 
         # Best-effort delivery: delivered reflects whether any socket is connected.
         delivered = bool(customer_manager.active_connections.get(str(order_id)))
