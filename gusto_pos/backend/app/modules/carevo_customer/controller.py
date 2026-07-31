@@ -83,6 +83,49 @@ async def create_order(
     return await CarevoService.create_order(db, customer, payload)
 
 
+# --------------------- PE Step 3: customer events --------------------------
+@router.post("/orders/{order_id}/depart", response_model=s.EventAck)
+async def depart(
+    order_id: uuid.UUID,
+    payload: s.DepartIn,
+    customer: Customer = Depends(get_current_customer),
+    db: AsyncSession = Depends(get_db),
+):
+    return await CarevoService.record_departed(db, order_id, customer, payload.lat, payload.lng)
+
+
+@router.post("/orders/{order_id}/location", response_model=s.EventAck)
+async def location_ping(
+    order_id: uuid.UUID,
+    payload: s.LocationPingIn,
+    customer: Customer = Depends(get_current_customer),
+    db: AsyncSession = Depends(get_db),
+):
+    return await CarevoService.record_location_ping(
+        db, order_id, customer, payload.lat, payload.lng,
+        payload.accuracy_m, payload.speed_mps)
+
+
+@router.post("/orders/{order_id}/arrived", response_model=s.EventAck)
+async def arrived(
+    order_id: uuid.UUID,
+    payload: s.ArrivedIn,
+    customer: Customer = Depends(get_current_customer),
+    db: AsyncSession = Depends(get_db),
+):
+    return await CarevoService.record_arrived(db, order_id, customer, payload.accuracy_m, payload.source)
+
+
+@router.post("/orders/{order_id}/feedback", response_model=s.EventAck)
+async def wait_feedback(
+    order_id: uuid.UUID,
+    payload: s.WaitFeedbackIn,
+    customer: Customer = Depends(get_current_customer),
+    db: AsyncSession = Depends(get_db),
+):
+    return await CarevoService.record_wait_feedback(db, order_id, customer, payload.bucket)
+
+
 @router.get("/orders/{order_id}", response_model=s.OrderOut)
 async def get_order(
     order_id: uuid.UUID,

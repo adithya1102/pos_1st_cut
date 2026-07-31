@@ -1,6 +1,7 @@
 """Business logic for CareVo Skip (customer pre-order / pickup)."""
 from __future__ import annotations
 
+import json
 import math
 import secrets
 import string
@@ -187,6 +188,16 @@ class CarevoService:
         db.add(order)
         await db.flush()  # assign order.id
 
+        # PE Step 3 (FR-C1/C2): persist travel context on the order.
+        if any(v is not None for v in (payload.transport_mode, payload.origin_lat,
+                                       payload.origin_lng, payload.origin_source)):
+            await db.execute(text("""
+                UPDATE customer_orders SET transport_mode=:tm, origin_lat=:la,
+                       origin_lng=:ln, origin_source=:os WHERE id=:id
+            """), {"tm": payload.transport_mode, "la": payload.origin_lat,
+                   "ln": payload.origin_lng, "os": payload.origin_source,
+                   "id": str(order.id)})
+
         total = 0.0
         for line in payload.items:
             mi = by_id.get(str(line.menu_item_id))
@@ -263,6 +274,85 @@ class CarevoService:
         if str(order.customer_id) != str(customer.id):
             raise HTTPException(status_code=403, detail="Not your order")
         return order
+
+    # -------------------- PE Step 3: customer events -----------------------
+    @staticmethod
+    async def _owned_order_row(db: AsyncSession, order_id, customer):
+        row = (await db.execute(text(
+            "SELECT id, outlet_id, customer_id FROM customer_orders WHERE id = :o"
+        ), {"o": str(order_id)})).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Order not found")
+        if str(row.customer_id) != str(customer.id):
+            raise HTTPException(status_code=403, detail="Not your order")
+        return row
+
+    @staticmethod
+    async def _has_event(db: AsyncSession, order_id, event_type) -> bool:
+        return (await db.execute(text(
+            "SELECT 1 FROM order_events WHERE order_id = :o AND event_type = :t LIMIT 1"
+        ), {"o": str(order_id), "t": event_type})).first() is not None
+
+    @staticmethod
+    async def record_departed(db, order_id, customer, lat, lng) -> dict:
+        row = await CarevoService._owned_order_row(db, order_id, customer)
+        # FR-C3: whichever fires first (tap or inferred) wins — idempotent.
+        if await CarevoService._has_event(db, order_id, pe.CUSTOMER_DEPARTED):
+            return {"ok": True, "recorded": False, "detail": "already departed"}
+        await pe.write_event(
+            db, order_id, pe.CUSTOMER_DEPARTED, actor_type="customer",
+            actor_id=customer.id, source="tap", outlet_id=row.outlet_id,
+            payload={"lat": lat, "lng": lng})
+        await db.commit()
+        return {"ok": True, "recorded": True}
+
+    @staticmethod
+    async def record_location_ping(db, order_id, customer, lat, lng, accuracy_m, speed_mps) -> dict:
+        row = await CarevoService._owned_order_row(db, order_id, customer)
+        last = (await db.execute(text(
+            "SELECT occurred_at, payload FROM order_events WHERE order_id = :o "
+            "AND event_type = 'LOCATION_PING' ORDER BY seq DESC LIMIT 1"
+        ), {"o": str(order_id)})).first()
+        if last is not None:
+            lp = last.payload if isinstance(last.payload, dict) else json.loads(last.payload)
+            dt_s = (datetime.now(timezone.utc) - last.occurred_at).total_seconds()
+            dist_m = float("inf")
+            if lp.get("lat") is not None and lp.get("lng") is not None:
+                dist_m = CarevoService._haversine_km(
+                    float(lp["lat"]), float(lp["lng"]), float(lat), float(lng)) * 1000.0
+            # FR-E5 / NFR-7: reject unless ≥ 90s OR ≥ 300m since the last ping.
+            if dt_s < 90 and dist_m < 300:
+                return {"ok": True, "recorded": False, "detail": "throttled"}
+        await pe.write_event(
+            db, order_id, pe.LOCATION_PING, actor_type="customer",
+            actor_id=customer.id, source="system", outlet_id=row.outlet_id,
+            payload={"lat": lat, "lng": lng, "accuracy_m": accuracy_m, "speed_mps": speed_mps})
+        await db.commit()
+        return {"ok": True, "recorded": True}
+
+    @staticmethod
+    async def record_arrived(db, order_id, customer, accuracy_m, source) -> dict:
+        row = await CarevoService._owned_order_row(db, order_id, customer)
+        if await CarevoService._has_event(db, order_id, pe.CUSTOMER_ARRIVED):
+            return {"ok": True, "recorded": False, "detail": "already arrived"}
+        await pe.write_event(
+            db, order_id, pe.CUSTOMER_ARRIVED, actor_type="customer",
+            actor_id=customer.id, source=("geofence" if source == "geofence" else "tap"),
+            outlet_id=row.outlet_id, payload={"accuracy_m": accuracy_m})
+        await db.commit()
+        return {"ok": True, "recorded": True}
+
+    @staticmethod
+    async def record_wait_feedback(db, order_id, customer, bucket) -> dict:
+        row = await CarevoService._owned_order_row(db, order_id, customer)
+        if await CarevoService._has_event(db, order_id, pe.WAIT_FEEDBACK):
+            return {"ok": True, "recorded": False, "detail": "already submitted"}
+        await pe.write_event(
+            db, order_id, pe.WAIT_FEEDBACK, actor_type="customer",
+            actor_id=customer.id, source="tap", outlet_id=row.outlet_id,
+            payload={"bucket": bucket})
+        await db.commit()
+        return {"ok": True, "recorded": True}
 
     # ---------------------------- Payment ----------------------------------
     @staticmethod

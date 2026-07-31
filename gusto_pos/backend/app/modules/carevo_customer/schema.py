@@ -81,6 +81,39 @@ class CreateOrderIn(BaseModel):
     outlet_id: uuid.UUID
     items: list[OrderItemIn] = Field(..., min_length=1)
     customer_notes: Optional[str] = None
+    # PE Step 3 (FR-C1/C2): travel context captured at checkout.
+    transport_mode: Optional[str] = None      # bike | car | walk | auto | bus
+    origin_lat: Optional[float] = None
+    origin_lng: Optional[float] = None
+    origin_source: Optional[str] = None        # gps | places_autocomplete | none
+
+
+# --- PE Step 3: customer event inputs ---------------------------------------
+class DepartIn(BaseModel):
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+
+class LocationPingIn(BaseModel):
+    lat: float
+    lng: float
+    accuracy_m: Optional[float] = None
+    speed_mps: Optional[float] = None
+
+
+class ArrivedIn(BaseModel):
+    accuracy_m: Optional[float] = None
+    source: str = "geofence"                    # geofence | tap
+
+
+class WaitFeedbackIn(BaseModel):
+    bucket: str = Field(..., pattern=r"^(0|1-3|3-5|5\+)$")
+
+
+class EventAck(BaseModel):
+    ok: bool = True
+    recorded: bool = True
+    detail: Optional[str] = None
 
 
 class PaymentBlock(BaseModel):
