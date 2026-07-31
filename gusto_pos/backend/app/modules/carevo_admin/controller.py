@@ -93,6 +93,48 @@ async def unlock_order(
     return await AdminService.unlock_order(db, admin, order_id)
 
 
+# -------------------- prediction engine (shadow mode) ----------------------
+# Read-only observability over migration 006's PE tables. No response_model:
+# the payloads are nested and mix UUID/datetime/Decimal/JSONB, which FastAPI's
+# jsonable_encoder serialises cleanly without a hand-maintained schema.
+@router.get("/prediction/overview")
+async def prediction_overview(
+    _admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """FR-A3 shadow-mode status + FR-A4 global data health toward graduation."""
+    return await AdminService.prediction_overview(db)
+
+
+@router.get("/prediction/outlets")
+async def prediction_outlets(
+    _admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """FR-A2 per-outlet prediction quality (trust, calibration, tap discipline)."""
+    return await AdminService.prediction_outlets(db)
+
+
+@router.get("/prediction/orders")
+async def prediction_recent_orders(
+    limit: int = Query(default=50, ge=1, le=200),
+    _admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Recent orders with an event stream — the drill-in list for timelines."""
+    return await AdminService.prediction_recent_orders(db, limit)
+
+
+@router.get("/prediction/orders/{order_id}/timeline")
+async def order_timeline(
+    order_id: uuid.UUID,
+    _admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """FR-A1 per-order event timeline + twin promise + predictions + outcome."""
+    return await AdminService.order_timeline(db, order_id)
+
+
 # ------------------------------ audit log ----------------------------------
 @router.get("/audit-logs", response_model=list[s.AuditLogOut])
 async def list_audit_logs(

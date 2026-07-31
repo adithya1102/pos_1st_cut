@@ -131,6 +131,106 @@ export interface AuditLog {
   created_at: string;
 }
 
+// -------------------- prediction engine (shadow mode) ----------------------
+
+export interface PredictionOverview {
+  shadow_mode: boolean;
+  read_only: boolean;
+  graduation_threshold: number;
+  orders_analyzed: number;
+  progress_pct: number;
+  promise_kept: number;
+  promise_kept_rate: number | null;
+  trusted_travel_observations: number;
+  trusted_kitchen_observations: number;
+  total_events: number;
+  orders_predicted: number;
+  avg_interval_score: number | null;
+  graduated_outlets: number;
+}
+
+export interface OutletQuality {
+  outlet_id: string;
+  outlet_name: string | null;
+  outcomes: number;
+  promise_kept: number;
+  promise_kept_rate: number | null;
+  avg_interval_score: number | null;
+  avg_kitchen_trust: number | null;
+  avg_travel_trust: number | null;
+  avg_customer_trust: number | null;
+  trusted_order_count: number;
+  tap_discipline: number | null;
+  shadow_mode: boolean;
+}
+
+export interface PredictionOrderRow {
+  order_id: string;
+  status: string;
+  outlet_id: string | null;
+  outlet_name: string | null;
+  risk_level: string | null;
+  travel_source: string | null;
+  degraded: boolean | null;
+  interval_score: number | null;
+  promise_kept: boolean | null;
+  event_count: number;
+  created_at: string | null;
+}
+
+export interface TimelineEvent {
+  seq: number;
+  event_type: string;
+  actor_type: string;
+  source: string;
+  occurred_at: string;
+  payload: Record<string, unknown> | null;
+}
+
+export interface TimelinePrediction {
+  predictor: string;
+  model_version: string;
+  mu_seconds: number | null;
+  sigma_seconds: number | null;
+  output: unknown;
+  predicted_at: string;
+}
+
+export interface OrderTimeline {
+  order_id: string;
+  status: string;
+  outlet_id: string | null;
+  outlet_name: string | null;
+  total_amount: number;
+  created_at: string | null;
+  events: TimelineEvent[];
+  twin: {
+    promise_start: string | null;
+    promise_end: string | null;
+    shadow_range_min: [number, number] | null;
+    risk_level: string | null;
+    travel_source: string | null;
+    degraded: boolean | null;
+    ready_sigma_s: number | null;
+    hold_tolerance_s: number | null;
+    last_recomputed_at: string | null;
+  } | null;
+  predictions: TimelinePrediction[];
+  outcome: {
+    actual_prep_s: number | null;
+    actual_travel_s: number | null;
+    actual_hold_s: number | null;
+    counter_wait_s: number | null;
+    promise_kept: boolean | null;
+    interval_score: number | null;
+    wait_feedback: string | null;
+    kitchen_trust: number;
+    travel_trust: number;
+    customer_trust: number;
+    trust_failures: string[];
+  } | null;
+}
+
 // ------------------------------ endpoints -----------------------------------
 
 export const adminApi = {
@@ -151,6 +251,16 @@ export const adminApi = {
 
   auditLogs: (limit = 100) =>
     api.get<AuditLog[]>(`/api/v1/admin/audit-logs?limit=${limit}`),
+
+  // Prediction engine (shadow-mode observability, read-only).
+  predictionOverview: () =>
+    api.get<PredictionOverview>("/api/v1/admin/prediction/overview"),
+  predictionOutlets: () =>
+    api.get<OutletQuality[]>("/api/v1/admin/prediction/outlets"),
+  predictionOrders: (limit = 50) =>
+    api.get<PredictionOrderRow[]>(`/api/v1/admin/prediction/orders?limit=${limit}`),
+  orderTimeline: (orderId: string) =>
+    api.get<OrderTimeline>(`/api/v1/admin/prediction/orders/${orderId}/timeline`),
 
   // Admin-assisted onboarding: reuses the public /register flow (same as
   // owner_app self-signup) to create an outlet (pending_verification) + owner.

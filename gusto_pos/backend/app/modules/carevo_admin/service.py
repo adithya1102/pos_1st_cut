@@ -220,6 +220,222 @@ class AdminService:
             "failed_attempts": row[2],
         }
 
+    # ---------------- prediction engine (shadow-mode observability) --------
+    # Read-only windows onto the PE tables from migration 006. Raw SQL, no ORM,
+    # every order FK points at customer_orders(id). Graduation is intentionally
+    # NOT implemented here (Build Order Step 7) — shadow_mode is reported as-is.
+    GRADUATION_THRESHOLD = 300
+
+    @staticmethod
+    async def prediction_overview(db: AsyncSession) -> dict:
+        """FR-A3 (shadow-mode status) + FR-A4 (global data health)."""
+        r = (await db.execute(text("""
+            SELECT
+              (SELECT count(*) FROM order_outcome)                          AS outcomes,
+              (SELECT count(*) FROM order_outcome WHERE promise_kept)       AS kept,
+              (SELECT count(*) FROM order_outcome WHERE travel_trust >= 0.5) AS trusted_travel,
+              (SELECT count(*) FROM order_outcome WHERE kitchen_trust > 0)   AS trusted_kitchen,
+              (SELECT count(*) FROM order_events)                           AS events,
+              (SELECT count(DISTINCT order_id) FROM prediction_log)         AS predicted_orders,
+              (SELECT round(avg(interval_score), 1) FROM order_outcome)     AS avg_interval,
+              (SELECT count(*) FROM outlet_reliability WHERE NOT shadow_mode) AS graduated_outlets
+        """))).first()
+        outcomes = r.outcomes or 0
+        threshold = AdminService.GRADUATION_THRESHOLD
+        return {
+            # Shadow mode is a hard product state in this build, not a per-outlet
+            # decision — Steps 6-8/10 (real Maps, graduation, JIT, GBM) are out.
+            "shadow_mode": True,
+            "read_only": True,
+            "graduation_threshold": threshold,
+            "orders_analyzed": outcomes,
+            "progress_pct": min(100.0, round(outcomes / threshold * 100, 1)) if threshold else 0.0,
+            "promise_kept": r.kept or 0,
+            "promise_kept_rate": round((r.kept or 0) / outcomes, 3) if outcomes else None,
+            "trusted_travel_observations": r.trusted_travel or 0,
+            "trusted_kitchen_observations": r.trusted_kitchen or 0,
+            "total_events": r.events or 0,
+            "orders_predicted": r.predicted_orders or 0,
+            "avg_interval_score": float(r.avg_interval) if r.avg_interval is not None else None,
+            "graduated_outlets": r.graduated_outlets or 0,
+        }
+
+    @staticmethod
+    async def prediction_outlets(db: AsyncSession) -> list[dict]:
+        """FR-A2 — per-outlet prediction quality. Only outlets with a completed
+        outcome appear (reliability is written alongside outcomes)."""
+        rows = (await db.execute(text("""
+            SELECT o.id, o.location_name,
+                   count(oo.order_id)                                    AS outcomes,
+                   count(oo.order_id) FILTER (WHERE oo.promise_kept)     AS kept,
+                   round(avg(oo.interval_score), 1)                      AS avg_interval,
+                   round(avg(oo.kitchen_trust), 2)                       AS avg_kitchen_trust,
+                   round(avg(oo.travel_trust), 2)                        AS avg_travel_trust,
+                   round(avg(oo.customer_trust), 2)                      AS avg_customer_trust,
+                   r.trusted_order_count, r.tap_discipline, r.shadow_mode
+            FROM outlets o
+            JOIN order_outcome oo       ON oo.outlet_id = o.id
+            LEFT JOIN outlet_reliability r ON r.outlet_id = o.id
+            GROUP BY o.id, o.location_name, r.trusted_order_count,
+                     r.tap_discipline, r.shadow_mode
+            ORDER BY outcomes DESC
+        """))).fetchall()
+        return [
+            {
+                "outlet_id": r.id,
+                "outlet_name": r.location_name,
+                "outcomes": r.outcomes,
+                "promise_kept": r.kept,
+                "promise_kept_rate": round(r.kept / r.outcomes, 3) if r.outcomes else None,
+                "avg_interval_score": float(r.avg_interval) if r.avg_interval is not None else None,
+                "avg_kitchen_trust": float(r.avg_kitchen_trust) if r.avg_kitchen_trust is not None else None,
+                "avg_travel_trust": float(r.avg_travel_trust) if r.avg_travel_trust is not None else None,
+                "avg_customer_trust": float(r.avg_customer_trust) if r.avg_customer_trust is not None else None,
+                "trusted_order_count": r.trusted_order_count or 0,
+                "tap_discipline": float(r.tap_discipline) if r.tap_discipline is not None else None,
+                "shadow_mode": bool(r.shadow_mode) if r.shadow_mode is not None else True,
+            }
+            for r in rows
+        ]
+
+    @staticmethod
+    async def prediction_recent_orders(db: AsyncSession, limit: int = 50) -> list[dict]:
+        """Recent orders that have an event stream — the list an admin drills
+        into for FR-A1 timelines."""
+        limit = max(1, min(limit, 200))
+        rows = (await db.execute(text("""
+            SELECT co.id, co.status, co.outlet_id, o.location_name AS outlet_name,
+                   t.risk_level, t.travel_source, t.degraded,
+                   oo.interval_score, oo.promise_kept,
+                   (SELECT count(*) FROM order_events e WHERE e.order_id = co.id) AS event_count,
+                   co.created_at
+            FROM customer_orders co
+            LEFT JOIN outlets o        ON o.id = co.outlet_id
+            LEFT JOIN order_twin t     ON t.order_id = co.id
+            LEFT JOIN order_outcome oo ON oo.order_id = co.id
+            WHERE EXISTS (SELECT 1 FROM order_events e WHERE e.order_id = co.id)
+            ORDER BY co.created_at DESC
+            LIMIT :lim
+        """), {"lim": limit})).fetchall()
+        return [
+            {
+                "order_id": r.id,
+                "status": r.status,
+                "outlet_id": r.outlet_id,
+                "outlet_name": r.outlet_name,
+                "risk_level": r.risk_level,
+                "travel_source": r.travel_source,
+                "degraded": bool(r.degraded) if r.degraded is not None else None,
+                "interval_score": float(r.interval_score) if r.interval_score is not None else None,
+                "promise_kept": r.promise_kept,
+                "event_count": r.event_count or 0,
+                "created_at": r.created_at,
+            }
+            for r in rows
+        ]
+
+    @staticmethod
+    async def order_timeline(db: AsyncSession, order_id: uuid.UUID) -> dict:
+        """FR-A1 — the full evidence for one order: raw event stream, the twin's
+        promise/shadow range, every prediction_log entry, and the scored outcome."""
+        head = (await db.execute(text("""
+            SELECT co.id, co.status, co.outlet_id, o.location_name AS outlet_name,
+                   co.total_amount, co.created_at
+            FROM customer_orders co
+            LEFT JOIN outlets o ON o.id = co.outlet_id
+            WHERE co.id = :o
+        """), {"o": str(order_id)})).first()
+        if not head:
+            raise HTTPException(status_code=404, detail="Order not found")
+
+        events = (await db.execute(text("""
+            SELECT seq, event_type, actor_type, source, occurred_at, payload
+            FROM order_events WHERE order_id = :o ORDER BY seq
+        """), {"o": str(order_id)})).fetchall()
+
+        twin = (await db.execute(text("""
+            SELECT promise_start, promise_end, risk_level, travel_source, degraded,
+                   ready_sigma_s, hold_tolerance_s, inputs, last_recomputed_at
+            FROM order_twin WHERE order_id = :o
+        """), {"o": str(order_id)})).first()
+
+        preds = (await db.execute(text("""
+            SELECT predictor, model_version, mu_seconds, sigma_seconds, output, predicted_at
+            FROM prediction_log WHERE order_id = :o ORDER BY predicted_at, id
+        """), {"o": str(order_id)})).fetchall()
+
+        outcome = (await db.execute(text("""
+            SELECT actual_prep_s, actual_travel_s, actual_hold_s, counter_wait_s,
+                   promise_kept, interval_score, wait_feedback,
+                   kitchen_trust, travel_trust, customer_trust, trust_failures
+            FROM order_outcome WHERE order_id = :o
+        """), {"o": str(order_id)})).first()
+
+        twin_out = None
+        if twin:
+            inp = twin.inputs if isinstance(twin.inputs, dict) else json.loads(twin.inputs)
+            sr = inp.get("shadow_range_min")
+            twin_out = {
+                "promise_start": twin.promise_start,
+                "promise_end": twin.promise_end,
+                "shadow_range_min": sr,
+                "risk_level": twin.risk_level,
+                "travel_source": twin.travel_source,
+                "degraded": bool(twin.degraded) if twin.degraded is not None else None,
+                "ready_sigma_s": twin.ready_sigma_s,
+                "hold_tolerance_s": twin.hold_tolerance_s,
+                "last_recomputed_at": twin.last_recomputed_at,
+            }
+
+        outcome_out = None
+        if outcome:
+            outcome_out = {
+                "actual_prep_s": outcome.actual_prep_s,
+                "actual_travel_s": outcome.actual_travel_s,
+                "actual_hold_s": outcome.actual_hold_s,
+                "counter_wait_s": outcome.counter_wait_s,
+                "promise_kept": outcome.promise_kept,
+                "interval_score": float(outcome.interval_score) if outcome.interval_score is not None else None,
+                "wait_feedback": outcome.wait_feedback,
+                "kitchen_trust": float(outcome.kitchen_trust),
+                "travel_trust": float(outcome.travel_trust),
+                "customer_trust": float(outcome.customer_trust),
+                "trust_failures": outcome.trust_failures,
+            }
+
+        return {
+            "order_id": head.id,
+            "status": head.status,
+            "outlet_id": head.outlet_id,
+            "outlet_name": head.outlet_name,
+            "total_amount": float(head.total_amount) if head.total_amount is not None else 0.0,
+            "created_at": head.created_at,
+            "events": [
+                {
+                    "seq": e.seq,
+                    "event_type": e.event_type,
+                    "actor_type": e.actor_type,
+                    "source": e.source,
+                    "occurred_at": e.occurred_at,
+                    "payload": e.payload,
+                }
+                for e in events
+            ],
+            "twin": twin_out,
+            "predictions": [
+                {
+                    "predictor": p.predictor,
+                    "model_version": p.model_version,
+                    "mu_seconds": p.mu_seconds,
+                    "sigma_seconds": p.sigma_seconds,
+                    "output": p.output,
+                    "predicted_at": p.predicted_at,
+                }
+                for p in preds
+            ],
+            "outcome": outcome_out,
+        }
+
     # --------------------------- audit log ---------------------------------
     @staticmethod
     async def list_audit_logs(db: AsyncSession, limit: int = 100) -> list[dict]:
