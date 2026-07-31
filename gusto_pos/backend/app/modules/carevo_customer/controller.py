@@ -133,12 +133,14 @@ async def get_order(
     db: AsyncSession = Depends(get_db),
 ):
     order = await CarevoService.get_order(db, order_id, customer)
+    wait_estimate = await CarevoService.shadow_estimate(db, order_id)
     return {
         "id": order.id,
         "status": order.status,
         "payment_status": order.payment_status,
         "pickup_code": order.pickup_code,
         "total_amount": float(order.total_amount or 0),
+        "wait_estimate": wait_estimate,
         "items": [
             {
                 "id": it.id,

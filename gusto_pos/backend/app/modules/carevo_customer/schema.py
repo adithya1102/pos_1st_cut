@@ -141,6 +141,13 @@ class OrderItemOut(BaseModel):
     item_notes: Optional[str] = None
 
 
+class WaitEstimateOut(BaseModel):
+    # §16 shadow-mode range only — never a departure window / σ / confidence.
+    low_min: int
+    high_min: int
+    approximate: bool = True
+
+
 class OrderOut(BaseModel):
     id: uuid.UUID
     status: str
@@ -150,6 +157,7 @@ class OrderOut(BaseModel):
     items: list[OrderItemOut] = []
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    wait_estimate: Optional[WaitEstimateOut] = None
 
 
 # ---------------------------- Payment ---------------------------------------

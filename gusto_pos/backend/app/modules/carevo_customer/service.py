@@ -275,6 +275,33 @@ class CarevoService:
             raise HTTPException(status_code=403, detail="Not your order")
         return order
 
+    @staticmethod
+    async def shadow_estimate(db: AsyncSession, order_id) -> Optional[dict]:
+        """§16 wide range for the customer. Compute-on-read if the twin is stale
+        and the order is still live (§17). Best-effort — never raises to the caller."""
+        live = (await db.execute(text(
+            "SELECT status FROM customer_orders WHERE id = :o"), {"o": str(order_id)})).scalar()
+        twin = (await db.execute(text(
+            "SELECT inputs, stale_after FROM order_twin WHERE order_id = :o"
+        ), {"o": str(order_id)})).first()
+        stale = twin is None or (twin.stale_after and twin.stale_after < datetime.now(timezone.utc))
+        if live in _LIVE_STATUSES and stale:
+            try:
+                from app.modules.prediction.service import PredictionService
+                res = await PredictionService.recompute_twin(db, order_id)
+                if res:
+                    lo, hi = res["shadow_range_min"]
+                    return {"low_min": lo, "high_min": hi, "approximate": res.get("degraded", True)}
+            except Exception:
+                await db.rollback()
+        if twin and twin.inputs:
+            inp = twin.inputs if isinstance(twin.inputs, dict) else json.loads(twin.inputs)
+            sr = inp.get("shadow_range_min")
+            if sr:
+                return {"low_min": sr[0], "high_min": sr[1],
+                        "approximate": inp.get("travel_source") == "haversine_fallback"}
+        return None
+
     # -------------------- PE Step 3: customer events -----------------------
     @staticmethod
     async def _owned_order_row(db: AsyncSession, order_id, customer):
@@ -394,6 +421,13 @@ class CarevoService:
                              "ttl_minutes": settings.PICKUP_TTL_MINUTES},
                 )
             await db.commit()
+            # PE Step 4: score terminal (abandoned) orders too, best-effort.
+            for r in rows:
+                try:
+                    from app.modules.prediction.service import PredictionService
+                    await PredictionService.compute_outcome(db, r.id)
+                except Exception:
+                    await db.rollback()
         return len(rows)
 
     @staticmethod
@@ -498,6 +532,16 @@ class CarevoService:
         await db.refresh(order)
 
         await CarevoService._broadcast_status(order)
+
+        # PE Step 4 (shadow mode): compute the order twin once accepted. Runs in
+        # its own transaction AFTER payment is committed, wrapped so a prediction
+        # failure can never roll back or break the payment (FR-M1: promise only
+        # after ORDER_ACCEPTED, which mark_paid just emitted).
+        try:
+            from app.modules.prediction.service import PredictionService
+            await PredictionService.recompute_twin(db, order.id)
+        except Exception:
+            await db.rollback()
         return order
 
     @staticmethod
@@ -584,6 +628,12 @@ class CarevoService:
             await db.commit()
             await db.refresh(order)
             await CarevoService._broadcast_status(order)
+            # PE Step 4: score the terminal order (trust + outcome), best-effort.
+            try:
+                from app.modules.prediction.service import PredictionService
+                await PredictionService.compute_outcome(db, order.id)
+            except Exception:
+                await db.rollback()
             return {"verified": True, "order_id": order.id, "status": "COMPLETED"}
 
         # Wrong code (or non-live status) — count as a failed attempt.
