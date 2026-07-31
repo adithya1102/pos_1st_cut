@@ -390,6 +390,20 @@ class CarevoService:
             actor_type="staff", source="tap", outlet_id=order.outlet_id,
             payload={"method": method or "upi_manual"},
         )
+        # PE Step 2: the owner has a single app and won't tap kitchen states, so
+        # the system INFERS the kitchen lifecycle. Payment confirmation is taken
+        # as acceptance + prep start. source='inferred' → excluded from kitchen
+        # training as ground truth (FR-E2), but anchors the twin/prediction.
+        await pe.write_event(
+            db, order.id, pe.ORDER_ACCEPTED,
+            actor_type="system", source="inferred", outlet_id=order.outlet_id,
+            payload={"derived_from": "mark_paid"},
+        )
+        await pe.write_event(
+            db, order.id, pe.PREP_STARTED,
+            actor_type="system", source="inferred", outlet_id=order.outlet_id,
+            payload={"derived_from": "mark_paid"},
+        )
         await db.commit()
         await db.refresh(order)
 
@@ -872,9 +886,16 @@ class CarevoService:
             "ts": datetime.now(timezone.utc).isoformat(),
         }
 
-        # Record the item-unavailability as a first-class event (affects order
-        # composition + hold tolerance). ready_now/delayed_10 have no §9 event.
-        if notify_type == "item_unavailable":
+        # PE Step 2: "Ready now" is the one genuine readiness signal the owner
+        # already gives (no separate kitchen taps), so it emits ORDER_READY.
+        # item_unavailable is recorded too (affects composition + hold tolerance).
+        if notify_type == "ready_now":
+            await pe.write_event(
+                db, order_id, pe.ORDER_READY,
+                actor_type="staff", source="tap", outlet_id=outlet_id,
+            )
+            await db.commit()
+        elif notify_type == "item_unavailable":
             await pe.write_event(
                 db, order_id, pe.ITEM_UNAVAILABLE,
                 actor_type="staff", source="tap", outlet_id=outlet_id,
