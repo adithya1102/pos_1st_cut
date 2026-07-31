@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../config/app_config.dart';
 import '../models/order.dart';
 import '../models/order_notify.dart';
+import '../services/location_service.dart';
 import '../services/order_notify_service.dart';
 import '../services/order_service.dart';
 import '../services/upi_intent.dart';
@@ -56,6 +57,14 @@ class _PickupScreenState extends State<PickupScreen> {
   OrderNotify? _banner;
   Timer? _bannerTimer;
 
+  // PE Step 3 travel events. Tracked locally for the session; the backend is
+  // idempotent so re-taps or a reopened screen never double-record.
+  bool _departed = false;
+  bool _departing = false;
+  bool _arrived = false;
+  bool _feedbackSent = false;
+  Timer? _locTimer;
+
   @override
   void initState() {
     super.initState();
@@ -68,9 +77,81 @@ class _PickupScreenState extends State<PickupScreen> {
   void dispose() {
     _timer?.cancel();
     _bannerTimer?.cancel();
+    _locTimer?.cancel();
     _notifySub?.cancel();
     _notifyClient?.dispose();
     super.dispose();
+  }
+
+  // ------------------------ PE Step 3: travel events -----------------------
+
+  /// FR-C3 — "I'm leaving". Best-effort location (a denial still records the
+  /// departure, just without coordinates) then kicks off en-route pings.
+  Future<void> _onLeaving() async {
+    final orders = context.read<OrderService>();
+    final location = context.read<LocationService>();
+    setState(() => _departing = true);
+    try {
+      final loc = await location.getCurrentLocation();
+      await orders.depart(
+        widget.orderId,
+        lat: loc.hasCoordinates ? loc.latitude : null,
+        lng: loc.hasCoordinates ? loc.longitude : null,
+      );
+      if (!mounted) return;
+      setState(() => _departed = true);
+      _startEnRoutePings();
+    } catch (_) {
+      // Non-fatal: the customer can retry; the button re-enables.
+    } finally {
+      if (mounted) setState(() => _departing = false);
+    }
+  }
+
+  /// FR-C4 — stream location every 60s while en route. The backend throttles
+  /// and infers the 150m geofence, so a stationary customer just gets ignored.
+  void _startEnRoutePings() {
+    _locTimer?.cancel();
+    _locTimer = Timer.periodic(const Duration(seconds: 60), (_) => _pingLocation());
+    _pingLocation();
+  }
+
+  Future<void> _pingLocation() async {
+    if (!mounted || _arrived) return;
+    final orders = context.read<OrderService>();
+    final loc = await context.read<LocationService>().getCurrentLocation();
+    if (!mounted || !loc.hasCoordinates) return;
+    try {
+      await orders.sendLocation(
+        widget.orderId,
+        lat: loc.latitude!,
+        lng: loc.longitude!,
+      );
+    } catch (_) {/* transient; next tick retries */}
+  }
+
+  /// FR-C4 / FR-C6 — explicit arrival tap (the fallback when GPS is off and the
+  /// geofence can't fire on its own).
+  Future<void> _onArrived() async {
+    final orders = context.read<OrderService>();
+    setState(() => _arrived = true);
+    _locTimer?.cancel();
+    try {
+      await orders.arrived(widget.orderId);
+    } catch (_) {
+      if (mounted) setState(() => _arrived = false);
+    }
+  }
+
+  /// FR-C5 — one-tap perceived-wait bucket, shown once after pickup.
+  Future<void> _sendFeedback(String bucket) async {
+    final orders = context.read<OrderService>();
+    setState(() => _feedbackSent = true);
+    try {
+      await orders.sendWaitFeedback(widget.orderId, bucket);
+    } catch (_) {
+      if (mounted) setState(() => _feedbackSent = false);
+    }
   }
 
   void _connectNotify() {
@@ -107,8 +188,11 @@ class _PickupScreenState extends State<PickupScreen> {
         _error = null;
         _loading = false;
       });
-      if (status.stepIndex >= 2) {
+      // Keep polling through Ready → Completed so the wait-feedback prompt
+      // (FR-C5) can appear once the pickup is verified; then stop.
+      if (status.isCompleted) {
         _timer?.cancel();
+        _locTimer?.cancel();
       }
     } catch (e) {
       if (!mounted) return;
@@ -126,6 +210,8 @@ class _PickupScreenState extends State<PickupScreen> {
     final status = _status;
     final step = status?.stepIndex ?? 0;
     final isPaid = status?.paymentStatus.toUpperCase() == 'PAID';
+    final completed = status?.isCompleted ?? false;
+    final estimate = status?.waitEstimate;
 
     return Scaffold(
       appBar: AppBar(
@@ -174,6 +260,28 @@ class _PickupScreenState extends State<PickupScreen> {
                     highlight: step >= 2,
                     paid: isPaid,
                   ),
+                  // FR-C5 — perceived-wait prompt, shown once after pickup.
+                  if (completed && !_feedbackSent) ...[
+                    const SizedBox(height: 16),
+                    _WaitFeedbackCard(onPick: _sendFeedback),
+                  ],
+                  // FR-C7 — cold-start / shadow estimate: always framed as a
+                  // wide, approximate range while the engine is unproven.
+                  if (isPaid && !completed && estimate != null) ...[
+                    const SizedBox(height: 16),
+                    _WaitEstimateCard(estimate: estimate),
+                  ],
+                  // FR-C3/C4/C6 — travel controls.
+                  if (isPaid && !completed) ...[
+                    const SizedBox(height: 16),
+                    _TravelControls(
+                      departed: _departed,
+                      departing: _departing,
+                      arrived: _arrived,
+                      onLeaving: _departing ? null : _onLeaving,
+                      onArrived: _onArrived,
+                    ),
+                  ],
                   const SizedBox(height: 24),
                   Text('Order status', style: textTheme.headlineSmall),
                   const SizedBox(height: 16),
@@ -320,6 +428,171 @@ class _UpiPayButtonState extends State<_UpiPayButton> {
       icon: Icons.account_balance_wallet,
       loading: _busy,
       onPressed: _busy ? null : _pay,
+    );
+  }
+}
+
+/// FR-C7 — the customer-facing wait range. Shadow mode (§16): wide, labelled
+/// "approximate", never a precise ETA or a departure instruction.
+class _WaitEstimateCard extends StatelessWidget {
+  const _WaitEstimateCard({required this.estimate});
+  final WaitEstimate estimate;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final textTheme = Theme.of(context).textTheme;
+    return NeoCard(
+      color: c.surface,
+      child: Row(
+        children: [
+          Icon(Icons.schedule, color: c.ink),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Estimated wait', style: textTheme.titleMedium),
+                Text(
+                  estimate.approximate
+                      ? 'Rough guess — we\'re still learning this kitchen.'
+                      : 'Based on the kitchen and your travel.',
+                  style: textTheme.bodySmall?.copyWith(color: c.inkSoft),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text('~${estimate.label}',
+              style: textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+}
+
+/// FR-C3/C4/C6 — "I'm leaving" → en-route → "I've arrived".
+class _TravelControls extends StatelessWidget {
+  const _TravelControls({
+    required this.departed,
+    required this.departing,
+    required this.arrived,
+    required this.onLeaving,
+    required this.onArrived,
+  });
+  final bool departed;
+  final bool departing;
+  final bool arrived;
+  final VoidCallback? onLeaving;
+  final VoidCallback? onArrived;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final textTheme = Theme.of(context).textTheme;
+
+    if (arrived) {
+      return NeoCard(
+        color: c.accent,
+        child: Row(
+          children: [
+            Icon(Icons.check_circle, color: c.onAccent),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text('You\'re here — head to the counter.',
+                  style: textTheme.titleMedium?.copyWith(color: c.onAccent)),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (!departed) {
+      return NeoButton(
+        label: departing ? 'One sec…' : 'I\'m leaving now',
+        icon: Icons.directions_run,
+        loading: departing,
+        onPressed: onLeaving,
+      );
+    }
+
+    // Departed, not yet arrived.
+    return NeoCard(
+      color: c.surface,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.navigation, color: c.primary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text('On your way — we\'re timing your food.',
+                    style: textTheme.titleMedium),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          NeoButton(
+            label: 'I\'ve arrived',
+            icon: Icons.place,
+            variant: NeoButtonVariant.neutral,
+            onPressed: onArrived,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// FR-C5 — perceived wait bucket, one tap.
+class _WaitFeedbackCard extends StatelessWidget {
+  const _WaitFeedbackCard({required this.onPick});
+  final void Function(String bucket) onPick;
+
+  static const _buckets = [
+    ('0', 'No wait'),
+    ('1-3', '1–3 min'),
+    ('3-5', '3–5 min'),
+    ('5+', '5+ min'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final textTheme = Theme.of(context).textTheme;
+    return NeoCard(
+      color: c.surface,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('How long did you wait at the counter?',
+              style: textTheme.titleMedium),
+          const SizedBox(height: 4),
+          Text('Helps us get your next order\'s timing right.',
+              style: textTheme.bodySmall?.copyWith(color: c.inkSoft)),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              for (final b in _buckets)
+                GestureDetector(
+                  onTap: () => onPick(b.$1),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: c.surfaceAlt,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: c.border, width: 2.5),
+                    ),
+                    child: Text(b.$2, style: textTheme.titleSmall),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

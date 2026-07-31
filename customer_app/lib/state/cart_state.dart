@@ -94,10 +94,26 @@ class CartState extends ChangeNotifier {
   }
 
   /// Build the `POST /customer/orders` payload.
-  Map<String, dynamic> toOrderPayload({String? customerNotes}) => {
+  ///
+  /// PE Step 3 (FR-C1/C2): the checkout may attach a travel [transportMode]
+  /// and the customer's [originLat]/[originLng] starting point so the
+  /// prediction engine can estimate travel. All are optional — a customer who
+  /// denies location still checks out, just with `origin_source: 'none'`.
+  Map<String, dynamic> toOrderPayload({
+    String? customerNotes,
+    String? transportMode,
+    double? originLat,
+    double? originLng,
+    String? originSource,
+  }) =>
+      {
         'outlet_id': _outlet?.id,
         'items': _items.map((i) => i.toOrderItemJson()).toList(),
         if (customerNotes != null && customerNotes.trim().isNotEmpty)
           'customer_notes': customerNotes.trim(),
+        'transport_mode': ?transportMode,
+        'origin_lat': ?originLat,
+        'origin_lng': ?originLng,
+        'origin_source': ?originSource,
       };
 }

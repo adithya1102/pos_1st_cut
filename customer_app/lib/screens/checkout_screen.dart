@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../services/api_client.dart';
+import '../services/location_service.dart';
 import '../services/order_service.dart';
 import '../services/payment_service.dart';
 import '../state/cart_state.dart';
@@ -12,6 +13,21 @@ import '../widgets/price_text.dart';
 import '../widgets/theme_toggle_button.dart';
 import 'payment_processing_screen.dart';
 import 'pickup_screen.dart';
+
+/// PE Step 3 (FR-C1) — how the customer will travel to the outlet. Values map
+/// 1:1 to the backend MODE_SPEED_MPS keys used by the travel predictor.
+enum TransportMode {
+  walk('walk', 'Walk', Icons.directions_walk),
+  bike('bike', 'Bike', Icons.two_wheeler),
+  car('car', 'Car', Icons.directions_car),
+  auto('auto', 'Auto', Icons.local_taxi),
+  bus('bus', 'Bus', Icons.directions_bus);
+
+  const TransportMode(this.wire, this.label, this.icon);
+  final String wire;
+  final String label;
+  final IconData icon;
+}
 
 /// Step 8: checkout with UPI / Card / Net Banking ONLY (no pay-at-counter).
 class CheckoutScreen extends StatefulWidget {
@@ -26,13 +42,55 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   PaymentMethod _method = PaymentMethod.upi;
   bool _placing = false;
 
+  // FR-C1/C2: travel context captured before the order is placed.
+  TransportMode _transport = TransportMode.bike;
+  double? _originLat;
+  double? _originLng;
+  String _originSource = 'none'; // none | gps
+  bool _locating = false;
+
+  Future<void> _useMyLocation() async {
+    setState(() => _locating = true);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final res = await context.read<LocationService>().getCurrentLocation();
+      if (!mounted) return;
+      if (res.hasCoordinates) {
+        setState(() {
+          _originLat = res.latitude;
+          _originLng = res.longitude;
+          _originSource = 'gps';
+        });
+      } else {
+        // FR-C6: denial degrades gracefully — the order still goes through,
+        // the estimate is just wider/approximate.
+        setState(() {
+          _originLat = null;
+          _originLng = null;
+          _originSource = 'none';
+        });
+        messenger.showSnackBar(const SnackBar(
+          content: Text('Location off — we\'ll show an approximate wait.'),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _locating = false);
+    }
+  }
+
   Future<void> _payNow() async {
     final cart = context.read<CartState>();
     final outlet = cart.outlet;
     setState(() => _placing = true);
     try {
       final order = await context.read<OrderService>().createOrder(
-            cart.toOrderPayload(customerNotes: widget.customerNotes),
+            cart.toOrderPayload(
+              customerNotes: widget.customerNotes,
+              transportMode: _transport.wire,
+              originLat: _originLat,
+              originLng: _originLng,
+              originSource: _originSource,
+            ),
           );
       if (!mounted) return;
 
@@ -121,6 +179,32 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               ),
             ),
             const SizedBox(height: 24),
+            Text('How are you getting here?', style: textTheme.headlineSmall),
+            const SizedBox(height: 6),
+            Text('Helps us time your food so it\'s fresh when you arrive.',
+                style: textTheme.bodyMedium?.copyWith(color: c.inkSoft)),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                for (final mode in TransportMode.values)
+                  _TransportChip(
+                    mode: mode,
+                    selected: _transport == mode,
+                    onTap: () => setState(() => _transport = mode),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            Text('Your starting point', style: textTheme.headlineSmall),
+            const SizedBox(height: 12),
+            _OriginCard(
+              hasOrigin: _originSource == 'gps',
+              locating: _locating,
+              onUseLocation: _locating ? null : _useMyLocation,
+            ),
+            const SizedBox(height: 24),
             Text('Payment method', style: textTheme.headlineSmall),
             const SizedBox(height: 6),
             Text('Pay securely online. Counter payment is not available.',
@@ -195,6 +279,108 @@ class _MethodTile extends StatelessWidget {
             selected ? Icons.radio_button_checked : Icons.radio_button_off,
             color: selected ? c.onAccent : c.inkSoft,
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TransportChip extends StatelessWidget {
+  const _TransportChip({
+    required this.mode,
+    required this.selected,
+    required this.onTap,
+  });
+  final TransportMode mode;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final textTheme = Theme.of(context).textTheme;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? c.accent : c.surface,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: c.border, width: 2.5),
+          boxShadow: [
+            BoxShadow(
+              color: c.shadow,
+              offset: selected ? const Offset(3, 3) : const Offset(2, 2),
+              blurRadius: 0,
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(mode.icon, size: 20, color: selected ? c.onAccent : c.ink),
+            const SizedBox(width: 8),
+            Text(mode.label,
+                style: textTheme.titleSmall
+                    ?.copyWith(color: selected ? c.onAccent : c.ink)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _OriginCard extends StatelessWidget {
+  const _OriginCard({
+    required this.hasOrigin,
+    required this.locating,
+    required this.onUseLocation,
+  });
+  final bool hasOrigin;
+  final bool locating;
+  final VoidCallback? onUseLocation;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final textTheme = Theme.of(context).textTheme;
+    return NeoCard(
+      color: hasOrigin ? c.accent : c.surface,
+      child: Row(
+        children: [
+          Icon(hasOrigin ? Icons.my_location : Icons.location_searching,
+              color: hasOrigin ? c.onAccent : c.ink),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  hasOrigin ? 'Using your location' : 'Set your location',
+                  style: textTheme.titleMedium
+                      ?.copyWith(color: hasOrigin ? c.onAccent : c.ink),
+                ),
+                Text(
+                  hasOrigin
+                      ? 'We\'ll estimate your travel time.'
+                      : 'Optional — skips to an approximate wait if off.',
+                  style: textTheme.bodySmall?.copyWith(
+                      color: hasOrigin ? c.onAccent : c.inkSoft),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (locating)
+            const SizedBox(
+                width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+          else
+            TextButton(
+              onPressed: onUseLocation,
+              child: Text(hasOrigin ? 'Update' : 'Use GPS',
+                  style: textTheme.labelLarge
+                      ?.copyWith(color: hasOrigin ? c.onAccent : c.primary)),
+            ),
         ],
       ),
     );

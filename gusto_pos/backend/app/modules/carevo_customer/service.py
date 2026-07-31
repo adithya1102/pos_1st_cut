@@ -354,8 +354,25 @@ class CarevoService:
             db, order_id, pe.LOCATION_PING, actor_type="customer",
             actor_id=customer.id, source="system", outlet_id=row.outlet_id,
             payload={"lat": lat, "lng": lng, "accuracy_m": accuracy_m, "speed_mps": speed_mps})
+        # FR-C4: 150m geofence is inferred server-side so the client stays a dumb
+        # location streamer. Emit CUSTOMER_ARRIVED once, when the ping lands inside
+        # the ring around the outlet (idempotent — a prior tap/geofence wins).
+        arrived = False
+        oc = (await db.execute(text(
+            "SELECT latitude, longitude FROM outlets WHERE id = :o"
+        ), {"o": str(row.outlet_id)})).first()
+        if oc and oc.latitude is not None and oc.longitude is not None:
+            dist_m = CarevoService._haversine_km(
+                float(lat), float(lng), float(oc.latitude), float(oc.longitude)) * 1000.0
+            if dist_m <= 150.0 and not await CarevoService._has_event(
+                    db, order_id, pe.CUSTOMER_ARRIVED):
+                await pe.write_event(
+                    db, order_id, pe.CUSTOMER_ARRIVED, actor_type="customer",
+                    actor_id=customer.id, source="geofence", outlet_id=row.outlet_id,
+                    payload={"accuracy_m": accuracy_m, "distance_m": round(dist_m, 1)})
+                arrived = True
         await db.commit()
-        return {"ok": True, "recorded": True}
+        return {"ok": True, "recorded": True, "detail": "arrived" if arrived else None}
 
     @staticmethod
     async def record_arrived(db, order_id, customer, accuracy_m, source) -> dict:
@@ -382,7 +399,6 @@ class CarevoService:
         return {"ok": True, "recorded": True}
 
     # ---------------------------- Payment ----------------------------------
-    @staticmethod
     @staticmethod
     async def _expire_stale_pickups(
         db: AsyncSession, *, outlet_id=None, order_id=None

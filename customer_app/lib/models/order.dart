@@ -74,6 +74,28 @@ class OrderItemLine {
   }
 }
 
+/// §16 shadow-mode wait range. Deliberately wide and always "approximate" —
+/// never a precise ETA, σ, or departure window while the engine is unproven.
+class WaitEstimate {
+  const WaitEstimate({
+    required this.lowMin,
+    required this.highMin,
+    required this.approximate,
+  });
+
+  final int lowMin;
+  final int highMin;
+  final bool approximate;
+
+  factory WaitEstimate.fromJson(Map<String, dynamic> json) => WaitEstimate(
+        lowMin: (json['low_min'] as num?)?.toInt() ?? 0,
+        highMin: (json['high_min'] as num?)?.toInt() ?? 0,
+        approximate: (json['approximate'] as bool?) ?? true,
+      );
+
+  String get label => lowMin == highMin ? '~$highMin min' : '$lowMin–$highMin min';
+}
+
 /// The full order status returned by `GET /customer/orders/{id}`.
 class OrderStatus {
   const OrderStatus({
@@ -85,6 +107,7 @@ class OrderStatus {
     required this.items,
     this.createdAt,
     this.updatedAt,
+    this.waitEstimate,
   });
 
   final String id;
@@ -95,6 +118,7 @@ class OrderStatus {
   final List<OrderItemLine> items;
   final String? createdAt;
   final String? updatedAt;
+  final WaitEstimate? waitEstimate;
 
   factory OrderStatus.fromJson(Map<String, dynamic> json) {
     return OrderStatus(
@@ -109,8 +133,14 @@ class OrderStatus {
           .toList(),
       createdAt: json['created_at']?.toString(),
       updatedAt: json['updated_at']?.toString(),
+      waitEstimate: json['wait_estimate'] is Map<String, dynamic>
+          ? WaitEstimate.fromJson(json['wait_estimate'] as Map<String, dynamic>)
+          : null,
     );
   }
+
+  bool get isCompleted => const {'COMPLETED', 'PICKED_UP'}
+      .contains(status.toUpperCase());
 
   /// Maps the backend status string to a 0-based stepper index:
   /// 0 = Received, 1 = Preparing, 2 = Ready.
