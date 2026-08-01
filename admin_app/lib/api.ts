@@ -108,6 +108,8 @@ export interface Outlet {
   verification_status: VerificationStatus;
   is_visible: boolean;
   created_at: string | null;
+  deactivated_at: string | null;
+  is_deactivated: boolean;
 }
 
 export interface LockedOrder {
@@ -245,6 +247,10 @@ export const adminApi = {
     api.post(`/api/v1/admin/outlets/${id}/approve`, { reason: reason ?? null }),
   rejectOutlet: (id: string, reason?: string) =>
     api.post(`/api/v1/admin/outlets/${id}/reject`, { reason: reason ?? null }),
+  deactivateOutlet: (id: string, reason?: string) =>
+    api.post(`/api/v1/admin/outlets/${id}/deactivate`, { reason: reason ?? null }),
+  reactivateOutlet: (id: string) =>
+    api.post(`/api/v1/admin/outlets/${id}/reactivate`),
 
   lockedOrders: () => api.get<LockedOrder[]>("/api/v1/admin/orders/locked"),
   unlockOrder: (id: string) => api.post(`/api/v1/admin/orders/${id}/unlock`),

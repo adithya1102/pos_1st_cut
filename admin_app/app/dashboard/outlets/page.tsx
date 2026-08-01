@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Outlet, VerificationStatus, adminApi } from "@/lib/api";
 import {
+  Button,
   EmptyRow,
   ErrorBox,
   Panel,
@@ -40,9 +41,42 @@ export default function OutletsPage() {
     [filter],
   );
 
+  const [busyId, setBusyId] = useState<string | null>(null);
+
   useEffect(() => {
     load();
   }, [load]);
+
+  async function deactivate(o: Outlet) {
+    const confirmed = window.confirm(
+      `Deactivate "${o.location_name}"?\n\n` +
+        `It will be hidden from customers and marked deactivated in the console. ` +
+        `All order & event history is retained (this is a soft-delete, not a purge) ` +
+        `and it can be reactivated later. The action is audited.`,
+    );
+    if (!confirmed) return;
+    setBusyId(o.id);
+    try {
+      await adminApi.deactivateOutlet(o.id);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Deactivate failed.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function reactivate(o: Outlet) {
+    setBusyId(o.id);
+    try {
+      await adminApi.reactivateOutlet(o.id);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Reactivate failed.");
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   return (
     <>
@@ -77,14 +111,22 @@ export default function OutletsPage() {
               <th className={th}>Verification</th>
               <th className={th}>Visible</th>
               <th className={th}>Created</th>
+              <th className={th}>Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {outlets === null && <EmptyRow colSpan={6}>Loading…</EmptyRow>}
-            {outlets?.length === 0 && <EmptyRow colSpan={6}>No outlets match.</EmptyRow>}
+            {outlets === null && <EmptyRow colSpan={7}>Loading…</EmptyRow>}
+            {outlets?.length === 0 && <EmptyRow colSpan={7}>No outlets match.</EmptyRow>}
             {outlets?.map((o) => (
-              <tr key={o.id}>
-                <td className={`${td} font-medium`}>{o.location_name}</td>
+              <tr key={o.id} className={o.is_deactivated ? "bg-slate-50/60" : undefined}>
+                <td className={`${td} font-medium`}>
+                  {o.location_name}
+                  {o.is_deactivated && (
+                    <span className="ml-2 inline-block rounded bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-600">
+                      deactivated
+                    </span>
+                  )}
+                </td>
                 <td className={`${td} text-slate-600`}>{o.organization_name ?? "—"}</td>
                 <td className={`${td} text-slate-600`}>{o.city ?? "—"}</td>
                 <td className={td}>
@@ -92,6 +134,21 @@ export default function OutletsPage() {
                 </td>
                 <td className={`${td} text-slate-600`}>{o.is_visible ? "yes" : "no"}</td>
                 <td className={`${td} text-slate-600`}>{fmtDate(o.created_at)}</td>
+                <td className={td}>
+                  {o.is_deactivated ? (
+                    <Button disabled={busyId === o.id} onClick={() => reactivate(o)}>
+                      Reactivate
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="danger"
+                      disabled={busyId === o.id}
+                      onClick={() => deactivate(o)}
+                    >
+                      Deactivate
+                    </Button>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

@@ -75,6 +75,29 @@ async def reject_outlet(
     )
 
 
+@router.post("/outlets/{outlet_id}/deactivate", response_model=s.OutletDeactivateOut)
+async def deactivate_outlet(
+    outlet_id: uuid.UUID,
+    payload: s.OutletDecisionIn | None = None,
+    admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Soft-delete (deactivate). Hides the outlet from customers + forces
+    is_visible=false; retains all order/event history. Reversible."""
+    return await AdminService.deactivate_outlet(
+        db, admin, outlet_id, payload.reason if payload else None
+    )
+
+
+@router.post("/outlets/{outlet_id}/reactivate", response_model=s.OutletDeactivateOut)
+async def reactivate_outlet(
+    outlet_id: uuid.UUID,
+    admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await AdminService.reactivate_outlet(db, admin, outlet_id)
+
+
 # ---------------------------- locked orders --------------------------------
 @router.get("/orders/locked", response_model=list[s.LockedOrderOut])
 async def list_locked_orders(

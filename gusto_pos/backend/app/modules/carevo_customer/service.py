@@ -95,7 +95,7 @@ class CarevoService:
     async def list_outlets(db: AsyncSession, lat: Optional[float], lng: Optional[float]) -> list[dict]:
         rows = (await db.execute(text(
             "SELECT id, location_name, city, latitude, longitude, upi_id FROM outlets "
-            "WHERE is_visible = true"
+            "WHERE is_visible = true AND deactivated_at IS NULL"
         ))).fetchall()
         out = []
         for r in rows:

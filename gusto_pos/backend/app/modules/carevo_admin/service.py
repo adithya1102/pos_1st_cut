@@ -70,7 +70,8 @@ class AdminService:
         rows = (await db.execute(text("""
             SELECT o.id, o.location_name, o.city, o.organization_id,
                    org.name AS organization_name,
-                   o.verification_status, o.is_visible, o.created_at
+                   o.verification_status, o.is_visible, o.created_at,
+                   o.deactivated_at
             FROM outlets o
             LEFT JOIN organizations org ON org.id = o.organization_id
             -- CAST is required: with a NULL bind, Postgres cannot infer the
@@ -79,7 +80,8 @@ class AdminService:
             WHERE (CAST(:status AS varchar) IS NULL
                    OR o.verification_status = CAST(:status AS varchar))
             ORDER BY
-                -- pending first: that is the queue the admin actually works
+                -- live before deactivated, then pending first (the work queue)
+                CASE WHEN o.deactivated_at IS NULL THEN 0 ELSE 1 END,
                 CASE o.verification_status WHEN 'pending_verification' THEN 0 ELSE 1 END,
                 o.created_at DESC NULLS LAST
         """), {"status": status_filter})).fetchall()
@@ -93,9 +95,69 @@ class AdminService:
                 "verification_status": r.verification_status,
                 "is_visible": bool(r.is_visible),
                 "created_at": r.created_at,
+                "deactivated_at": r.deactivated_at,
+                "is_deactivated": r.deactivated_at is not None,
             }
             for r in rows
         ]
+
+    # --------------------- soft-delete (deactivate) ------------------------
+    @staticmethod
+    async def deactivate_outlet(
+        db: AsyncSession, actor: User, outlet_id: uuid.UUID, reason: Optional[str]
+    ) -> dict:
+        """Soft-delete: hide the outlet everywhere customer-facing (also forces
+        is_visible=false) but keep every row — orders, events, outcomes stay as
+        permanent training data. Reversible via reactivate_outlet."""
+        current = (await db.execute(text(
+            "SELECT id, deactivated_at, is_visible FROM outlets WHERE id = :oid"
+        ), {"oid": str(outlet_id)})).first()
+        if not current:
+            raise HTTPException(status_code=404, detail="Outlet not found")
+        if current.deactivated_at is not None:
+            raise HTTPException(status_code=409, detail="Outlet is already deactivated")
+
+        row = (await db.execute(text("""
+            UPDATE outlets
+            SET deactivated_at = now(), is_visible = false
+            WHERE id = :oid
+            RETURNING id, deactivated_at
+        """), {"oid": str(outlet_id)})).first()
+
+        await AdminService._audit(
+            db, actor, action="outlet.deactivate", target_type="outlet",
+            target_id=outlet_id,
+            detail={"reason": reason, "was_visible": bool(current.is_visible)},
+        )
+        await db.commit()
+        return {"id": row[0], "is_deactivated": True, "deactivated_at": row[1]}
+
+    @staticmethod
+    async def reactivate_outlet(
+        db: AsyncSession, actor: User, outlet_id: uuid.UUID
+    ) -> dict:
+        """Undo a soft-delete. Leaves is_visible false — the owner re-enables
+        customer visibility themselves, so reactivation never silently re-lists."""
+        current = (await db.execute(text(
+            "SELECT id, deactivated_at FROM outlets WHERE id = :oid"
+        ), {"oid": str(outlet_id)})).first()
+        if not current:
+            raise HTTPException(status_code=404, detail="Outlet not found")
+        if current.deactivated_at is None:
+            raise HTTPException(status_code=409, detail="Outlet is not deactivated")
+
+        row = (await db.execute(text("""
+            UPDATE outlets SET deactivated_at = NULL
+            WHERE id = :oid
+            RETURNING id, deactivated_at
+        """), {"oid": str(outlet_id)})).first()
+
+        await AdminService._audit(
+            db, actor, action="outlet.reactivate", target_type="outlet",
+            target_id=outlet_id, detail=None,
+        )
+        await db.commit()
+        return {"id": row[0], "is_deactivated": False, "deactivated_at": row[1]}
 
     @staticmethod
     async def _decide_outlet(

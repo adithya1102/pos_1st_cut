@@ -26,6 +26,9 @@ class AdminOutletOut(BaseModel):
     verification_status: VerificationStatus
     is_visible: bool
     created_at: Optional[datetime] = None
+    # Soft-delete (migration 007). Non-null => deactivated/hidden, retained data.
+    deactivated_at: Optional[datetime] = None
+    is_deactivated: bool = False
 
 
 class OutletDecisionIn(BaseModel):
@@ -38,6 +41,12 @@ class OutletDecisionOut(BaseModel):
     id: uuid.UUID
     verification_status: VerificationStatus
     previous_status: str
+
+
+class OutletDeactivateOut(BaseModel):
+    id: uuid.UUID
+    is_deactivated: bool
+    deactivated_at: Optional[datetime] = None
 
 
 class LockedOrderOut(BaseModel):
