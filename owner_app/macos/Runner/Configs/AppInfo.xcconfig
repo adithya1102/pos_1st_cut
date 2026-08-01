@@ -8,7 +8,7 @@
 PRODUCT_NAME = owner_app
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = com.gusto.ownerApp
+PRODUCT_BUNDLE_IDENTIFIER = com.carevo.ownerApp
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 com.gusto. All rights reserved.

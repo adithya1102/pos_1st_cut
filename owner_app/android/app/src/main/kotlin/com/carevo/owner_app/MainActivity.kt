@@ -1,4 +1,4 @@
-package com.example.customer_app
+package com.carevo.owner_app
 
 import io.flutter.embedding.android.FlutterActivity
 
