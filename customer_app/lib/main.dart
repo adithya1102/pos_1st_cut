@@ -8,6 +8,7 @@ import 'services/location_service.dart';
 import 'services/order_service.dart';
 import 'services/otp_auth_service.dart';
 import 'services/payment_service.dart';
+import 'services/places_service.dart';
 import 'state/auth_state.dart';
 import 'state/cart_state.dart';
 import 'screens/splash_screen.dart';
@@ -40,6 +41,7 @@ Future<void> main() async {
         Provider<CatalogService>(create: (_) => CatalogService(api)),
         Provider<OrderService>(create: (_) => OrderService(api)),
         Provider<LocationService>(create: (_) => LocationService()),
+        Provider<PlacesService>(create: (_) => PlacesService()),
         ChangeNotifierProvider(
           create: (_) => AuthState(api, otpService),
         ),

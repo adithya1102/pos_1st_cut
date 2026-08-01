@@ -5,6 +5,7 @@ import '../services/api_client.dart';
 import '../services/location_service.dart';
 import '../services/order_service.dart';
 import '../services/payment_service.dart';
+import '../services/places_service.dart';
 import '../state/cart_state.dart';
 import '../theme/app_colors.dart';
 import '../theme/widgets/neo_button.dart';
@@ -13,6 +14,7 @@ import '../widgets/price_text.dart';
 import '../widgets/theme_toggle_button.dart';
 import 'payment_processing_screen.dart';
 import 'pickup_screen.dart';
+import 'place_search_screen.dart';
 
 /// PE Step 3 (FR-C1) — how the customer will travel to the outlet. Values map
 /// 1:1 to the backend MODE_SPEED_MPS keys used by the travel predictor.
@@ -46,7 +48,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   TransportMode _transport = TransportMode.bike;
   double? _originLat;
   double? _originLng;
-  String _originSource = 'none'; // none | gps
+  String _originSource = 'none'; // none | gps | places_autocomplete
+  String? _originLabel;
   bool _locating = false;
 
   Future<void> _useMyLocation() async {
@@ -60,6 +63,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           _originLat = res.latitude;
           _originLng = res.longitude;
           _originSource = 'gps';
+          _originLabel = 'Current location';
         });
       } else {
         // FR-C6: denial degrades gracefully — the order still goes through,
@@ -68,6 +72,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           _originLat = null;
           _originLng = null;
           _originSource = 'none';
+          _originLabel = null;
         });
         messenger.showSnackBar(const SnackBar(
           content: Text('Location off — we\'ll show an approximate wait.'),
@@ -76,6 +81,20 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     } finally {
       if (mounted) setState(() => _locating = false);
     }
+  }
+
+  Future<void> _searchLocation() async {
+    // FR-C2: Places Autocomplete origin (one Google session per search flow).
+    final loc = await Navigator.of(context).push<PlaceLocation>(
+      MaterialPageRoute(builder: (_) => const PlaceSearchScreen()),
+    );
+    if (!mounted || loc == null) return;
+    setState(() {
+      _originLat = loc.lat;
+      _originLng = loc.lng;
+      _originSource = 'places_autocomplete';
+      _originLabel = loc.label;
+    });
   }
 
   Future<void> _payNow() async {
@@ -200,9 +219,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             Text('Your starting point', style: textTheme.headlineSmall),
             const SizedBox(height: 12),
             _OriginCard(
-              hasOrigin: _originSource == 'gps',
+              originLabel: _originLabel,
               locating: _locating,
+              placesEnabled: context.read<PlacesService>().isEnabled,
               onUseLocation: _locating ? null : _useMyLocation,
+              onSearch: _searchLocation,
             ),
             const SizedBox(height: 24),
             Text('Payment method', style: textTheme.headlineSmall),
@@ -332,56 +353,113 @@ class _TransportChip extends StatelessWidget {
 
 class _OriginCard extends StatelessWidget {
   const _OriginCard({
-    required this.hasOrigin,
+    required this.originLabel,
     required this.locating,
+    required this.placesEnabled,
     required this.onUseLocation,
+    required this.onSearch,
   });
-  final bool hasOrigin;
+  final String? originLabel;
   final bool locating;
+  final bool placesEnabled;
   final VoidCallback? onUseLocation;
+  final VoidCallback? onSearch;
 
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final textTheme = Theme.of(context).textTheme;
+    final hasOrigin = originLabel != null;
     return NeoCard(
       color: hasOrigin ? c.accent : c.surface,
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(hasOrigin ? Icons.my_location : Icons.location_searching,
-              color: hasOrigin ? c.onAccent : c.ink),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  hasOrigin ? 'Using your location' : 'Set your location',
-                  style: textTheme.titleMedium
-                      ?.copyWith(color: hasOrigin ? c.onAccent : c.ink),
+          Row(
+            children: [
+              Icon(hasOrigin ? Icons.my_location : Icons.location_searching,
+                  color: hasOrigin ? c.onAccent : c.ink),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      hasOrigin ? originLabel! : 'Set your location',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: textTheme.titleMedium
+                          ?.copyWith(color: hasOrigin ? c.onAccent : c.ink),
+                    ),
+                    Text(
+                      hasOrigin
+                          ? 'We\'ll estimate your travel time.'
+                          : 'Optional — skips to an approximate wait if off.',
+                      style: textTheme.bodySmall?.copyWith(
+                          color: hasOrigin ? c.onAccent : c.inkSoft),
+                    ),
+                  ],
                 ),
-                Text(
-                  hasOrigin
-                      ? 'We\'ll estimate your travel time.'
-                      : 'Optional — skips to an approximate wait if off.',
-                  style: textTheme.bodySmall?.copyWith(
-                      color: hasOrigin ? c.onAccent : c.inkSoft),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              if (locating)
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 8),
+                  child: SizedBox(
+                      width: 20, height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2)),
+                )
+              else
+                _OriginAction(
+                  icon: Icons.gps_fixed,
+                  label: hasOrigin ? 'Update GPS' : 'Use GPS',
+                  onTap: onUseLocation,
+                  onSurface: hasOrigin,
+                ),
+              if (placesEnabled) ...[
+                const SizedBox(width: 8),
+                _OriginAction(
+                  icon: Icons.search,
+                  label: 'Search address',
+                  onTap: onSearch,
+                  onSurface: hasOrigin,
                 ),
               ],
-            ),
+            ],
           ),
-          const SizedBox(width: 8),
-          if (locating)
-            const SizedBox(
-                width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-          else
-            TextButton(
-              onPressed: onUseLocation,
-              child: Text(hasOrigin ? 'Update' : 'Use GPS',
-                  style: textTheme.labelLarge
-                      ?.copyWith(color: hasOrigin ? c.onAccent : c.primary)),
-            ),
         ],
+      ),
+    );
+  }
+}
+
+class _OriginAction extends StatelessWidget {
+  const _OriginAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    required this.onSurface,
+  });
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+  final bool onSurface;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final textTheme = Theme.of(context).textTheme;
+    final fg = onSurface ? c.onAccent : c.primary;
+    return TextButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon, size: 18, color: fg),
+      label: Text(label, style: textTheme.labelLarge?.copyWith(color: fg)),
+      style: TextButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       ),
     );
   }

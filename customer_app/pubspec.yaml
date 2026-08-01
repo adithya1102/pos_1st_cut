@@ -30,9 +30,14 @@ dependencies:
 
   # UPI intent deep-link (upi://pay) to open the user's UPI app
   url_launcher: ^6.3.0
+  flutter_google_places_sdk: ^0.4.3
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+
+  # On-device live test for the Places SDK integration.
+  integration_test:
     sdk: flutter
 
   flutter_lints: ^6.0.0
