@@ -13,6 +13,15 @@ class AppConfig {
     defaultValue: 'https://gusto-pos-backend.onrender.com/api/v1',
   );
 
+  /// Google Maps/Places key for any Dart-side (REST) calls. Supplied at build
+  /// time and never committed:
+  ///   flutter build apk --dart-define=MAPS_API_KEY=AIza...
+  /// On Android the native SDK reads its key from the manifest meta-data
+  /// (injected via Gradle from local.properties) — this const is for Dart HTTP
+  /// callers only. Empty string when not provided.
+  static const String mapsApiKey = String.fromEnvironment('MAPS_API_KEY');
+  static bool get hasMapsKey => mapsApiKey.isNotEmpty;
+
   /// Dev OTP code accepted by the stub auth service / backend stub.
   static const String devOtpCode = '000000';
 
