@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     FIREBASE_PROJECT_ID: Optional[str] = None
     FIREBASE_ENABLED: bool = False
 
+    # Google Distance Matrix key for SERVER-SIDE travel ETAs (predict_travel).
+    # Distinct from the on-device Android/iOS Maps key: an app-restricted key is
+    # rejected for web-service calls, so this must be an unrestricted or
+    # IP-restricted key. Empty => predict_travel stays on the haversine fallback
+    # (shadow mode), so the feature is inert until this is set on Render.
+    MAPS_SERVER_KEY: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()

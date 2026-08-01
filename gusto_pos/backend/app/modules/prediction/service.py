@@ -67,6 +67,15 @@ Q80_Z = 0.8416                        # z for the 80th percentile (FR-M2)
 
 _ACTIVE = ("PAID", "RECEIVED", "PREPARING")
 
+# --- Step 6 travel (Distance Matrix) ---------------------------------------
+TRAVEL_CACHE_TTL_DAYS = 14            # quarter-hour-of-week ETAs reused ~2 weeks
+_DM_TIMEOUT_S = 4.0                   # fail fast to the haversine net (FR-P4)
+_IST = timedelta(hours=5, minutes=30)  # India-only deploy: bucket by local time
+# our transport_mode -> Google Distance Matrix travel mode
+_GMAPS_MODE = {"walk": "walking", "bike": "bicycling", "car": "driving",
+               "auto": "driving", "bus": "transit"}
+_GEOHASH_B32 = "0123456789bcdefghjkmnpqrstuvwxyz"
+
 
 def _haversine_km(lat1, lon1, lat2, lon2) -> float:
     r = 6371.0
@@ -75,6 +84,72 @@ def _haversine_km(lat1, lon1, lat2, lon2) -> float:
     dl = math.radians(lon2 - lon1)
     a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
     return 2 * r * math.asin(math.sqrt(a))
+
+
+def _geohash6(lat: float, lng: float) -> str:
+    """Standard geohash, precision 6 (~1.2km × 0.6km cell) — the travel_cache
+    origin key, so nearby origins share a cached ETA."""
+    lat_iv, lng_iv = [-90.0, 90.0], [-180.0, 180.0]
+    bit, even, ch, out = 0, True, 0, []
+    while len(out) < 6:
+        if even:
+            mid = (lng_iv[0] + lng_iv[1]) / 2
+            if lng > mid:
+                ch |= 1 << (4 - bit); lng_iv[0] = mid
+            else:
+                lng_iv[1] = mid
+        else:
+            mid = (lat_iv[0] + lat_iv[1]) / 2
+            if lat > mid:
+                ch |= 1 << (4 - bit); lat_iv[0] = mid
+            else:
+                lat_iv[1] = mid
+        even = not even
+        if bit < 4:
+            bit += 1
+        else:
+            out.append(_GEOHASH_B32[ch]); bit, ch = 0, 0
+    return "".join(out)
+
+
+def _quarter_hour_of_week(dt_utc: datetime) -> int:
+    """0..671 quarter-hour of the ISO week, in IST (local travel patterns)."""
+    lt = dt_utc + _IST
+    return lt.weekday() * 96 + lt.hour * 4 + lt.minute // 15
+
+
+async def _distance_matrix_eta(key, olat, olng, dlat, dlng, gmode):
+    """One Distance Matrix call. Returns ETA seconds, or None on ANY problem
+    (timeout / transport error / non-OK element / quota) so the caller falls
+    back to haversine. Uses duration_in_traffic for driving when present."""
+    import httpx
+    params = {
+        "origins": f"{olat},{olng}",
+        "destinations": f"{dlat},{dlng}",
+        "mode": gmode,
+        "key": key,
+    }
+    if gmode == "driving":
+        params["departure_time"] = "now"        # unlocks duration_in_traffic
+        params["traffic_model"] = "best_guess"
+    try:
+        async with httpx.AsyncClient(timeout=_DM_TIMEOUT_S) as client:
+            r = await client.get(
+                "https://maps.googleapis.com/maps/api/distancematrix/json",
+                params=params)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        if data.get("status") != "OK":
+            return None
+        el = data["rows"][0]["elements"][0]
+        if el.get("status") != "OK":
+            return None
+        dur = el.get("duration_in_traffic") or el.get("duration")
+        secs = dur.get("value") if dur else None
+        return float(secs) if secs is not None else None
+    except Exception:
+        return None
 
 
 def _resolve_item(station, base_prep, occupancy, hold_tol):
@@ -170,8 +245,8 @@ class PredictionService:
 
     # ---------------------------- Travel (§12) -----------------------------
     @staticmethod
-    def predict_travel(origin_lat, origin_lng, outlet_lat, outlet_lng, mode):
-        """Haversine fallback ONLY (Maps blocked). Always degraded, σ×2."""
+    def _haversine_travel(origin_lat, origin_lng, outlet_lat, outlet_lng, mode):
+        """FR-P4 safety net — always available, no network. Always degraded (σ×2)."""
         if None in (origin_lat, origin_lng, outlet_lat, outlet_lng):
             # No origin (e.g. location denied, FR-C6): very wide, degraded.
             return 20 * 60.0, TRAVEL_RESIDUAL_SIGMA_S * HAVERSINE_SIGMA_INFLATE * 1.5, "haversine_fallback"
@@ -181,6 +256,64 @@ class PredictionService:
         mu = (dist_km * 1000.0) / speed + LASTMILE_S
         sigma = TRAVEL_RESIDUAL_SIGMA_S * HAVERSINE_SIGMA_INFLATE
         return float(mu), float(sigma), "haversine_fallback"
+
+    @staticmethod
+    async def predict_travel(db, outlet_id, origin_lat, origin_lng, outlet_lat, outlet_lng, mode):
+        """Step 6 travel ETA. When MAPS_SERVER_KEY is set, use the Google Distance
+        Matrix API, cached in travel_cache on (origin_geohash6, outlet_id, mode,
+        quarter_hour). Haversine is ALWAYS the fallback on no-key / no-origin /
+        timeout / non-OK / quota / any exception (FR-P4 — never removed).
+
+        Returns (mu_seconds, sigma_seconds, source), source one of
+        maps_live | maps_cached | haversine_fallback.
+        """
+        from app.core.config import settings
+
+        fallback = PredictionService._haversine_travel(
+            origin_lat, origin_lng, outlet_lat, outlet_lng, mode)
+        # Inert unless a server key is configured and we actually have an origin.
+        if not settings.MAPS_SERVER_KEY or None in (origin_lat, origin_lng, outlet_lat, outlet_lng):
+            return fallback
+
+        gmode = _GMAPS_MODE.get(mode or DEFAULT_MODE, "driving")
+        gh = _geohash6(float(origin_lat), float(origin_lng))
+        qh = _quarter_hour_of_week(datetime.now(timezone.utc))
+        real_sigma = float(TRAVEL_RESIDUAL_SIGMA_S)  # real ETA -> no σ×2 inflation
+
+        # 1) fresh cache hit -> maps_cached
+        try:
+            hit = (await db.execute(text("""
+                SELECT eta_seconds FROM travel_cache
+                WHERE origin_geohash6=:gh AND outlet_id=:o AND mode=:m AND quarter_hour=:q
+                  AND refreshed_at > now() - make_interval(days => :ttl)
+            """), {"gh": gh, "o": str(outlet_id), "m": gmode, "q": qh,
+                   "ttl": TRAVEL_CACHE_TTL_DAYS})).first()
+            if hit is not None:
+                return float(hit.eta_seconds), real_sigma, "maps_cached"
+        except Exception:
+            pass  # a cache read failure must never break prediction
+
+        # 2) live Distance Matrix call (short timeout; any failure -> haversine)
+        eta = await _distance_matrix_eta(
+            settings.MAPS_SERVER_KEY, float(origin_lat), float(origin_lng),
+            float(outlet_lat), float(outlet_lng), gmode)
+        if eta is None:
+            return fallback  # FR-P4 safety net
+
+        # 3) best-effort cache upsert (never fatal)
+        try:
+            await db.execute(text("""
+                INSERT INTO travel_cache
+                    (origin_geohash6, outlet_id, mode, quarter_hour, eta_seconds, sample_count, refreshed_at)
+                VALUES (:gh, :o, :m, :q, :eta, 1, now())
+                ON CONFLICT (origin_geohash6, outlet_id, mode, quarter_hour)
+                DO UPDATE SET eta_seconds = EXCLUDED.eta_seconds,
+                              sample_count = travel_cache.sample_count + 1,
+                              refreshed_at = now()
+            """), {"gh": gh, "o": str(outlet_id), "m": gmode, "q": qh, "eta": int(eta)})
+        except Exception:
+            pass
+        return float(eta), real_sigma, "maps_live"
 
     # --------------------------- Decision (§14) ----------------------------
     @staticmethod
@@ -253,8 +386,8 @@ class PredictionService:
         mu_ready, sigma_ready, kv = await PredictionService.predict_kitchen(
             db, order_id, o.outlet_id, backlog, outlet_state)
         hold_tol = outlet_state["_hold_tolerance_s"]
-        mu_travel, sigma_travel, tsrc = PredictionService.predict_travel(
-            o.origin_lat, o.origin_lng, o.olat, o.olng, o.transport_mode)
+        mu_travel, sigma_travel, tsrc = await PredictionService.predict_travel(
+            db, o.outlet_id, o.origin_lat, o.origin_lng, o.olat, o.olng, o.transport_mode)
 
         now = datetime.now(timezone.utc)
         d_start, d_end, bucket, cost, buckets = PredictionService.decide_departure(
