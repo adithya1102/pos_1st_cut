@@ -23,7 +23,16 @@ class AppConfig {
   static bool get hasMapsKey => mapsApiKey.isNotEmpty;
 
   /// Dev OTP code accepted by the stub auth service / backend stub.
+  /// Only meaningful when [useFirebaseAuth] is false.
   static const String devOtpCode = '000000';
+
+  /// Real Firebase phone OTP (default) vs the backend stub. Opt back into the
+  /// stub for offline/dev work against a backend without FIREBASE_ENABLED:
+  ///   flutter run --dart-define=USE_FIREBASE_AUTH=false
+  static const bool useFirebaseAuth = bool.fromEnvironment(
+    'USE_FIREBASE_AUTH',
+    defaultValue: true,
+  );
 
   /// How often the pickup screen polls order status.
   static const Duration pickupPollInterval = Duration(seconds: 4);

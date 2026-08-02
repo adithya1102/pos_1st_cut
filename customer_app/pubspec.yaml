@@ -32,6 +32,11 @@ dependencies:
   url_launcher: ^6.3.0
   flutter_google_places_sdk: ^0.4.3
 
+  # Phone-number OTP sign-in. Native config comes from
+  # android/app/google-services.json (Firebase project carevo-pos).
+  firebase_core: ^4.12.1
+  firebase_auth: ^6.5.6
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

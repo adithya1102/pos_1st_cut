@@ -81,6 +81,48 @@ class CarevoService:
             await db.refresh(customer)
         return customer
 
+    @staticmethod
+    async def verify_firebase_token(db: AsyncSession, id_token: str) -> Customer:
+        """Exchange a verified Firebase phone-auth token for a Customer row.
+
+        Independent of OTP_STUB_MODE: this path never trusts a client-supplied
+        code, so it is safe to run with the stub still enabled for dev builds.
+        """
+        from app.modules.carevo_customer.firebase import (
+            find_phone_variants,
+            normalize_phone,
+            verify_phone_token,
+        )
+
+        if not settings.FIREBASE_ENABLED:
+            raise HTTPException(
+                status_code=501,
+                detail="Firebase authentication is not enabled on this deployment",
+            )
+
+        phone, _uid = await verify_phone_token(id_token)
+        canonical = normalize_phone(phone)
+
+        # Match legacy spellings too, so pre-Firebase rows (and their order
+        # history) are reused instead of duplicated under the E.164 form.
+        res = await db.execute(
+            select(Customer).where(Customer.phone_number.in_(find_phone_variants(phone)))
+        )
+        customer = res.scalars().first()
+
+        if not customer:
+            customer = Customer(phone_number=canonical)
+            db.add(customer)
+            await db.commit()
+            await db.refresh(customer)
+        elif customer.phone_number != canonical:
+            # Upgrade the stored number to E.164 now that it is provider-verified.
+            customer.phone_number = canonical
+            await db.commit()
+            await db.refresh(customer)
+
+        return customer
+
     # --------------------------- Discovery ---------------------------------
     @staticmethod
     def _haversine_km(lat1, lon1, lat2, lon2) -> float:

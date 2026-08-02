@@ -23,6 +23,15 @@ class VerifyOtpIn(BaseModel):
     otp: str
 
 
+class FirebaseAuthIn(BaseModel):
+    """Real phone-auth exchange: a Firebase ID token for a CareVo session token.
+
+    The phone number is read from the verified token's claims, never from the
+    client — a client-supplied number here would be trivially forgeable.
+    """
+    id_token: str = Field(..., min_length=16)
+
+
 class CustomerPublic(BaseModel):
     id: uuid.UUID
     name: Optional[str] = None

@@ -1,9 +1,11 @@
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'config/app_config.dart';
 import 'services/api_client.dart';
 import 'services/catalog_service.dart';
+import 'services/firebase_otp_service.dart';
 import 'services/location_service.dart';
 import 'services/order_service.dart';
 import 'services/otp_auth_service.dart';
@@ -18,6 +20,12 @@ import 'theme/theme_provider.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Reads android/app/google-services.json (Firebase project carevo-pos).
+  // Required before FirebaseAuth.instance is touched.
+  if (AppConfig.useFirebaseAuth) {
+    await Firebase.initializeApp();
+  }
+
   // Build the single API client and restore any persisted token.
   final api = ApiClient();
   await api.loadToken();
@@ -26,9 +34,10 @@ Future<void> main() async {
   final themeProvider = ThemeProvider();
   await themeProvider.load();
 
-  // Wire the service stubs. Swapping to Firebase/Razorpay later means
-  // changing only these two lines.
-  final OtpAuthService otpService = StubOtpService(api);
+  // Real Firebase phone OTP by default; the backend stub stays reachable via
+  // --dart-define=USE_FIREBASE_AUTH=false for offline/dev work.
+  final OtpAuthService otpService =
+      AppConfig.useFirebaseAuth ? FirebaseOtpService(api) : StubOtpService(api);
   final PaymentService paymentService = StubPaymentService(api);
 
   runApp(

@@ -2,6 +2,9 @@ import java.util.Properties
 
 plugins {
     id("com.android.application")
+    // Firebase: processes google-services.json into generated resources. Must come
+    // after the Android plugin. Version is declared (apply false) in settings.gradle.kts.
+    id("com.google.gms.google-services")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
@@ -59,3 +62,14 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+// NOTE: deliberately no `implementation(platform("com.google.firebase:firebase-bom:…"))`.
+//
+// The Firebase console's Gradle snippet assumes a native Android app. In a
+// Flutter app the FlutterFire plugins already supply their own BoM — firebase_core
+// 4.12.1 brings 34.15.0 — and declaring a different version here overrides theirs
+// for the whole graph. Pinning 34.17.0 resolved firebase-common to 22.2.0, which
+// no longer has FirebaseOptions.getRecaptchaSiteKey(); FlutterFirebaseCorePlugin
+// calls it, so the app died on launch with NoSuchMethodError.
+//
+// Let firebase_core own the native versions: bump the pub package, not a BoM here.

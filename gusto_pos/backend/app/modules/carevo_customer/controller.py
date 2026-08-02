@@ -53,6 +53,29 @@ async def verify_otp(payload: s.VerifyOtpIn, db: AsyncSession = Depends(get_db))
     }
 
 
+@router.post("/auth/firebase", response_model=s.VerifyOtpOut)
+async def verify_firebase(payload: s.FirebaseAuthIn, db: AsyncSession = Depends(get_db)):
+    """Real phone-auth login: Firebase ID token -> CareVo customer session.
+
+    Intentionally NOT behind _require_customer_auth_enabled(). That switch exists
+    because the stub OTP path lets anyone mint a token for any phone number; this
+    path proves possession of the number via Firebase, so it stays available on
+    public deploys and is the intended replacement for the stub. Gated instead by
+    FIREBASE_ENABLED + FIREBASE_PROJECT_ID.
+    """
+    customer = await CarevoService.verify_firebase_token(db, payload.id_token)
+    token = create_customer_token(str(customer.id))
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "customer": {
+            "id": customer.id,
+            "name": customer.name,
+            "phone_number": customer.phone_number,
+        },
+    }
+
+
 # ---------------------------- Discovery ------------------------------------
 @router.get("/outlets", response_model=list[s.OutletOut])
 async def list_outlets(

@@ -114,8 +114,9 @@ class _OtpScreenState extends State<OtpScreen> {
                       onPressed: _valid ? _verify : null,
                     ),
                     // DEBUG-ONLY: skip straight through with the stub code.
-                    // Absent from release builds.
-                    if (kDebugMode) ...[
+                    // Absent from release builds, and from Firebase builds
+                    // where the stub code is not accepted.
+                    if (kDebugMode && !AppConfig.useFirebaseAuth) ...[
                       const SizedBox(height: 12),
                       OutlinedButton.icon(
                         onPressed: auth.busy ? null : _skipDev,
@@ -126,7 +127,7 @@ class _OtpScreenState extends State<OtpScreen> {
                   ],
                 ),
               ),
-              if (kDebugMode) ...[
+              if (kDebugMode && !AppConfig.useFirebaseAuth) ...[
                 const SizedBox(height: 18),
                 Container(
                   padding: const EdgeInsets.all(12),
