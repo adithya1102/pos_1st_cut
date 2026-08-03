@@ -34,6 +34,24 @@ class AppConfig {
     defaultValue: true,
   );
 
+  /// Android only. Forces phone verification down the web reCAPTCHA flow
+  /// instead of Play Integrity.
+  ///
+  /// Play Integrity can only vouch for an app distributed through the Play
+  /// Store. This app is sideloaded, so the integrity token comes back with no
+  /// usable app info and Firebase rejects it (`17028 Invalid app info in
+  /// play_integrity_token`) — real numbers never get an SMS. Firebase does not
+  /// fall back on its own here: reCAPTCHA is automatic only when Play Integrity
+  /// is *unavailable*, not when it returns a token that is refused.
+  ///
+  /// Flip this off once the app ships on a Play track (Play Integrity is the
+  /// nicer flow — no webview challenge):
+  ///   flutter run --dart-define=FORCE_RECAPTCHA_FLOW=false
+  static const bool forceRecaptchaFlow = bool.fromEnvironment(
+    'FORCE_RECAPTCHA_FLOW',
+    defaultValue: true,
+  );
+
   /// How often the pickup screen polls order status.
   static const Duration pickupPollInterval = Duration(seconds: 4);
 

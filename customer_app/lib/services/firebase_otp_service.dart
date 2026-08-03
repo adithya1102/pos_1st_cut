@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 
+import '../config/app_config.dart';
 import '../models/customer.dart';
 import 'api_client.dart';
 import 'otp_auth_service.dart';
@@ -30,6 +32,33 @@ class FirebaseOtpService implements OtpAuthService {
 
   int? _resendToken;
 
+  /// `setSettings` mutates the shared FirebaseAuth instance, so it only needs
+  /// to land once — but it must land *before* the first verifyPhoneNumber call.
+  bool _verifierConfigured = false;
+
+  /// Selects the app verifier for this device. See
+  /// [AppConfig.forceRecaptchaFlow] for why the Play Integrity default is not
+  /// usable while the app is sideloaded.
+  ///
+  /// Android-only setting: on every other platform the call is skipped rather
+  /// than passed a flag the platform ignores.
+  Future<void> _configureAppVerifier() async {
+    if (_verifierConfigured) return;
+    _verifierConfigured = true;
+
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+    if (!AppConfig.forceRecaptchaFlow) return;
+
+    try {
+      await _auth.setSettings(forceRecaptchaFlow: true);
+    } catch (e) {
+      // Never block sign-in on this: if the setting fails to apply we still
+      // want the normal (Play Integrity) attempt rather than a dead end.
+      debugPrint('Could not force reCAPTCHA flow: $e');
+      _verifierConfigured = false;
+    }
+  }
+
   /// Firebase requires E.164. Bare 10-digit input is assumed Indian (+91),
   /// matching the rest of the app's phone handling.
   static String toE164(String raw) {
@@ -47,6 +76,8 @@ class FirebaseOtpService implements OtpAuthService {
   Future<String> requestOtp(String phoneNumber) async {
     _verificationId = null;
     _autoCredential = null;
+
+    await _configureAppVerifier();
 
     // Completed by whichever callback fires first; guarded because Firebase can
     // invoke more than one (e.g. verificationCompleted then codeSent) and
@@ -155,6 +186,12 @@ class FirebaseOtpService implements OtpAuthService {
         return 'SMS sign-in is not enabled for this project yet.';
       case 'network-request-failed':
         return 'Network error: unable to reach Firebase.';
+      // App verification was refused rather than merely unavailable — the
+      // reCAPTCHA challenge was dismissed, or this build's signing key is not
+      // the one registered in Firebase.
+      case 'app-not-authorized':
+      case 'web-context-cancelled':
+        return 'Could not verify this app. Please try again.';
       default:
         return e.message ?? 'Verification failed (${e.code}).';
     }
