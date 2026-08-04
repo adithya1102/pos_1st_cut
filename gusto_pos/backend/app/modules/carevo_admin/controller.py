@@ -116,6 +116,16 @@ async def unlock_order(
     return await AdminService.unlock_order(db, admin, order_id)
 
 
+# --------------------------- customer directory ----------------------------
+@router.get("/customers", response_model=list[s.CustomerDirectoryOut])
+async def list_customers(
+    limit: int = Query(200, ge=1, le=1000),
+    _admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await AdminService.list_customers(db, limit=limit)
+
+
 # -------------------- prediction engine (shadow mode) ----------------------
 # Read-only observability over migration 006's PE tables. No response_model:
 # the payloads are nested and mix UUID/datetime/Decimal/JSONB, which FastAPI's

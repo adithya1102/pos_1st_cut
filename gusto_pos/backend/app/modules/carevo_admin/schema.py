@@ -74,3 +74,16 @@ class AuditLogOut(BaseModel):
     target_id: Optional[uuid.UUID] = None
     detail: Optional[Any] = None
     created_at: datetime
+
+
+class CustomerDirectoryOut(BaseModel):
+    """One row of the read-only customer directory.
+
+    `name` is nullable because customers are created from a verified phone
+    number alone — nothing in the sign-in flow asks for a name.
+    """
+    id: uuid.UUID
+    phone_number: str
+    name: Optional[str] = None
+    order_count: int
+    created_at: Optional[datetime] = None

@@ -282,6 +282,36 @@ class AdminService:
             "failed_attempts": row[2],
         }
 
+    # ------------------------- customer directory --------------------------
+    @staticmethod
+    async def list_customers(db: AsyncSession, limit: int = 200) -> list[dict]:
+        """Read-only customer directory across ALL outlets.
+
+        Order count is a LEFT JOIN aggregate so customers who signed in but
+        never ordered still appear (count 0) — they are exactly the rows worth
+        seeing. No PII beyond the phone number the customer signed in with, and
+        no write path: this endpoint is deliberately GET-only.
+        """
+        rows = (await db.execute(text("""
+            SELECT c.id, c.phone_number, c.name, c.created_at,
+                   count(co.id) AS order_count
+            FROM customers c
+            LEFT JOIN customer_orders co ON co.customer_id = c.id
+            GROUP BY c.id, c.phone_number, c.name, c.created_at
+            ORDER BY c.created_at DESC NULLS LAST
+            LIMIT :limit
+        """), {"limit": limit})).fetchall()
+        return [
+            {
+                "id": r.id,
+                "phone_number": r.phone_number,
+                "name": r.name,
+                "order_count": r.order_count or 0,
+                "created_at": r.created_at,
+            }
+            for r in rows
+        ]
+
     # ---------------- prediction engine (shadow-mode observability) --------
     # Read-only windows onto the PE tables from migration 006. Raw SQL, no ORM,
     # every order FK points at customer_orders(id). Graduation is intentionally

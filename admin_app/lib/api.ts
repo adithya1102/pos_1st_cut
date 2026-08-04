@@ -123,6 +123,16 @@ export interface LockedOrder {
   created_at: string | null;
 }
 
+/** One row of the read-only customer directory. `name` is usually null —
+ *  sign-in only ever captures a verified phone number. */
+export interface CustomerRow {
+  id: string;
+  phone_number: string;
+  name: string | null;
+  order_count: number;
+  created_at: string | null;
+}
+
 export interface AuditLog {
   id: string;
   actor_username: string | null;
@@ -254,6 +264,9 @@ export const adminApi = {
 
   lockedOrders: () => api.get<LockedOrder[]>("/api/v1/admin/orders/locked"),
   unlockOrder: (id: string) => api.post(`/api/v1/admin/orders/${id}/unlock`),
+
+  customers: (limit = 200) =>
+    api.get<CustomerRow[]>(`/api/v1/admin/customers?limit=${limit}`),
 
   auditLogs: (limit = 100) =>
     api.get<AuditLog[]>(`/api/v1/admin/audit-logs?limit=${limit}`),
