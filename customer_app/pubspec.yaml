@@ -50,6 +50,34 @@ dev_dependencies:
     sdk: flutter
 
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
+
+# Launcher icon generation: `dart run flutter_launcher_icons`.
+#
+# `app_icon.png` is the brand square: 1920x1920, no alpha, logo on a white
+# field. It is used as-is for iOS and for the legacy (pre-API-26) Android icon,
+# both of which want an opaque full-bleed square.
+#
+# Android adaptive icons get `app_icon_foreground.png` instead — the same logo
+# keyed onto TRANSPARENCY, generated from app_icon.png (see scripts/).
+# Reason: feeding the white square in as the foreground layer leaves a faint
+# rounded-square ghost inside Android's circular mask. The square's field is not
+# pure white (measured 244-255, mostly 254) while the background layer is
+# #FFFFFF, so its baked-in rounded corners show as a ~1-11/255 seam. A
+# transparent foreground has no square to reveal, at any mask shape.
+#
+# Inset 12 (not the default 16): the keyed artwork fills 92% of its canvas, so
+# 12% lands it at ~56% of the 108dp adaptive canvas — inside Android's 61% safe
+# zone (66dp of 108dp) with margin, without looking undersized.
+flutter_launcher_icons:
+  image_path: "assets/icon/app_icon.png"
+  android: true
+  ios: true
+  # iOS rejects icons with an alpha channel at App Store submission.
+  remove_alpha_ios: true
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/icon/app_icon_foreground.png"
+  adaptive_icon_foreground_inset: 12

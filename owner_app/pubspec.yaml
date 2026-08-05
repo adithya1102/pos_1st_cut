@@ -57,6 +57,31 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+
+# Launcher icon generation: `dart run flutter_launcher_icons`.
+# Same brand mark and same split as customer_app — see that pubspec for the full
+# reasoning. In short: `app_icon.png` (opaque white square) drives iOS and the
+# legacy pre-API-26 Android icon, while Android's adaptive icon takes
+# `app_icon_foreground.png`, the same logo keyed onto TRANSPARENCY.
+#
+# The transparency matters: feeding the white square in as the adaptive
+# foreground leaves a faint rounded-square ghost inside Android's circular mask,
+# because the square's field is not pure white (244-255) against a #FFFFFF
+# background layer. Regenerate the foreground with
+# `python scripts/make_adaptive_foreground.py` if the source logo changes.
+#
+# Inset 12 matches customer_app: keyed artwork fills 92% of its canvas, landing
+# at ~56% of the 108dp adaptive canvas, inside the 61% safe zone.
+flutter_launcher_icons:
+  image_path: "assets/icon/app_icon.png"
+  android: true
+  ios: true
+  # iOS rejects icons with an alpha channel at App Store submission.
+  remove_alpha_ios: true
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/icon/app_icon_foreground.png"
+  adaptive_icon_foreground_inset: 12
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
