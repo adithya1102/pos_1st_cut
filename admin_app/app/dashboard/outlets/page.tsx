@@ -108,6 +108,7 @@ export default function OutletsPage() {
               <th className={th}>Outlet</th>
               <th className={th}>Organization</th>
               <th className={th}>City</th>
+              <th className={th}>Phone</th>
               <th className={th}>Verification</th>
               <th className={th}>Visible</th>
               <th className={th}>Created</th>
@@ -115,8 +116,8 @@ export default function OutletsPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {outlets === null && <EmptyRow colSpan={7}>Loading…</EmptyRow>}
-            {outlets?.length === 0 && <EmptyRow colSpan={7}>No outlets match.</EmptyRow>}
+            {outlets === null && <EmptyRow colSpan={8}>Loading…</EmptyRow>}
+            {outlets?.length === 0 && <EmptyRow colSpan={8}>No outlets match.</EmptyRow>}
             {outlets?.map((o) => (
               <tr key={o.id} className={o.is_deactivated ? "bg-slate-50/60" : undefined}>
                 <td className={`${td} font-medium`}>
@@ -129,6 +130,11 @@ export default function OutletsPage() {
                 </td>
                 <td className={`${td} text-slate-600`}>{o.organization_name ?? "—"}</td>
                 <td className={`${td} text-slate-600`}>{o.city ?? "—"}</td>
+                {/* Null for outlets that predate migration 009, and for owners
+                    who skipped the optional field at signup. */}
+                <td className={`${td} font-mono text-xs text-slate-600`}>
+                  {o.phone_number ?? "—"}
+                </td>
                 <td className={td}>
                   <StatusBadge status={o.verification_status} />
                 </td>

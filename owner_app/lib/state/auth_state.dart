@@ -49,6 +49,7 @@ class AuthState extends ChangeNotifier {
   Future<String?> register({
     required String restaurantName,
     String? city,
+    String? phoneNumber,
     required String username,
     required String password,
     required String upiId,
@@ -57,6 +58,7 @@ class AuthState extends ChangeNotifier {
       await _auth.register(
         restaurantName: restaurantName.trim(),
         city: city,
+        phoneNumber: phoneNumber,
         username: username.trim(),
         password: password,
         upiId: upiId,

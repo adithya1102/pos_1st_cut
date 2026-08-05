@@ -29,6 +29,7 @@ class AuthService {
   Future<void> register({
     required String restaurantName,
     String? city,
+    String? phoneNumber,
     required String username,
     required String password,
     required String upiId,
@@ -36,6 +37,10 @@ class AuthService {
     await _client.post('/register', body: {
       'restaurant_name': restaurantName,
       if (city != null && city.trim().isNotEmpty) 'city': city.trim(),
+      // Omitted entirely when blank: the field is optional server-side, and
+      // sending "" would fail the schema's min_length check.
+      if (phoneNumber != null && phoneNumber.trim().isNotEmpty)
+        'phone_number': phoneNumber.trim(),
       'username': username,
       'password': password,
       'upi_id': upiId.trim(),

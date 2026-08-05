@@ -68,7 +68,7 @@ class AdminService:
                 detail=f"Invalid status. Must be one of: {[PENDING, ACTIVE, REJECTED]}",
             )
         rows = (await db.execute(text("""
-            SELECT o.id, o.location_name, o.city, o.organization_id,
+            SELECT o.id, o.location_name, o.city, o.phone_number, o.organization_id,
                    org.name AS organization_name,
                    o.verification_status, o.is_visible, o.created_at,
                    o.deactivated_at
@@ -90,6 +90,7 @@ class AdminService:
                 "id": r.id,
                 "location_name": r.location_name,
                 "city": r.city,
+                "phone_number": r.phone_number,
                 "organization_id": r.organization_id,
                 "organization_name": r.organization_name,
                 "verification_status": r.verification_status,

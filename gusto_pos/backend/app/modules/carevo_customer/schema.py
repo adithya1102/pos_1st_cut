@@ -206,6 +206,10 @@ class VerifyPickupIn(BaseModel):
 class RegisterIn(BaseModel):
     restaurant_name: str = Field(..., min_length=2, max_length=100)
     city: Optional[str] = Field(None, max_length=50)
+    # Outlet contact number (migration 009). Optional, unlike upi_id: it is
+    # informational for platform admins, not needed to take payments, so an
+    # owner who leaves it blank still registers.
+    phone_number: Optional[str] = Field(None, min_length=6, max_length=20)
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     username: str = Field(..., min_length=3, max_length=50)

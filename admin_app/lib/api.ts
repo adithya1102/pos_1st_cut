@@ -103,6 +103,8 @@ export interface Outlet {
   id: string;
   location_name: string;
   city: string | null;
+  // Null for every outlet created before migration 009 added the column.
+  phone_number: string | null;
   organization_id: string | null;
   organization_name: string | null;
   verification_status: VerificationStatus;

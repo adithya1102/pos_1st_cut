@@ -956,13 +956,14 @@ class CarevoService:
             ), {"n": payload.restaurant_name})).scalar()
 
             outlet_id = (await db.execute(text(
-                "INSERT INTO outlets (id, location_name, city, latitude, longitude, "
+                "INSERT INTO outlets (id, location_name, city, phone_number, latitude, longitude, "
                 "  geofence_radius_meters, organization_id, verification_status, is_visible, "
                 "  upi_id, created_at) "
-                "VALUES (gen_random_uuid(), :ln, :city, :lat, :lng, 100, :org, "
+                "VALUES (gen_random_uuid(), :ln, :city, :phone, :lat, :lng, 100, :org, "
                 "        'pending_verification', false, :upi, now()) RETURNING id"
             ), {
                 "ln": payload.restaurant_name, "city": payload.city,
+                "phone": (payload.phone_number or "").strip() or None,
                 "lat": payload.latitude, "lng": payload.longitude, "org": str(org_id),
                 "upi": payload.upi_id,
             })).scalar()

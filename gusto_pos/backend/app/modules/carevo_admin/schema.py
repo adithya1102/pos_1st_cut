@@ -21,6 +21,8 @@ class AdminOutletOut(BaseModel):
     id: uuid.UUID
     location_name: str
     city: Optional[str] = None
+    # Contact number (migration 009). NULL for every outlet created before it.
+    phone_number: Optional[str] = None
     organization_id: Optional[uuid.UUID] = None
     organization_name: Optional[str] = None
     verification_status: VerificationStatus
