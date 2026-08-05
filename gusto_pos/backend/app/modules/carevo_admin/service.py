@@ -289,15 +289,19 @@ class AdminService:
 
         Order count is a LEFT JOIN aggregate so customers who signed in but
         never ordered still appear (count 0) — they are exactly the rows worth
-        seeing. No PII beyond the phone number the customer signed in with, and
-        no write path: this endpoint is deliberately GET-only.
+        seeing. No PII beyond the phone number and email the customer signed in
+        with, and no write path: this endpoint is deliberately GET-only.
+
+        Since migration 008 either identifier can be NULL: phone-only customers
+        (OTP) have no email, Google-only customers have no phone. Both columns
+        are surfaced so a row is never blank in both.
         """
         rows = (await db.execute(text("""
-            SELECT c.id, c.phone_number, c.name, c.created_at,
+            SELECT c.id, c.phone_number, c.email, c.name, c.created_at,
                    count(co.id) AS order_count
             FROM customers c
             LEFT JOIN customer_orders co ON co.customer_id = c.id
-            GROUP BY c.id, c.phone_number, c.name, c.created_at
+            GROUP BY c.id, c.phone_number, c.email, c.name, c.created_at
             ORDER BY c.created_at DESC NULLS LAST
             LIMIT :limit
         """), {"limit": limit})).fetchall()
@@ -305,6 +309,7 @@ class AdminService:
             {
                 "id": r.id,
                 "phone_number": r.phone_number,
+                "email": r.email,
                 "name": r.name,
                 "order_count": r.order_count or 0,
                 "created_at": r.created_at,

@@ -125,9 +125,12 @@ export interface LockedOrder {
 
 /** One row of the read-only customer directory. `name` is usually null —
  *  sign-in only ever captures a verified phone number. */
+// phone_number and email are both nullable since migration 008: OTP customers
+// have no email, Google customers have no phone. At least one is always set.
 export interface CustomerRow {
   id: string;
-  phone_number: string;
+  phone_number: string | null;
+  email: string | null;
   name: string | null;
   order_count: number;
   created_at: string | null;

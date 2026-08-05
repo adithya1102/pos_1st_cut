@@ -39,19 +39,25 @@ export default function CustomersPage() {
           <thead className="bg-slate-50">
             <tr>
               <th className={th}>Phone</th>
+              <th className={th}>Email</th>
               <th className={th}>Name</th>
               <th className={th}>Orders</th>
               <th className={th}>Joined</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {customers === null && <EmptyRow colSpan={4}>Loading…</EmptyRow>}
+            {customers === null && <EmptyRow colSpan={5}>Loading…</EmptyRow>}
             {customers?.length === 0 && (
-              <EmptyRow colSpan={4}>No customers yet.</EmptyRow>
+              <EmptyRow colSpan={5}>No customers yet.</EmptyRow>
             )}
             {customers?.map((c) => (
               <tr key={c.id}>
-                <td className={`${td} font-mono text-xs`}>{c.phone_number}</td>
+                {/* Exactly one of phone/email is null for most rows: OTP
+                    customers have no email, Google customers no phone. */}
+                <td className={`${td} font-mono text-xs`}>
+                  {c.phone_number ?? "—"}
+                </td>
+                <td className={`${td} text-slate-600`}>{c.email ?? "—"}</td>
                 {/* Name is null for anyone who signed in but never supplied one,
                     which is the common case. */}
                 <td className={`${td} text-slate-600`}>{c.name ?? "—"}</td>

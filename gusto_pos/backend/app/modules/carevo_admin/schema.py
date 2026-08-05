@@ -79,11 +79,19 @@ class AuditLogOut(BaseModel):
 class CustomerDirectoryOut(BaseModel):
     """One row of the read-only customer directory.
 
-    `name` is nullable because customers are created from a verified phone
-    number alone — nothing in the sign-in flow asks for a name.
+    `name` is nullable because customers are created from a verified identifier
+    alone — nothing in the sign-in flow asks for a name.
+
+    `phone_number` and `email` are BOTH nullable as of migration 008: a
+    phone-only (OTP) customer has no email, a Google-only customer has no
+    phone. The DB CHECK `customers_identity_present` guarantees at least one is
+    set, but neither individually. phone_number was `str` here until that
+    migration landed — a single Google-only row would have raised a Pydantic
+    ValidationError and 500'd this whole endpoint.
     """
     id: uuid.UUID
-    phone_number: str
+    phone_number: Optional[str] = None
+    email: Optional[str] = None
     name: Optional[str] = None
     order_count: int
     created_at: Optional[datetime] = None
