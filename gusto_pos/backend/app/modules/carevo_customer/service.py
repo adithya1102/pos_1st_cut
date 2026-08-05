@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import HTTPException, status
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -118,6 +118,64 @@ class CarevoService:
         elif customer.phone_number != canonical:
             # Upgrade the stored number to E.164 now that it is provider-verified.
             customer.phone_number = canonical
+            await db.commit()
+            await db.refresh(customer)
+
+        return customer
+
+    @staticmethod
+    async def verify_google_token(db: AsyncSession, id_token: str) -> Customer:
+        """Exchange a verified Firebase Google-provider token for a Customer row.
+
+        Standalone identity: the resulting customer has NO phone number. The app
+        renders it as "—" until the customer verifies a phone separately, at
+        which point the phone-auth path fills it in on the same row.
+
+        Matching order is google_uid first, then email. The uid is the stable
+        key (an email can be reassigned by a Workspace admin); email is the
+        fallback that reunites a Google login with a row created by an earlier
+        Google sign-in before uid was stored, and backfills the uid onto it.
+        """
+        from app.modules.carevo_customer.firebase import verify_google_token
+
+        if not settings.FIREBASE_ENABLED:
+            raise HTTPException(
+                status_code=501,
+                detail="Firebase authentication is not enabled on this deployment",
+            )
+
+        email, uid, name = await verify_google_token(id_token)
+
+        res = await db.execute(select(Customer).where(Customer.google_uid == uid))
+        customer = res.scalars().first()
+
+        if not customer:
+            res = await db.execute(
+                select(Customer).where(func.lower(Customer.email) == email)
+            )
+            customer = res.scalars().first()
+
+        if not customer:
+            # No phone: this is the standalone-identity case the nullable
+            # phone_number column (migration 008) exists for.
+            customer = Customer(email=email, google_uid=uid, name=name)
+            db.add(customer)
+            await db.commit()
+            await db.refresh(customer)
+            return customer
+
+        # Existing row — reconcile it with what Google just told us.
+        changed = False
+        if customer.google_uid != uid:
+            customer.google_uid = uid
+            changed = True
+        if customer.email != email:
+            customer.email = email
+            changed = True
+        if name and not customer.name:
+            customer.name = name
+            changed = True
+        if changed:
             await db.commit()
             await db.refresh(customer)
 

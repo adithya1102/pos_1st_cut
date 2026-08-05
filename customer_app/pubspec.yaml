@@ -37,6 +37,10 @@ dependencies:
   firebase_core: ^4.12.1
   firebase_auth: ^6.5.6
 
+  # Google Sign-In (standalone identity, no phone). The Android side reads
+  # default_web_client_id, generated from android/app/google-services.json.
+  google_sign_in: ^7.2.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

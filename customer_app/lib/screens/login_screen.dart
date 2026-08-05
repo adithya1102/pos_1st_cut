@@ -8,6 +8,7 @@ import '../theme/widgets/neo_button.dart';
 import '../theme/widgets/neo_card.dart';
 import '../theme/widgets/neo_text_field.dart';
 import '../widgets/theme_toggle_button.dart';
+import 'location_screen.dart';
 import 'otp_screen.dart';
 
 /// Step 2 of the flow: mobile number entry to request an OTP.
@@ -41,6 +42,26 @@ class _LoginScreenState extends State<LoginScreen> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(auth.error ?? 'Could not send OTP.')),
+      );
+    }
+  }
+
+  /// Google is a standalone identity: it skips the OTP step entirely and lands
+  /// straight on the location screen, exactly where a verified OTP lands.
+  Future<void> _google() async {
+    FocusScope.of(context).unfocus();
+    final auth = context.read<AuthState>();
+    final ok = await auth.signInWithGoogle();
+    if (!mounted) return;
+    if (ok) {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const LocationScreen()),
+        (route) => false,
+      );
+    } else if (auth.error != null) {
+      // A plain cancel leaves error null and should stay silent.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(auth.error!)),
       );
     }
   }
@@ -105,6 +126,25 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ],
                 ),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(child: Divider(color: c.border, thickness: 2)),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Text('OR', style: textTheme.labelLarge),
+                  ),
+                  Expanded(child: Divider(color: c.border, thickness: 2)),
+                ],
+              ),
+              const SizedBox(height: 20),
+              NeoButton(
+                label: 'Continue with Google',
+                icon: Icons.account_circle_outlined,
+                variant: NeoButtonVariant.neutral,
+                loading: auth.busy,
+                onPressed: auth.busy ? null : _google,
               ),
               const SizedBox(height: 20),
               Text(

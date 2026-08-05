@@ -32,6 +32,23 @@ class FirebaseOtpService implements OtpAuthService {
 
   int? _resendToken;
 
+  /// The number [_resendToken] belongs to. A resend token is scoped to one
+  /// phone number's verification session, so it must not follow the user to a
+  /// different number.
+  String? _resendTokenPhone;
+
+  /// Monotonic id for the current verification attempt.
+  ///
+  /// FlutterFire never cancels the EventChannel subscription it opens per
+  /// `verifyPhoneNumber` call, so a superseded attempt keeps delivering
+  /// callbacks forever. Its `codeAutoRetrievalTimeout` — 30s after its own
+  /// `codeSent`, the plugin's default timeout — would otherwise fire *after*
+  /// a resend and overwrite the live verificationId with the dead one, so the
+  /// code the user just received gets checked against the wrong session and
+  /// comes back "expired". Every callback captures the generation it belongs
+  /// to and drops its write once a newer attempt has started.
+  int _generation = 0;
+
   /// `setSettings` mutates the shared FirebaseAuth instance, so it only needs
   /// to land once — but it must land *before* the first verifyPhoneNumber call.
   bool _verifierConfigured = false;
@@ -74,8 +91,20 @@ class FirebaseOtpService implements OtpAuthService {
 
   @override
   Future<String> requestOtp(String phoneNumber) async {
+    final e164 = toE164(phoneNumber);
+
+    // This attempt supersedes any earlier one; its callbacks stop counting.
+    final generation = ++_generation;
+    bool isCurrent() => generation == _generation;
+
     _verificationId = null;
     _autoCredential = null;
+
+    // Resending is only meaningful against the same number's session.
+    if (_resendTokenPhone != e164) {
+      _resendToken = null;
+      _resendTokenPhone = e164;
+    }
 
     await _configureAppVerifier();
 
@@ -92,23 +121,28 @@ class FirebaseOtpService implements OtpAuthService {
     }
 
     await _auth.verifyPhoneNumber(
-      phoneNumber: toE164(phoneNumber),
+      phoneNumber: e164,
       forceResendingToken: _resendToken,
       verificationCompleted: (credential) {
+        if (!isCurrent()) return;
         _autoCredential = credential;
         // verificationId is null on instant verification; the stored credential
         // is what verifyOtp will use.
         succeed(credential.verificationId ?? '');
       },
       verificationFailed: (e) {
+        if (!isCurrent()) return;
         fail(ApiException(_messageFor(e)));
       },
       codeSent: (verificationId, resendToken) {
+        if (!isCurrent()) return;
         _verificationId = verificationId;
         _resendToken = resendToken;
+        _resendTokenPhone = e164;
         succeed(verificationId);
       },
       codeAutoRetrievalTimeout: (verificationId) {
+        if (!isCurrent()) return;
         // Auto-retrieval window closed; the typed code is now the only route.
         _verificationId = verificationId;
         succeed(verificationId);
@@ -157,6 +191,9 @@ class FirebaseOtpService implements OtpAuthService {
     }
     await _api.setToken(token);
 
+    // Retire this attempt so its still-live callbacks (the auto-retrieval
+    // timeout in particular) can't resurrect a verificationId after sign-in.
+    _generation++;
     _verificationId = null;
     _autoCredential = null;
 

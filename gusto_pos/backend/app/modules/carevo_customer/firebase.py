@@ -154,6 +154,36 @@ async def verify_phone_token(id_token: str) -> tuple[str, str]:
     return str(phone), str(claims["sub"])
 
 
+async def verify_google_token(id_token: str) -> tuple[str, str, Optional[str]]:
+    """Verify a Google-provider ID token. Returns (email, firebase_uid, name).
+
+    Standalone identity: unlike [verify_phone_token] this deliberately does NOT
+    require or read a phone number. A Google customer has none until they verify
+    one separately.
+    """
+    claims = await verify_id_token(id_token)
+
+    # `firebase.sign_in_provider` is set by Firebase itself and cannot be
+    # forged without the signing key, so it is the trustworthy way to confirm
+    # this token really came from the Google provider rather than, say, the
+    # phone provider carrying an unrelated `email` claim.
+    provider = (claims.get("firebase") or {}).get("sign_in_provider")
+    if provider != "google.com":
+        raise _auth_error("Firebase token is not a Google sign-in")
+
+    email = claims.get("email")
+    if not email:
+        raise _auth_error("Google sign-in returned no email address")
+
+    # Google verifies the address it hands back; refusing the unverified case
+    # stops an attacker-controlled address being matched onto someone's row.
+    if claims.get("email_verified") is False:
+        raise _auth_error("Google account email is not verified")
+
+    name = claims.get("name") or None
+    return str(email).strip().lower(), str(claims["sub"]), name
+
+
 def normalize_phone(phone: str) -> str:
     """Strip formatting so Firebase's E.164 matches stored phone numbers."""
     return "".join(ch for ch in phone if ch.isdigit() or ch == "+").strip()

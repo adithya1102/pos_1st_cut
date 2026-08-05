@@ -72,6 +72,31 @@ async def verify_firebase(payload: s.FirebaseAuthIn, db: AsyncSession = Depends(
             "id": customer.id,
             "name": customer.name,
             "phone_number": customer.phone_number,
+            "email": customer.email,
+        },
+    }
+
+
+@router.post("/auth/google", response_model=s.VerifyOtpOut)
+async def verify_google(payload: s.GoogleAuthIn, db: AsyncSession = Depends(get_db)):
+    """Google sign-in: Firebase Google-provider ID token -> CareVo session.
+
+    A STANDALONE identity — the customer returned here has no phone number, and
+    none is asked for. Same reasoning as /auth/firebase for skipping
+    _require_customer_auth_enabled(): nothing is taken on the client's word, the
+    token is verified against Google's public keys. Gated by FIREBASE_ENABLED +
+    FIREBASE_PROJECT_ID.
+    """
+    customer = await CarevoService.verify_google_token(db, payload.id_token)
+    token = create_customer_token(str(customer.id))
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "customer": {
+            "id": customer.id,
+            "name": customer.name,
+            "phone_number": customer.phone_number,
+            "email": customer.email,
         },
     }
 

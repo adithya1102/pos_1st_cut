@@ -32,10 +32,23 @@ class FirebaseAuthIn(BaseModel):
     id_token: str = Field(..., min_length=16)
 
 
+class GoogleAuthIn(BaseModel):
+    """Google sign-in exchange: a Firebase Google-provider ID token for a CareVo
+    session token.
+
+    Same rule as [FirebaseAuthIn] — email and uid are read from the verified
+    token's claims, never from the client.
+    """
+    id_token: str = Field(..., min_length=16)
+
+
 class CustomerPublic(BaseModel):
     id: uuid.UUID
     name: Optional[str] = None
-    phone_number: str
+    # Optional since Google sign-in: a standalone Google identity has no
+    # verified phone until the customer verifies one separately.
+    phone_number: Optional[str] = None
+    email: Optional[str] = None
 
 
 class VerifyOtpOut(BaseModel):

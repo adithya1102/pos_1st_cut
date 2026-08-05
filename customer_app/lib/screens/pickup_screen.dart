@@ -119,7 +119,12 @@ class _PickupScreenState extends State<PickupScreen> {
   Future<void> _pingLocation() async {
     if (!mounted || _arrived) return;
     final orders = context.read<OrderService>();
-    final loc = await context.read<LocationService>().getCurrentLocation();
+    // Timer-driven, so it must never raise a permission dialog on its own: it
+    // rides on the grant "I'm leaving now" already asked for, and silently
+    // no-ops without one.
+    final loc = await context
+        .read<LocationService>()
+        .getCurrentLocation(allowPrompt: false);
     if (!mounted || !loc.hasCoordinates) return;
     try {
       await orders.sendLocation(

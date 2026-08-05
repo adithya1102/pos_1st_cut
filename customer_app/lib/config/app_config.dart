@@ -22,6 +22,14 @@ class AppConfig {
   static const String mapsApiKey = String.fromEnvironment('MAPS_API_KEY');
   static bool get hasMapsKey => mapsApiKey.isNotEmpty;
 
+  /// Web OAuth client id for Google Sign-In. Normally left empty: on Android
+  /// the plugin reads `default_web_client_id`, which the google-services Gradle
+  /// plugin generates from android/app/google-services.json. Override only for
+  /// a build that must use a different OAuth client:
+  ///   flutter build apk --dart-define=GOOGLE_SERVER_CLIENT_ID=...apps.googleusercontent.com
+  static const String googleServerClientId =
+      String.fromEnvironment('GOOGLE_SERVER_CLIENT_ID');
+
   /// Dev OTP code accepted by the stub auth service / backend stub.
   /// Only meaningful when [useFirebaseAuth] is false.
   static const String devOtpCode = '000000';
