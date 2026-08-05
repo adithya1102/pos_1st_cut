@@ -9,6 +9,7 @@ import '../theme/widgets/neo_button.dart';
 import '../theme/widgets/neo_card.dart';
 import '../widgets/theme_toggle_button.dart';
 import 'menu_screen.dart';
+import 'profile_screen.dart';
 
 /// Step 4: nearby restaurant discovery.
 class OutletsScreen extends StatefulWidget {
@@ -50,8 +51,21 @@ class _OutletsScreenState extends State<OutletsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Nearby'),
-        actions: const [
-          Padding(padding: EdgeInsets.only(right: 16), child: ThemeToggleButton()),
+        actions: [
+          // Entry point to the account screen (profile, rewards, order history,
+          // logout). Sits here because this is the first authenticated screen
+          // after sign-in and the one customers return to between orders.
+          IconButton(
+            icon: const Icon(Icons.person_outline),
+            tooltip: 'Account',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const ProfileScreen()),
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.only(right: 16),
+            child: ThemeToggleButton(),
+          ),
         ],
       ),
       body: SafeArea(

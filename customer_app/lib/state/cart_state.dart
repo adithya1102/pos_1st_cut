@@ -105,12 +105,17 @@ class CartState extends ChangeNotifier {
     double? originLat,
     double? originLng,
     String? originSource,
+    String? couponCode,
   }) =>
       {
         'outlet_id': _outlet?.id,
         'items': _items.map((i) => i.toOrderItemJson()).toList(),
         if (customerNotes != null && customerNotes.trim().isNotEmpty)
           'customer_notes': customerNotes.trim(),
+        // Omitted when blank: the server validates a minimum length, so an
+        // empty string would be rejected rather than treated as "no coupon".
+        if (couponCode != null && couponCode.trim().isNotEmpty)
+          'coupon_code': couponCode.trim().toUpperCase(),
         'transport_mode': ?transportMode,
         'origin_lat': ?originLat,
         'origin_lng': ?originLng,

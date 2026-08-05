@@ -44,6 +44,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   PaymentMethod _method = PaymentMethod.upi;
   bool _placing = false;
 
+  /// Optional points-discount coupon code. Validated server-side at order
+  /// creation — the app deliberately does no local check, so there is exactly
+  /// one place that decides whether a code is spendable.
+  final _coupon = TextEditingController();
+
+  @override
+  void dispose() {
+    _coupon.dispose();
+    super.dispose();
+  }
+
   // FR-C1/C2: travel context captured before the order is placed.
   TransportMode _transport = TransportMode.bike;
   double? _originLat;
@@ -109,6 +120,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               originLat: _originLat,
               originLng: _originLng,
               originSource: _originSource,
+              couponCode: _coupon.text,
             ),
           );
       if (!mounted) return;
@@ -224,6 +236,23 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               placesEnabled: context.read<PlacesService>().isEnabled,
               onUseLocation: _locating ? null : _useMyLocation,
               onSearch: _searchLocation,
+            ),
+            const SizedBox(height: 24),
+            Text('Have a coupon?', style: textTheme.headlineSmall),
+            const SizedBox(height: 6),
+            Text('Redeem points in your account to get a code.',
+                style: textTheme.bodyMedium?.copyWith(color: c.inkSoft)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _coupon,
+              autocorrect: false,
+              enableSuggestions: false,
+              textCapitalization: TextCapitalization.characters,
+              decoration: const InputDecoration(
+                labelText: 'Coupon code (optional)',
+                hintText: 'PTS-ABCD2345',
+                prefixIcon: Icon(Icons.local_offer_outlined),
+              ),
             ),
             const SizedBox(height: 24),
             Text('Payment method', style: textTheme.headlineSmall),

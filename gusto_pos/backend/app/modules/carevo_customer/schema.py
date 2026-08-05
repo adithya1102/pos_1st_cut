@@ -103,6 +103,8 @@ class CreateOrderIn(BaseModel):
     outlet_id: uuid.UUID
     items: list[OrderItemIn] = Field(..., min_length=1)
     customer_notes: Optional[str] = None
+    # Optional POINTS_DISCOUNT coupon applied at checkout (migration 010).
+    coupon_code: Optional[str] = Field(None, min_length=4, max_length=24)
     # PE Step 3 (FR-C1/C2): travel context captured at checkout.
     transport_mode: Optional[str] = None      # bike | car | walk | auto | bus
     origin_lat: Optional[float] = None
@@ -337,3 +339,91 @@ class NotifyOut(BaseModel):
     type: str
     item_id: Optional[uuid.UUID] = None
     item_name: Optional[str] = None
+
+
+# --------------------- Profile / loyalty / coupons (010) ---------------------
+class MeOut(BaseModel):
+    """The signed-in customer's own profile.
+
+    `plan` is DERIVED from premium_until, never stored — so there is no second
+    field that can drift out of agreement with it. It is a display label only:
+    no paid tier exists yet and premium currently unlocks nothing.
+    """
+    id: uuid.UUID
+    name: Optional[str] = None
+    phone_number: Optional[str] = None
+    email: Optional[str] = None
+    points_balance: float = 0
+    premium_until: Optional[datetime] = None
+    plan: str = "Free"
+
+
+class UpdateMeIn(BaseModel):
+    """Name is the only self-editable field.
+
+    Phone and email are identities established by a verified sign-in flow
+    (OTP / Google) and must never be settable by the client asserting them.
+    """
+    name: str = Field(..., min_length=1, max_length=100)
+
+
+class OrderHistoryItemOut(BaseModel):
+    name: Optional[str] = None
+    quantity: int = 1
+
+
+class OrderHistoryOut(BaseModel):
+    order_id: uuid.UUID
+    outlet_id: uuid.UUID
+    outlet_name: Optional[str] = None
+    status: str
+    payment_status: Optional[str] = None
+    total_amount: float = 0
+    discount_amount: float = 0
+    created_at: Optional[datetime] = None
+    items: list[OrderHistoryItemOut] = []
+
+
+class PointTransactionOut(BaseModel):
+    id: uuid.UUID
+    order_id: Optional[uuid.UUID] = None
+    points_delta: float
+    reason: str
+    created_at: Optional[datetime] = None
+
+
+class PointsOut(BaseModel):
+    points_balance: float = 0
+    # Mirrors the service constants so the client never hardcodes the rule.
+    redemption_threshold: float = 50
+    redemption_value_rupees: float = 100
+    can_redeem: bool = False
+    transactions: list[PointTransactionOut] = []
+
+
+class CouponOut(BaseModel):
+    id: uuid.UUID
+    code: str
+    kind: str
+    discount_amount: float = 0
+    trial_days: int = 0
+    status: str
+    expires_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
+class RedeemPointsOut(BaseModel):
+    coupon: CouponOut
+    points_balance: float
+    message: str
+
+
+class RedeemCouponIn(BaseModel):
+    code: str = Field(..., min_length=4, max_length=24)
+
+
+class RedeemCouponOut(BaseModel):
+    kind: str
+    premium_until: Optional[datetime] = None
+    plan: str = "Free"
+    message: str

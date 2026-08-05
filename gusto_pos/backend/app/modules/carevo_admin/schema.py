@@ -97,3 +97,8 @@ class CustomerDirectoryOut(BaseModel):
     name: Optional[str] = None
     order_count: int
     created_at: Optional[datetime] = None
+    # Loyalty + plan (migration 010). `plan` is derived from premium_until on
+    # the way out, never stored, so it cannot drift from the timestamp.
+    points_balance: float = 0
+    premium_until: Optional[datetime] = None
+    plan: str = "Free"

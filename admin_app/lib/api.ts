@@ -136,6 +136,11 @@ export interface CustomerRow {
   name: string | null;
   order_count: number;
   created_at: string | null;
+  // Loyalty + plan (migration 010). plan is derived server-side from
+  // premium_until; premium_until is null for everyone who never had a trial.
+  points_balance: number;
+  premium_until: string | null;
+  plan: string;
 }
 
 export interface AuditLog {

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import HTTPException
@@ -299,13 +300,26 @@ class AdminService:
         """
         rows = (await db.execute(text("""
             SELECT c.id, c.phone_number, c.email, c.name, c.created_at,
+                   c.points_balance, c.premium_until,
                    count(co.id) AS order_count
             FROM customers c
             LEFT JOIN customer_orders co ON co.customer_id = c.id
-            GROUP BY c.id, c.phone_number, c.email, c.name, c.created_at
+            GROUP BY c.id, c.phone_number, c.email, c.name, c.created_at,
+                     c.points_balance, c.premium_until
             ORDER BY c.created_at DESC NULLS LAST
             LIMIT :limit
         """), {"limit": limit})).fetchall()
+        now = datetime.now(timezone.utc)
+
+        def _plan(premium_until) -> str:
+            # Derived, never stored — mirrors CarevoService._plan_label so the
+            # admin view and the customer's own view can never disagree.
+            if premium_until is None:
+                return "Free"
+            if premium_until.tzinfo is None:
+                premium_until = premium_until.replace(tzinfo=timezone.utc)
+            return "Premium" if premium_until > now else "Free"
+
         return [
             {
                 "id": r.id,
@@ -314,6 +328,9 @@ class AdminService:
                 "name": r.name,
                 "order_count": r.order_count or 0,
                 "created_at": r.created_at,
+                "points_balance": float(r.points_balance or 0),
+                "premium_until": r.premium_until,
+                "plan": _plan(r.premium_until),
             }
             for r in rows
         ]

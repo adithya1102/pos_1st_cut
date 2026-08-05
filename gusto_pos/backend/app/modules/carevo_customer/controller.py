@@ -101,6 +101,79 @@ async def verify_google(payload: s.GoogleAuthIn, db: AsyncSession = Depends(get_
     }
 
 
+# --------------------- Profile / loyalty / coupons (010) --------------------
+# Every route here is scoped to the customer resolved from the bearer token.
+# None of them accepts a customer id, so there is no path by which one customer
+# can read or mutate another's profile, orders, points or coupons.
+#
+# Deliberately NOT gated by _require_customer_auth_enabled(): that switch guards
+# the stub-OTP login path, and these all require an already-issued token.
+@router.get("/me", response_model=s.MeOut)
+async def get_me(
+    customer: Customer = Depends(get_current_customer),
+    db: AsyncSession = Depends(get_db),
+):
+    return await CarevoService.get_me(db, customer)
+
+
+@router.patch("/me", response_model=s.MeOut)
+async def update_me(
+    payload: s.UpdateMeIn,
+    customer: Customer = Depends(get_current_customer),
+    db: AsyncSession = Depends(get_db),
+):
+    """Name only — phone and email come from verified sign-in, not the client."""
+    return await CarevoService.update_me(db, customer, payload)
+
+
+@router.get("/orders", response_model=list[s.OrderHistoryOut])
+async def list_my_orders(
+    limit: int = 50,
+    customer: Customer = Depends(get_current_customer),
+    db: AsyncSession = Depends(get_db),
+):
+    return await CarevoService.list_my_orders(db, customer, limit=min(max(limit, 1), 200))
+
+
+@router.get("/points", response_model=s.PointsOut)
+async def get_points(
+    customer: Customer = Depends(get_current_customer),
+    db: AsyncSession = Depends(get_db),
+):
+    return await CarevoService.get_points(db, customer)
+
+
+@router.post("/points/redeem", response_model=s.RedeemPointsOut)
+async def redeem_points(
+    customer: Customer = Depends(get_current_customer),
+    db: AsyncSession = Depends(get_db),
+):
+    """Spend 50 points for a ₹100 single-use discount coupon. 409 if short."""
+    return await CarevoService.redeem_points(db, customer)
+
+
+@router.get("/coupons", response_model=list[s.CouponOut])
+async def list_my_coupons(
+    customer: Customer = Depends(get_current_customer),
+    db: AsyncSession = Depends(get_db),
+):
+    return await CarevoService.list_my_coupons(db, customer)
+
+
+@router.post("/coupons/redeem", response_model=s.RedeemCouponOut)
+async def redeem_trial_coupon(
+    payload: s.RedeemCouponIn,
+    customer: Customer = Depends(get_current_customer),
+    db: AsyncSession = Depends(get_db),
+):
+    """Redeem a PREMIUM_TRIAL code — grants premium_until, no payment involved.
+
+    POINTS_DISCOUNT coupons are NOT redeemed here; they are applied by passing
+    coupon_code to POST /orders at checkout.
+    """
+    return await CarevoService.redeem_trial_coupon(db, customer, payload)
+
+
 # ---------------------------- Discovery ------------------------------------
 @router.get("/outlets", response_model=list[s.OutletOut])
 async def list_outlets(

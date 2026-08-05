@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'config/app_config.dart';
 import 'services/api_client.dart';
 import 'services/catalog_service.dart';
+import 'services/customer_service.dart';
 import 'services/firebase_otp_service.dart';
 import 'services/google_auth_service.dart';
 import 'services/location_service.dart';
@@ -51,6 +52,7 @@ Future<void> main() async {
         Provider<PaymentService>.value(value: paymentService),
         Provider<CatalogService>(create: (_) => CatalogService(api)),
         Provider<OrderService>(create: (_) => OrderService(api)),
+        Provider<CustomerService>(create: (_) => CustomerService(api)),
         Provider<LocationService>(create: (_) => LocationService()),
         Provider<PlacesService>(create: (_) => PlacesService()),
         Provider<GoogleAuthService>.value(value: googleAuth),

@@ -17,6 +17,13 @@ class AuthState extends ChangeNotifier {
   Customer? _customer;
   Customer? get customer => _customer;
 
+  /// Replace the cached customer after a profile edit, so screens reading the
+  /// session copy don't show a stale name until the next sign-in.
+  void setCustomer(Customer customer) {
+    _customer = customer;
+    notifyListeners();
+  }
+
   bool get isAuthenticated => _api.isAuthenticated;
 
   bool _busy = false;

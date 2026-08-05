@@ -8,7 +8,7 @@ import string
 import time
 import uuid
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import HTTPException, status
@@ -19,9 +19,11 @@ from app.core.config import settings
 from app.core.websocket_manager import customer_manager, pos_manager
 from app.modules.customers.model import Customer
 from app.modules.carevo_customer.model import (
+    Coupon,
     CustomerOrder,
     CustomerOrderItem,
     PaymentTransaction,
+    PointTransaction,
 )
 from app.modules.carevo_payments.gateway import get_gateway
 from app.modules.prediction import events as pe
@@ -317,7 +319,22 @@ class CarevoService:
                 item_notes=line.item_notes,
             ))
 
-        order.total_amount = round(total, 2)
+        gross = round(total, 2)
+
+        # Coupon (migration 010). Applied BEFORE the gateway order is created so
+        # the customer is only ever charged the discounted amount — settling the
+        # full amount and refunding the difference would be a second money path
+        # to get wrong.
+        discount = 0.0
+        if getattr(payload, "coupon_code", None):
+            discount = await CarevoService._consume_points_coupon(
+                db, customer, order_id=order.id, gross=gross,
+                code=payload.coupon_code,
+            )
+        order.discount_amount = discount
+        # Never below zero: a ₹100 coupon on an ₹80 order settles at ₹0, and the
+        # unused ₹20 is not carried anywhere (single-use means single-use).
+        order.total_amount = round(max(gross - discount, 0.0), 2)
 
         # Create gateway order (stub / razorpay-shaped)
         gw = get_gateway()
@@ -644,6 +661,12 @@ class CarevoService:
             actor_type="system", source="inferred", outlet_id=order.outlet_id,
             payload={"derived_from": "mark_paid"},
         )
+
+        # Loyalty accrual (migration 010), in the SAME transaction as the PAID
+        # transition: points are earned iff the payment is recorded, and the two
+        # can never diverge through a partial failure.
+        await CarevoService._accrue_points(db, order)
+
         await db.commit()
         await db.refresh(order)
 
@@ -1173,4 +1196,345 @@ class CarevoService:
             "type": notify_type,
             "item_id": resolved_item_id,
             "item_name": item_name,
+        }
+
+    # ==================== Profile / loyalty / coupons (010) ====================
+    # Accrual rate: 0.10 points per Rs.20 spent, i.e. points = amount * 0.005.
+    # A Rs.10,000 lifetime spend reaches the 50-point threshold, which mints a
+    # Rs.100 coupon - 1% back. Constants live here so clients never hardcode them.
+    POINTS_PER_RUPEE = 0.10 / 20.0
+    REDEMPTION_THRESHOLD = 50.0
+    REDEMPTION_VALUE_RUPEES = 100.0
+    PREMIUM_TRIAL_DAYS = 60
+
+    @staticmethod
+    def _plan_label(premium_until: Optional[datetime]) -> str:
+        """Derive the plan from premium_until. Never stored - see MeOut."""
+        if premium_until is None:
+            return "Free"
+        # Rows written before 010 may come back naive; treat those as UTC rather
+        # than raising on an aware/naive comparison.
+        if premium_until.tzinfo is None:
+            premium_until = premium_until.replace(tzinfo=timezone.utc)
+        return "Premium" if premium_until > datetime.now(timezone.utc) else "Free"
+
+    @staticmethod
+    def _me_payload(customer: Customer) -> dict:
+        return {
+            "id": customer.id,
+            "name": customer.name,
+            "phone_number": customer.phone_number,
+            "email": customer.email,
+            "points_balance": float(customer.points_balance or 0),
+            "premium_until": customer.premium_until,
+            "plan": CarevoService._plan_label(customer.premium_until),
+        }
+
+    @staticmethod
+    async def get_me(db: AsyncSession, customer: Customer) -> dict:
+        return CarevoService._me_payload(customer)
+
+    @staticmethod
+    async def update_me(db: AsyncSession, customer: Customer, payload) -> dict:
+        """Name only. Phone and email are verified identities, not client-settable."""
+        name = (payload.name or "").strip()
+        if not name:
+            raise HTTPException(status_code=422, detail="Name cannot be empty")
+        customer.name = name
+        await db.commit()
+        await db.refresh(customer)
+        return CarevoService._me_payload(customer)
+
+    @staticmethod
+    async def list_my_orders(
+        db: AsyncSession, customer: Customer, limit: int = 50
+    ) -> list[dict]:
+        """The signed-in customer's own order history, newest first.
+
+        Scoped by customer_id taken from the bearer token - never from a
+        client-supplied id - so one customer can never read another's orders.
+        """
+        orders = (await db.execute(text("""
+            SELECT co.id, co.outlet_id, o.location_name AS outlet_name,
+                   co.status, co.payment_status, co.total_amount,
+                   co.discount_amount, co.created_at
+            FROM customer_orders co
+            LEFT JOIN outlets o ON o.id = co.outlet_id
+            WHERE co.customer_id = :cid
+            ORDER BY co.created_at DESC
+            LIMIT :limit
+        """), {"cid": str(customer.id), "limit": limit})).fetchall()
+        if not orders:
+            return []
+
+        order_ids = [str(o.id) for o in orders]
+        items = (await db.execute(text("""
+            SELECT customer_order_id, name_snap, quantity
+            FROM customer_order_items
+            WHERE customer_order_id = ANY(:ids)
+            ORDER BY created_at
+        """), {"ids": order_ids})).fetchall()
+        by_order: dict = defaultdict(list)
+        for it in items:
+            by_order[str(it.customer_order_id)].append(
+                {"name": it.name_snap, "quantity": it.quantity}
+            )
+
+        return [
+            {
+                "order_id": o.id,
+                "outlet_id": o.outlet_id,
+                "outlet_name": o.outlet_name,
+                "status": o.status,
+                "payment_status": o.payment_status,
+                "total_amount": float(o.total_amount or 0),
+                "discount_amount": float(o.discount_amount or 0),
+                "created_at": o.created_at,
+                "items": by_order.get(str(o.id), []),
+            }
+            for o in orders
+        ]
+
+    @staticmethod
+    async def _accrue_points(db: AsyncSession, order: CustomerOrder) -> None:
+        """Award points for a paid order. Called inside mark_paid's transaction.
+
+        Earned on what was actually paid (total_amount, already net of any
+        discount): a redeemed coupon should not also re-earn points on the part
+        it paid for.
+        """
+        if order.customer_id is None:
+            return
+        amount = float(order.total_amount or 0)
+        points = round(amount * CarevoService.POINTS_PER_RUPEE, 2)
+        if points <= 0:
+            return
+
+        # Idempotency guard mirroring the partial unique index in migration 010:
+        # mark_paid is itself idempotent, but a retry must never double-award.
+        already = (await db.execute(text("""
+            SELECT 1 FROM point_transactions
+            WHERE order_id = :oid AND reason = 'ORDER_ACCRUAL' LIMIT 1
+        """), {"oid": str(order.id)})).first()
+        if already:
+            return
+
+        db.add(PointTransaction(
+            customer_id=order.customer_id,
+            order_id=order.id,
+            points_delta=points,
+            reason="ORDER_ACCRUAL",
+        ))
+        # Increment in SQL rather than read-modify-write: two orders settling at
+        # the same moment must not clobber each other's award.
+        await db.execute(text("""
+            UPDATE customers SET points_balance = COALESCE(points_balance, 0) + :p
+            WHERE id = :cid
+        """), {"p": points, "cid": str(order.customer_id)})
+
+    @staticmethod
+    async def get_points(db: AsyncSession, customer: Customer) -> dict:
+        rows = (await db.execute(text("""
+            SELECT id, order_id, points_delta, reason, created_at
+            FROM point_transactions
+            WHERE customer_id = :cid
+            ORDER BY created_at DESC
+            LIMIT 50
+        """), {"cid": str(customer.id)})).fetchall()
+        balance = float(customer.points_balance or 0)
+        return {
+            "points_balance": balance,
+            "redemption_threshold": CarevoService.REDEMPTION_THRESHOLD,
+            "redemption_value_rupees": CarevoService.REDEMPTION_VALUE_RUPEES,
+            "can_redeem": balance >= CarevoService.REDEMPTION_THRESHOLD,
+            "transactions": [
+                {
+                    "id": r.id,
+                    "order_id": r.order_id,
+                    "points_delta": float(r.points_delta),
+                    "reason": r.reason,
+                    "created_at": r.created_at,
+                }
+                for r in rows
+            ],
+        }
+
+    @staticmethod
+    def _make_coupon_code(prefix: str) -> str:
+        """Unambiguous alphabet: no O/0/I/1, so a code read aloud survives."""
+        alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        body = "".join(secrets.choice(alphabet) for _ in range(8))
+        return prefix + "-" + body
+
+    @staticmethod
+    async def redeem_points(db: AsyncSession, customer: Customer) -> dict:
+        """Spend REDEMPTION_THRESHOLD points to mint one Rs.100 discount coupon."""
+        threshold = CarevoService.REDEMPTION_THRESHOLD
+
+        # The conditional UPDATE is the whole concurrency guard: two simultaneous
+        # redemptions cannot both pass, because the second sees the debited
+        # balance and matches no row.
+        debited = (await db.execute(text("""
+            UPDATE customers
+            SET points_balance = points_balance - :t
+            WHERE id = :cid AND COALESCE(points_balance, 0) >= :t
+            RETURNING points_balance
+        """), {"t": threshold, "cid": str(customer.id)})).first()
+        if not debited:
+            await db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Not enough points. You need {:g} to redeem (you have {:g})."
+                ).format(threshold, float(customer.points_balance or 0)),
+            )
+
+        coupon = Coupon(
+            code=CarevoService._make_coupon_code("PTS"),
+            customer_id=customer.id,
+            kind=Coupon.KIND_POINTS_DISCOUNT,
+            discount_amount=CarevoService.REDEMPTION_VALUE_RUPEES,
+            status="ACTIVE",
+        )
+        db.add(coupon)
+        db.add(PointTransaction(
+            customer_id=customer.id,
+            order_id=None,  # not tied to an order until the coupon is spent
+            points_delta=-threshold,
+            reason="COUPON_REDEMPTION",
+        ))
+        await db.commit()
+        await db.refresh(coupon)
+        await db.refresh(customer)
+
+        return {
+            "coupon": {
+                "id": coupon.id,
+                "code": coupon.code,
+                "kind": coupon.kind,
+                "discount_amount": float(coupon.discount_amount),
+                "trial_days": coupon.trial_days,
+                "status": coupon.status,
+                "expires_at": coupon.expires_at,
+                "created_at": coupon.created_at,
+            },
+            "points_balance": float(customer.points_balance or 0),
+            "message": "Rs.{:g} coupon ready. Apply it at checkout.".format(
+                CarevoService.REDEMPTION_VALUE_RUPEES
+            ),
+        }
+
+    @staticmethod
+    async def list_my_coupons(db: AsyncSession, customer: Customer) -> list[dict]:
+        rows = (await db.execute(text("""
+            SELECT id, code, kind, discount_amount, trial_days, status,
+                   expires_at, created_at
+            FROM coupons
+            WHERE customer_id = :cid AND status = 'ACTIVE'
+            ORDER BY created_at DESC
+        """), {"cid": str(customer.id)})).fetchall()
+        return [
+            {
+                "id": r.id,
+                "code": r.code,
+                "kind": r.kind,
+                "discount_amount": float(r.discount_amount or 0),
+                "trial_days": r.trial_days or 0,
+                "status": r.status,
+                "expires_at": r.expires_at,
+                "created_at": r.created_at,
+            }
+            for r in rows
+        ]
+
+    @staticmethod
+    async def _consume_points_coupon(
+        db: AsyncSession, customer: Customer, *, order_id, gross: float, code: str
+    ) -> float:
+        """Validate and burn a POINTS_DISCOUNT coupon; return the rupee discount.
+
+        Runs inside create_order's open transaction, so a later failure there
+        rolls the burn back with it and the coupon stays spendable.
+        """
+        code = (code or "").strip().upper()
+        now = datetime.now(timezone.utc)
+
+        # One UPDATE does lookup, ownership check, expiry check, status check and
+        # the burn together - leaving no window between validating and spending.
+        row = (await db.execute(text("""
+            UPDATE coupons
+            SET status = 'REDEEMED', redeemed_at = :now, redeemed_order_id = :oid
+            WHERE code = :code
+              AND kind = 'POINTS_DISCOUNT'
+              AND status = 'ACTIVE'
+              AND (customer_id IS NULL OR customer_id = :cid)
+              AND (expires_at IS NULL OR expires_at > :now)
+            RETURNING id, discount_amount
+        """), {
+            "now": now, "oid": str(order_id), "code": code, "cid": str(customer.id),
+        })).first()
+
+        if not row:
+            # Deliberately one message for every failure mode (unknown / already
+            # used / expired / someone else's): probing codes should not reveal
+            # which of those is true.
+            raise HTTPException(
+                status_code=422, detail="That coupon code is not valid."
+            )
+
+        await db.execute(text(
+            "UPDATE customer_orders SET coupon_id = :couid WHERE id = :oid"
+        ), {"couid": str(row[0]), "oid": str(order_id)})
+
+        # Cap at the order value, so the recorded discount is never larger than
+        # what was actually taken off.
+        return round(min(float(row[1] or 0), gross), 2)
+
+    @staticmethod
+    async def redeem_trial_coupon(db: AsyncSession, customer: Customer, payload) -> dict:
+        """Redeem a PREMIUM_TRIAL coupon: extends premium_until by trial_days.
+
+        No payment, no billing, no plan record - this grants a timestamp. Paid
+        plans are a separate workstream and premium unlocks nothing yet.
+        """
+        code = (payload.code or "").strip().upper()
+        now = datetime.now(timezone.utc)
+
+        row = (await db.execute(text("""
+            UPDATE coupons
+            SET status = 'REDEEMED', redeemed_at = :now,
+                customer_id = COALESCE(customer_id, CAST(:cid AS uuid))
+            WHERE code = :code
+              AND kind = 'PREMIUM_TRIAL'
+              AND status = 'ACTIVE'
+              AND (customer_id IS NULL OR customer_id = CAST(:cid AS uuid))
+              AND (expires_at IS NULL OR expires_at > :now)
+            RETURNING trial_days
+        """), {"now": now, "code": code, "cid": str(customer.id)})).first()
+
+        if not row:
+            raise HTTPException(
+                status_code=422, detail="That coupon code is not valid."
+            )
+
+        days = int(row[0] or CarevoService.PREMIUM_TRIAL_DAYS)
+        # Extend from whichever is later: an unexpired window is added to rather
+        # than thrown away, and a lapsed one restarts from today.
+        base = customer.premium_until
+        if base is not None and base.tzinfo is None:
+            base = base.replace(tzinfo=timezone.utc)
+        start = base if (base is not None and base > now) else now
+        new_until = start + timedelta(days=days)
+
+        await db.execute(text(
+            "UPDATE customers SET premium_until = :pu WHERE id = :cid"
+        ), {"pu": new_until, "cid": str(customer.id)})
+        await db.commit()
+        await db.refresh(customer)
+
+        return {
+            "kind": Coupon.KIND_PREMIUM_TRIAL,
+            "premium_until": customer.premium_until,
+            "plan": CarevoService._plan_label(customer.premium_until),
+            "message": "Premium trial active for {} days.".format(days),
         }
