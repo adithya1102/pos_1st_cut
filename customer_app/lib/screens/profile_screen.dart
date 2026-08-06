@@ -5,9 +5,9 @@ import '../models/customer.dart';
 import '../services/api_client.dart';
 import '../services/customer_service.dart';
 import '../state/auth_state.dart';
-import '../widgets/theme_toggle_button.dart';
 import 'login_screen.dart';
 import 'order_history_screen.dart';
+import '../widgets/account_button.dart';
 
 /// Account screen: identity, loyalty points, coupon redemption, and logout.
 ///
@@ -16,6 +16,9 @@ import 'order_history_screen.dart';
 /// customer by id.
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
+
+  /// Used to avoid pushing Account on top of itself from the shared AppBar action.
+  static const routeName = '/account';
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -259,9 +262,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Account'),
-        actions: const [
-          Padding(padding: EdgeInsets.only(right: 16), child: ThemeToggleButton()),
-        ],
+        actions: careVoActions(account: false),
       ),
       body: SafeArea(
         child: _loading

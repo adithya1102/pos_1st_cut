@@ -22,10 +22,50 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.users.model import User
 
+# ---------------------------------------------------------------------------
+# Activity heuristic (NOT a churn model, NOT a prediction).
+#
+# This is a fixed recency bucket: days since the customer's last PAID order,
+# compared against two constants. It has no training data, no features beyond
+# recency, and no probability output — it cannot say a customer WILL churn, only
+# that they have not ordered in N days. Deliberately kept this dumb: the order
+# volume here is far too low for a fitted model to mean anything, and a fake
+# confidence score would be worse than an honest one.
+#
+# Thresholds are arbitrary-but-reasonable for food ordering; change freely.
+ACTIVITY_ACTIVE_MAX_DAYS = 14      # ordered within 2 weeks
+ACTIVITY_AT_RISK_MAX_DAYS = 30     # 14-30 days
+# Beyond 30 days -> "Churned". Never ordered -> "No orders".
+
 # outlets.verification_status lifecycle
 PENDING = "pending_verification"
 ACTIVE = "active"
 REJECTED = "rejected"
+
+
+def _days_since(last_order_at) -> Optional[int]:
+    """Whole days since [last_order_at]. None when the customer never ordered."""
+    if last_order_at is None:
+        return None
+    ts = last_order_at
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return max((datetime.now(timezone.utc) - ts).days, 0)
+
+
+def _activity(last_order_at) -> str:
+    """Bucket a customer by order recency. A HEURISTIC LABEL, not a prediction.
+
+    Returns one of: "No orders" | "Active" | "At Risk" | "Churned".
+    """
+    days = _days_since(last_order_at)
+    if days is None:
+        return "No orders"
+    if days <= ACTIVITY_ACTIVE_MAX_DAYS:
+        return "Active"
+    if days <= ACTIVITY_AT_RISK_MAX_DAYS:
+        return "At Risk"
+    return "Churned"
 
 
 class AdminService:
@@ -298,14 +338,60 @@ class AdminService:
         (OTP) have no email, Google-only customers have no phone. Both columns
         are surfaced so a row is never blank in both.
         """
+        # Aggregates are computed in SQL rather than per-customer round trips:
+        # one pass over PAID orders for the money/recency figures, plus two
+        # DISTINCT ON pre-aggregates for the "most X" columns. Only PAID orders
+        # count - an abandoned basket is not a purchase and must not inflate
+        # lifetime value or make a lapsed customer look active.
         rows = (await db.execute(text("""
+            WITH paid AS (
+                SELECT co.id, co.customer_id, co.outlet_id, co.total_amount,
+                       co.created_at
+                FROM customer_orders co
+                WHERE co.payment_status = 'PAID'
+            ),
+            money AS (
+                SELECT customer_id,
+                       count(*)               AS paid_order_count,
+                       sum(total_amount)      AS total_order_value,
+                       max(created_at)        AS last_order_at
+                FROM paid GROUP BY customer_id
+            ),
+            top_dish AS (
+                SELECT DISTINCT ON (p.customer_id)
+                       p.customer_id, coi.name_snap AS dish_name,
+                       sum(coi.quantity) AS qty
+                FROM paid p
+                JOIN customer_order_items coi ON coi.customer_order_id = p.id
+                WHERE coi.name_snap IS NOT NULL
+                GROUP BY p.customer_id, coi.name_snap
+                ORDER BY p.customer_id, qty DESC, coi.name_snap
+            ),
+            top_outlet AS (
+                SELECT DISTINCT ON (p.customer_id)
+                       p.customer_id, o.location_name AS outlet_name,
+                       count(*) AS visits
+                FROM paid p
+                LEFT JOIN outlets o ON o.id = p.outlet_id
+                GROUP BY p.customer_id, o.location_name
+                ORDER BY p.customer_id, visits DESC, o.location_name
+            )
             SELECT c.id, c.phone_number, c.email, c.name, c.created_at,
                    c.points_balance, c.premium_until,
-                   count(co.id) AS order_count
+                   count(co.id)                       AS order_count,
+                   COALESCE(m.total_order_value, 0)   AS total_order_value,
+                   m.last_order_at,
+                   td.dish_name                       AS top_dish,
+                   tou.outlet_name                    AS top_outlet
             FROM customers c
             LEFT JOIN customer_orders co ON co.customer_id = c.id
+            LEFT JOIN money      m   ON m.customer_id   = c.id
+            LEFT JOIN top_dish   td  ON td.customer_id  = c.id
+            LEFT JOIN top_outlet tou ON tou.customer_id = c.id
             GROUP BY c.id, c.phone_number, c.email, c.name, c.created_at,
-                     c.points_balance, c.premium_until
+                     c.points_balance, c.premium_until,
+                     m.total_order_value, m.last_order_at, td.dish_name,
+                     tou.outlet_name
             ORDER BY c.created_at DESC NULLS LAST
             LIMIT :limit
         """), {"limit": limit})).fetchall()
@@ -331,6 +417,12 @@ class AdminService:
                 "points_balance": float(r.points_balance or 0),
                 "premium_until": r.premium_until,
                 "plan": _plan(r.premium_until),
+                "total_order_value": float(r.total_order_value or 0),
+                "top_dish": r.top_dish,
+                "top_outlet": r.top_outlet,
+                "last_order_at": r.last_order_at,
+                "days_since_last_order": _days_since(r.last_order_at),
+                "activity_status": _activity(r.last_order_at),
             }
             for r in rows
         ]

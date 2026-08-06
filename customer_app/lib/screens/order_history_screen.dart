@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../services/api_client.dart';
 import '../services/customer_service.dart';
+import '../widgets/account_button.dart';
 
 /// The signed-in customer's past orders.
 ///
@@ -47,7 +48,10 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
     final orders = _orders;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Order history')),
+      appBar: AppBar(
+        title: const Text('Order history'),
+        actions: careVoActions(account: false),
+      ),
       body: SafeArea(
         child: orders == null
             ? const Center(child: CircularProgressIndicator())

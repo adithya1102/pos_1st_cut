@@ -7,8 +7,8 @@ import '../theme/app_theme.dart';
 import '../theme/widgets/neo_button.dart';
 import '../theme/widgets/neo_card.dart';
 import '../theme/widgets/neo_chip.dart';
-import '../widgets/theme_toggle_button.dart';
 import 'outlets_screen.dart';
+import '../widgets/account_button.dart';
 
 /// Step 3: location permission request WITH a manual city/area fallback.
 class LocationScreen extends StatefulWidget {
@@ -67,9 +67,7 @@ class _LocationScreenState extends State<LocationScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Location'),
-        actions: const [
-          Padding(padding: EdgeInsets.only(right: 16), child: ThemeToggleButton()),
-        ],
+        actions: careVoActions(),
       ),
       body: SafeArea(
         child: SingleChildScrollView(

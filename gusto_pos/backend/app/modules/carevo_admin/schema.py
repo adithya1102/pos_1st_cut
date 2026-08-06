@@ -102,3 +102,15 @@ class CustomerDirectoryOut(BaseModel):
     points_balance: float = 0
     premium_until: Optional[datetime] = None
     plan: str = "Free"
+
+    # Order stats, computed from PAID orders only — an abandoned basket is not
+    # a purchase and must not inflate lifetime value or recency.
+    total_order_value: float = 0
+    top_dish: Optional[str] = None
+    top_outlet: Optional[str] = None
+    last_order_at: Optional[datetime] = None
+    days_since_last_order: Optional[int] = None
+    # HEURISTIC recency bucket, NOT a churn prediction: "No orders" | "Active"
+    # | "At Risk" | "Churned", from days_since_last_order against two fixed
+    # thresholds. No model, no training, no probability. See service.py.
+    activity_status: str = "No orders"

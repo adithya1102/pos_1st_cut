@@ -42,6 +42,22 @@ async def get_outlet(
     return await CarevoService.get_owner_outlet(db, _require_outlet(staff))
 
 
+@router.patch("/outlet/image", response_model=s.OwnerOutletOut)
+async def set_outlet_image(
+    payload: s.SetOutletImageIn,
+    staff: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set/clear the outlet storefront photo (migration 011).
+
+    Scoped to the caller's own outlet via _require_outlet — there is no
+    outlet_id parameter, so one owner cannot rebrand another's storefront.
+    """
+    return await CarevoService.set_outlet_image(
+        db, _require_outlet(staff), payload.image_url
+    )
+
+
 @router.post("/outlets/{outlet_id}/visibility", response_model=s.SetVisibilityOut)
 async def set_visibility(
     outlet_id: uuid.UUID,

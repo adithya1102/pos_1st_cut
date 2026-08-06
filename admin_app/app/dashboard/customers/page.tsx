@@ -33,7 +33,7 @@ export default function CustomersPage() {
       {error && <ErrorBox message={error} />}
       <Panel
         title="Customers"
-        subtitle="Every customer who has signed in, across all outlets, newest first. Read-only — there is no edit or delete path from here."
+        subtitle="Every customer who has signed in, across all outlets, newest first. Read-only — there is no edit or delete path from here. Activity is a simple recency heuristic (days since last paid order), not a churn prediction."
       >
         <table className="w-full">
           <thead className="bg-slate-50">
@@ -42,15 +42,19 @@ export default function CustomersPage() {
               <th className={th}>Email</th>
               <th className={th}>Name</th>
               <th className={th}>Orders</th>
+              <th className={th}>Total value</th>
+              <th className={th}>Top dish</th>
+              <th className={th}>Top outlet</th>
+              <th className={th}>Activity</th>
               <th className={th}>Points</th>
               <th className={th}>Plan</th>
               <th className={th}>Joined</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {customers === null && <EmptyRow colSpan={7}>Loading…</EmptyRow>}
+            {customers === null && <EmptyRow colSpan={11}>Loading…</EmptyRow>}
             {customers?.length === 0 && (
-              <EmptyRow colSpan={7}>No customers yet.</EmptyRow>
+              <EmptyRow colSpan={11}>No customers yet.</EmptyRow>
             )}
             {customers?.map((c) => (
               <tr key={c.id}>
@@ -64,6 +68,19 @@ export default function CustomersPage() {
                     which is the common case. */}
                 <td className={`${td} text-slate-600`}>{c.name ?? "—"}</td>
                 <td className={td}>{c.order_count}</td>
+                <td className={td}>
+                  {c.total_order_value > 0
+                    ? `₹${c.total_order_value.toFixed(2)}`
+                    : "—"}
+                </td>
+                <td className={`${td} text-slate-600`}>{c.top_dish ?? "—"}</td>
+                <td className={`${td} text-slate-600`}>{c.top_outlet ?? "—"}</td>
+                <td className={td}>
+                  <ActivityBadge
+                    status={c.activity_status}
+                    days={c.days_since_last_order}
+                  />
+                </td>
                 {/* Zero balance shows "—" rather than "0" so the eye skips it,
                     same as the other default-valued columns. */}
                 <td className={td}>
@@ -92,5 +109,42 @@ export default function CustomersPage() {
         </table>
       </Panel>
     </>
+  );
+}
+
+/**
+ * Recency bucket badge.
+ *
+ * This reflects a HEURISTIC, not a model: the backend buckets days since the
+ * customer's last PAID order against two fixed thresholds (14 / 30 days).
+ * There is no prediction here — the tooltip states the actual day count so the
+ * label can always be traced back to the fact behind it.
+ */
+function ActivityBadge({
+  status,
+  days,
+}: {
+  status: string;
+  days: number | null;
+}) {
+  const styles: Record<string, string> = {
+    Active: "bg-emerald-100 text-emerald-800",
+    "At Risk": "bg-amber-100 text-amber-800",
+    Churned: "bg-rose-100 text-rose-800",
+    "No orders": "bg-slate-100 text-slate-600",
+  };
+  const tone = styles[status] ?? styles["No orders"];
+  const title =
+    days === null
+      ? "No paid orders yet"
+      : `${days} day${days === 1 ? "" : "s"} since last paid order (heuristic, not a prediction)`;
+
+  return (
+    <span
+      className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${tone}`}
+      title={title}
+    >
+      {status}
+    </span>
   );
 }

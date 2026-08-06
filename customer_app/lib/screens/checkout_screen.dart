@@ -11,10 +11,10 @@ import '../theme/app_colors.dart';
 import '../theme/widgets/neo_button.dart';
 import '../theme/widgets/neo_card.dart';
 import '../widgets/price_text.dart';
-import '../widgets/theme_toggle_button.dart';
 import 'payment_processing_screen.dart';
 import 'pickup_screen.dart';
 import 'place_search_screen.dart';
+import '../widgets/account_button.dart';
 
 /// PE Step 3 (FR-C1) — how the customer will travel to the outlet. Values map
 /// 1:1 to the backend MODE_SPEED_MPS keys used by the travel predictor.
@@ -108,11 +108,91 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     });
   }
 
+  /// Hard availability gate, run BEFORE payment.
+  ///
+  /// Returns true when the order may proceed. When items have gone unavailable
+  /// since they were added, this prompts to remove them and returns false —
+  /// the customer is never charged for a basket the kitchen cannot fulfil, and
+  /// never discovers the problem after committing.
+  Future<bool> _ensureAvailable(CartState cart) async {
+    final outletId = cart.outletId;
+    if (outletId == null || cart.isEmpty) return true;
+
+    final orders = context.read<OrderService>();
+    final List<String> unavailableIds;
+    try {
+      unavailableIds = await orders.checkCartAvailability(
+        outletId: outletId,
+        menuItemIds: cart.items.map((i) => i.item.id).toSet().toList(),
+      );
+    } on ApiException {
+      // The pre-check is a courtesy, not the authority. If it cannot run, let
+      // create_order's server-side validation be the gate rather than blocking
+      // a legitimate order on a flaky network call.
+      return true;
+    }
+    if (unavailableIds.isEmpty || !mounted) return unavailableIds.isEmpty;
+
+    final names = cart.items
+        .where((i) => unavailableIds.contains(i.item.id))
+        .map((i) => i.item.name)
+        .toSet()
+        .toList();
+
+    final removed = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: Text(
+          names.length == 1 ? 'An item just sold out' : 'Some items just sold out',
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              names.length == 1
+                  ? '${names.first} is no longer available at this restaurant.'
+                  : 'These are no longer available at this restaurant:',
+            ),
+            if (names.length > 1) ...[
+              const SizedBox(height: 8),
+              ...names.map((n) => Text('•  $n')),
+            ],
+            const SizedBox(height: 12),
+            const Text(
+              'Remove them to continue — you have not been charged.',
+              style: TextStyle(fontSize: 12),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text('Back to cart'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(c, true),
+            child: Text(names.length == 1 ? 'Remove it' : 'Remove them'),
+          ),
+        ],
+      ),
+    );
+
+    if (removed == true) {
+      cart.removeUnavailable(unavailableIds.toSet());
+    }
+    // Always false: even after removing, the customer re-confirms the new total
+    // rather than having a smaller order silently charged.
+    return false;
+  }
+
   Future<void> _payNow() async {
     final cart = context.read<CartState>();
     final outlet = cart.outlet;
     setState(() => _placing = true);
     try {
+      if (!await _ensureAvailable(cart)) return;
+      if (!mounted) return;
       final order = await context.read<OrderService>().createOrder(
             cart.toOrderPayload(
               customerNotes: widget.customerNotes,
@@ -173,9 +253,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Checkout'),
-        actions: const [
-          Padding(padding: EdgeInsets.only(right: 16), child: ThemeToggleButton()),
-        ],
+        actions: careVoActions(),
       ),
       bottomNavigationBar: SafeArea(
         top: false,

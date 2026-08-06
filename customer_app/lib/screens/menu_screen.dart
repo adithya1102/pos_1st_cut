@@ -10,9 +10,9 @@ import '../theme/widgets/neo_button.dart';
 import '../theme/widgets/neo_chip.dart';
 import '../widgets/cart_bar.dart';
 import '../widgets/menu_item_card.dart';
-import '../widgets/theme_toggle_button.dart';
 import 'cart_screen.dart';
 import 'dish_detail_screen.dart';
+import '../widgets/account_button.dart';
 
 /// Step 5: menu browse with horizontal category chips + item list.
 class MenuScreen extends StatefulWidget {
@@ -51,9 +51,48 @@ class _MenuScreenState extends State<MenuScreen> {
   @override
   void initState() {
     super.initState();
-    // Bind the cart to this outlet (clears cart if switching restaurants).
-    context.read<CartState>().setOutlet(widget.outlet);
+    // Bind only when it costs nothing. Browsing a different restaurant must NOT
+    // silently discard a basket — if it would, the cart stays bound to the old
+    // outlet and _confirmOutletSwitch() asks first, on the add-to-cart attempt.
+    context.read<CartState>().bindOutletIfSafe(widget.outlet);
     _future = _load();
+  }
+
+  /// Gate for adding an item while the cart belongs to another restaurant.
+  /// Returns true when the caller may proceed with the add.
+  Future<bool> _confirmOutletSwitch() async {
+    final cart = context.read<CartState>();
+    if (!cart.wouldDiscardCart(widget.outlet)) {
+      // Same outlet (or empty cart): bind and add with no interruption.
+      cart.bindOutletIfSafe(widget.outlet);
+      return true;
+    }
+
+    final previous = cart.outlet?.name ?? 'another restaurant';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Start a new order?'),
+        content: Text(
+          'Your cart has items from $previous. Adding this will empty that '
+          'cart and start a new one at ${widget.outlet.name}.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text('Keep my cart'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('Start new order'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return false;
+    // setOutlet clears, which is exactly what the customer just agreed to.
+    cart.setOutlet(widget.outlet);
+    return true;
   }
 
   Future<MenuResponse> _load() =>
@@ -61,7 +100,11 @@ class _MenuScreenState extends State<MenuScreen> {
 
   void _retry() => setState(() => _future = _load());
 
-  void _openItem(MenuItem item) {
+  Future<void> _openItem(MenuItem item) async {
+    // Confirm the outlet switch BEFORE the dish opens, so the cart is already
+    // bound to this restaurant by the time "Add to cart" is tapped.
+    if (!await _confirmOutletSwitch()) return;
+    if (!mounted) return;
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => DishDetailScreen(item: item)),
     );
@@ -79,9 +122,7 @@ class _MenuScreenState extends State<MenuScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.outlet.name),
-        actions: const [
-          Padding(padding: EdgeInsets.only(right: 16), child: ThemeToggleButton()),
-        ],
+        actions: careVoActions(),
       ),
       bottomNavigationBar: CartBar(onView: _openCart),
       body: SafeArea(

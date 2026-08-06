@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/menu_item.dart';
+import 'package:image_picker/image_picker.dart';
+
 import '../models/outlet.dart';
+import '../services/cloudinary_service.dart';
 import '../state/auth_state.dart';
 import '../state/home_state.dart';
 import '../state/orders_state.dart';
@@ -85,6 +88,7 @@ class _OutletVisibilityToggle extends StatelessWidget {
     }
     return Row(
       children: [
+        const _OutletImageButton(),
         Text(
           outlet.isVisible ? 'Open' : 'Hidden',
           style: Theme.of(context).textTheme.labelMedium,
@@ -198,4 +202,86 @@ Future<void> _openDishEditor(BuildContext context, MenuItem? item) async {
   await Navigator.of(context).push<bool>(
     MaterialPageRoute(builder: (_) => DishEditScreen(item: item)),
   );
+}
+
+/// Storefront photo control for the outlet, shown beside the visibility switch.
+///
+/// Reuses [CloudinaryService] — the exact unsigned-upload pipeline dish images
+/// already use (same cloud name, same preset, no API secret in the app). No
+/// second upload path was built for this.
+class _OutletImageButton extends StatefulWidget {
+  const _OutletImageButton();
+
+  @override
+  State<_OutletImageButton> createState() => _OutletImageButtonState();
+}
+
+class _OutletImageButtonState extends State<_OutletImageButton> {
+  final _cloudinary = CloudinaryService();
+  bool _busy = false;
+
+  Future<void> _pick() async {
+    if (!_cloudinary.configured) {
+      _snack('Image upload is not configured.');
+      return;
+    }
+    // Resolved before the picker opens: reading a provider off `context` after
+    // that await is an async-gap use of BuildContext.
+    final home = context.read<HomeState>();
+    final picked = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      // Storefront photo renders at 52x52 on the customer card; capping here
+      // keeps the upload small rather than shipping a full-resolution photo.
+      maxWidth: 1200,
+      imageQuality: 85,
+    );
+    if (picked == null) return;
+
+    setState(() => _busy = true);
+    try {
+      // Throws on failure rather than returning null — the catch below is the
+      // failure path.
+      final url = await _cloudinary.uploadImage(picked.path);
+      final ok = await home.setOutletImage(url);
+      if (mounted) _snack(ok ? 'Storefront photo updated.' : 'Could not save the photo.');
+    } catch (_) {
+      if (mounted) _snack('Image upload failed.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _snack(String m) => ScaffoldMessenger.of(context)
+      .showSnackBar(SnackBar(content: Text(m)));
+
+  @override
+  Widget build(BuildContext context) {
+    final outlet = context.select<HomeState, Outlet?>((s) => s.outlet);
+    if (_busy) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 12),
+        child: SizedBox(
+          width: 18, height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    return IconButton(
+      tooltip: outlet?.imageUrl == null
+          ? 'Add storefront photo'
+          : 'Change storefront photo',
+      icon: outlet?.imageUrl == null
+          ? const Icon(Icons.add_photo_alternate_outlined)
+          : ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: Image.network(
+                outlet!.imageUrl!,
+                width: 24, height: 24, fit: BoxFit.cover,
+                errorBuilder: (_, _, _) =>
+                    const Icon(Icons.add_photo_alternate_outlined),
+              ),
+            ),
+      onPressed: _pick,
+    );
+  }
 }

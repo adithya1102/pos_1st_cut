@@ -16,8 +16,8 @@ import '../theme/app_theme.dart';
 import '../theme/widgets/neo_button.dart';
 import '../theme/widgets/neo_card.dart';
 import '../widgets/price_text.dart';
-import '../widgets/theme_toggle_button.dart';
 import 'location_screen.dart';
+import '../widgets/account_button.dart';
 
 /// Step 10: pickup screen — large pickup code + Received→Preparing→Ready
 /// stepper, polled every ~4s.
@@ -222,9 +222,7 @@ class _PickupScreenState extends State<PickupScreen> {
       appBar: AppBar(
         automaticallyImplyLeading: false,
         title: const Text('Pickup'),
-        actions: const [
-          Padding(padding: EdgeInsets.only(right: 16), child: ThemeToggleButton()),
-        ],
+        actions: careVoActions(),
       ),
       body: SafeArea(
         child: _loading && status == null

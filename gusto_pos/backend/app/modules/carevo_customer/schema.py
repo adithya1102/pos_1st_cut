@@ -65,6 +65,8 @@ class OutletOut(BaseModel):
     is_open: bool = True
     distance_km: Optional[float] = None
     upi_id: Optional[str] = None
+    # Storefront photo (migration 011). Null -> the app renders its fallback glyph.
+    image_url: Optional[str] = None
 
 
 # ------------------------------ Menu ----------------------------------------
@@ -241,6 +243,12 @@ class OwnerOutletOut(BaseModel):
     id: uuid.UUID
     location_name: str
     is_visible: bool
+    image_url: Optional[str] = None
+
+
+class SetOutletImageIn(BaseModel):
+    """Cloudinary URL produced by the app's unsigned upload. Null clears it."""
+    image_url: Optional[str] = Field(None, max_length=500)
 
 
 class SetVisibilityIn(BaseModel):
@@ -427,3 +435,20 @@ class RedeemCouponOut(BaseModel):
     premium_until: Optional[datetime] = None
     plan: str = "Free"
     message: str
+
+
+# ------------------- Cart availability pre-check (Task 5) --------------------
+class CartCheckIn(BaseModel):
+    outlet_id: uuid.UUID
+    menu_item_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class UnavailableItemOut(BaseModel):
+    menu_item_id: uuid.UUID
+    # Null when the item was deleted from the menu outright, not just disabled.
+    name: Optional[str] = None
+
+
+class CartCheckOut(BaseModel):
+    ok: bool
+    unavailable: list[UnavailableItemOut] = []

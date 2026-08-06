@@ -32,6 +32,11 @@ Future<void> main() async {
   final api = ApiClient();
   await api.loadToken();
 
+  // Restore the persisted cart before the first frame, so a relaunch shows the
+  // basket immediately rather than flashing an empty one.
+  final cartState = CartState();
+  await cartState.restore();
+
   // Load the persisted theme preference.
   final themeProvider = ThemeProvider();
   await themeProvider.load();
@@ -59,7 +64,7 @@ Future<void> main() async {
         ChangeNotifierProvider(
           create: (_) => AuthState(api, otpService, googleAuth),
         ),
-        ChangeNotifierProvider(create: (_) => CartState()),
+        ChangeNotifierProvider.value(value: cartState),
       ],
       child: const CareVoApp(),
     ),

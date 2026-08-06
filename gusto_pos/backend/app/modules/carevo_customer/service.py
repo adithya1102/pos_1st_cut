@@ -196,12 +196,12 @@ class CarevoService:
     @staticmethod
     async def list_outlets(db: AsyncSession, lat: Optional[float], lng: Optional[float]) -> list[dict]:
         rows = (await db.execute(text(
-            "SELECT id, location_name, city, latitude, longitude, upi_id FROM outlets "
+            "SELECT id, location_name, city, latitude, longitude, upi_id, image_url FROM outlets "
             "WHERE is_visible = true AND deactivated_at IS NULL"
         ))).fetchall()
         out = []
         for r in rows:
-            oid, name, city, o_lat, o_lng, upi_id = r
+            oid, name, city, o_lat, o_lng, upi_id, image_url = r
             distance = None
             if lat is not None and lng is not None and o_lat is not None and o_lng is not None:
                 distance = CarevoService._haversine_km(lat, lng, float(o_lat), float(o_lng))
@@ -212,6 +212,7 @@ class CarevoService:
                 "is_open": True,
                 "distance_km": distance,
                 "upi_id": upi_id,
+                "image_url": image_url,
             })
         if lat is not None and lng is not None:
             out.sort(key=lambda x: (x["distance_km"] is None, x["distance_km"] or 0))
@@ -791,11 +792,38 @@ class CarevoService:
     @staticmethod
     async def get_owner_outlet(db: AsyncSession, outlet_id: uuid.UUID) -> dict:
         row = (await db.execute(text(
-            "SELECT id, location_name, is_visible FROM outlets WHERE id = :oid"
+            "SELECT id, location_name, is_visible, image_url FROM outlets WHERE id = :oid"
         ), {"oid": str(outlet_id)})).first()
         if not row:
             raise HTTPException(status_code=404, detail="Outlet not found")
-        return {"id": row[0], "location_name": row[1], "is_visible": bool(row[2])}
+        return {
+            "id": row[0], "location_name": row[1],
+            "is_visible": bool(row[2]), "image_url": row[3],
+        }
+
+    @staticmethod
+    async def set_outlet_image(
+        db: AsyncSession, outlet_id: uuid.UUID, image_url: Optional[str]
+    ) -> dict:
+        """Store the outlet storefront photo URL (migration 011).
+
+        The upload itself happens client-side against Cloudinary's unsigned
+        endpoint - the same pipeline dish images already use - so the backend
+        only ever stores the resulting URL and never handles image bytes.
+        Passing null clears the photo, returning the card to its fallback glyph.
+        """
+        url = (image_url or "").strip() or None
+        row = (await db.execute(text(
+            "UPDATE outlets SET image_url = :u WHERE id = :oid "
+            "RETURNING id, location_name, is_visible, image_url"
+        ), {"u": url, "oid": str(outlet_id)})).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Outlet not found")
+        await db.commit()
+        return {
+            "id": row[0], "location_name": row[1],
+            "is_visible": bool(row[2]), "image_url": row[3],
+        }
 
     @staticmethod
     async def set_outlet_visibility(
@@ -1538,3 +1566,41 @@ class CarevoService:
             "plan": CarevoService._plan_label(customer.premium_until),
             "message": "Premium trial active for {} days.".format(days),
         }
+
+    @staticmethod
+    async def check_cart_availability(
+        db: AsyncSession, outlet_id: uuid.UUID, item_ids: list
+    ) -> dict:
+        """Re-check a cart against live menu state, BEFORE payment.
+
+        Exists because the customer menu query filters `is_available = true`, so
+        an item turned off after it was added simply vanishes from the menu -
+        the already-populated cart keeps it, and nothing notices until
+        create_order raises 409. This endpoint moves that discovery earlier, to
+        a point where the customer can still fix it without having paid.
+
+        Read-only and side-effect free: it never mutates the cart or the order.
+        create_order remains the authority - this is a courtesy pre-check, not a
+        replacement for server-side validation.
+        """
+        if not item_ids:
+            return {"ok": True, "unavailable": []}
+
+        ids = [str(i) for i in item_ids]
+        rows = (await db.execute(text("""
+            SELECT mi.id, mi.name, mi.is_available, mi.is_active
+            FROM menu_items mi
+            WHERE mi.id = ANY(:ids)
+        """), {"ids": ids})).fetchall()
+
+        found = {str(r.id): r for r in rows}
+        unavailable = []
+        for iid in ids:
+            r = found.get(iid)
+            if r is None:
+                # Deleted from the menu entirely since it was added.
+                unavailable.append({"menu_item_id": iid, "name": None})
+            elif not (r.is_available and r.is_active):
+                unavailable.append({"menu_item_id": iid, "name": r.name})
+
+        return {"ok": not unavailable, "unavailable": unavailable}

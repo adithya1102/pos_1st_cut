@@ -8,9 +8,9 @@ import '../theme/widgets/neo_button.dart';
 import '../theme/widgets/neo_card.dart';
 import '../theme/widgets/neo_text_field.dart';
 import '../widgets/price_text.dart';
-import '../widgets/theme_toggle_button.dart';
 import '../widgets/veg_badge.dart';
 import 'checkout_screen.dart';
+import '../widgets/account_button.dart';
 
 /// Step 7: cart review. Prominent SELF PICKUP callout, NO delivery option.
 class CartScreen extends StatefulWidget {
@@ -38,9 +38,7 @@ class _CartScreenState extends State<CartScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Your Cart'),
-        actions: const [
-          Padding(padding: EdgeInsets.only(right: 16), child: ThemeToggleButton()),
-        ],
+        actions: careVoActions(),
       ),
       bottomNavigationBar: cart.isEmpty
           ? null

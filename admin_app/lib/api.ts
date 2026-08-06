@@ -141,6 +141,14 @@ export interface CustomerRow {
   points_balance: number;
   premium_until: string | null;
   plan: string;
+  // Order stats, from PAID orders only.
+  total_order_value: number;
+  top_dish: string | null;
+  top_outlet: string | null;
+  last_order_at: string | null;
+  days_since_last_order: number | null;
+  /** HEURISTIC recency bucket, not a churn prediction. See backend service.py. */
+  activity_status: "No orders" | "Active" | "At Risk" | "Churned" | string;
 }
 
 export interface AuditLog {

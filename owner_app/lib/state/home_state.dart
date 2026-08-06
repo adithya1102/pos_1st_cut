@@ -48,6 +48,23 @@ class HomeState extends ChangeNotifier {
     }
   }
 
+  /// Persist a new storefront photo URL (or null to clear).
+  ///
+  /// Not optimistic, unlike [toggleVisibility]: the Cloudinary upload has
+  /// already completed by the time this runs, so there is no latency left worth
+  /// hiding, and showing an image that failed to save would be misleading.
+  Future<bool> setOutletImage(String? imageUrl) async {
+    final current = _outlet;
+    if (current == null) return false;
+    try {
+      _outlet = await _outletService.setImage(imageUrl);
+      notifyListeners();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Optimistically flips outlet visibility; reverts if the call fails.
   Future<bool> toggleVisibility(bool next) async {
     final current = _outlet;

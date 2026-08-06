@@ -12,6 +12,28 @@ class OrderService {
     return CreatedOrder.fromJson((res as Map).cast<String, dynamic>());
   }
 
+  /// Pre-checkout availability gate. Returns the display names of cart items
+  /// that are no longer orderable, empty when everything is fine.
+  ///
+  /// Called BEFORE payment. `POST /orders` re-checks server-side regardless —
+  /// this exists so the customer finds out while they can still fix it, not
+  /// after committing.
+  Future<List<String>> checkCartAvailability({
+    required String outletId,
+    required List<String> menuItemIds,
+  }) async {
+    final res = await _api.post('/customer/cart/check', body: {
+      'outlet_id': outletId,
+      'menu_item_ids': menuItemIds,
+    });
+    final map = (res as Map).cast<String, dynamic>();
+    return ((map['unavailable'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((u) => u['menu_item_id']?.toString() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toList();
+  }
+
   Future<OrderStatus> fetchStatus(String orderId) async {
     final res = await _api.get('/customer/orders/$orderId');
     return OrderStatus.fromJson((res as Map).cast<String, dynamic>());

@@ -174,6 +174,23 @@ async def redeem_trial_coupon(
     return await CarevoService.redeem_trial_coupon(db, customer, payload)
 
 
+@router.post("/cart/check", response_model=s.CartCheckOut)
+async def check_cart(
+    payload: s.CartCheckIn,
+    _: Customer = Depends(get_current_customer),
+    db: AsyncSession = Depends(get_db),
+):
+    """Pre-checkout availability gate. Read-only; never mutates anything.
+
+    The app calls this before taking payment so an item that went unavailable
+    mid-session is surfaced while the customer can still remove it.
+    POST /orders re-validates regardless — this does not replace that check.
+    """
+    return await CarevoService.check_cart_availability(
+        db, payload.outlet_id, payload.menu_item_ids
+    )
+
+
 # ---------------------------- Discovery ------------------------------------
 @router.get("/outlets", response_model=list[s.OutletOut])
 async def list_outlets(
