@@ -8,9 +8,9 @@ import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/widgets/neo_button.dart';
 import '../theme/widgets/neo_card.dart';
-import '../theme/widgets/neo_chip.dart';
 import 'outlets_screen.dart';
 import '../widgets/account_button.dart';
+import '../widgets/area_picker.dart';
 
 /// Step 3: location permission request WITH a manual city/area fallback.
 class LocationScreen extends StatefulWidget {
@@ -168,7 +168,7 @@ class _LocationScreenState extends State<LocationScreen> {
                 ],
               ),
               const SizedBox(height: 20),
-              _AreaPicker(
+              AreaPicker(
                 areas: _areas,
                 error: _areasError,
                 selected: _selectedArea,
@@ -211,80 +211,6 @@ class _LocationScreenState extends State<LocationScreen> {
           ),
         ),
       ),
-    );
-  }
-}
-
-/// City chips built from live outlet data.
-///
-/// Renders one of four states rather than an unconditional chip row: loading,
-/// load-failed (with retry), genuinely no serviceable cities, or the chips. A
-/// city only reaches here if it has >=1 orderable outlet, so tapping one can
-/// never land on an empty restaurant list.
-class _AreaPicker extends StatelessWidget {
-  const _AreaPicker({
-    required this.areas,
-    required this.error,
-    required this.selected,
-    required this.onSelect,
-    required this.onRetry,
-  });
-
-  final List<AreaOption>? areas;
-  final String? error;
-  final String? selected;
-  final ValueChanged<String> onSelect;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    final textTheme = Theme.of(context).textTheme;
-    final list = areas;
-
-    if (list == null) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 12),
-        child: Center(child: CircularProgressIndicator()),
-      );
-    }
-
-    if (error != null) {
-      return Row(
-        children: [
-          Expanded(
-            child: Text(
-              'Could not load areas.',
-              style: textTheme.bodyMedium?.copyWith(color: c.inkSoft),
-            ),
-          ),
-          TextButton(onPressed: onRetry, child: const Text('Retry')),
-        ],
-      );
-    }
-
-    if (list.isEmpty) {
-      // Honest empty state. The old hardcoded chips would happily offer eight
-      // Bangalore areas here and send the customer to a blank list.
-      return Text(
-        'No restaurants are taking pickup orders yet. '
-        'Try "Use my current location" to check nearby.',
-        style: textTheme.bodyMedium?.copyWith(color: c.inkSoft),
-      );
-    }
-
-    return Wrap(
-      spacing: 10,
-      runSpacing: 10,
-      children: [
-        for (final a in list)
-          NeoChip(
-            label: '${a.city}  ·  ${a.subtitle}',
-            icon: Icons.place_outlined,
-            selected: selected == a.city,
-            onTap: () => onSelect(a.city),
-          ),
-      ],
     );
   }
 }
