@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ----------------------------- Auth -----------------------------------------
@@ -209,11 +209,19 @@ class VerifyPickupIn(BaseModel):
 
 class RegisterIn(BaseModel):
     restaurant_name: str = Field(..., min_length=2, max_length=100)
-    city: Optional[str] = Field(None, max_length=50)
-    # Outlet contact number (migration 009). Optional, unlike upi_id: it is
-    # informational for platform admins, not needed to take payments, so an
-    # owner who leaves it blank still registers.
-    phone_number: Optional[str] = Field(None, min_length=6, max_length=20)
+
+    # City is now chosen from the canonical `cities` list (migration 013), not
+    # typed freehand — that is what stopped "Bangalore"/"Bengaluru" diverging.
+    # Supply EXACTLY ONE of:
+    #   city           -> must already be an active city
+    #   requested_city -> a new name, recorded as pending for admin approval
+    city: Optional[str] = Field(None, max_length=80)
+    requested_city: Optional[str] = Field(None, min_length=2, max_length=80)
+
+    # Outlet contact number. REQUIRED as of this change: admins had no reliable
+    # way to reach an outlet during verification. Existing rows keep NULL — the
+    # DB column stays nullable, so this binds new signups only.
+    phone_number: str = Field(..., min_length=6, max_length=20)
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     username: str = Field(..., min_length=3, max_length=50)
@@ -221,6 +229,23 @@ class RegisterIn(BaseModel):
     # Payee VPA (e.g. name@bank) for the upi://pay intent. Required for new
     # signups so the outlet can accept payments; simple "x@y" shape check.
     upi_id: str = Field(..., min_length=3, max_length=255, pattern=r"^[^@\s]+@[^@\s]+$")
+
+
+    @model_validator(mode="after")
+    def _exactly_one_city(self):
+        """Reject both-or-neither rather than silently preferring one.
+
+        Accepting both would make it ambiguous whether the owner picked from the
+        list or asked for something new, and the two paths differ: one must
+        already be approved, the other creates a pending request.
+        """
+        chosen = (self.city or "").strip()
+        requested = (self.requested_city or "").strip()
+        if bool(chosen) == bool(requested):
+            raise ValueError(
+                "Provide either 'city' (from the list) or 'requested_city', not both."
+            )
+        return self
 
 
 class RegisterOut(BaseModel):
@@ -463,3 +488,10 @@ class AreaOut(BaseModel):
     """
     city: str
     outlet_count: int
+
+
+# ---------------------- Canonical cities (migration 013) ---------------------
+class CityOut(BaseModel):
+    """One selectable city for the owner signup dropdown."""
+    id: uuid.UUID
+    name: str

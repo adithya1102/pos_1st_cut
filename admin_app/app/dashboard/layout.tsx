@@ -12,6 +12,7 @@ const NAV = [
   { href: "/dashboard/onboard", label: "Onboard restaurant" },
   { href: "/dashboard/locked-orders", label: "Locked orders" },
   { href: "/dashboard/customers", label: "Customers" },
+  { href: "/dashboard/cities", label: "Cities" },
   { href: "/dashboard/prediction", label: "Prediction engine" },
   { href: "/dashboard/audit", label: "Audit log" },
 ];

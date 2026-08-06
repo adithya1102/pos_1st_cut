@@ -29,22 +29,37 @@ class AuthService {
   Future<void> register({
     required String restaurantName,
     String? city,
-    String? phoneNumber,
+    String? requestedCity,
+    required String phoneNumber,
     required String username,
     required String password,
     required String upiId,
   }) async {
     await _client.post('/register', body: {
       'restaurant_name': restaurantName,
+      // Exactly one of city / requested_city — the server rejects both-or-
+      // neither. `city` must already be an approved city; `requested_city`
+      // files a new-city request for admin approval.
       if (city != null && city.trim().isNotEmpty) 'city': city.trim(),
-      // Omitted entirely when blank: the field is optional server-side, and
-      // sending "" would fail the schema's min_length check.
-      if (phoneNumber != null && phoneNumber.trim().isNotEmpty)
-        'phone_number': phoneNumber.trim(),
+      if (requestedCity != null && requestedCity.trim().isNotEmpty)
+        'requested_city': requestedCity.trim(),
+      // Now mandatory server-side, so always sent.
+      'phone_number': phoneNumber.trim(),
       'username': username,
       'password': password,
       'upi_id': upiId.trim(),
     });
+  }
+
+  /// Cities selectable at signup. Public endpoint — no token needed, which is
+  /// required since this populates the form before an account exists.
+  Future<List<String>> fetchCities() async {
+    final data = await _client.get('/cities');
+    return ((data as List?) ?? const [])
+        .whereType<Map>()
+        .map((m) => m['name']?.toString() ?? '')
+        .where((n) => n.isNotEmpty)
+        .toList();
   }
 
   Future<bool> hasToken() async {

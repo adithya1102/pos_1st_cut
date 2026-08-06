@@ -665,3 +665,85 @@ class AdminService:
             }
             for r in rows
         ]
+
+    # ------------------------- cities (migration 013) -----------------------
+    # New-city requests reuse the outlet-verification pattern rather than
+    # introducing a second queue: a pending row, an admin decision, and one
+    # admin_audit_logs entry written in the SAME transaction as the change.
+    @staticmethod
+    async def list_cities(
+        db: AsyncSession, status_filter: Optional[str] = None
+    ) -> list[dict]:
+        """All cities, optionally filtered. Pending first — that is the work queue."""
+        if status_filter is not None and status_filter not in ("active", "pending", "rejected"):
+            raise HTTPException(
+                status_code=422,
+                detail="Invalid status. Must be one of: ['active', 'pending', 'rejected']",
+            )
+        rows = (await db.execute(text("""
+            SELECT c.id, c.name, c.status, c.created_at, c.decided_at,
+                   c.requested_by_outlet_id,
+                   o.location_name AS requested_by_outlet_name
+            FROM cities c
+            LEFT JOIN outlets o ON o.id = c.requested_by_outlet_id
+            WHERE (CAST(:status AS varchar) IS NULL
+                   OR c.status = CAST(:status AS varchar))
+            ORDER BY
+                CASE c.status WHEN 'pending' THEN 0 ELSE 1 END,
+                c.name
+        """), {"status": status_filter})).fetchall()
+        return [
+            {
+                "id": r.id,
+                "name": r.name,
+                "status": r.status,
+                "created_at": r.created_at,
+                "decided_at": r.decided_at,
+                "requested_by_outlet_id": r.requested_by_outlet_id,
+                "requested_by_outlet_name": r.requested_by_outlet_name,
+            }
+            for r in rows
+        ]
+
+    @staticmethod
+    async def decide_city(
+        db: AsyncSession, actor: User, city_id: uuid.UUID, target_status: str
+    ) -> dict:
+        """Approve (-> active) or reject a requested city.
+
+        Approving makes the name selectable for every FUTURE signup. It does not
+        touch `outlets.city` on the requesting outlet: that row already carries
+        the name, and rewriting outlet data from an admin decision would be a
+        surprising side effect of what reads as a list edit.
+        """
+        if target_status not in ("active", "rejected"):
+            raise HTTPException(
+                status_code=422, detail="target_status must be 'active' or 'rejected'"
+            )
+
+        current = (await db.execute(text(
+            "SELECT id, name, status FROM cities WHERE id = :cid"
+        ), {"cid": str(city_id)})).first()
+        if not current:
+            raise HTTPException(status_code=404, detail="City not found")
+        if current.status == target_status:
+            raise HTTPException(
+                status_code=409, detail=f"City is already '{target_status}'"
+            )
+
+        row = (await db.execute(text("""
+            UPDATE cities SET status = :s, decided_at = now()
+            WHERE id = :cid
+            RETURNING id, name, status, decided_at
+        """), {"s": target_status, "cid": str(city_id)})).first()
+
+        await AdminService._audit(
+            db, actor,
+            action=("city.approve" if target_status == "active" else "city.reject"),
+            target_type="city", target_id=city_id,
+            detail={"name": current.name, "from": current.status, "to": target_status},
+        )
+        await db.commit()
+        return {
+            "id": row[0], "name": row[1], "status": row[2], "decided_at": row[3],
+        }

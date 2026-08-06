@@ -1012,6 +1012,31 @@ class CarevoService:
         if taken:
             raise HTTPException(status_code=409, detail="Username already taken")
 
+        # Resolve the city BEFORE anything is written (migration 013).
+        # Exactly one of city / requested_city is accepted — the schema enforces
+        # that. A named city must already be active in the canonical list, so
+        # free-text spellings can no longer enter `outlets.city`; a requested one
+        # is recorded as pending for admin approval further down.
+        city_name = None
+        requested_city = (getattr(payload, "requested_city", None) or "").strip()
+        if payload.city:
+            row = (await db.execute(text(
+                "SELECT name FROM cities WHERE lower(name) = lower(:n) "
+                "AND status = 'active' LIMIT 1"
+            ), {"n": payload.city.strip()})).first()
+            if not row:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "That city is not available yet. Pick one from the list, "
+                        "or request a new city."
+                    ),
+                )
+            # Store the canonical spelling, not whatever casing was submitted.
+            city_name = row[0]
+        else:
+            city_name = requested_city
+
         try:
             org_id = (await db.execute(text(
                 "INSERT INTO organizations (id, name, created_at) "
@@ -1025,11 +1050,25 @@ class CarevoService:
                 "VALUES (gen_random_uuid(), :ln, :city, :phone, :lat, :lng, 100, :org, "
                 "        'pending_verification', false, :upi, now()) RETURNING id"
             ), {
-                "ln": payload.restaurant_name, "city": payload.city,
+                "ln": payload.restaurant_name, "city": city_name,
                 "phone": (payload.phone_number or "").strip() or None,
                 "lat": payload.latitude, "lng": payload.longitude, "org": str(org_id),
                 "upi": payload.upi_id,
             })).scalar()
+
+            # New-city request rides the SAME pending-approval pattern as outlet
+            # verification: a row with status='pending' that an admin approves or
+            # rejects, audited through admin_audit_logs. No second queue.
+            #
+            # ON CONFLICT DO NOTHING: if another owner already requested the same
+            # city (or it exists rejected), do not duplicate the row — the outlet
+            # still carries the name and rides the existing request's decision.
+            if requested_city:
+                await db.execute(text("""
+                    INSERT INTO cities (name, status, requested_by_outlet_id)
+                    VALUES (:n, 'pending', :oid)
+                    ON CONFLICT (lower(name)) DO NOTHING
+                """), {"n": requested_city, "oid": str(outlet_id)})
 
             await db.execute(text(
                 "INSERT INTO users (id, username, hashed_password, is_active, outlet_id, created_at) "
@@ -1644,3 +1683,17 @@ class CarevoService:
             {"city": r.city, "outlet_count": int(r.outlet_count)}
             for r in rows
         ]
+
+    @staticmethod
+    async def list_active_cities(db: AsyncSession) -> list[dict]:
+        """Cities selectable at owner signup (migration 013).
+
+        PUBLIC and unauthenticated, because signup itself is: the dropdown has to
+        populate before the owner has an account. Returns only `active` — a
+        pending request is not selectable by anyone else until an admin approves
+        it, otherwise one owner's typo becomes everyone's option.
+        """
+        rows = (await db.execute(text(
+            "SELECT id, name FROM cities WHERE status = 'active' ORDER BY name"
+        ))).fetchall()
+        return [{"id": r.id, "name": r.name} for r in rows]

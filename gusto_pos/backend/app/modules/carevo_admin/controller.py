@@ -126,6 +126,37 @@ async def list_customers(
     return await AdminService.list_customers(db, limit=limit)
 
 
+# ------------------------------ cities -------------------------------------
+# Same shape as the outlet verification queue above, deliberately: pending rows
+# listed, then approve/reject, each writing an admin_audit_logs entry.
+@router.get("/cities", response_model=list[s.AdminCityOut])
+async def list_cities(
+    status: Optional[str] = Query(None),
+    _admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await AdminService.list_cities(db, status)
+
+
+@router.post("/cities/{city_id}/approve", response_model=s.CityDecisionOut)
+async def approve_city(
+    city_id: uuid.UUID,
+    admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Make a requested city selectable for future signups."""
+    return await AdminService.decide_city(db, admin, city_id, "active")
+
+
+@router.post("/cities/{city_id}/reject", response_model=s.CityDecisionOut)
+async def reject_city(
+    city_id: uuid.UUID,
+    admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await AdminService.decide_city(db, admin, city_id, "rejected")
+
+
 # -------------------- prediction engine (shadow mode) ----------------------
 # Read-only observability over migration 006's PE tables. No response_model:
 # the payloads are nested and mix UUID/datetime/Decimal/JSONB, which FastAPI's

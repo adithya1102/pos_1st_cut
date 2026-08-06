@@ -151,6 +151,18 @@ export interface CustomerRow {
   activity_status: "No orders" | "Active" | "At Risk" | "Churned" | string;
 }
 
+/** A city in the canonical list (migration 013). */
+export interface City {
+  id: string;
+  name: string;
+  status: "active" | "pending" | "rejected" | string;
+  created_at: string | null;
+  decided_at: string | null;
+  /** Which outlet's signup requested it; null for seeded/admin-added rows. */
+  requested_by_outlet_id: string | null;
+  requested_by_outlet_name: string | null;
+}
+
 export interface AuditLog {
   id: string;
   actor_username: string | null;
@@ -285,6 +297,15 @@ export const adminApi = {
 
   customers: (limit = 200) =>
     api.get<CustomerRow[]>(`/api/v1/admin/customers?limit=${limit}`),
+
+  cities: (status?: string) =>
+    api.get<City[]>(
+      `/api/v1/admin/cities${status ? `?status=${encodeURIComponent(status)}` : ""}`,
+    ),
+  approveCity: (id: string) =>
+    api.post<City>(`/api/v1/admin/cities/${id}/approve`, {}),
+  rejectCity: (id: string) =>
+    api.post<City>(`/api/v1/admin/cities/${id}/reject`, {}),
 
   auditLogs: (limit = 100) =>
     api.get<AuditLog[]>(`/api/v1/admin/audit-logs?limit=${limit}`),

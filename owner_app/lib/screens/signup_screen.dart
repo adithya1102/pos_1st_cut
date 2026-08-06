@@ -15,8 +15,16 @@ class SignupScreen extends StatefulWidget {
 class _SignupScreenState extends State<SignupScreen> {
   final _formKey = GlobalKey<FormState>();
   final _restaurant = TextEditingController();
-  final _city = TextEditingController();
+  // Free-text city entry is gone: it is what let "Bangalore" and "Bengaluru"
+  // both into the database. The owner now picks from the approved list, or
+  // explicitly requests a new city for admin approval.
+  final _newCity = TextEditingController();
   final _phone = TextEditingController();
+
+  List<String>? _cities;      // null = still loading
+  String? _citiesError;
+  String? _selectedCity;      // chosen from the approved list
+  bool _requestingNewCity = false;
   final _upi = TextEditingController();
   final _username = TextEditingController();
   final _password = TextEditingController();
@@ -29,12 +37,39 @@ class _SignupScreenState extends State<SignupScreen> {
   @override
   void dispose() {
     _restaurant.dispose();
-    _city.dispose();
+    _newCity.dispose();
     _phone.dispose();
     _upi.dispose();
     _username.dispose();
     _password.dispose();
     super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCities();
+  }
+
+  Future<void> _loadCities() async {
+    setState(() => _citiesError = null);
+    try {
+      final cities = await context.read<AuthState>().fetchCities();
+      if (!mounted) return;
+      setState(() {
+        _cities = cities;
+        // Drop a selection that is no longer approved.
+        if (_selectedCity != null && !cities.contains(_selectedCity)) {
+          _selectedCity = null;
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _cities = const [];
+        _citiesError = 'Could not load cities.';
+      });
+    }
   }
 
   Future<void> _submit() async {
@@ -46,7 +81,9 @@ class _SignupScreenState extends State<SignupScreen> {
     });
     final err = await context.read<AuthState>().register(
           restaurantName: _restaurant.text,
-          city: _city.text,
+          // Exactly one of the two, matching the server's rule.
+          city: _requestingNewCity ? null : _selectedCity,
+          requestedCity: _requestingNewCity ? _newCity.text : null,
           phoneNumber: _phone.text,
           username: _username.text,
           password: _password.text,
@@ -104,28 +141,73 @@ class _SignupScreenState extends State<SignupScreen> {
                           : null,
                     ),
                     const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _city,
-                      textCapitalization: TextCapitalization.words,
-                      decoration: const InputDecoration(
-                        labelText: 'City (optional)',
-                        prefixIcon: Icon(Icons.location_city_outlined),
+                    // ---- City: approved list, or an explicit request -------
+                    if (_cities == null)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 20),
+                        child: Center(child: CircularProgressIndicator()),
+                      )
+                    else if (_requestingNewCity) ...[
+                      TextFormField(
+                        controller: _newCity,
+                        textCapitalization: TextCapitalization.words,
+                        decoration: const InputDecoration(
+                          labelText: 'Request a new city',
+                          helperText:
+                              'An admin reviews this before it becomes selectable.',
+                          prefixIcon: Icon(Icons.add_location_alt_outlined),
+                        ),
+                        validator: (v) => (v == null || v.trim().length < 2)
+                            ? 'Enter the city name'
+                            : null,
                       ),
-                    ),
+                      TextButton(
+                        onPressed: () =>
+                            setState(() => _requestingNewCity = false),
+                        child: const Text('Pick from the list instead'),
+                      ),
+                    ] else ...[
+                      DropdownButtonFormField<String>(
+                        initialValue: _selectedCity,
+                        isExpanded: true,
+                        decoration: InputDecoration(
+                          labelText: 'City',
+                          errorText: _citiesError,
+                          prefixIcon: const Icon(Icons.location_city_outlined),
+                        ),
+                        items: [
+                          for (final city in _cities!)
+                            DropdownMenuItem(value: city, child: Text(city)),
+                        ],
+                        onChanged: (v) => setState(() => _selectedCity = v),
+                        // Required now: a free-text city is what allowed the
+                        // duplicate-spelling problem this dropdown removes.
+                        validator: (v) =>
+                            (v == null || v.isEmpty) ? 'Select your city' : null,
+                      ),
+                      TextButton(
+                        onPressed: () => setState(() {
+                          _requestingNewCity = true;
+                          _selectedCity = null;
+                        }),
+                        child: const Text("My city isn't listed"),
+                      ),
+                    ],
                     const SizedBox(height: 16),
                     TextFormField(
                       controller: _phone,
                       keyboardType: TextInputType.phone,
                       decoration: const InputDecoration(
-                        labelText: 'Contact phone (optional)',
+                        labelText: 'Contact phone',
                         hintText: '+91 98765 43210',
                         prefixIcon: Icon(Icons.phone_outlined),
                       ),
-                      // Optional, so blank is valid. Only a filled-in value is
-                      // length-checked, matching the server's min_length: 6.
+                      // REQUIRED as of this change, matching RegisterIn: blank
+                      // is no longer accepted, and the 6-char floor mirrors the
+                      // server's min_length so the error surfaces here first.
                       validator: (v) {
                         final s = (v ?? '').trim();
-                        if (s.isEmpty) return null;
+                        if (s.isEmpty) return 'Enter a contact phone number';
                         return s.length < 6 ? 'Enter a valid phone number' : null;
                       },
                     ),

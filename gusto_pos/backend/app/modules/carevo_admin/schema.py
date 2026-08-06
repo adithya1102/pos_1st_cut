@@ -114,3 +114,23 @@ class CustomerDirectoryOut(BaseModel):
     # | "At Risk" | "Churned", from days_since_last_order against two fixed
     # thresholds. No model, no training, no probability. See service.py.
     activity_status: str = "No orders"
+
+
+# ---------------------- Cities (migration 013) -------------------------------
+class AdminCityOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    # active | pending | rejected
+    status: str
+    created_at: Optional[datetime] = None
+    decided_at: Optional[datetime] = None
+    # Which outlet's signup asked for it. NULL for seeded/admin-added rows.
+    requested_by_outlet_id: Optional[uuid.UUID] = None
+    requested_by_outlet_name: Optional[str] = None
+
+
+class CityDecisionOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    status: str
+    decided_at: Optional[datetime] = None

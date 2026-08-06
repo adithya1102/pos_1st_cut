@@ -44,12 +44,16 @@ class AuthState extends ChangeNotifier {
     }
   }
 
+  /// Cities selectable at signup, from the canonical list (migration 013).
+  Future<List<String>> fetchCities() => _auth.fetchCities();
+
   /// Owner self-signup. Returns null on success, or a staff-facing error.
   /// Does not log in — the outlet is pending admin verification.
   Future<String?> register({
     required String restaurantName,
     String? city,
-    String? phoneNumber,
+    String? requestedCity,
+    required String phoneNumber,
     required String username,
     required String password,
     required String upiId,
@@ -58,6 +62,7 @@ class AuthState extends ChangeNotifier {
       await _auth.register(
         restaurantName: restaurantName.trim(),
         city: city,
+        requestedCity: requestedCity,
         phoneNumber: phoneNumber,
         username: username.trim(),
         password: password,
