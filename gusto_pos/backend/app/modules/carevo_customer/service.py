@@ -194,11 +194,23 @@ class CarevoService:
         return round(2 * r * math.asin(math.sqrt(a)), 3)
 
     @staticmethod
-    async def list_outlets(db: AsyncSession, lat: Optional[float], lng: Optional[float]) -> list[dict]:
+    async def list_outlets(
+        db: AsyncSession,
+        lat: Optional[float],
+        lng: Optional[float],
+        city: Optional[str] = None,
+    ) -> list[dict]:
         rows = (await db.execute(text(
-            "SELECT id, location_name, city, latitude, longitude, upi_id, image_url FROM outlets "
-            "WHERE is_visible = true AND deactivated_at IS NULL"
-        ))).fetchall()
+            "SELECT id, location_name, city, latitude, longitude, upi_id, image_url "
+            "FROM outlets "
+            "WHERE is_visible = true AND deactivated_at IS NULL "
+            # CAST for the same reason as list_outlets in carevo_admin: with a
+            # NULL bind Postgres cannot infer the parameter type from
+            # `:city IS NULL` alone. Case-insensitive so the city picked from
+            # /customer/areas matches regardless of stored capitalisation.
+            "  AND (CAST(:city AS varchar) IS NULL "
+            "       OR lower(city) = lower(CAST(:city AS varchar)))"
+        ), {"city": city})).fetchall()
         out = []
         for r in rows:
             oid, name, city, o_lat, o_lng, upi_id, image_url = r
@@ -1604,3 +1616,31 @@ class CarevoService:
                 unavailable.append({"menu_item_id": iid, "name": r.name})
 
         return {"ok": not unavailable, "unavailable": unavailable}
+
+    @staticmethod
+    async def list_areas(db: AsyncSession) -> list[dict]:
+        """Cities that actually have at least one orderable outlet.
+
+        Derived from live outlet rows, never a hardcoded list: a city appears
+        here only while it has >=1 visible, non-deactivated outlet, so picking
+        one can never lead to an empty result. When the last outlet in a city is
+        hidden or deactivated, the city disappears from the picker on its own.
+
+        `outlets` has no locality/area column today (only `city`), so this
+        returns city granularity. See migration 012 (proposed, not applied) for
+        the smallest addition that would let this return localities too.
+        """
+        rows = (await db.execute(text("""
+            SELECT city, count(*) AS outlet_count
+            FROM outlets
+            WHERE is_visible = true
+              AND deactivated_at IS NULL
+              AND city IS NOT NULL
+              AND btrim(city) <> ''
+            GROUP BY city
+            ORDER BY count(*) DESC, city
+        """))).fetchall()
+        return [
+            {"city": r.city, "outlet_count": int(r.outlet_count)}
+            for r in rows
+        ]

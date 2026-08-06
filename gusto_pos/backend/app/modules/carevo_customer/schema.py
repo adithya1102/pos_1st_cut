@@ -452,3 +452,14 @@ class UnavailableItemOut(BaseModel):
 class CartCheckOut(BaseModel):
     ok: bool
     unavailable: list[UnavailableItemOut] = []
+
+
+# ---------------------- Location areas (derived, not fixed) ------------------
+class AreaOut(BaseModel):
+    """One selectable city, derived from outlets that are actually orderable.
+
+    `outlet_count` lets the app show "3 restaurants" instead of a bare name, and
+    is always >= 1 by construction — a city with no outlets is never returned.
+    """
+    city: str
+    outlet_count: int

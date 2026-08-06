@@ -32,9 +32,13 @@ class _OutletsScreenState extends State<OutletsScreen> {
   }
 
   Future<List<Outlet>> _load() {
-    return context
-        .read<CatalogService>()
-        .fetchOutlets(lat: widget.lat, lng: widget.lng);
+    return context.read<CatalogService>().fetchOutlets(
+          lat: widget.lat,
+          lng: widget.lng,
+          // areaLabel IS the city filter. It previously only fed the subtitle,
+          // so every area showed the identical full outlet list.
+          city: widget.areaLabel,
+        );
   }
 
   void _retry() => setState(() => _future = _load());
@@ -91,8 +95,10 @@ class _OutletsScreenState extends State<OutletsScreen> {
                   }
                   final outlets = snap.data ?? [];
                   if (outlets.isEmpty) {
-                    return const _ErrorState(
-                      message: 'No restaurants found here yet.',
+                    return _ErrorState(
+                      message: widget.areaLabel != null
+                          ? 'No restaurants in ${widget.areaLabel} yet.'
+                          : 'No restaurants found here yet.',
                     );
                   }
                   return RefreshIndicator(

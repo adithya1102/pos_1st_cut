@@ -11,6 +11,7 @@ import '../services/location_service.dart';
 import '../services/order_notify_service.dart';
 import '../services/order_service.dart';
 import '../services/upi_intent.dart';
+import '../state/cart_state.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/widgets/neo_button.dart';
@@ -193,6 +194,14 @@ class _PickupScreenState extends State<PickupScreen> {
         _error = null;
         _loading = false;
       });
+
+      // Clear the cart ONLY on confirmed payment. The UPI flow reaches this
+      // screen with the order still PENDING, so this is the first point at
+      // which the basket is genuinely spent. Idempotent: clear() on an
+      // already-empty cart is a no-op, and this poll repeats.
+      if (status.paymentStatus.toUpperCase() == 'PAID') {
+        context.read<CartState>().clear();
+      }
       // Keep polling through Ready → Completed so the wait-feedback prompt
       // (FR-C5) can appear once the pickup is verified; then stop.
       if (status.isCompleted) {

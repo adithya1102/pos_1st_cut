@@ -192,14 +192,33 @@ async def check_cart(
 
 
 # ---------------------------- Discovery ------------------------------------
+@router.get("/areas", response_model=list[s.AreaOut])
+async def list_areas(
+    _: Customer = Depends(get_current_customer),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cities that currently have at least one orderable outlet.
+
+    Backs the location picker. Derived from live outlet rows so the app can
+    never offer a location that yields an empty restaurant list.
+    """
+    return await CarevoService.list_areas(db)
+
+
 @router.get("/outlets", response_model=list[s.OutletOut])
 async def list_outlets(
     lat: Optional[float] = None,
     lng: Optional[float] = None,
+    city: Optional[str] = None,
     _: Customer = Depends(get_current_customer),
     db: AsyncSession = Depends(get_db),
 ):
-    return await CarevoService.list_outlets(db, lat, lng)
+    """Visible outlets, optionally filtered by `city` and sorted by distance.
+
+    `city` comes from /customer/areas. Passing one actually filters — before
+    this, the app's area chips only changed a subtitle string.
+    """
+    return await CarevoService.list_outlets(db, lat, lng, city=city)
 
 
 @router.get("/menu/{outlet_id}", response_model=s.MenuOut)

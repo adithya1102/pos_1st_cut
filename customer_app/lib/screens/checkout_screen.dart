@@ -209,7 +209,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       // "Pay via UPI" button that opens the user's UPI app with the amount
       // locked. Staff then confirm the payment manually.
       if (_method == PaymentMethod.upi) {
-        cart.clear();
+        // NOTE: the cart is deliberately NOT cleared here. At this point the
+        // order row exists but payment_status is still PENDING — the UPI intent
+        // has not even been opened yet. Clearing now loses the basket for
+        // anyone who cancels in their UPI app, fails, or never pays.
+        // PickupScreen clears it once the order is observed PAID.
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
             builder: (_) => PickupScreen(
