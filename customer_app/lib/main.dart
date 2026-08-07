@@ -13,6 +13,7 @@ import 'services/order_service.dart';
 import 'services/otp_auth_service.dart';
 import 'services/payment_service.dart';
 import 'services/places_service.dart';
+import 'services/push_service.dart';
 import 'state/auth_state.dart';
 import 'state/cart_state.dart';
 import 'screens/splash_screen.dart';
@@ -47,6 +48,7 @@ Future<void> main() async {
       AppConfig.useFirebaseAuth ? FirebaseOtpService(api) : StubOtpService(api);
   final PaymentService paymentService = StubPaymentService(api);
   final googleAuth = GoogleAuthService(api);
+  final push = PushService(api);
 
   runApp(
     MultiProvider(
@@ -61,8 +63,9 @@ Future<void> main() async {
         Provider<LocationService>(create: (_) => LocationService()),
         Provider<PlacesService>(create: (_) => PlacesService()),
         Provider<GoogleAuthService>.value(value: googleAuth),
+        Provider<PushService>.value(value: push),
         ChangeNotifierProvider(
-          create: (_) => AuthState(api, otpService, googleAuth),
+          create: (_) => AuthState(api, otpService, googleAuth, push),
         ),
         ChangeNotifierProvider.value(value: cartState),
       ],

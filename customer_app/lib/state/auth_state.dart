@@ -1,21 +1,32 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../models/customer.dart';
 import '../services/api_client.dart';
 import '../services/google_auth_service.dart';
 import '../services/otp_auth_service.dart';
+import '../services/push_service.dart';
 
 /// Holds session state and drives the two login flows: phone OTP through
 /// [OtpAuthService], and Google through [GoogleAuthService].
 class AuthState extends ChangeNotifier {
-  AuthState(this._api, this._otp, this._google);
+  AuthState(this._api, this._otp, this._google, this._push);
 
   final ApiClient _api;
   final OtpAuthService _otp;
   final GoogleAuthService _google;
+  final PushService _push;
 
   Customer? _customer;
   Customer? get customer => _customer;
+
+  /// Register for push AFTER authentication, since the backend stores the
+  /// token against the signed-in customer. Not awaited — a permission prompt
+  /// must never gate getting into the app.
+  void _registerPush() {
+    unawaited(_push.registerAfterLogin());
+  }
 
   /// Replace the cached customer after a profile edit, so screens reading the
   /// session copy don't show a stale name until the next sign-in.
@@ -69,6 +80,7 @@ class AuthState extends ChangeNotifier {
     try {
       final result = await _otp.verifyOtp(_pendingPhone, otp);
       _customer = result.customer;
+      _registerPush();
       notifyListeners();
       return true;
     } on ApiException catch (e) {
@@ -92,6 +104,7 @@ class AuthState extends ChangeNotifier {
       // null == the user dismissed the picker: no error to show.
       if (result == null) return false;
       _customer = result.customer;
+      _registerPush();
       notifyListeners();
       return true;
     } on ApiException catch (e) {
@@ -106,6 +119,9 @@ class AuthState extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    // Clear the device token BEFORE dropping the session token — unregistering
+    // is an authenticated call, so it has to happen while still signed in.
+    await _push.unregister();
     await _api.clearToken();
     // Drop the cached Google account too, so the next sign-in shows the picker
     // instead of silently reusing whoever was signed in before.

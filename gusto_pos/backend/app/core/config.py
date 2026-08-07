@@ -39,6 +39,21 @@ class Settings(BaseSettings):
     # (shadow mode), so the feature is inert until this is set on Render.
     MAPS_SERVER_KEY: str = ""
 
+    # --- Push notifications (FCM HTTP v1) -----------------------------------
+    # PUSH_ENABLED gates SENDING, exactly as FIREBASE_ENABLED gates the inbound
+    # auth path. Sending needs a Firebase SERVICE ACCOUNT — a different and much
+    # more privileged credential than google-services.json (which is client-side
+    # and only lets a device receive). Point this at the downloaded JSON:
+    #
+    #   PUSH_ENABLED=true
+    #   FCM_SERVICE_ACCOUNT_FILE=/etc/secrets/carevo-fcm.json
+    #
+    # Left false/empty, every send is recorded as 'skipped' and nothing is
+    # transmitted — so the whole pipeline is inert but exercisable until real
+    # credentials exist. Never commit the service-account file.
+    PUSH_ENABLED: bool = False
+    FCM_SERVICE_ACCOUNT_FILE: Optional[str] = None
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()

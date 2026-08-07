@@ -683,7 +683,7 @@ class CarevoService:
         await db.commit()
         await db.refresh(order)
 
-        await CarevoService._broadcast_status(order)
+        await CarevoService._broadcast_status(order, db)
 
         # PE Step 4 (shadow mode): compute the order twin once accepted. Runs in
         # its own transaction AFTER payment is committed, wrapped so a prediction
@@ -721,12 +721,18 @@ class CarevoService:
         order.updated_at = datetime.now(timezone.utc)
         await db.commit()
         await db.refresh(order)
-        await CarevoService._broadcast_status(order)
+        await CarevoService._broadcast_status(order, db)
         return order
 
     @staticmethod
-    async def _broadcast_status(order: CustomerOrder) -> None:
-        """Reuse the in-memory WS layer to push Skip status changes."""
+    async def _broadcast_status(order: CustomerOrder, db: AsyncSession = None) -> None:
+        """Reuse the in-memory WS layer to push Skip status changes.
+
+        Also the single hook for FCM order-status pushes (migration 014): every
+        transition already funnels through here, so notifications reuse this
+        choke point instead of re-deriving which statuses changed. Wrapped so a
+        push failure can never affect the order.
+        """
         payload = {
             "event": "SKIP_ORDER_STATUS",
             "order_id": str(order.id),
@@ -742,6 +748,17 @@ class CarevoService:
             await pos_manager.broadcast_to_outlet(str(order.outlet_id), payload)
         except Exception:
             pass
+
+        # FCM push for the same transition. Best-effort and fully swallowed:
+        # a notification must never fail or roll back the order it describes.
+        # Inert (logged as 'skipped') until PUSH_ENABLED + a service account
+        # are configured, so this is safe to ship before credentials exist.
+        if db is not None:
+            try:
+                from app.modules.push.service import PushService
+                await PushService.notify_order_status(db, order)
+            except Exception:
+                pass
 
     # ------------------------------ POS ------------------------------------
     @staticmethod
@@ -779,7 +796,7 @@ class CarevoService:
             )
             await db.commit()
             await db.refresh(order)
-            await CarevoService._broadcast_status(order)
+            await CarevoService._broadcast_status(order, db)
             # PE Step 4: score the terminal order (trust + outcome), best-effort.
             try:
                 from app.modules.prediction.service import PredictionService
