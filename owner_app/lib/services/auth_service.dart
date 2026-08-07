@@ -31,6 +31,7 @@ class AuthService {
     String? city,
     String? requestedCity,
     required String phoneNumber,
+    required String email,
     required String username,
     required String password,
     required String upiId,
@@ -45,6 +46,8 @@ class AuthService {
         'requested_city': requestedCity.trim(),
       // Now mandatory server-side, so always sent.
       'phone_number': phoneNumber.trim(),
+      // Required as of migration 015 — it is what makes forgot-password work.
+      'email': email.trim().toLowerCase(),
       'username': username,
       'password': password,
       'upi_id': upiId.trim(),
@@ -68,4 +71,101 @@ class AuthService {
   }
 
   Future<void> logout() => _client.clearToken();
+
+  /// `POST /auth/password/forgot` — PUBLIC, no token.
+  ///
+  /// The response is identical whether or not the username exists, so this
+  /// never reveals which accounts are real. [maskedEmail] is non-null only
+  /// when there is an address on file.
+  Future<ForgotPasswordResult> forgotPassword(String username) async {
+    final data = await _client.post('/auth/password/forgot', body: {
+      'username': username.trim(),
+    });
+    final m = (data as Map).cast<String, dynamic>();
+    return ForgotPasswordResult(
+      message: m['message']?.toString() ?? '',
+      maskedEmail: m['email_hint']?.toString(),
+      needsAdminHelp: m['needs_admin_help'] == true,
+    );
+  }
+
+  /// `POST /account/change-password` — requires the CURRENT password on top of
+  /// the bearer token. Throws [ApiException] with 401 when it is wrong.
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    await _client.post('/account/change-password', body: {
+      'current_password': currentPassword,
+      'new_password': newPassword,
+    });
+  }
+
+  /// `GET /account` — drives the "add your email" prompt for legacy accounts.
+  Future<AccountInfo> account() async {
+    final data = await _client.get('/account');
+    return AccountInfo.fromJson((data as Map).cast<String, dynamic>());
+  }
+
+  /// `PUT /account/email` — set/update the recovery email.
+  Future<AccountInfo> setEmail(String email) async {
+    final data = await _client.put('/account/email', body: {'email': email.trim()});
+    final m = (data as Map).cast<String, dynamic>();
+    return AccountInfo(
+      username: '',
+      email: m['email']?.toString(),
+      emailHint: m['email_hint']?.toString(),
+      emailVerified: false,
+      needsEmail: false,
+      verificationSent: m['verification_sent'] == true,
+    );
+  }
+}
+
+/// Outcome of a forgot-password request. Deliberately carries no signal about
+/// whether the username existed.
+class ForgotPasswordResult {
+  const ForgotPasswordResult({
+    required this.message,
+    this.maskedEmail,
+    this.needsAdminHelp = false,
+  });
+
+  final String message;
+
+  /// e.g. "a*****a@g***l.com" — enough to recognise, not enough to learn.
+  final String? maskedEmail;
+
+  /// Legacy account with no email on file: recover via the admin queue.
+  final bool needsAdminHelp;
+}
+
+class AccountInfo {
+  const AccountInfo({
+    required this.username,
+    this.email,
+    this.emailHint,
+    this.emailVerified = false,
+    this.needsEmail = true,
+    this.verificationSent = false,
+  });
+
+  final String username;
+  final String? email;
+  final String? emailHint;
+  final bool emailVerified;
+
+  /// True for accounts predating migration 015 — prompts them to add one.
+  final bool needsEmail;
+
+  /// False while the server has no mail transport configured.
+  final bool verificationSent;
+
+  factory AccountInfo.fromJson(Map<String, dynamic> j) => AccountInfo(
+        username: j['username']?.toString() ?? '',
+        email: j['email']?.toString(),
+        emailHint: j['email_hint']?.toString(),
+        emailVerified: j['email_verified'] == true,
+        needsEmail: j['needs_email'] == true,
+      );
 }

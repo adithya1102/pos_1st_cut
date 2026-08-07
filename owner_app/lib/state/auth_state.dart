@@ -47,6 +47,38 @@ class AuthState extends ChangeNotifier {
   /// Cities selectable at signup, from the canonical list (migration 013).
   Future<List<String>> fetchCities() => _auth.fetchCities();
 
+  /// Account state — drives the "add your email" prompt for legacy accounts.
+  Future<AccountInfo> account() => _auth.account();
+
+  Future<AccountInfo> setEmail(String email) => _auth.setEmail(email);
+
+  /// Returns null on success, or a staff-facing error message.
+  Future<String?> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    try {
+      await _auth.changePassword(
+        currentPassword: currentPassword, newPassword: newPassword);
+      return null;
+    } on ApiException catch (e) {
+      if (e.statusCode == 401) return 'Your current password is incorrect.';
+      return e.message;
+    } catch (_) {
+      return 'Could not change the password. Try again.';
+    }
+  }
+
+  /// Forgot-password. The result is identical whether or not the username
+  /// exists, so callers must not branch on "was it found".
+  Future<ForgotPasswordResult?> forgotPassword(String username) async {
+    try {
+      return await _auth.forgotPassword(username);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Owner self-signup. Returns null on success, or a staff-facing error.
   /// Does not log in — the outlet is pending admin verification.
   Future<String?> register({
@@ -54,6 +86,7 @@ class AuthState extends ChangeNotifier {
     String? city,
     String? requestedCity,
     required String phoneNumber,
+    required String email,
     required String username,
     required String password,
     required String upiId,
@@ -64,6 +97,7 @@ class AuthState extends ChangeNotifier {
         city: city,
         requestedCity: requestedCity,
         phoneNumber: phoneNumber,
+        email: email,
         username: username.trim(),
         password: password,
         upiId: upiId,

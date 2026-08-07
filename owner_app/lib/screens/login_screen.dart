@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../config/app_config.dart';
 import '../state/auth_state.dart';
+import 'forgot_password_screen.dart';
 import 'signup_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -109,7 +110,17 @@ class _LoginScreenState extends State<LoginScreen> {
                             )
                           : const Text('Log in'),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 4),
+                    TextButton(
+                      onPressed: auth.loading
+                          ? null
+                          : () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                    builder: (_) => const ForgotPasswordScreen()),
+                              ),
+                      child: const Text('Forgot password?'),
+                    ),
+                    const SizedBox(height: 4),
                     TextButton(
                       onPressed: auth.loading
                           ? null

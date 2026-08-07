@@ -1087,10 +1087,24 @@ class CarevoService:
                     ON CONFLICT (lower(name)) DO NOTHING
                 """), {"n": requested_city, "oid": str(outlet_id)})
 
+            # email lands on the USER row (migration 015): password recovery is
+            # per-account, and an outlet can have several staff users.
+            taken_email = (await db.execute(text(
+                "SELECT 1 FROM users WHERE lower(email) = lower(:e) LIMIT 1"
+            ), {"e": payload.email})).first()
+            if taken_email:
+                raise HTTPException(
+                    status_code=409, detail="That email is already registered"
+                )
+
             await db.execute(text(
-                "INSERT INTO users (id, username, hashed_password, is_active, outlet_id, created_at) "
-                "VALUES (gen_random_uuid(), :u, :pw, true, :oid, now())"
-            ), {"u": payload.username, "pw": get_password_hash(payload.password), "oid": str(outlet_id)})
+                "INSERT INTO users (id, username, hashed_password, is_active, outlet_id, "
+                "  email, created_at) "
+                "VALUES (gen_random_uuid(), :u, :pw, true, :oid, :email, now())"
+            ), {
+                "u": payload.username, "pw": get_password_hash(payload.password),
+                "oid": str(outlet_id), "email": payload.email.strip().lower(),
+            })
 
             menu_id = (await db.execute(text(
                 "INSERT INTO menus (id, outlet_id, version_label, is_latest, created_at) "

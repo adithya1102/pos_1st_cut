@@ -10,6 +10,7 @@ import '../state/auth_state.dart';
 import '../state/home_state.dart';
 import '../state/orders_state.dart';
 import '../widgets/dish_row.dart';
+import 'change_password_screen.dart';
 import 'dish_edit_screen.dart';
 import 'orders_screen.dart';
 
@@ -41,6 +42,13 @@ class _HomeScreenState extends State<HomeScreen> {
         title: Text(_index == 0 ? 'Menu & Outlet' : 'Orders'),
         actions: [
           if (_index == 0) const _OutletVisibilityToggle(),
+          IconButton(
+            tooltip: 'Change password',
+            icon: const Icon(Icons.password_outlined),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const ChangePasswordScreen()),
+            ),
+          ),
           IconButton(
             tooltip: 'Log out',
             icon: const Icon(Icons.logout),

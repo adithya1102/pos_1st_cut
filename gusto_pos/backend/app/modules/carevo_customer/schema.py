@@ -222,6 +222,14 @@ class RegisterIn(BaseModel):
     # way to reach an outlet during verification. Existing rows keep NULL — the
     # DB column stays nullable, so this binds new signups only.
     phone_number: str = Field(..., min_length=6, max_length=20)
+
+    # Owner recovery email (migration 015). REQUIRED for new signups — it is
+    # what makes forgot-password possible. Stored on `users`, not `outlets`:
+    # recovery is per-account, and usernames are unique per user.
+    # Existing accounts keep NULL and are prompted to add one after login.
+    email: str = Field(
+        ..., min_length=5, max_length=255, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+    )
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     username: str = Field(..., min_length=3, max_length=50)

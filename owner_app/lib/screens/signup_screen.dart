@@ -20,6 +20,7 @@ class _SignupScreenState extends State<SignupScreen> {
   // explicitly requests a new city for admin approval.
   final _newCity = TextEditingController();
   final _phone = TextEditingController();
+  final _email = TextEditingController();
 
   List<String>? _cities;      // null = still loading
   String? _citiesError;
@@ -31,6 +32,7 @@ class _SignupScreenState extends State<SignupScreen> {
   bool _obscure = true;
 
   static final _vpaRe = RegExp(r'^[^@\s]+@[^@\s]+$');
+  static final _emailRe = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
   bool _submitting = false;
   String? _error;
 
@@ -39,6 +41,7 @@ class _SignupScreenState extends State<SignupScreen> {
     _restaurant.dispose();
     _newCity.dispose();
     _phone.dispose();
+    _email.dispose();
     _upi.dispose();
     _username.dispose();
     _password.dispose();
@@ -85,6 +88,7 @@ class _SignupScreenState extends State<SignupScreen> {
           city: _requestingNewCity ? null : _selectedCity,
           requestedCity: _requestingNewCity ? _newCity.text : null,
           phoneNumber: _phone.text,
+          email: _email.text,
           username: _username.text,
           password: _password.text,
           upiId: _upi.text,
@@ -209,6 +213,29 @@ class _SignupScreenState extends State<SignupScreen> {
                         final s = (v ?? '').trim();
                         if (s.isEmpty) return 'Enter a contact phone number';
                         return s.length < 6 ? 'Enter a valid phone number' : null;
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: _email,
+                      autocorrect: false,
+                      enableSuggestions: false,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: const InputDecoration(
+                        labelText: 'Email',
+                        helperText: 'Used to recover your account if you forget '
+                            'your password.',
+                        prefixIcon: Icon(Icons.email_outlined),
+                      ),
+                      // Required (migration 015) — forgot-password depends on
+                      // it. Same shape check as the server, so the error shows
+                      // here before a round trip.
+                      validator: (v) {
+                        final s = (v ?? '').trim();
+                        if (s.isEmpty) return 'Enter your email';
+                        return _emailRe.hasMatch(s)
+                            ? null
+                            : 'Enter a valid email address';
                       },
                     ),
                     const SizedBox(height: 16),

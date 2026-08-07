@@ -34,6 +34,10 @@ from app.modules.onboarding.controller import router as onboarding_router
 
 # CareVo Admin Dashboard (additive; SUPER_ADMIN-gated platform ops)
 from app.modules.carevo_admin.controller import router as carevo_admin_router
+from app.modules.account.controller import (
+    public_router as account_public_router,
+    router as account_router,
+)
 from app.modules.push.controller import (
     admin_router as push_admin_router,
     customer_router as push_customer_router,
@@ -96,6 +100,11 @@ app.include_router(carevo_admin_router, prefix="/api/v1")
 # Push notifications (migration 014). Token registration is customer-authed;
 # the nudge triggers are SUPER_ADMIN-only. Sending stays inert until
 # PUSH_ENABLED + a Firebase service account are configured.
+# Owner account: email on file, change password, forgot/reset password
+# (migration 015). The /auth/password/* pair is PUBLIC by necessity — a
+# locked-out owner has no token. Email sending stays inert until EMAIL_ENABLED.
+app.include_router(account_router, prefix="/api/v1")
+app.include_router(account_public_router, prefix="/api/v1")
 app.include_router(push_customer_router, prefix="/api/v1")
 app.include_router(push_admin_router, prefix="/api/v1")
 

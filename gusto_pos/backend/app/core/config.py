@@ -51,6 +51,22 @@ class Settings(BaseSettings):
     # Left false/empty, every send is recorded as 'skipped' and nothing is
     # transmitted — so the whole pipeline is inert but exercisable until real
     # credentials exist. Never commit the service-account file.
+    # --- Outbound email (migration 015) --------------------------------------
+    # Gates SENDING of verification / password-reset mail, exactly as
+    # PUSH_ENABLED gates FCM. There is no mail transport configured yet, so with
+    # this false every send is recorded and logged but nothing leaves the
+    # process — the flows are fully exercisable before a provider exists.
+    #
+    # Owner accounts are NOT Firebase Auth users (username + bcrypt in `users`),
+    # so Firebase's built-in verification/reset mail does not apply to them.
+    # Reset links are our own single-use tokens; whatever provider is wired in
+    # later just has to deliver EmailMessage.body.
+    EMAIL_ENABLED: bool = False
+    # Base URL the emailed links point at (the app/web page that completes the
+    # flow). Left empty until the flows have a real landing page.
+    EMAIL_LINK_BASE_URL: str = ""
+    EMAIL_FROM: str = "no-reply@carevo.app"
+
     PUSH_ENABLED: bool = False
     FCM_SERVICE_ACCOUNT_FILE: Optional[str] = None
 
