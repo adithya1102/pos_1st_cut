@@ -5,10 +5,12 @@ import '../models/outlet.dart';
 import '../services/api_client.dart';
 import '../services/catalog_service.dart';
 import '../theme/app_colors.dart';
+import '../theme/app_theme.dart';
 import '../theme/widgets/neo_button.dart';
 import '../theme/widgets/neo_card.dart';
 import 'menu_screen.dart';
 import '../widgets/account_button.dart';
+import '../widgets/offer_sheet.dart';
 
 /// Step 4: nearby restaurant discovery.
 class OutletsScreen extends StatefulWidget {
@@ -179,6 +181,14 @@ class _OutletCard extends StatelessWidget {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
+                    // Inline offer line, in the same box as the name so it
+                    // reads as part of the restaurant rather than as an ad
+                    // bolted onto the card. Only rendered when the outlet
+                    // actually has an active offer.
+                    if (outlet.hasOffers) ...[
+                      const SizedBox(height: 8),
+                      _OfferChip(outlet: outlet),
+                    ],
                   ],
                 ),
               ),
@@ -209,6 +219,61 @@ class _OutletCard extends StatelessWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// The inline "there's an offer here" line on an outlet card.
+///
+/// Tapping opens the full list (CareVo campaigns aimed at this restaurant plus
+/// its own offers, combined). Its own gesture sits above the card's, so a tap
+/// here opens offers instead of navigating into the menu — deliberate, since a
+/// customer reaching for the offer text wants the offers.
+class _OfferChip extends StatelessWidget {
+  const _OfferChip({required this.outlet});
+  final Outlet outlet;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final textTheme = Theme.of(context).textTheme;
+    // offerCount includes the headline itself, so "+N more" counts the rest.
+    final extra = outlet.offerCount - 1;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => showOffersSheet(context, outlet: outlet),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          color: c.accent,
+          borderRadius: BorderRadius.circular(AppTheme.radius - 2),
+          border: Border.all(color: c.border, width: 2),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.local_offer, size: 14, color: c.onAccent),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                outlet.offerText!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: textTheme.labelLarge
+                    ?.copyWith(color: c.onAccent, fontSize: 12),
+              ),
+            ),
+            if (extra > 0) ...[
+              const SizedBox(width: 6),
+              Text(
+                '+$extra more',
+                style: textTheme.labelSmall?.copyWith(color: c.onAccent),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

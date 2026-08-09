@@ -5,12 +5,14 @@ import 'config/app_config.dart';
 import 'services/api_client.dart';
 import 'services/auth_service.dart';
 import 'services/menu_service.dart';
+import 'services/offer_service.dart';
 import 'services/order_service.dart';
 import 'services/outlet_service.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'state/auth_state.dart';
 import 'state/home_state.dart';
+import 'state/offers_state.dart';
 import 'state/orders_state.dart';
 
 void main() {
@@ -39,6 +41,9 @@ class GustoOwnerApp extends StatelessWidget {
         ),
         ChangeNotifierProvider(
           create: (_) => OrdersState(OrderService(apiClient)),
+        ),
+        ChangeNotifierProvider(
+          create: (_) => OffersState(OfferService(apiClient)),
         ),
       ],
       child: MaterialApp(

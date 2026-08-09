@@ -291,12 +291,20 @@ async def get_order(
 ):
     order = await CarevoService.get_order(db, order_id, customer)
     wait_estimate = await CarevoService.shadow_estimate(db, order_id)
+    # total_amount is what was charged; the discount is stored alongside it
+    # (migration 010) precisely so the original can be reconstructed here rather
+    # than being lost the moment the order is placed.
+    total = float(order.total_amount or 0)
+    discount = float(order.discount_amount or 0)
     return {
         "id": order.id,
         "status": order.status,
         "payment_status": order.payment_status,
         "pickup_code": order.pickup_code,
-        "total_amount": float(order.total_amount or 0),
+        "total_amount": total,
+        "original_amount": round(total + discount, 2),
+        "discount_amount": discount,
+        "final_amount": total,
         "wait_estimate": wait_estimate,
         "items": [
             {
@@ -324,12 +332,17 @@ async def advance_order(
 ):
     target = payload.status if payload else None
     order = await CarevoService.advance_status(db, order_id, target)
+    total = float(order.total_amount or 0)
+    discount = float(order.discount_amount or 0)
     return {
         "id": order.id,
         "status": order.status,
         "payment_status": order.payment_status,
         "pickup_code": order.pickup_code,
-        "total_amount": float(order.total_amount or 0),
+        "total_amount": total,
+        "original_amount": round(total + discount, 2),
+        "discount_amount": discount,
+        "final_amount": total,
         "items": [
             {
                 "id": it.id,

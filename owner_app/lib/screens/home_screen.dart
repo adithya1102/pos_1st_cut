@@ -8,10 +8,12 @@ import '../models/outlet.dart';
 import '../services/cloudinary_service.dart';
 import '../state/auth_state.dart';
 import '../state/home_state.dart';
+import '../state/offers_state.dart';
 import '../state/orders_state.dart';
 import '../widgets/dish_row.dart';
 import 'change_password_screen.dart';
 import 'dish_edit_screen.dart';
+import 'offers_screen.dart';
 import 'orders_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -30,16 +32,19 @@ class _HomeScreenState extends State<HomeScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<HomeState>().load();
       context.read<OrdersState>().load();
+      context.read<OffersState>().load();
     });
   }
 
+  static const _titles = ['Menu & Outlet', 'Orders', 'Offers'];
+
   @override
   Widget build(BuildContext context) {
-    final pages = const [_DishesTab(), OrdersScreen()];
+    final pages = const [_DishesTab(), OrdersScreen(), OffersScreen()];
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_index == 0 ? 'Menu & Outlet' : 'Orders'),
+        title: Text(_titles[_index]),
         actions: [
           if (_index == 0) const _OutletVisibilityToggle(),
           IconButton(
@@ -57,13 +62,21 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       body: IndexedStack(index: _index, children: pages),
-      floatingActionButton: _index == 0
-          ? FloatingActionButton.extended(
-              onPressed: () => _openDishEditor(context, null),
-              icon: const Icon(Icons.add),
-              label: const Text('Add dish'),
-            )
-          : null,
+      floatingActionButton: switch (_index) {
+        0 => FloatingActionButton.extended(
+            onPressed: () => _openDishEditor(context, null),
+            icon: const Icon(Icons.add),
+            label: const Text('Add dish'),
+          ),
+        // "Create offer", never "create coupon": the owner is choosing a
+        // discount their restaurant funds, not minting a code.
+        2 => FloatingActionButton.extended(
+            onPressed: () => openOfferEditor(context, null),
+            icon: const Icon(Icons.local_offer_outlined),
+            label: const Text('Create offer'),
+          ),
+        _ => null,
+      },
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (i) => setState(() => _index = i),
@@ -77,6 +90,11 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: Icon(Icons.receipt_long_outlined),
             selectedIcon: Icon(Icons.receipt_long),
             label: 'Orders',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.local_offer_outlined),
+            selectedIcon: Icon(Icons.local_offer),
+            label: 'Offers',
           ),
         ],
       ),

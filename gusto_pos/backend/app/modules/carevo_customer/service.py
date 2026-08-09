@@ -27,6 +27,10 @@ from app.modules.carevo_customer.model import (
 )
 from app.modules.carevo_payments.gateway import get_gateway
 from app.modules.prediction import events as pe
+# Safe at module level: promotions.service imports only its own schema, so this
+# closes no cycle (promotions.controller reaches back into carevo_customer.deps,
+# never into this module).
+from app.modules.promotions.service import PromotionService
 
 # --- OTP rate limiter -------------------------------------------------------
 # NOTE: single-process limiter; use Redis in prod
@@ -211,12 +215,21 @@ class CarevoService:
             "  AND (CAST(:city AS varchar) IS NULL "
             "       OR lower(city) = lower(CAST(:city AS varchar)))"
         ), {"city": city})).fetchall()
+
+        # Offer summary for the inline chip (migration 016). ONE query for the
+        # whole list — a per-card lookup would be N round trips on the first
+        # screen the customer sees. "*" holds the platform-wide campaigns, which
+        # reach every outlet including those with no offer of their own.
+        offers = await PromotionService.offer_summary_by_outlet(db)
+        platform = offers.get("*")
+
         out = []
         for r in rows:
             oid, name, city, o_lat, o_lng, upi_id, image_url = r
             distance = None
             if lat is not None and lng is not None and o_lat is not None and o_lng is not None:
                 distance = CarevoService._haversine_km(lat, lng, float(o_lat), float(o_lng))
+            summary = offers.get(str(oid)) or platform
             out.append({
                 "id": oid,
                 "name": name,
@@ -225,6 +238,8 @@ class CarevoService:
                 "distance_km": distance,
                 "upi_id": upi_id,
                 "image_url": image_url,
+                "offer_count": (summary or {}).get("count", 0),
+                "offer_text": (summary or {}).get("text"),
             })
         if lat is not None and lng is not None:
             out.sort(key=lambda x: (x["distance_km"] is None, x["distance_km"] or 0))
@@ -339,11 +354,44 @@ class CarevoService:
         # full amount and refunding the difference would be a second money path
         # to get wrong.
         discount = 0.0
-        if getattr(payload, "coupon_code", None):
+        promotion_label: Optional[str] = None
+        wants_coupon = bool(getattr(payload, "coupon_code", None))
+        wants_promotion = bool(
+            getattr(payload, "promotion_id", None)
+            or getattr(payload, "promotion_code", None)
+        )
+
+        # No stacking in V1. Rejected outright rather than quietly honouring one
+        # of the two: a customer who supplies both and is charged for one has no
+        # way to tell which was ignored. The DB backs this up as well —
+        # idx_promo_redemption_one_per_order allows a single promotion per order.
+        if wants_coupon and wants_promotion:
+            raise HTTPException(
+                status_code=422,
+                detail="Use either a coupon or an offer on an order, not both.",
+            )
+
+        if wants_coupon:
             discount = await CarevoService._consume_points_coupon(
                 db, customer, order_id=order.id, gross=gross,
                 code=payload.coupon_code,
             )
+        elif wants_promotion:
+            # Promotions (migration 016). Runs in this same open transaction, so
+            # a failure below rolls the redemption back and the offer stays
+            # claimable — identical discipline to _consume_points_coupon.
+            applied = await PromotionService.apply_to_order(
+                db,
+                customer_id=customer.id,
+                outlet_id=payload.outlet_id,
+                order_id=order.id,
+                gross=gross,
+                promotion_id=getattr(payload, "promotion_id", None),
+                code=getattr(payload, "promotion_code", None),
+            )
+            discount = applied["discount_amount"]
+            promotion_label = applied["label"]
+
         order.discount_amount = discount
         # Never below zero: a ₹100 coupon on an ₹80 order settles at ₹0, and the
         # unused ₹20 is not carried anywhere (single-use means single-use).
@@ -393,6 +441,13 @@ class CarevoService:
                 "currency": g_order.currency,
                 "key_id": g_order.key_id,
             },
+            # The struck-through-price breakdown, computed here rather than in
+            # the app: `gross` is the pre-discount figure and only this function
+            # has ever known it.
+            "original_amount": gross,
+            "discount_amount": discount,
+            "final_amount": order.total_amount,
+            "promotion_label": promotion_label,
         }
 
     @staticmethod

@@ -8,6 +8,8 @@ class Outlet {
     this.distanceKm,
     this.upiId,
     this.imageUrl,
+    this.offerCount = 0,
+    this.offerText,
   });
 
   final String id;
@@ -21,10 +23,20 @@ class Outlet {
   /// the card falls back to the generic restaurant glyph.
   final String? imageUrl;
 
+  /// Offer summary (migration 016), returned inline by /customer/outlets so the
+  /// discovery list needs no second request. Counts this restaurant's own
+  /// offers plus every CareVo campaign that reaches it; [offerText] is the
+  /// headline one. 0 / null means the card renders as it always did.
+  final int offerCount;
+  final String? offerText;
+
+  bool get hasOffers => offerCount > 0 && (offerText?.isNotEmpty ?? false);
+
   factory Outlet.fromJson(Map<String, dynamic> json) {
     final dist = json['distance_km'];
     final upi = json['upi_id'] as String?;
     final img = json['image_url'] as String?;
+    final offer = json['offer_text'] as String?;
     return Outlet(
       id: json['id']?.toString() ?? '',
       name: (json['name'] ?? '') as String,
@@ -33,6 +45,8 @@ class Outlet {
       distanceKm: dist == null ? null : (dist as num).toDouble(),
       upiId: (upi != null && upi.isNotEmpty) ? upi : null,
       imageUrl: (img != null && img.isNotEmpty) ? img : null,
+      offerCount: (json['offer_count'] as num?)?.toInt() ?? 0,
+      offerText: (offer != null && offer.isNotEmpty) ? offer : null,
     );
   }
 
@@ -46,5 +60,7 @@ class Outlet {
         'distance_km': distanceKm,
         'upi_id': upiId,
         'image_url': imageUrl,
+        'offer_count': offerCount,
+        'offer_text': offerText,
       };
 }

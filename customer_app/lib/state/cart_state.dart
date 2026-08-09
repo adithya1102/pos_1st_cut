@@ -212,6 +212,10 @@ class CartState extends ChangeNotifier {
   /// and the customer's [originLat]/[originLng] starting point so the
   /// prediction engine can estimate travel. All are optional — a customer who
   /// denies location still checks out, just with `origin_source: 'none'`.
+  /// A [promotionId] is an offer the customer tapped from the list;
+  /// [promotionCode] is one they typed in. Both are separate from
+  /// [couponCode] — a points coupon and an offer are different instruments and
+  /// the server rejects an order carrying both.
   Map<String, dynamic> toOrderPayload({
     String? customerNotes,
     String? transportMode,
@@ -219,6 +223,8 @@ class CartState extends ChangeNotifier {
     double? originLng,
     String? originSource,
     String? couponCode,
+    String? promotionId,
+    String? promotionCode,
   }) =>
       {
         'outlet_id': _outlet?.id,
@@ -229,6 +235,10 @@ class CartState extends ChangeNotifier {
         // empty string would be rejected rather than treated as "no coupon".
         if (couponCode != null && couponCode.trim().isNotEmpty)
           'coupon_code': couponCode.trim().toUpperCase(),
+        if (promotionId != null && promotionId.isNotEmpty)
+          'promotion_id': promotionId,
+        if (promotionCode != null && promotionCode.trim().isNotEmpty)
+          'promotion_code': promotionCode.trim().toUpperCase(),
         'transport_mode': ?transportMode,
         'origin_lat': ?originLat,
         'origin_lng': ?originLng,

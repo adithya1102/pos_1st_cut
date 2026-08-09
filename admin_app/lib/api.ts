@@ -71,6 +71,13 @@ export const api = {
       method: "POST",
       body: body === undefined ? undefined : JSON.stringify(body),
     }),
+  // PATCH is how a campaign is edited AND how it is switched on/off — the
+  // backend audits the toggle distinctly, so no separate verb is needed here.
+  patch: <T,>(path: string, body?: unknown) =>
+    request<T>(path, {
+      method: "PATCH",
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }),
 };
 
 /** Staff login. Form-encoded on purpose — the endpoint is OAuth2PasswordRequestForm. */
@@ -161,6 +168,53 @@ export interface City {
   /** Which outlet's signup requested it; null for seeded/admin-added rows. */
   requested_by_outlet_id: string | null;
   requested_by_outlet_name: string | null;
+}
+
+// -------------------------- promotions (migration 016) ----------------------
+
+/** Who pays. Derived from nothing else — `scope` IS the funding decision.
+ *  The admin dashboard only ever creates CAREVO_CAMPAIGN rows; RESTAURANT_OFFER
+ *  appears in this union only because the two share a table and a type. */
+export type PromotionScope = "CAREVO_CAMPAIGN" | "RESTAURANT_OFFER";
+export type DiscountType = "PERCENT" | "FLAT";
+
+export interface Promotion {
+  id: string;
+  code: string | null;
+  label: string;
+  scope: PromotionScope;
+  /** Null = platform-wide. Set = campaign aimed at one restaurant. */
+  outlet_id: string | null;
+  outlet_name: string | null;
+  discount_type: DiscountType;
+  discount_value: number;
+  max_discount_amount: number | null;
+  min_order_value: number | null;
+  creator_name: string | null;
+  max_redemptions_total: number | null;
+  max_redemptions_per_customer: number;
+  is_active: boolean;
+  created_by_user_id: string | null;
+  created_at: string | null;
+  /** V1 analytics: a count, nothing more. */
+  redemption_count: number;
+  /** Server-rendered one-liner, so the dashboard and the customer app never
+   *  word the same campaign differently. */
+  benefit_text: string;
+}
+
+export interface PromotionCreateBody {
+  label: string;
+  code?: string | null;
+  outlet_id?: string | null;
+  discount_type: DiscountType;
+  discount_value: number;
+  max_discount_amount?: number | null;
+  min_order_value?: number | null;
+  creator_name?: string | null;
+  max_redemptions_total?: number | null;
+  max_redemptions_per_customer?: number;
+  is_active?: boolean;
 }
 
 export interface AuditLog {
@@ -309,6 +363,16 @@ export const adminApi = {
 
   auditLogs: (limit = 100) =>
     api.get<AuditLog[]>(`/api/v1/admin/audit-logs?limit=${limit}`),
+
+  // CareVo Campaigns (migration 016). CareVo-funded and CareVo-created; the
+  // restaurants' own offers live in owner_app and are never listed here.
+  promotions: () => api.get<Promotion[]>("/api/v1/admin/promotions"),
+  createPromotion: (body: PromotionCreateBody) =>
+    api.post<Promotion>("/api/v1/admin/promotions", body),
+  updatePromotion: (id: string, body: Partial<PromotionCreateBody>) =>
+    api.patch<Promotion>(`/api/v1/admin/promotions/${id}`, body),
+  setPromotionActive: (id: string, is_active: boolean) =>
+    api.patch<Promotion>(`/api/v1/admin/promotions/${id}`, { is_active }),
 
   // Prediction engine (shadow-mode observability, read-only).
   predictionOverview: () =>

@@ -67,6 +67,13 @@ class OutletOut(BaseModel):
     upi_id: Optional[str] = None
     # Storefront photo (migration 011). Null -> the app renders its fallback glyph.
     image_url: Optional[str] = None
+    # Offer summary (migration 016) so the discovery card can show its inline
+    # chip without one extra request per outlet. Counts this outlet's active
+    # Restaurant Offers plus every active CareVo Campaign that reaches it;
+    # offer_text is the headline benefit of the newest of those. 0/null means
+    # the card renders exactly as it did before.
+    offer_count: int = 0
+    offer_text: Optional[str] = None
 
 
 # ------------------------------ Menu ----------------------------------------
@@ -107,6 +114,16 @@ class CreateOrderIn(BaseModel):
     customer_notes: Optional[str] = None
     # Optional POINTS_DISCOUNT coupon applied at checkout (migration 010).
     coupon_code: Optional[str] = Field(None, min_length=4, max_length=24)
+    # Promotion applied at checkout (migration 016). Two ways in, because the
+    # two products reach the customer differently: `promotion_id` is a tap on an
+    # offer the app already listed, `promotion_code` is a code typed in from a
+    # creator post or a poster.
+    #
+    # DELIBERATELY SEPARATE from coupon_code. V1 does not stack: sending both a
+    # coupon and a promotion is rejected rather than silently applying one, so
+    # the customer never sees a total they cannot account for.
+    promotion_id: Optional[uuid.UUID] = None
+    promotion_code: Optional[str] = Field(None, min_length=3, max_length=24)
     # PE Step 3 (FR-C1/C2): travel context captured at checkout.
     transport_mode: Optional[str] = None      # bike | car | walk | auto | bus
     origin_lat: Optional[float] = None
@@ -155,6 +172,18 @@ class CreateOrderOut(BaseModel):
     status: str
     total_amount: float
     payment: PaymentBlock
+    # Price breakdown (migration 016). total_amount stays the amount charged and
+    # keeps its meaning for every existing caller; these three are additive so
+    # the app can show "₹420 ₹380" without recomputing anything client-side.
+    # final_amount == total_amount always — both are returned because the app
+    # reads a breakdown, not a total, and a name it has to remember is a bug
+    # waiting to happen.
+    original_amount: float = 0
+    discount_amount: float = 0
+    final_amount: float = 0
+    # What to name the saving in the UI, e.g. "20% off up to ₹60". Null when no
+    # promotion was applied (a points coupon is not a promotion).
+    promotion_label: Optional[str] = None
 
 
 class OrderItemOut(BaseModel):
@@ -180,6 +209,11 @@ class OrderOut(BaseModel):
     payment_status: str
     pickup_code: Optional[str] = None
     total_amount: float
+    # Same breakdown as CreateOrderOut, so the order-status and history screens
+    # can show what was saved without re-deriving it from the line items.
+    original_amount: float = 0
+    discount_amount: float = 0
+    final_amount: float = 0
     items: list[OrderItemOut] = []
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

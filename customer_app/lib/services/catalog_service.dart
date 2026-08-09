@@ -1,4 +1,5 @@
 import '../models/menu.dart';
+import '../models/offer.dart';
 import '../models/outlet.dart';
 import 'api_client.dart';
 
@@ -40,6 +41,19 @@ class CatalogService {
   Future<MenuResponse> fetchMenu(String outletId) async {
     final res = await _api.get('/customer/menu/$outletId');
     return MenuResponse.fromJson((res as Map).cast<String, dynamic>());
+  }
+
+  /// Every offer usable at this restaurant, as one list.
+  ///
+  /// CareVo campaigns (platform-wide and ones aimed at this restaurant) and the
+  /// restaurant's own offers arrive already merged and already filtered to the
+  /// active, unexhausted ones — the app does not decide what is claimable.
+  Future<List<Offer>> fetchOffers(String outletId) async {
+    final res = await _api.get('/customer/offers', query: {'outlet_id': outletId});
+    return ((res as List?) ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .map(Offer.fromJson)
+        .toList();
   }
 }
 

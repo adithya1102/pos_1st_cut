@@ -33,6 +33,9 @@ class CreatedOrder {
     required this.status,
     required this.totalAmount,
     this.payment,
+    this.originalAmount = 0,
+    this.discountAmount = 0,
+    this.promotionLabel,
   });
 
   final String id;
@@ -40,14 +43,35 @@ class CreatedOrder {
   final double totalAmount;
   final PaymentIntent? payment;
 
+  /// Price breakdown (migration 016). The SERVER's figures — the checkout
+  /// screen previews a discount locally, but only these decide what was
+  /// charged, so anything shown after the order exists reads from here.
+  final double originalAmount;
+  final double discountAmount;
+
+  /// e.g. "20% off up to ₹60". Null when no promotion was applied.
+  final String? promotionLabel;
+
+  /// What the customer actually pays. Same value as [totalAmount]; named for
+  /// the breakdown so a reader never has to remember they are the same.
+  double get finalAmount => totalAmount;
+
+  bool get hasDiscount => discountAmount > 0;
+
   factory CreatedOrder.fromJson(Map<String, dynamic> json) {
+    final total = (json['total_amount'] as num?)?.toDouble() ?? 0;
     return CreatedOrder(
       id: json['id']?.toString() ?? '',
       status: (json['status'] ?? 'CREATED') as String,
-      totalAmount: (json['total_amount'] as num?)?.toDouble() ?? 0,
+      totalAmount: total,
       payment: json['payment'] is Map<String, dynamic>
           ? PaymentIntent.fromJson(json['payment'] as Map<String, dynamic>)
           : null,
+      // Falls back to the total for any response predating the breakdown, so
+      // "original" is never mistakenly reported as ₹0.
+      originalAmount: (json['original_amount'] as num?)?.toDouble() ?? total,
+      discountAmount: (json['discount_amount'] as num?)?.toDouble() ?? 0,
+      promotionLabel: json['promotion_label'] as String?,
     );
   }
 }
@@ -108,6 +132,8 @@ class OrderStatus {
     this.createdAt,
     this.updatedAt,
     this.waitEstimate,
+    this.originalAmount = 0,
+    this.discountAmount = 0,
   });
 
   final String id;
@@ -115,18 +141,28 @@ class OrderStatus {
   final String paymentStatus;
   final String? pickupCode;
   final double totalAmount;
+
+  /// Price breakdown, reconstructed server-side from the stored discount so a
+  /// past order can still show what it saved.
+  final double originalAmount;
+  final double discountAmount;
   final List<OrderItemLine> items;
+
+  bool get hasDiscount => discountAmount > 0;
   final String? createdAt;
   final String? updatedAt;
   final WaitEstimate? waitEstimate;
 
   factory OrderStatus.fromJson(Map<String, dynamic> json) {
+    final total = (json['total_amount'] as num?)?.toDouble() ?? 0;
     return OrderStatus(
       id: json['id']?.toString() ?? '',
       status: (json['status'] ?? 'CREATED') as String,
       paymentStatus: (json['payment_status'] ?? 'PENDING') as String,
       pickupCode: json['pickup_code']?.toString(),
-      totalAmount: (json['total_amount'] as num?)?.toDouble() ?? 0,
+      totalAmount: total,
+      originalAmount: (json['original_amount'] as num?)?.toDouble() ?? total,
+      discountAmount: (json['discount_amount'] as num?)?.toDouble() ?? 0,
       items: ((json['items'] as List<dynamic>?) ?? [])
           .whereType<Map<String, dynamic>>()
           .map(OrderItemLine.fromJson)

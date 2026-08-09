@@ -42,6 +42,12 @@ from app.modules.push.controller import (
     admin_router as push_admin_router,
     customer_router as push_customer_router,
 )
+# Promotions (migration 016): CareVo Campaigns + Restaurant Offers.
+from app.modules.promotions.controller import (
+    admin_router as promotions_admin_router,
+    customer_router as promotions_customer_router,
+    pos_router as promotions_pos_router,
+)
 
 
 app = FastAPI(title="Gusto POS", version="2.0.0")
@@ -107,6 +113,13 @@ app.include_router(account_router, prefix="/api/v1")
 app.include_router(account_public_router, prefix="/api/v1")
 app.include_router(push_customer_router, prefix="/api/v1")
 app.include_router(push_admin_router, prefix="/api/v1")
+# Promotions (migration 016) → /api/v1/admin/promotions (SUPER_ADMIN),
+# /api/v1/pos/offers (outlet staff, own outlet only), /api/v1/customer/offers.
+# Two DISTINCT products sharing one table, never one generic coupon: `scope`
+# alone decides who funds the discount and is set by the route, not the body.
+app.include_router(promotions_admin_router, prefix="/api/v1")
+app.include_router(promotions_pos_router, prefix="/api/v1")
+app.include_router(promotions_customer_router, prefix="/api/v1")
 
 @app.get("/")
 async def root():

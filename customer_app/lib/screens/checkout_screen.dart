@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/offer.dart';
 import '../services/api_client.dart';
 import '../services/location_service.dart';
 import '../services/order_service.dart';
@@ -10,6 +11,7 @@ import '../state/cart_state.dart';
 import '../theme/app_colors.dart';
 import '../theme/widgets/neo_button.dart';
 import '../theme/widgets/neo_card.dart';
+import '../widgets/offer_sheet.dart';
 import '../widgets/price_text.dart';
 import 'payment_processing_screen.dart';
 import 'pickup_screen.dart';
@@ -49,11 +51,24 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   /// one place that decides whether a code is spendable.
   final _coupon = TextEditingController();
 
+  /// The offer the customer picked from the restaurant's list (migration 016).
+  ///
+  /// Mutually exclusive with [_coupon] because V1 does not stack: the server
+  /// rejects an order carrying both, so the UI disables one when the other is
+  /// in play rather than letting them build a basket that cannot be paid for.
+  Offer? _offer;
+
   @override
   void dispose() {
     _coupon.dispose();
     super.dispose();
   }
+
+  /// Local preview of the saving, for the struck-through price. The server
+  /// recomputes and is the authority — the order response carries the real
+  /// original / discount / final figures.
+  double _previewDiscount(double subtotal) =>
+      _offer?.previewSaving(subtotal) ?? 0;
 
   // FR-C1/C2: travel context captured before the order is placed.
   TransportMode _transport = TransportMode.bike;
@@ -200,7 +215,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               originLat: _originLat,
               originLng: _originLng,
               originSource: _originSource,
-              couponCode: _coupon.text,
+              // Never both: an offer takes precedence over a leftover coupon
+              // code, matching the mutual exclusion the UI already enforces.
+              couponCode: _offer == null ? _coupon.text : null,
+              promotionId: _offer?.id,
             ),
           );
       if (!mounted) return;
@@ -254,6 +272,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final textTheme = Theme.of(context).textTheme;
     final c = AppColors.of(context);
 
+    final subtotal = cart.subtotal;
+    final discount = _previewDiscount(subtotal);
+    final payable = (subtotal - discount).clamp(0.0, subtotal);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Checkout'),
@@ -264,7 +286,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
           child: NeoButton(
-            label: 'Pay ${formatRupees(cart.subtotal)}  •  ${_method.label}',
+            label: 'Pay ${formatRupees(payable)}  •  ${_method.label}',
             icon: Icons.lock,
             loading: _placing,
             onPressed: cart.isEmpty ? null : _payNow,
@@ -320,20 +342,57 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               onSearch: _searchLocation,
             ),
             const SizedBox(height: 24),
+            Text('Offers', style: textTheme.headlineSmall),
+            const SizedBox(height: 6),
+            Text(
+              _offer == null
+                  ? 'Pick one offer for this order.'
+                  : 'One offer per order.',
+              style: textTheme.bodyMedium?.copyWith(color: c.inkSoft),
+            ),
+            const SizedBox(height: 12),
+            _OfferPicker(
+              offer: _offer,
+              // No picker without an outlet — offers are per restaurant, and
+              // the cart is always bound to one before checkout is reachable.
+              onBrowse: cart.outlet == null
+                  ? null
+                  : () => showOffersSheet(
+                        context,
+                        outlet: cart.outlet!,
+                        subtotal: subtotal,
+                        onApply: (o) => setState(() {
+                          _offer = o;
+                          // Mutual exclusion, made visible: adopting an offer
+                          // clears a half-typed coupon rather than leaving a
+                          // field the server would reject.
+                          _coupon.clear();
+                        }),
+                      ),
+              onClear: () => setState(() => _offer = null),
+            ),
+            const SizedBox(height: 24),
             Text('Have a coupon?', style: textTheme.headlineSmall),
             const SizedBox(height: 6),
-            Text('Redeem points in your account to get a code.',
-                style: textTheme.bodyMedium?.copyWith(color: c.inkSoft)),
+            Text(
+              _offer == null
+                  ? 'Redeem points in your account to get a code.'
+                  : 'Remove the offer above to use a points coupon instead.',
+              style: textTheme.bodyMedium?.copyWith(color: c.inkSoft),
+            ),
             const SizedBox(height: 12),
             TextField(
               controller: _coupon,
+              // Disabled, not hidden: the customer can see why it is
+              // unavailable and what to do about it.
+              enabled: _offer == null,
               autocorrect: false,
               enableSuggestions: false,
               textCapitalization: TextCapitalization.characters,
               decoration: const InputDecoration(
                 labelText: 'Coupon code (optional)',
                 hintText: 'PTS-ABCD2345',
-                prefixIcon: Icon(Icons.local_offer_outlined),
+                prefixIcon: Icon(Icons.confirmation_number_outlined),
               ),
             ),
             const SizedBox(height: 24),
@@ -351,9 +410,79 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               const SizedBox(height: 12),
             ],
             const SizedBox(height: 12),
-            _TotalRow(subtotal: cart.subtotal),
+            _TotalRow(
+              subtotal: subtotal,
+              discount: discount,
+              payable: payable,
+              offerLabel: _offer?.benefitText,
+            ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// "Add an offer" / the chosen offer, with a way back out.
+class _OfferPicker extends StatelessWidget {
+  const _OfferPicker({
+    required this.offer,
+    required this.onBrowse,
+    required this.onClear,
+  });
+
+  final Offer? offer;
+  final VoidCallback? onBrowse;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final textTheme = Theme.of(context).textTheme;
+    final chosen = offer;
+
+    if (chosen == null) {
+      return NeoCard(
+        onTap: onBrowse,
+        child: Row(
+          children: [
+            Icon(Icons.local_offer_outlined, color: c.primary),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Text('See offers at this restaurant',
+                  style: textTheme.titleMedium),
+            ),
+            Icon(Icons.chevron_right, color: c.inkSoft),
+          ],
+        ),
+      );
+    }
+
+    return NeoCard(
+      color: c.accent,
+      child: Row(
+        children: [
+          Icon(Icons.local_offer, color: c.onAccent),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(chosen.benefitText,
+                    style: textTheme.titleMedium?.copyWith(color: c.onAccent)),
+                Text(
+                  chosen.isCareVo ? 'CareVo offer' : 'Restaurant offer',
+                  style: textTheme.bodySmall?.copyWith(color: c.onAccent),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Remove offer',
+            onPressed: onClear,
+            icon: Icon(Icons.close, color: c.onAccent),
+          ),
+        ],
       ),
     );
   }
@@ -576,22 +705,80 @@ class _OriginAction extends StatelessWidget {
   }
 }
 
+/// The price breakdown: original struck through, the saving, then what is
+/// actually charged.
+///
+/// Collapses to the single "Amount payable" row it has always been when there
+/// is no discount — a struck-through price identical to the final one is noise.
 class _TotalRow extends StatelessWidget {
-  const _TotalRow({required this.subtotal});
+  const _TotalRow({
+    required this.subtotal,
+    required this.discount,
+    required this.payable,
+    this.offerLabel,
+  });
+
   final double subtotal;
+  final double discount;
+  final double payable;
+  final String? offerLabel;
 
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    final c = AppColors.of(context);
+    final hasDiscount = discount > 0;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-      decoration: const BoxDecoration(),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Column(
         children: [
-          Text('Amount payable', style: textTheme.titleMedium),
-          PriceText(subtotal,
-              style: textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+          if (hasDiscount) ...[
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('Item total',
+                    style: textTheme.bodyMedium?.copyWith(color: c.inkSoft)),
+                Text(
+                  formatRupees(subtotal),
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: c.inkSoft,
+                    decoration: TextDecoration.lineThrough,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text(
+                    offerLabel == null ? 'Offer applied' : 'Offer • $offerLabel',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.bodyMedium?.copyWith(color: c.primary),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  '− ${formatRupees(discount)}',
+                  style: textTheme.bodyMedium?.copyWith(
+                      color: c.primary, fontWeight: FontWeight.w700),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+          ],
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Amount payable', style: textTheme.titleMedium),
+              PriceText(payable,
+                  style: textTheme.headlineSmall
+                      ?.copyWith(fontWeight: FontWeight.w700)),
+            ],
+          ),
         ],
       ),
     );
