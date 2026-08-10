@@ -87,13 +87,33 @@ class _LoginScreenState extends State<LoginScreen> {
                           ? 'Enter your password'
                           : null,
                     ),
-                    if (auth.error != null) ...[
+                    // Shown DURING the wait, not after it fails: a free-tier
+                    // cold start takes 40-80s, and silence for that long reads
+                    // as a broken app.
+                    if (auth.loading && auth.wakingUp) ...[
                       const SizedBox(height: 16),
-                      Text(
-                        auth.error!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                        ),
+                      _Notice(
+                        icon: Icons.hourglass_bottom,
+                        color: Theme.of(context).colorScheme.tertiary,
+                        text: 'Waking up the server — this can take up to a '
+                            'minute on the first sign-in of the day.',
+                      ),
+                    ],
+                    if (!auth.loading && auth.error != null) ...[
+                      const SizedBox(height: 16),
+                      _Notice(
+                        // A wrong password and an unreachable server should not
+                        // look alike at a glance, let alone read alike.
+                        icon: switch (auth.failure) {
+                          LoginFailure.badCredentials => Icons.lock_outline,
+                          LoginFailure.network => Icons.wifi_off,
+                          LoginFailure.timeout => Icons.hourglass_bottom,
+                          _ => Icons.error_outline,
+                        },
+                        color: auth.failure == LoginFailure.timeout
+                            ? Theme.of(context).colorScheme.tertiary
+                            : Theme.of(context).colorScheme.error,
+                        text: auth.error!,
                       ),
                     ],
                     const SizedBox(height: 24),
@@ -137,6 +157,32 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// One inline message with an icon that matches its cause.
+class _Notice extends StatelessWidget {
+  const _Notice({required this.icon, required this.color, required this.text});
+
+  final IconData icon;
+  final Color color;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18, color: color),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: color),
+          ),
+        ),
+      ],
     );
   }
 }

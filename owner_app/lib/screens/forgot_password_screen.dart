@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../state/auth_state.dart';
 
@@ -43,12 +44,36 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       _error = null;
       _result = null;
     });
-    final res = await context.read<AuthState>().forgotPassword(_username.text);
+
+    // Same three-way split as login: a dead connection, a cold start and a
+    // server refusal are different problems and get different words. The one
+    // thing NOT treated as an error is "no email on file" — that is a
+    // successful 200 whose message the panel below renders verbatim, along
+    // with the admin-recovery route.
+    ForgotPasswordResult? res;
+    String? err;
+    try {
+      res = await context.read<AuthState>().forgotPassword(_username.text);
+    } on NetworkException catch (e) {
+      err = e.timedOut
+          ? 'The server is waking up — this can take up to a minute. '
+              'Try again in a few seconds.'
+          : 'Could not reach the server. Check your internet connection.';
+    } on ApiException catch (e) {
+      err = switch (e.statusCode) {
+        429 => 'Too many requests. Wait a minute and try again.',
+        >= 500 => 'The server hit an error (${e.statusCode}). Try again shortly.',
+        _ => 'Could not send reset instructions (${e.statusCode}): ${e.message}',
+      };
+    } catch (_) {
+      err = 'Something went wrong. Please try again.';
+    }
+
     if (!mounted) return;
     setState(() {
       _submitting = false;
       _result = res;
-      if (res == null) _error = 'Could not reach the server. Try again.';
+      _error = err;
     });
   }
 
