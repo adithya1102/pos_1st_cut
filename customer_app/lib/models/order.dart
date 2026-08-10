@@ -7,6 +7,7 @@ class PaymentIntent {
     required this.amount,
     required this.currency,
     required this.keyId,
+    this.paymentSessionId,
   });
 
   final String gateway;
@@ -15,13 +16,22 @@ class PaymentIntent {
   final String currency;
   final String keyId;
 
+  /// The token Cashfree's checkout opens on. Null for the Razorpay-shaped
+  /// stub, which has no equivalent — so the app decides which flow to run from
+  /// this being present, not from a build-time constant.
+  final String? paymentSessionId;
+
+  bool get isCashfree => gateway == 'cashfree' && (paymentSessionId?.isNotEmpty ?? false);
+
   factory PaymentIntent.fromJson(Map<String, dynamic> json) {
+    final session = json['payment_session_id'] as String?;
     return PaymentIntent(
       gateway: (json['gateway'] ?? '') as String,
       gatewayOrderId: (json['gateway_order_id'] ?? '') as String,
       amount: (json['amount'] as num?)?.toDouble() ?? 0,
       currency: (json['currency'] ?? 'INR') as String,
       keyId: (json['key_id'] ?? '') as String,
+      paymentSessionId: (session != null && session.isNotEmpty) ? session : null,
     );
   }
 }

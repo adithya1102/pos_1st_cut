@@ -41,6 +41,7 @@ dependencies:
   # default_web_client_id, generated from android/app/google-services.json.
   google_sign_in: ^7.2.0
   firebase_messaging: ^16.5.0
+  flutter_cashfree_pg_sdk: ^2.4.0+52
 
 dev_dependencies:
   flutter_test:

@@ -61,6 +61,20 @@ class AppConfig {
   );
 
   /// How often the pickup screen polls order status.
+  /// Cashfree environment. Mirrors the backend's CASHFREE_ENV so the app and
+  /// the server cannot disagree about which Cashfree they are talking to —
+  /// a sandbox session id is rejected by production and vice versa.
+  ///
+  /// Defaults to sandbox. Going live is an explicit
+  /// `--dart-define=CASHFREE_ENV=production` at build time, never a default:
+  /// the failure mode of getting this wrong is real money.
+  static const String cashfreeEnv = String.fromEnvironment(
+    'CASHFREE_ENV',
+    defaultValue: 'sandbox',
+  );
+
+  static bool get cashfreeIsProduction => cashfreeEnv.toLowerCase() == 'production';
+
   static const Duration pickupPollInterval = Duration(seconds: 4);
 
   /// Network request timeout.

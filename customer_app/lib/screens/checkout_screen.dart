@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../models/offer.dart';
 import '../services/api_client.dart';
+import '../services/cashfree_service.dart';
 import '../services/location_service.dart';
 import '../services/order_service.dart';
 import '../services/payment_service.dart';
@@ -43,7 +44,6 @@ class CheckoutScreen extends StatefulWidget {
 }
 
 class _CheckoutScreenState extends State<CheckoutScreen> {
-  PaymentMethod _method = PaymentMethod.upi;
   bool _placing = false;
 
   /// Optional points-discount coupon code. Validated server-side at order
@@ -203,7 +203,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   Future<void> _payNow() async {
     final cart = context.read<CartState>();
-    final outlet = cart.outlet;
     setState(() => _placing = true);
     try {
       if (!await _ensureAvailable(cart)) return;
@@ -223,31 +222,62 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           );
       if (!mounted) return;
 
-      // UPI-intent MVP: go to the pickup screen, which shows a tappable
-      // "Pay via UPI" button that opens the user's UPI app with the amount
-      // locked. Staff then confirm the payment manually.
-      if (_method == PaymentMethod.upi) {
-        // NOTE: the cart is deliberately NOT cleared here. At this point the
-        // order row exists but payment_status is still PENDING — the UPI intent
-        // has not even been opened yet. Clearing now loses the basket for
-        // anyone who cancels in their UPI app, fails, or never pays.
-        // PickupScreen clears it once the order is observed PAID.
-        Navigator.of(context).pushReplacement(
+      // Stub backend (no Cashfree session): keep the simulate path so dev and
+      // any deploy still on PAYMENT_GATEWAY=stub remains walkable.
+      if (!(order.payment?.isCashfree ?? false)) {
+        Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (_) => PickupScreen(
-              orderId: order.id,
-              upiVpa: outlet?.upiId,
-              payeeName: outlet?.name,
-              amount: order.totalAmount,
+            builder: (_) => PaymentProcessingScreen(
+              order: order,
+              // Nominal only — the stub records a method string and does not
+              // branch on it. The customer no longer picks one.
+              method: PaymentMethod.upi,
             ),
           ),
         );
         return;
       }
 
-      Navigator.of(context).push(
+      // Cashfree Drop-in. UPI, cards and netbanking all live inside this
+      // sheet, which is why the app no longer asks the customer to choose.
+      final result = await context.read<CashfreeService>().openCheckout(
+            orderId: order.id,
+            paymentSessionId: order.payment!.paymentSessionId!,
+          );
+      if (!mounted) return;
+
+      if (result.outcome == CheckoutOutcome.notStarted) {
+        // Never opened, so nothing was charged and nothing needs confirming.
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(result.message ?? 'Could not open payment.'),
+        ));
+        return;
+      }
+
+      // Everything else — verified OR failed — goes to the pickup screen.
+      //
+      // That is deliberate and is the whole point of the webhook being the
+      // authority. onVerify can fire for a payment the bank later reverses,
+      // and can fail to fire for one that genuinely succeeded (app killed,
+      // network dropped returning from a UPI app). Neither the SDK's yes nor
+      // its no is trustworthy enough to tell the customer their order is
+      // confirmed — so both defer to the polled order status, which only the
+      // webhook can move to PAID.
+      //
+      // The cart is NOT cleared here for the same reason: at this instant
+      // payment_status is still whatever the server last knew. PickupScreen
+      // clears it once the order is actually observed PAID.
+      Navigator.of(context).pushReplacement(
         MaterialPageRoute(
-          builder: (_) => PaymentProcessingScreen(order: order, method: _method),
+          builder: (_) => PickupScreen(
+            orderId: order.id,
+            amount: order.finalAmount,
+            // Show a gentle note only when the SDK reported a problem; the
+            // screen still polls, in case it was wrong.
+            paymentHint: result.verified
+                ? null
+                : (result.message ?? 'Payment was not completed.'),
+          ),
         ),
       );
     } on ApiException catch (e) {
@@ -286,7 +316,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
           child: NeoButton(
-            label: 'Pay ${formatRupees(payable)}  •  ${_method.label}',
+            label: 'Pay ${formatRupees(payable)}',
             icon: Icons.lock,
             loading: _placing,
             onPressed: cart.isEmpty ? null : _payNow,
@@ -396,19 +426,31 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               ),
             ),
             const SizedBox(height: 24),
-            Text('Payment method', style: textTheme.headlineSmall),
+            Text('Payment', style: textTheme.headlineSmall),
             const SizedBox(height: 6),
-            Text('Pay securely online. Counter payment is not available.',
-                style: textTheme.bodyMedium?.copyWith(color: c.inkSoft)),
+            // No method picker any more: Cashfree's sheet presents UPI, cards
+            // and netbanking itself, and handing card entry to them is what
+            // keeps card details out of this app entirely.
+            Text(
+              'Pay securely with UPI, card or net banking. '
+              'Counter payment is not available.',
+              style: textTheme.bodyMedium?.copyWith(color: c.inkSoft),
+            ),
             const SizedBox(height: 16),
-            for (final method in PaymentMethod.values) ...[
-              _MethodTile(
-                method: method,
-                selected: _method == method,
-                onTap: () => setState(() => _method = method),
+            NeoCard(
+              child: Row(
+                children: [
+                  Icon(Icons.lock_outline, color: c.primary),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Text(
+                      'You\'ll choose how to pay on the next screen.',
+                      style: textTheme.bodyMedium,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 12),
-            ],
+            ),
             const SizedBox(height: 12),
             _TotalRow(
               subtotal: subtotal,
@@ -481,64 +523,6 @@ class _OfferPicker extends StatelessWidget {
             tooltip: 'Remove offer',
             onPressed: onClear,
             icon: Icon(Icons.close, color: c.onAccent),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MethodTile extends StatelessWidget {
-  const _MethodTile({
-    required this.method,
-    required this.selected,
-    required this.onTap,
-  });
-  final PaymentMethod method;
-  final bool selected;
-  final VoidCallback onTap;
-
-  IconData get _icon => switch (method) {
-        PaymentMethod.upi => Icons.qr_code_2,
-        PaymentMethod.card => Icons.credit_card,
-        PaymentMethod.netbanking => Icons.account_balance,
-      };
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    final textTheme = Theme.of(context).textTheme;
-    return NeoCard(
-      onTap: onTap,
-      color: selected ? c.accent : c.surface,
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: selected ? c.surface : c.surfaceAlt,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: c.border, width: 2.5),
-            ),
-            child: Icon(_icon, color: c.ink),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(method.label,
-                    style: textTheme.titleMedium?.copyWith(
-                        color: selected ? c.onAccent : c.ink)),
-                Text(method.subtitle,
-                    style: textTheme.bodySmall?.copyWith(
-                        color: selected ? c.onAccent : c.inkSoft)),
-              ],
-            ),
-          ),
-          Icon(
-            selected ? Icons.radio_button_checked : Icons.radio_button_off,
-            color: selected ? c.onAccent : c.inkSoft,
           ),
         ],
       ),

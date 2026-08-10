@@ -10,7 +10,6 @@ import '../models/order_notify.dart';
 import '../services/location_service.dart';
 import '../services/order_notify_service.dart';
 import '../services/order_service.dart';
-import '../services/upi_intent.dart';
 import '../state/cart_state.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
@@ -26,18 +25,18 @@ class PickupScreen extends StatefulWidget {
   const PickupScreen({
     super.key,
     required this.orderId,
-    this.upiVpa,
-    this.payeeName,
     this.amount,
+    this.paymentHint,
   });
 
   final String orderId;
-
-  /// UPI-intent params (passed from checkout). When [upiVpa] is set and the
-  /// order is still unpaid, a tappable "Pay via UPI" button is shown.
-  final String? upiVpa;
-  final String? payeeName;
   final double? amount;
+
+  /// Set when Cashfree's sheet reported a problem. Advisory ONLY — this screen
+  /// keeps polling regardless, because the SDK callback is not authoritative:
+  /// the webhook is, and it can still arrive and flip the order to PAID after
+  /// the sheet claimed failure.
+  final String? paymentHint;
 
   @override
   State<PickupScreen> createState() => _PickupScreenState();
@@ -253,17 +252,35 @@ class _PickupScreenState extends State<PickupScreen> {
                   Text(
                     isPaid
                         ? 'Show or say your pickup code at the counter.'
-                        : 'Pay via UPI, then the restaurant confirms your order.',
+                        : 'Confirming your payment — this is usually instant.',
                     style: textTheme.bodyLarge?.copyWith(color: c.inkSoft),
                   ),
                   const SizedBox(height: 20),
-                  // Bug 1: a REAL tappable button that launches the upi:// intent.
-                  if (!isPaid && widget.upiVpa != null) ...[
-                    _UpiPayButton(
-                      vpa: widget.upiVpa!,
-                      payeeName: widget.payeeName ?? 'Restaurant',
-                      amount: status?.totalAmount ?? widget.amount ?? 0,
-                      orderId: widget.orderId,
+                  // Shown only while still unpaid AND the sheet reported a
+                  // problem. Kept deliberately soft: polling continues, and a
+                  // payment the SDK called failed can still be confirmed by the
+                  // webhook a moment later.
+                  if (!isPaid && widget.paymentHint != null) ...[
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: c.surfaceAlt,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: c.border, width: 2),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.info_outline, size: 18, color: c.inkSoft),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              '${widget.paymentHint!}\nIf you were charged, this '
+                              'will update by itself in a moment.',
+                              style: textTheme.bodySmall?.copyWith(color: c.inkSoft),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                     const SizedBox(height: 16),
                   ],
@@ -391,61 +408,6 @@ class _NotifyBanner extends StatelessWidget {
 }
 
 /// Tappable UPI pay button — actually launches the upi:// intent (bug 1 fix).
-class _UpiPayButton extends StatefulWidget {
-  const _UpiPayButton({
-    required this.vpa,
-    required this.payeeName,
-    required this.amount,
-    required this.orderId,
-  });
-  final String vpa;
-  final String payeeName;
-  final double amount;
-  final String orderId;
-
-  @override
-  State<_UpiPayButton> createState() => _UpiPayButtonState();
-}
-
-class _UpiPayButtonState extends State<_UpiPayButton> {
-  bool _busy = false;
-
-  Future<void> _pay() async {
-    setState(() => _busy = true);
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      final opened = await UpiIntent.launch(
-        payeeVpa: widget.vpa,
-        payeeName: widget.payeeName,
-        amount: widget.amount,
-        orderId: widget.orderId,
-      );
-      if (!opened && mounted) {
-        messenger.showSnackBar(SnackBar(
-          content: Text('No UPI app found. Pay ${widget.vpa} '
-              '${formatRupees(widget.amount)} from any UPI app.'),
-        ));
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return NeoButton(
-      label: _busy
-          ? 'Opening UPI…'
-          : 'Pay ${formatRupees(widget.amount)} via UPI',
-      icon: Icons.account_balance_wallet,
-      loading: _busy,
-      onPressed: _busy ? null : _pay,
-    );
-  }
-}
-
-/// FR-C7 — the customer-facing wait range. Shadow mode (§16): wide, labelled
-/// "approximate", never a precise ETA or a departure instruction.
 class _WaitEstimateCard extends StatelessWidget {
   const _WaitEstimateCard({required this.estimate});
   final WaitEstimate estimate;

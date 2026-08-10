@@ -9,6 +9,7 @@ import 'services/customer_service.dart';
 import 'services/firebase_otp_service.dart';
 import 'services/google_auth_service.dart';
 import 'services/location_service.dart';
+import 'services/cashfree_service.dart';
 import 'services/order_service.dart';
 import 'services/otp_auth_service.dart';
 import 'services/payment_service.dart';
@@ -59,6 +60,10 @@ Future<void> main() async {
         Provider<PaymentService>.value(value: paymentService),
         Provider<CatalogService>(create: (_) => CatalogService(api)),
         Provider<OrderService>(create: (_) => OrderService(api)),
+        // Constructed once: the Cashfree SDK exposes a single global callback
+        // pair, so a per-checkout instance would have later instances silently
+        // overwrite the callbacks of an in-flight one.
+        Provider<CashfreeService>(create: (_) => CashfreeService()),
         Provider<CustomerService>(create: (_) => CustomerService(api)),
         Provider<LocationService>(create: (_) => LocationService()),
         Provider<PlacesService>(create: (_) => PlacesService()),
