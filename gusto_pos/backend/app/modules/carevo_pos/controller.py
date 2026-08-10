@@ -135,14 +135,51 @@ async def list_active_orders(
     return await CarevoService.list_active_orders(db, _require_outlet(staff))
 
 
-@router.post("/orders/{order_id}/mark-paid", response_model=s.MarkPaidOut)
-async def mark_order_paid(
+# REMOVED: POST /orders/{id}/mark-paid.
+#
+# Payment confirmation is now webhook-driven end to end: the gateway tells us,
+# and mark_paid fires from /customer/payment/webhook. A staff-tappable endpoint
+# that flips an order to PAID is, with a real gateway behind it, a button that
+# marks unpaid orders as paid — so it is gone rather than merely hidden in the
+# app. CarevoService.mark_order_paid_by_staff is left in place, uncalled, for
+# the UPI-intent fallback should it ever be re-enabled deliberately.
+
+
+@router.post("/orders/{order_id}/reject", response_model=s.RejectOrderOut)
+async def reject_order(
     order_id: uuid.UUID,
+    payload: s.RejectOrderIn | None = None,
     staff: User = Depends(get_current_staff),
     db: AsyncSession = Depends(get_db),
 ):
-    """Manual payment confirmation for the UPI-intent flow."""
-    return await CarevoService.mark_order_paid_by_staff(db, order_id, _require_outlet(staff))
+    """Refuse a paid order -> CANCELLED, and tell the customer.
+
+    There is deliberately NO matching /accept: a paid order is accepted
+    automatically. This is the only human gate, and it is an opt-OUT.
+
+    Allowed up to (not including) READY — see REJECTABLE_STATUSES. Rejecting
+    food that is already made and waiting is not a real-world action.
+    """
+    return await CarevoService.reject_order(
+        db, order_id, _require_outlet(staff),
+        reason=(payload.reason if payload else None),
+        actor_user_id=staff.id,
+    )
+
+
+@router.post("/push/register", response_model=s.RegisterStaffTokenOut)
+async def register_staff_push_token(
+    payload: s.RegisterStaffTokenIn,
+    staff: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Store this device's FCM token against the signed-in staff user.
+
+    Mirrors /customer/push/register. Needed because migration 014 built the
+    push stack customer-only — without a token here, "notify the outlet on
+    every paid order" has nowhere to send.
+    """
+    return await CarevoService.register_staff_push_token(db, staff.id, payload.fcm_token)
 
 
 @router.post("/orders/{order_id}/notify", response_model=s.NotifyOut)
@@ -154,4 +191,27 @@ async def notify_order(
 ):
     return await CarevoService.notify_order(
         db, order_id, _require_outlet(staff), payload.type, payload.item_id
+    )
+
+
+@router.post("/orders/{order_id}/items/unavailable",
+             response_model=s.MarkItemsUnavailableOut)
+async def mark_items_unavailable(
+    order_id: uuid.UUID,
+    payload: s.MarkItemsUnavailableIn,
+    staff: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark one OR MORE line items unavailable in a single staff action.
+
+    The existing /notify?type=item_unavailable takes exactly one item_id and
+    stays as-is for the single-item path. This is the batch entry point behind
+    the order-detail checklist: staff tick several items and confirm once.
+
+    One ORDER_UNAVAILABLE event and one push PER ITEM, not per batch, so each
+    item stays individually attributable in the event stream and the customer
+    is told which specific dish is off — "2 items unavailable" helps nobody.
+    """
+    return await CarevoService.mark_items_unavailable(
+        db, order_id, _require_outlet(staff), payload.item_ids
     )

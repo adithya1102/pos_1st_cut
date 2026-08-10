@@ -119,6 +119,8 @@ class _Detail extends StatelessWidget {
             ),
           ),
           const Divider(height: 24),
+          ItemUnavailableChecklist(order: order),
+          const Divider(height: 24),
           VerifyBox(orderId: order.orderId),
           const Divider(height: 24),
           NotifySection(order: order),
@@ -128,8 +130,12 @@ class _Detail extends StatelessWidget {
   }
 }
 
-/// Front-and-center manual payment confirmation for the UPI-intent MVP.
-/// Unpaid → a prominent "Mark Payment Received" button; paid → a confirmation.
+/// Payment state + the one human gate on an order.
+///
+/// There is no "Mark Payment Received" any more, and no "Accept" either. The
+/// gateway webhook confirms payment and the order moves to RECEIVED on its own,
+/// so staff are never the thing an order waits on. What they get instead is the
+/// ability to pull an order they cannot make — an opt-OUT, not an opt-in.
 class _PaymentAction extends StatefulWidget {
   final Order order;
   const _PaymentAction({required this.order});
@@ -141,39 +147,210 @@ class _PaymentAction extends StatefulWidget {
 class _PaymentActionState extends State<_PaymentAction> {
   bool _busy = false;
 
-  Future<void> _confirm() async {
+  /// Mirrors the server's REJECTABLE_STATUSES. Once the food is made and
+  /// waiting on the counter, "we can't do this one" is no longer true.
+  static const _rejectable = {'PAID', 'RECEIVED', 'PREPARING'};
+
+  bool get _canReject =>
+      widget.order.isPaid && _rejectable.contains(widget.order.status.toUpperCase());
+
+  Future<void> _reject() async {
+    final controller = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Reject this order?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'The customer has already paid. They will be told the order was '
+              'cancelled and that a refund is being arranged.',
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              maxLength: 300,
+              decoration: const InputDecoration(
+                labelText: 'Reason (optional, for your records)',
+                hintText: 'Kitchen closed early',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Keep it')),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(c).colorScheme.error,
+            ),
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('Reject order'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
     setState(() => _busy = true);
-    final err = await context.read<OrdersState>().markPaid(widget.order.orderId);
+    final err = await context
+        .read<OrdersState>()
+        .reject(widget.order.orderId, reason: controller.text);
     if (!mounted) return;
     setState(() => _busy = false);
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(
-        content: Text(err ?? 'Payment received — order confirmed.'),
+        content: Text(err ?? 'Order rejected. The customer has been notified.'),
       ));
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    if (widget.order.isPaid) {
+    final status = widget.order.status.toUpperCase();
+
+    if (status == 'CANCELLED') {
       return Row(
         children: [
-          Icon(Icons.verified, size: 18, color: theme.colorScheme.primary),
+          Icon(Icons.cancel, size: 18, color: theme.colorScheme.error),
           const SizedBox(width: 8),
-          Text('Payment received',
+          Text('Rejected',
               style: theme.textTheme.labelLarge
-                  ?.copyWith(color: theme.colorScheme.primary)),
+                  ?.copyWith(color: theme.colorScheme.error)),
         ],
       );
     }
-    return FilledButton.icon(
-      onPressed: _busy ? null : _confirm,
-      icon: _busy
-          ? const SizedBox(
-              height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
-          : const Icon(Icons.payments_outlined),
-      label: const Text('Mark Payment Received'),
+
+    if (!widget.order.isPaid) {
+      // Unpaid orders are simply not actionable now: nothing here can make them
+      // paid, and the gateway will say so when it happens.
+      return Row(
+        children: [
+          Icon(Icons.hourglass_empty, size: 18, color: theme.colorScheme.outline),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text('Awaiting payment — confirms automatically.',
+                style: theme.textTheme.bodySmall),
+          ),
+        ],
+      );
+    }
+
+    return Row(
+      children: [
+        Icon(Icons.verified, size: 18, color: theme.colorScheme.primary),
+        const SizedBox(width: 8),
+        Text('Paid',
+            style: theme.textTheme.labelLarge
+                ?.copyWith(color: theme.colorScheme.primary)),
+        const Spacer(),
+        if (_canReject)
+          TextButton.icon(
+            onPressed: _busy ? null : _reject,
+            icon: _busy
+                ? const SizedBox(
+                    height: 16, width: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : Icon(Icons.block, size: 18, color: theme.colorScheme.error),
+            label: Text('Reject',
+                style: TextStyle(color: theme.colorScheme.error)),
+          )
+        else
+          Text('Too late to reject', style: theme.textTheme.bodySmall),
+      ],
+    );
+  }
+}
+
+/// Tick several items, mark them all unavailable in one action.
+///
+/// The server writes one event and fires one push PER item, so the customer is
+/// told exactly which dish is off. Does NOT change the order total — the paid
+/// order stands, and the customer's remedy is a fresh order for replacements.
+class ItemUnavailableChecklist extends StatefulWidget {
+  final Order order;
+  const ItemUnavailableChecklist({super.key, required this.order});
+
+  @override
+  State<ItemUnavailableChecklist> createState() => _ItemUnavailableChecklistState();
+}
+
+class _ItemUnavailableChecklistState extends State<ItemUnavailableChecklist> {
+  final Set<String> _selected = {};
+  bool _busy = false;
+
+  Future<void> _submit() async {
+    if (_selected.isEmpty) return;
+    final n = _selected.length;
+    setState(() => _busy = true);
+    final err = await context
+        .read<OrdersState>()
+        .markItemsUnavailable(widget.order.orderId, _selected.toList());
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      if (err == null) _selected.clear();
+    });
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(err ??
+            (n == 1
+                ? 'Item marked unavailable. Customer notified.'
+                : '$n items marked unavailable. Customer notified for each.')),
+      ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final items = widget.order.items;
+    if (items.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text("Can't make something?", style: theme.textTheme.titleSmall),
+        const SizedBox(height: 2),
+        Text(
+          'Tick the items you cannot prepare. The customer is told which ones, '
+          'and can reorder separately.',
+          style: theme.textTheme.bodySmall,
+        ),
+        const SizedBox(height: 4),
+        ...items.map((it) => CheckboxListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+              value: _selected.contains(it.id),
+              onChanged: _busy
+                  ? null
+                  : (v) => setState(() {
+                        if (v == true) {
+                          _selected.add(it.id);
+                        } else {
+                          _selected.remove(it.id);
+                        }
+                      }),
+              title: Text('${it.quantity}x  ${it.name}'),
+            )),
+        Align(
+          alignment: Alignment.centerRight,
+          child: FilledButton.tonalIcon(
+            onPressed: (_busy || _selected.isEmpty) ? null : _submit,
+            icon: _busy
+                ? const SizedBox(
+                    height: 16, width: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.remove_shopping_cart_outlined, size: 18),
+            label: Text(_selected.isEmpty
+                ? 'Mark unavailable'
+                : 'Mark ${_selected.length} unavailable'),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../models/order.dart';
+import '../services/api_client.dart';
 import '../services/order_service.dart';
 
 /// Backs the Orders tab: the active queue plus pickup verification and notify
@@ -38,15 +39,36 @@ class OrdersState extends ChangeNotifier {
     return _orderService.verifyPickup(orderId, code);
   }
 
-  /// Manual UPI-intent payment confirmation, then refresh the queue.
-  /// Returns null on success or a staff-facing error message.
-  Future<String?> markPaid(String orderId) async {
+  /// Refuse a paid order. Returns null on success, or a staff-facing message.
+  ///
+  /// Replaces markPaid, which is gone: payment is confirmed by the gateway
+  /// webhook now, so there is nothing for staff to confirm — only something to
+  /// refuse. 409 means the order is already READY and can no longer be pulled.
+  Future<String?> reject(String orderId, {String? reason}) async {
     try {
-      await _orderService.markPaid(orderId);
+      await _orderService.reject(orderId, reason: reason);
       await load();
       return null;
+    } on ApiException catch (e) {
+      if (e.statusCode == 409) return e.message;
+      return 'Could not reject this order.';
     } catch (_) {
-      return 'Could not mark payment received.';
+      return 'Could not reach the server. Check your connection.';
+    }
+  }
+
+  /// Mark one or more line items unavailable in a single action.
+  /// Returns null on success, or a staff-facing message.
+  Future<String?> markItemsUnavailable(String orderId, List<String> itemIds) async {
+    if (itemIds.isEmpty) return null;
+    try {
+      await _orderService.markItemsUnavailable(orderId, itemIds);
+      await load();
+      return null;
+    } on ApiException catch (e) {
+      return e.message;
+    } catch (_) {
+      return 'Could not reach the server. Check your connection.';
     }
   }
 

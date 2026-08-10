@@ -388,6 +388,13 @@ class AdminService:
             LEFT JOIN money      m   ON m.customer_id   = c.id
             LEFT JOIN top_dish   td  ON td.customer_id  = c.id
             LEFT JOIN top_outlet tou ON tou.customer_id = c.id
+            -- Hide deleted accounts. A deleted customer is anonymised in place
+            -- rather than removed (customer_orders.customer_id is RESTRICT), so
+            -- the row survives to hold order history together. It holds no
+            -- personal data any more and is not a person an admin can act on,
+            -- so listing it would be noise at best and misleading at worst.
+            -- The tombstone lives in google_uid — see DELETED_UID_PREFIX.
+            WHERE c.google_uid IS NULL OR c.google_uid NOT LIKE 'deleted:%'
             GROUP BY c.id, c.phone_number, c.email, c.name, c.created_at,
                      c.points_balance, c.premium_until,
                      m.total_order_value, m.last_order_at, td.dish_name,

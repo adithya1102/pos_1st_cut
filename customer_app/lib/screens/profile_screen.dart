@@ -213,6 +213,103 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   // -------------------------------- Logout ---------------------------------
+  /// Irreversible account deletion (Play Store requires an in-app route).
+  ///
+  /// Two-step on purpose: a plain "are you sure" is too easy to tap through for
+  /// something with no undo, so the second step requires typing DELETE. The
+  /// copy is honest that order records survive as the restaurants' tax records
+  /// rather than implying a total erasure that the schema cannot deliver.
+  Future<void> _deleteAccount() async {
+    final warned = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Delete your account?'),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('This cannot be undone. We will permanently erase:'),
+            SizedBox(height: 8),
+            Text('•  your name, phone number and email\n'
+                '•  your saved sign-in\n'
+                '•  your points balance and any unused coupons'),
+            SizedBox(height: 12),
+            Text(
+              'Past order records are kept for the restaurants\' tax and '
+              'accounting obligations, but are no longer linked to you.',
+              style: TextStyle(fontSize: 12),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Keep my account')),
+          TextButton(
+            onPressed: () => Navigator.pop(c, true),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+    if (warned != true || !mounted) return;
+
+    final typed = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Type DELETE to confirm'),
+        content: TextField(
+          controller: typed,
+          autofocus: true,
+          autocorrect: false,
+          decoration: const InputDecoration(hintText: 'DELETE'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+          ValueListenableBuilder<TextEditingValue>(
+            valueListenable: typed,
+            builder: (_, v, _) => TextButton(
+              // Enabled only on an exact match — no near-misses.
+              onPressed: v.text.trim().toUpperCase() == 'DELETE'
+                  ? () => Navigator.pop(c, true)
+                  : null,
+              style: TextButton.styleFrom(
+                foregroundColor: Theme.of(context).colorScheme.error,
+              ),
+              child: const Text('Delete my account'),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _busy = true);
+    try {
+      final res = await context.read<CustomerService>().deleteAccount();
+      if (!mounted) return;
+      await context.read<AuthState>().logout();
+      if (!mounted) return;
+      // Same hard stack clear as logout: nothing authenticated is reachable
+      // by going back, and the token is gone anyway.
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+        (route) => false,
+      );
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(res.message)));
+    } on ApiException catch (e) {
+      if (mounted) _toast(e.message);
+    } catch (_) {
+      if (mounted) _toast('Could not reach the server. Try again.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _logout() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -394,12 +491,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     // Text-style, not a primary button: destructive-ish and
                     // deliberately not the visual focus of the screen.
                     Center(
-                      child: TextButton(
-                        onPressed: _busy ? null : _logout,
-                        style: TextButton.styleFrom(
-                          foregroundColor: theme.colorScheme.error,
-                        ),
-                        child: const Text('Log out'),
+                      child: Column(
+                        children: [
+                          TextButton(
+                            onPressed: _busy ? null : _logout,
+                            style: TextButton.styleFrom(
+                              foregroundColor: theme.colorScheme.error,
+                            ),
+                            child: const Text('Log out'),
+                          ),
+                          const SizedBox(height: 4),
+                          // Set apart and understated: irreversible, so it
+                          // should never sit next to Log out looking like a
+                          // peer of it.
+                          TextButton(
+                            onPressed: _busy ? null : _deleteAccount,
+                            style: TextButton.styleFrom(
+                              foregroundColor: theme.colorScheme.outline,
+                            ),
+                            child: const Text('Delete my account'),
+                          ),
+                        ],
                       ),
                     ),
                   ],

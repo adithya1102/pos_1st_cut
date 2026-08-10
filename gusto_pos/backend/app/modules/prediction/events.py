@@ -32,6 +32,14 @@ WAIT_FEEDBACK = "WAIT_FEEDBACK"
 LOAD_SNAPSHOT = "LOAD_SNAPSHOT"
 ORDER_ABANDONED = "ORDER_ABANDONED"
 ITEM_UNAVAILABLE = "ITEM_UNAVAILABLE"
+# Gateway reported the payment did not succeed (failed, dropped, cancelled).
+# Distinct from ORDER_ABANDONED, which means the TTL sweeper expired an unpaid
+# order — nobody tried to pay. Here somebody tried and it did not go through.
+PAYMENT_FAILED = "PAYMENT_FAILED"
+# Staff explicitly refused a PAID order. Distinct from ORDER_ABANDONED (TTL)
+# and from PAYMENT_FAILED (gateway): this one is a human decision, and it is
+# the only one of the three that obliges a refund.
+ORDER_REJECTED = "ORDER_REJECTED"
 
 # actor_type ∈ {customer, staff, system}; source ∈ {tap, geofence, system, inferred}
 

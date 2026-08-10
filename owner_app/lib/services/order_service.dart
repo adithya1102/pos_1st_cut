@@ -84,9 +84,40 @@ class OrderService {
     }
   }
 
-  /// `POST /pos/orders/{id}/mark-paid` — manual UPI-intent confirmation.
-  Future<void> markPaid(String orderId) async {
-    await _client.post('/pos/orders/$orderId/mark-paid');
+  // REMOVED: markPaid / POST /pos/orders/{id}/mark-paid.
+  //
+  // Payment confirmation is webhook-driven now — the gateway tells the backend,
+  // which runs the same cascade this button used to trigger. The endpoint no
+  // longer exists server-side, so calling it would 404; with a real gateway
+  // behind it, a staff-tappable "mark as paid" is a button that marks UNPAID
+  // orders paid, which is why it is deleted rather than hidden.
+
+  /// `POST /pos/orders/{id}/reject` — refuse a paid order.
+  ///
+  /// There is deliberately no matching accept: a paid order is accepted
+  /// automatically. This is the only human gate and it is an opt-OUT.
+  /// Returns the resulting status. 409 if the order is already READY.
+  Future<String> reject(String orderId, {String? reason}) async {
+    final data = await _client.post('/pos/orders/$orderId/reject',
+        body: {if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim()});
+    return ((data as Map?)?['status'] ?? 'CANCELLED').toString();
+  }
+
+  /// `POST /pos/orders/{id}/items/unavailable` — batch N/A.
+  ///
+  /// One call, several items; the server writes one event and fires one push
+  /// PER ITEM so the customer is told which specific dish is off.
+  Future<int> markItemsUnavailable(String orderId, List<String> itemIds) async {
+    final data = await _client.post(
+      '/pos/orders/$orderId/items/unavailable',
+      body: {'item_ids': itemIds},
+    );
+    return (((data as Map?)?['marked'] as List?) ?? const []).length;
+  }
+
+  /// `POST /pos/push/register` — store this device's FCM token for staff pushes.
+  Future<void> registerPushToken(String token) async {
+    await _client.post('/pos/push/register', body: {'fcm_token': token});
   }
 
   /// `POST /pos/orders/{id}/notify`

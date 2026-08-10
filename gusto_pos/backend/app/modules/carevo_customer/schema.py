@@ -165,6 +165,10 @@ class PaymentBlock(BaseModel):
     amount: int
     currency: str = "INR"
     key_id: Optional[str] = None
+    # Cashfree opens its hosted checkout on this token. Null for the
+    # Razorpay-shaped stub, which opens on gateway_order_id + key_id — so the
+    # app picks its flow from `gateway`, not from a build-time constant.
+    payment_session_id: Optional[str] = None
 
 
 class CreateOrderOut(BaseModel):
@@ -414,6 +418,61 @@ class NotifyOut(BaseModel):
     type: str
     item_id: Optional[uuid.UUID] = None
     item_name: Optional[str] = None
+
+
+# ------------------- Staff reject / batch N/A (migration 017) ----------------
+class RejectOrderIn(BaseModel):
+    """Optional free-text captured into the ORDER_REJECTED event. Not shown to
+    the customer verbatim in V1 — the push copy is fixed and honest."""
+    reason: Optional[str] = Field(default=None, max_length=300)
+
+
+class RejectOrderOut(BaseModel):
+    order_id: uuid.UUID
+    status: str
+    # True when the order was already CANCELLED — a double-tap, not an error.
+    already: bool = False
+    reason: Optional[str] = None
+
+
+class MarkItemsUnavailableIn(BaseModel):
+    """One or more line-item ids from THIS order. Duplicates are collapsed
+    server-side, so a checklist that somehow submits the same row twice cannot
+    produce two events for one item."""
+    item_ids: list[uuid.UUID] = Field(..., min_length=1)
+
+
+class UnavailableMarkedOut(BaseModel):
+    item_id: uuid.UUID
+    name: Optional[str] = None
+    notified: bool = False
+
+
+class MarkItemsUnavailableOut(BaseModel):
+    ok: bool
+    order_id: uuid.UUID
+    # One entry per item, each with its own event + push already fired.
+    marked: list[UnavailableMarkedOut] = []
+    delivered: bool = False
+
+
+class RegisterStaffTokenIn(BaseModel):
+    fcm_token: str = Field(..., min_length=10, max_length=255)
+
+
+class RegisterStaffTokenOut(BaseModel):
+    ok: bool
+    registered: bool
+
+
+class DeleteAccountOut(BaseModel):
+    ok: bool
+    deleted: bool
+    # Order rows survive as business/tax records, detached from any person.
+    # Reported back so the confirmation screen can be specific rather than
+    # vaguely reassuring.
+    orders_retained: int = 0
+    message: str
 
 
 # --------------------- Profile / loyalty / coupons (010) ---------------------

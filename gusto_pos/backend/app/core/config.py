@@ -29,6 +29,16 @@ class Settings(BaseSettings):
     RAZORPAY_KEY_SECRET: Optional[str] = None
     RAZORPAY_WEBHOOK_SECRET: Optional[str] = None
 
+    # Cashfree PG. Set PAYMENT_GATEWAY=cashfree to select it; the factory then
+    # REFUSES to start an order without these rather than silently serving stub
+    # payments. Sandbox by default — production is an explicit opt-in.
+    CASHFREE_APP_ID: Optional[str] = None
+    CASHFREE_SECRET_KEY: Optional[str] = None
+    CASHFREE_ENV: str = "sandbox"            # sandbox | production
+    # Public URL Cashfree POSTs webhooks to, e.g.
+    # https://gusto-pos-backend.onrender.com/api/v1/customer/payment/webhook
+    CASHFREE_NOTIFY_URL: Optional[str] = None
+
     FIREBASE_PROJECT_ID: Optional[str] = None
     FIREBASE_ENABLED: bool = False
 

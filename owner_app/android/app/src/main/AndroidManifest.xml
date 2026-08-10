@@ -1,4 +1,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- REQUIRED. Without this the app cannot open a socket at all and EVERY
+         request fails with a SocketException before it leaves the device.
+         Flutter's debug/ and profile/ overlay manifests declare it for you,
+         which is why debug builds worked while the release build could not
+         reach the backend on any screen — login included. It must be declared
+         HERE to be present in a release APK. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Lets the HTTP layer tell "device is offline" apart from "server is
+         unreachable" when reporting a failure to the owner. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <application
         android:label="CareVo Owner"
         android:name="${applicationName}"

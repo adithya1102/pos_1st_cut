@@ -164,6 +164,16 @@ class TrialRedemption {
 ///
 /// No method takes a customer id — the server resolves the customer from the
 /// bearer token, so the app cannot ask for anyone else's data even by mistake.
+/// Outcome of an account deletion. `ordersRetained` is deliberately surfaced:
+/// past orders survive as the restaurants' tax records, detached from any
+/// person, and telling the customer that plainly is better than implying a
+/// total erasure that did not happen.
+class DeleteAccountResult {
+  const DeleteAccountResult({required this.ordersRetained, required this.message});
+  final int ordersRetained;
+  final String message;
+}
+
 class CustomerService {
   CustomerService(this._api);
   final ApiClient _api;
@@ -171,6 +181,21 @@ class CustomerService {
   Future<Customer> me() async {
     final json = await _api.get('/customer/me');
     return Customer.fromJson(json as Map<String, dynamic>);
+  }
+
+  /// `DELETE /customer/me` — irreversibly erase this account's personal data.
+  ///
+  /// Play Store policy requires an in-app deletion route for apps with
+  /// accounts. Returns the server's summary so the confirmation can be
+  /// specific about what was kept and why.
+  Future<DeleteAccountResult> deleteAccount() async {
+    final res = await _api.delete('/customer/me');
+    final m = ((res as Map?) ?? const {}).cast<String, dynamic>();
+    return DeleteAccountResult(
+      ordersRetained: (m['orders_retained'] as num?)?.toInt() ?? 0,
+      message: m['message']?.toString() ??
+          'Your account and personal details have been deleted.',
+    );
   }
 
   Future<Customer> updateName(String name) async {

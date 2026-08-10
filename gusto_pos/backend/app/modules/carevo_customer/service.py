@@ -399,7 +399,19 @@ class CarevoService:
 
         # Create gateway order (stub / razorpay-shaped)
         gw = get_gateway()
-        g_order = gw.create_order(order.total_amount, currency="INR", receipt=str(order.id))
+        # Awaited now that the interface is async — a real gateway is a network
+        # call, and running it synchronously would block the event loop.
+        # `receipt` carries OUR order id, which Cashfree echoes back on the
+        # webhook so no correlation table is needed.
+        g_order = await gw.create_order(
+            order.total_amount, currency="INR", receipt=str(order.id),
+            customer={
+                "id": str(customer.id),
+                "phone": customer.phone_number,
+                "email": customer.email,
+                "name": customer.name,
+            },
+        )
 
         db.add(PaymentTransaction(
             customer_order_id=order.id,
@@ -410,6 +422,7 @@ class CarevoService:
             status="CREATED",
             method=None,
         ))
+        self_session_id = g_order.payment_session_id
 
         # FR-E1: ORDER_CREATED in the SAME transaction as the order insert.
         await pe.write_event(
@@ -440,6 +453,9 @@ class CarevoService:
                 "amount": g_order.amount,
                 "currency": g_order.currency,
                 "key_id": g_order.key_id,
+                # What the Cashfree Flutter SDK opens checkout with. Null for
+                # the Razorpay-shaped stub, which opens on order_id + key_id.
+                "payment_session_id": self_session_id,
             },
             # The struck-through-price breakdown, computed here rather than in
             # the app: `gross` is the pre-discount figure and only this function
@@ -749,6 +765,139 @@ class CarevoService:
             await PredictionService.recompute_twin(db, order.id)
         except Exception:
             await db.rollback()
+        return order
+
+    # Rejecting is allowed right up until the food is ready. Past READY the
+    # order is made and sitting on the counter — "we can't do this one" is no
+    # longer true, and the customer may already be walking over.
+    REJECTABLE_STATUSES = {"PAID", "RECEIVED", "PREPARING"}
+
+    @staticmethod
+    async def auto_receive(db: AsyncSession, order: CustomerOrder) -> CustomerOrder:
+        """PAID -> RECEIVED with no human gate.
+
+        There is no Accept step by design: a paid order is accepted. Staff get a
+        push and can REJECT if something is genuinely wrong, but the order is
+        never parked waiting for someone to notice it.
+
+        mark_paid is left completely untouched — it still emits the inferred
+        ORDER_ACCEPTED/PREP_STARTED the prediction engine anchors on, at exactly
+        the same moment it always did. This only moves the visible status on.
+        """
+        if (order.status or "").upper() != "PAID":
+            return order  # already moved on, or never paid
+        return await CarevoService.advance_status(db, order.id, "RECEIVED")
+
+    @staticmethod
+    async def reject_order(
+        db: AsyncSession, order_id: uuid.UUID, outlet_id: uuid.UUID,
+        *, reason: Optional[str] = None, actor_user_id: Optional[uuid.UUID] = None,
+    ) -> dict:
+        """Staff refuse a paid order -> CANCELLED + ORDER_REJECTED.
+
+        ORDER_REJECTED is a distinct event on purpose. ORDER_ABANDONED already
+        exists and means the TTL sweeper expired an order nobody paid for;
+        PAYMENT_FAILED means the gateway declined. This one is a human saying
+        no to money already taken — the only one of the three that obliges a
+        refund, and the only one worth surfacing to the customer as a decision
+        rather than an accident.
+
+        Refunds are deliberately OUT of scope: handled manually outside the app.
+        """
+        res = await db.execute(select(CustomerOrder).where(CustomerOrder.id == order_id))
+        order = res.scalars().first()
+        if not order or str(order.outlet_id) != str(outlet_id):
+            raise HTTPException(status_code=404, detail="Order not found for this outlet")
+
+        current = (order.status or "").upper()
+        if current == "CANCELLED":
+            # Idempotent: a double-tap is not an error.
+            return {"order_id": order.id, "status": current, "already": True}
+        if current not in CarevoService.REJECTABLE_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This order is already ready for pickup and can no longer be "
+                    "rejected." if current in ("READY", "COMPLETED")
+                    else f"An order in {current} cannot be rejected."
+                ),
+            )
+
+        order.status = "CANCELLED"
+        order.updated_at = datetime.now(timezone.utc)
+
+        await pe.write_event(
+            db, order.id, pe.ORDER_REJECTED,
+            actor_type="staff", source="tap", outlet_id=order.outlet_id,
+            actor_id=actor_user_id,
+            payload={"reason": reason, "from_status": current},
+        )
+        await db.commit()
+        await db.refresh(order)
+
+        # Same choke point every other transition uses, so the customer's WS
+        # banner and the FCM push both fire from one place.
+        await CarevoService._broadcast_status(order, db)
+        return {
+            "order_id": order.id,
+            "status": order.status,
+            "already": False,
+            "reason": reason,
+        }
+
+    @staticmethod
+    async def mark_payment_failed(
+        db: AsyncSession,
+        order: CustomerOrder,
+        *,
+        gateway_payment_id: Optional[str] = None,
+        method: Optional[str] = None,
+        raw_payload: Optional[dict] = None,
+    ) -> CustomerOrder:
+        """Record a gateway-reported payment failure.
+
+        The mirror of mark_paid, and deliberately much smaller: nothing accrues,
+        no pickup code is issued, no ORDER_ACCEPTED/PREP_STARTED is inferred.
+        Only the payment outcome is recorded.
+
+        Idempotent and one-way — never downgrades an order that is already PAID.
+        Gateways retry, and retries arrive out of order; a late FAILED webhook
+        for a payment that later succeeded must not un-pay a settled order.
+        """
+        if order.payment_status == "PAID":
+            return order
+
+        res = await db.execute(
+            select(PaymentTransaction)
+            .where(PaymentTransaction.customer_order_id == order.id)
+            .order_by(PaymentTransaction.created_at.desc())
+        )
+        txn = res.scalars().first()
+        if txn is None:
+            txn = PaymentTransaction(customer_order_id=order.id, amount=order.total_amount)
+            db.add(txn)
+        txn.gateway = txn.gateway or get_gateway().name
+        if gateway_payment_id:
+            txn.gateway_payment_id = gateway_payment_id
+        txn.method = method or txn.method
+        txn.status = "FAILED"
+        txn.raw_payload = raw_payload
+        txn.updated_at = datetime.now(timezone.utc)
+
+        # The ORDER stays CREATED: the basket is still valid and the customer
+        # can retry payment. Only payment_status carries the failure, so a
+        # retry needs no resurrection logic.
+        order.payment_status = "FAILED"
+        order.updated_at = datetime.now(timezone.utc)
+
+        await pe.write_event(
+            db, order.id, pe.PAYMENT_FAILED,
+            actor_type="system", source="webhook", outlet_id=order.outlet_id,
+            payload={"method": method, "gateway_payment_id": gateway_payment_id},
+        )
+        await db.commit()
+        await db.refresh(order)
+        await CarevoService._broadcast_status(order, db)
         return order
 
     @staticmethod
@@ -1361,6 +1510,205 @@ class CarevoService:
             "type": notify_type,
             "item_id": resolved_item_id,
             "item_name": item_name,
+        }
+
+    # Tombstone marker for a deleted account, written to google_uid.
+    #
+    # It has to go SOMEWHERE, because customers_identity_present CHECKs that
+    # phone_number OR google_uid is non-null, and the row must survive to hold
+    # order history together (customer_orders.customer_id is RESTRICT).
+    #
+    # google_uid rather than phone_number for two concrete reasons:
+    #   * phone_number is varchar(20) — "deleted:" + a 36-char uuid is 44 chars
+    #     and does not fit. google_uid is varchar(128).
+    #   * putting it here lets phone_number be set to NULL, i.e. genuinely
+    #     erased, which is the better privacy outcome anyway.
+    # The uuid makes it unique by construction (google_uid has a partial unique
+    # index) and "deleted:<uuid>" can never match a real Google UID, so no
+    # sign-in path can find a tombstone and resurrect the dead account.
+    DELETED_UID_PREFIX = "deleted:"
+
+    @staticmethod
+    def is_deleted_customer(google_uid: Optional[str]) -> bool:
+        return bool(google_uid and google_uid.startswith(
+            CarevoService.DELETED_UID_PREFIX))
+
+    @staticmethod
+    async def delete_my_account(db: AsyncSession, customer: Customer) -> dict:
+        """Irreversibly erase the customer's personal data (Play Store requires
+        an in-app deletion route for apps with accounts).
+
+        NOT a row DELETE, and that is forced by the schema, not a preference:
+        customer_orders.customer_id is RESTRICT, so deleting the row fails for
+        anyone who has ever ordered — and cascading it would destroy the
+        restaurants' revenue records along with the customer.
+
+        So: anonymise in place. Every identifier is overwritten or nulled, the
+        row survives only as an unusable tombstone holding the orders together.
+
+        ERASED  — name, phone, email, google_uid, device token, points balance,
+                  premium window, unspent coupons, notification history.
+        RETAINED— order rows and their line items (business/tax records, as the
+                  privacy policy states), plus points/promotion ledgers, which
+                  carry ids and amounts but no personal data.
+
+        Login is impossible afterwards: the tombstoned phone matches no real
+        number and google_uid is gone, so neither sign-in path can find it.
+        """
+        cid = str(customer.id)
+
+        # Personal content first, so a failure part-way cannot leave the
+        # identity erased while their data lingers.
+        await db.execute(text("DELETE FROM coupons WHERE customer_id = :c"), {"c": cid})
+        await db.execute(
+            text("DELETE FROM push_notifications WHERE customer_id = :c"), {"c": cid})
+
+        row = (await db.execute(text("""
+            UPDATE customers
+            SET name = NULL,
+                email = NULL,
+                phone_number = NULL,
+                fcm_token = NULL,
+                fcm_token_updated_at = NULL,
+                points_balance = 0,
+                premium_until = NULL,
+                google_uid = :prefix || id::text
+            WHERE id = :c
+            RETURNING id
+        """), {"c": cid, "prefix": CarevoService.DELETED_UID_PREFIX})).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Account not found")
+
+        retained = (await db.execute(text(
+            "SELECT count(*) FROM customer_orders WHERE customer_id = :c"), {"c": cid}
+        )).scalar() or 0
+
+        await db.commit()
+        return {
+            "ok": True,
+            "deleted": True,
+            "orders_retained": int(retained),
+            "message": (
+                "Your account and personal details have been deleted. "
+                "Past order records are kept for the restaurants' tax and "
+                "accounting obligations, and are no longer linked to you."
+            ),
+        }
+
+    @staticmethod
+    async def register_staff_push_token(
+        db: AsyncSession, user_id: uuid.UUID, fcm_token: str
+    ) -> dict:
+        """Store a staff device token (migration 017). Last device wins, same
+        one-token-per-account model customers already use."""
+        await db.execute(text("""
+            UPDATE users SET fcm_token = :t, fcm_token_updated_at = now()
+            WHERE id = :uid
+        """), {"t": fcm_token.strip(), "uid": str(user_id)})
+        await db.commit()
+        return {"ok": True, "registered": True}
+
+    @staticmethod
+    async def mark_items_unavailable(
+        db: AsyncSession, order_id: uuid.UUID, outlet_id: uuid.UUID,
+        item_ids: list,
+    ) -> dict:
+        """Batch N/A: several line items, one staff action.
+
+        Deliberately NOT one event for the batch. Each item gets its own
+        ITEM_UNAVAILABLE event and its own push naming that dish, because:
+          * the prediction engine reads composition per item;
+          * "2 items unavailable" tells the customer nothing actionable.
+
+        Does NOT touch the order total. The original paid order stands as-is;
+        adjusting it here would be a second money path (refunds are manual and
+        off-app by decision), and the customer's remedy is to place a NEW order
+        for replacements.
+        """
+        # Ownership first — never leak whether an order id exists elsewhere.
+        order = (await db.execute(text(
+            "SELECT id, outlet_id FROM customer_orders WHERE id = :oid"
+        ), {"oid": str(order_id)})).first()
+        if not order or str(order.outlet_id) != str(outlet_id):
+            raise HTTPException(status_code=404, detail="Order not found for this outlet")
+
+        # Collapse duplicates but keep the submitted order for stable output.
+        seen, wanted = set(), []
+        for i in item_ids:
+            if str(i) not in seen:
+                seen.add(str(i))
+                wanted.append(str(i))
+
+        rows = (await db.execute(text("""
+            SELECT id, name_snap FROM customer_order_items
+            WHERE customer_order_id = :oid AND id = ANY(:ids)
+        """), {"oid": str(order_id), "ids": wanted})).fetchall()
+        found = {str(r.id): r.name_snap for r in rows}
+
+        missing = [i for i in wanted if i not in found]
+        if missing:
+            # All-or-nothing: a checklist that half-applies is worse than one
+            # that refuses, because staff cannot see which half took.
+            raise HTTPException(
+                status_code=400,
+                detail=f"{len(missing)} of the selected items are not line items of this order",
+            )
+
+        now = datetime.now(timezone.utc)
+        marked = []
+        for iid in wanted:
+            await pe.write_event(
+                db, order_id, pe.ITEM_UNAVAILABLE,
+                actor_type="staff", source="tap", outlet_id=outlet_id,
+                payload={"item_id": iid, "batch_size": len(wanted)},
+            )
+        await db.commit()
+
+        # WS first (instant in-app banner), then FCM for a backgrounded app.
+        delivered_any = False
+        for iid in wanted:
+            name = found[iid]
+            payload = {
+                "event": "notify",
+                "order_id": str(order_id),
+                "type": "item_unavailable",
+                "item_id": iid,
+                "item_name": name,
+                "message": f"'{name}' is unavailable and won't be prepared.",
+                "ts": now.isoformat(),
+            }
+            delivered = bool(customer_manager.active_connections.get(str(order_id)))
+            try:
+                await customer_manager.send_order_update(str(order_id), payload)
+            except Exception:
+                delivered = False
+            delivered_any = delivered_any or delivered
+            marked.append({"item_id": iid, "name": name, "notified": delivered})
+
+        # One push per item, naming the dish. Best-effort throughout.
+        try:
+            from app.modules.push.service import PushService, KIND_ITEM_UNAVAILABLE
+            cust = (await db.execute(text(
+                "SELECT customer_id FROM customer_orders WHERE id = :oid"
+            ), {"oid": str(order_id)})).scalar()
+            if cust:
+                for iid in wanted:
+                    await PushService.send(
+                        db, customer_id=cust, kind=KIND_ITEM_UNAVAILABLE,
+                        title="Item unavailable",
+                        body=f"'{found[iid]}' can't be prepared. "
+                             f"Tap to reorder something else.",
+                        order_id=order_id,
+                        data={"item_id": iid, "item_name": found[iid] or ""},
+                    )
+        except Exception:
+            await db.rollback()
+
+        return {
+            "ok": True,
+            "order_id": order_id,
+            "marked": marked,
+            "delivered": delivered_any,
         }
 
     # ==================== Profile / loyalty / coupons (010) ====================

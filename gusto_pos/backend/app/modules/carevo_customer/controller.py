@@ -126,6 +126,24 @@ async def update_me(
     return await CarevoService.update_me(db, customer, payload)
 
 
+@router.delete("/me", response_model=s.DeleteAccountOut)
+async def delete_my_account(
+    customer: Customer = Depends(get_current_customer),
+    db: AsyncSession = Depends(get_db),
+):
+    """Permanently erase this account's personal data.
+
+    Scoped to the bearer token like every other /me route — it takes no
+    customer id, so nobody can delete anyone else's account.
+
+    Play Store policy requires apps that let users create an account to offer
+    an in-app deletion route. This is it. It is irreversible: there is no
+    undelete, and the same phone number signing in afterwards gets a brand new,
+    empty account rather than recovering this one.
+    """
+    return await CarevoService.delete_my_account(db, customer)
+
+
 @router.get("/orders", response_model=list[s.OrderHistoryOut])
 async def list_my_orders(
     limit: int = 50,
@@ -368,11 +386,21 @@ async def payment_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     from sqlalchemy import select, text
 
     body = await request.body()
-    signature = request.headers.get("x-razorpay-signature") or request.headers.get(
-        "X-Razorpay-Signature"
+
+    # Signature headers differ per gateway, so read both and let the gateway
+    # decide which it needs. Cashfree additionally signs a timestamp header.
+    h = request.headers
+    signature = (
+        h.get("x-webhook-signature")            # Cashfree
+        or h.get("x-razorpay-signature")        # Razorpay
+        or h.get("X-Razorpay-Signature")
     )
+    timestamp = h.get("x-webhook-timestamp")    # Cashfree only
+
     gw = get_gateway()
-    if not gw.verify_webhook_signature(body, signature):
+    # The raw bytes are what gets verified — re-serialising the parsed JSON
+    # would reorder keys and invalidate the digest.
+    if not gw.verify_webhook_signature(body, signature, timestamp=timestamp):
         raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
     try:
@@ -380,26 +408,25 @@ async def payment_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     except json.JSONDecodeError:
         data = {}
 
-    # Extract razorpay-shaped identifiers (best-effort across payload shapes).
-    entity = (
-        data.get("payload", {}).get("payment", {}).get("entity", {})
-        if isinstance(data.get("payload"), dict)
-        else {}
-    )
-    gateway_order_id = entity.get("order_id") or data.get("gateway_order_id")
-    gateway_payment_id = entity.get("id") or data.get("gateway_payment_id")
-    method = entity.get("method") or data.get("method")
-    order_id = data.get("order_id") or data.get("customer_order_id")
+    # Gateway-specific parsing lives in the gateway, not here. Adding ZohoPay
+    # later means one new parse_webhook, not another branch in this endpoint.
+    evt = gw.parse_webhook(body, data)
 
     order = None
-    if order_id:
-        res = await db.execute(select(CustomerOrder).where(CustomerOrder.id == order_id))
-        order = res.scalars().first()
-    if order is None and gateway_order_id:
+    if evt.our_order_id:
+        try:
+            res = await db.execute(
+                select(CustomerOrder).where(CustomerOrder.id == evt.our_order_id))
+            order = res.scalars().first()
+        except Exception:
+            # our_order_id came off the wire; a non-UUID must 404, not 500.
+            await db.rollback()
+            order = None
+    if order is None and evt.gateway_order_id:
         row = (await db.execute(text("""
             SELECT customer_order_id FROM payment_transactions
             WHERE gateway_order_id = :goid LIMIT 1
-        """), {"goid": gateway_order_id})).first()
+        """), {"goid": evt.gateway_order_id})).first()
         if row:
             res = await db.execute(select(CustomerOrder).where(CustomerOrder.id == row[0]))
             order = res.scalars().first()
@@ -407,13 +434,44 @@ async def payment_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     if order is None:
         raise HTTPException(status_code=404, detail="Order for webhook not found")
 
-    order = await CarevoService.mark_paid(
-        db, order,
-        gateway_payment_id=gateway_payment_id,
-        method=method,
-        raw_payload=data or None,
-    )
-    return {"ok": True, "status": order.status, "pickup_code": order.pickup_code}
+    if evt.outcome == "PAID":
+        # The EXISTING cascade, unchanged: pickup code, points accrual, PE
+        # events, WS broadcast, FCM push. Webhook-triggered instead of
+        # staff-tapped — that is the whole difference.
+        order = await CarevoService.mark_paid(
+            db, order,
+            gateway_payment_id=evt.gateway_payment_id,
+            method=evt.method,
+            raw_payload=data or None,
+        )
+        # No human gate: a paid order is an accepted order. Staff are pushed
+        # about it and may reject, but the order never waits to be noticed.
+        order = await CarevoService.auto_receive(db, order)
+        # Tell the outlet a new paid order landed. Best-effort — a push failure
+        # must never affect a payment that already succeeded.
+        try:
+            from app.modules.push.service import PushService
+            await PushService.notify_outlet_new_order(db, order)
+        except Exception:
+            await db.rollback()
+        return {"ok": True, "outcome": "PAID", "status": order.status,
+                "pickup_code": order.pickup_code}
+
+    if evt.outcome == "FAILED":
+        # Previously there was no failure path at all: a failed payment left the
+        # order sitting in CREATED/PENDING forever, indistinguishable from one
+        # the customer simply never paid.
+        await CarevoService.mark_payment_failed(
+            db, order,
+            gateway_payment_id=evt.gateway_payment_id,
+            method=evt.method,
+            raw_payload=data or None,
+        )
+        return {"ok": True, "outcome": "FAILED", "status": order.status}
+
+    # PENDING / UNKNOWN: acknowledge so the gateway stops retrying, but change
+    # nothing. Guessing "probably paid" here is how free orders happen.
+    return {"ok": True, "outcome": evt.outcome, "status": order.status}
 
 
 @router.post("/payment/simulate", response_model=s.SimulatePaymentOut)
