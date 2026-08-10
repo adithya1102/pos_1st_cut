@@ -1,3 +1,5 @@
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -8,6 +10,7 @@ import 'services/menu_service.dart';
 import 'services/offer_service.dart';
 import 'services/order_service.dart';
 import 'services/outlet_service.dart';
+import 'services/staff_push_service.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'state/auth_state.dart';
@@ -15,7 +18,19 @@ import 'state/home_state.dart';
 import 'state/offers_state.dart';
 import 'state/orders_state.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Reads android/app/google-services.json (Firebase project carevo-pos,
+  // package com.carevo.owner_app). Required before FirebaseMessaging is
+  // touched. Wrapped because a device with no Play Services must still be able
+  // to run the restaurant — it just won't get order notifications.
+  try {
+    await Firebase.initializeApp();
+  } catch (e) {
+    if (kDebugMode) debugPrint('Firebase init failed (push disabled): $e');
+  }
+
   final apiClient = ApiClient();
 
   runApp(GustoOwnerApp(apiClient: apiClient));
@@ -44,6 +59,11 @@ class GustoOwnerApp extends StatelessWidget {
         ),
         ChangeNotifierProvider(
           create: (_) => OffersState(OfferService(apiClient)),
+        ),
+        // Not a ChangeNotifier — it holds no UI state, it just registers this
+        // device's token after login and clears it on logout.
+        Provider(
+          create: (_) => StaffPushService(OrderService(apiClient)),
         ),
       ],
       child: MaterialApp(

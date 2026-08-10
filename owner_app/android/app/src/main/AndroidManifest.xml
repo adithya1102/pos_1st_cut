@@ -9,6 +9,11 @@
     <!-- Lets the HTTP layer tell "device is offline" apart from "server is
          unreachable" when reporting a failure to the owner. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- Android 13+ (API 33) requires this before a notification can be shown.
+         Without it FirebaseMessaging.requestPermission() returns denied and the
+         outlet silently never hears about a new paid order — which, with no
+         Accept gate, is the only signal staff get in time to reject one. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="CareVo Owner"
         android:name="${applicationName}"

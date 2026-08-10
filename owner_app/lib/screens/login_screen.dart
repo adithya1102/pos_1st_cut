@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../config/app_config.dart';
+import '../services/staff_push_service.dart';
 import '../state/auth_state.dart';
 import 'forgot_password_screen.dart';
 import 'signup_screen.dart';
@@ -30,7 +33,14 @@ class _LoginScreenState extends State<LoginScreen> {
     FocusScope.of(context).unfocus();
     if (!(_formKey.currentState?.validate() ?? false)) return;
     final auth = context.read<AuthState>();
-    await auth.login(_usernameController.text, _passwordController.text);
+    // Resolved before the await: reading a provider off `context` afterwards
+    // is an async-gap use of BuildContext.
+    final push = context.read<StaffPushService>();
+    final ok = await auth.login(_usernameController.text, _passwordController.text);
+    // Register this device for new-order pushes only once there is an
+    // authenticated staff user for the backend to store the token against.
+    // Fire-and-forget: a declined permission must not block getting in.
+    if (ok) unawaited(push.registerAfterLogin());
     // Navigation is handled by the root widget reacting to loggedIn.
   }
 

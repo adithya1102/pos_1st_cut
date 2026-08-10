@@ -2,6 +2,10 @@ import java.util.Properties
 
 plugins {
     id("com.android.application")
+    // Firebase: processes google-services.json into generated resources. Must
+    // come after the Android plugin. Version is declared (apply false) in
+    // settings.gradle.kts, mirroring customer_app.
+    id("com.google.gms.google-services")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }

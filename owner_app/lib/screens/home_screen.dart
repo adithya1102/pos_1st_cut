@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../models/outlet.dart';
 import '../services/cloudinary_service.dart';
+import '../services/staff_push_service.dart';
 import '../state/auth_state.dart';
 import '../state/home_state.dart';
 import '../state/offers_state.dart';
@@ -57,7 +58,12 @@ class _HomeScreenState extends State<HomeScreen> {
           IconButton(
             tooltip: 'Log out',
             icon: const Icon(Icons.logout),
-            onPressed: () => context.read<AuthState>().logout(),
+            onPressed: () async {
+              // Drop this device's push token first: once signed out it must
+              // stop buzzing for an outlet whose staff member has left.
+              await context.read<StaffPushService>().clear();
+              if (context.mounted) await context.read<AuthState>().logout();
+            },
           ),
         ],
       ),

@@ -46,6 +46,15 @@ dependencies:
 
   # Dish image picking (uploaded to Cloudinary via unsigned preset)
   image_picker: ^1.1.2
+  # Staff push (migration 017): buzz every device at the outlet when a paid
+  # order lands, so staff can reject a wrong one. Versions pinned to match
+  # customer_app — both apps live in the same Firebase project (carevo-pos)
+  # and a version skew between them buys nothing but divergent SDK behaviour.
+  #
+  # NOTE: do NOT add firebase_bom here. It breaks FlutterFire's own version
+  # resolution; the plugin versions below are the contract.
+  firebase_core: ^4.12.1
+  firebase_messaging: ^16.5.0
 
 dev_dependencies:
   flutter_test:

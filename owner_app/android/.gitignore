@@ -13,3 +13,7 @@ key.properties
 **/*.keystore
 **/*.jks
 /maps.properties
+
+# Firebase config. Carries the app's API key, and this repository is PUBLIC —
+# same rule customer_app/android/.gitignore already applies to its own copy.
+/app/google-services.json
