@@ -1884,6 +1884,13 @@ class CarevoService:
         """Spend REDEMPTION_THRESHOLD points to mint one Rs.100 discount coupon."""
         threshold = CarevoService.REDEMPTION_THRESHOLD
 
+        # Read the balance BEFORE the UPDATE, while `customer` is still a live
+        # ORM object. The failure path below rolls back, which expires every
+        # loaded attribute — touching customer.points_balance after that would
+        # trigger a lazy refresh outside the greenlet context and raise
+        # MissingGreenlet, turning an intended 409 into a 500.
+        current_balance = float(customer.points_balance or 0)
+
         # The conditional UPDATE is the whole concurrency guard: two simultaneous
         # redemptions cannot both pass, because the second sees the debited
         # balance and matches no row.
@@ -1899,7 +1906,7 @@ class CarevoService:
                 status_code=409,
                 detail=(
                     "Not enough points. You need {:g} to redeem (you have {:g})."
-                ).format(threshold, float(customer.points_balance or 0)),
+                ).format(threshold, current_balance),
             )
 
         coupon = Coupon(

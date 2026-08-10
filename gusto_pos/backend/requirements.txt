@@ -34,3 +34,15 @@ httpx>=0.27
 # line every push fails with "no access token" even when PUSH_ENABLED=true and
 # the service-account file is mounted. Pinned to the version validated locally.
 google-auth==2.53.0
+
+# --- test-only -----------------------------------------------------------
+# The API suite (tests/test_api_*.py) runs in-process against the ASGI app via
+# httpx.ASGITransport, so no server and no network is involved. httpx is
+# already a runtime dependency above.
+#
+# asyncio_default_fixture_loop_scope=session in pytest.ini is load-bearing:
+# the app's SQLAlchemy engine is a module-level singleton, and a per-test event
+# loop leaves its pooled connections bound to a closed loop — which shows up as
+# errors that only appear when tests run together, never in isolation.
+pytest==9.1.1
+pytest-asyncio==1.4.0
