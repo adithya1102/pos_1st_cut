@@ -225,6 +225,7 @@ class CartState extends ChangeNotifier {
     String? couponCode,
     String? promotionId,
     String? promotionCode,
+    DateTime? declaredArrivalAt,
   }) =>
       {
         'outlet_id': _outlet?.id,
@@ -240,6 +241,11 @@ class CartState extends ChangeNotifier {
         if (promotionCode != null && promotionCode.trim().isNotEmpty)
           'promotion_code': promotionCode.trim().toUpperCase(),
         'transport_mode': ?transportMode,
+        // Train mode only (addendum Item 1). UTC on the wire: the server does
+        // all its timing in UTC, and a local-time string would be read as UTC
+        // and silently shift the kitchen notification by the offset.
+        if (declaredArrivalAt != null)
+          'declared_arrival_at': declaredArrivalAt.toUtc().toIso8601String(),
         'origin_lat': ?originLat,
         'origin_lng': ?originLng,
         'origin_source': ?originSource,

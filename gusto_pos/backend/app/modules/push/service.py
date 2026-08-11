@@ -45,6 +45,11 @@ KIND_DISH_SUGGESTION = "DISH_SUGGESTION"
 # customers.fcm_token — see PushService.send_staff.
 KIND_STAFF_NEW_ORDER = "STAFF_NEW_ORDER"
 KIND_ITEM_UNAVAILABLE = "ITEM_UNAVAILABLE"
+# Train orders (addendum Item 1): "start cooking this one now", computed back
+# from the customer's declared arrival. Distinct kind from STAFF_NEW_ORDER so
+# staff can tell "an order arrived" from "an order is due to start", and so
+# the two can never suppress each other's idempotency check.
+KIND_TRAIN_START_DUE = "TRAIN_START_DUE"
 
 # Matches ACTIVITY_ACTIVE_MAX_DAYS in carevo_admin.service — the same "gone
 # quiet" definition the admin dashboard shows, so the two never disagree about
@@ -297,6 +302,40 @@ class PushService:
                 db, user_id=r[0], kind=KIND_STAFF_NEW_ORDER,
                 title=title, body=body, order_id=order.id,
                 data={"order_status": getattr(order, "status", "") or ""},
+            )
+            if res["status"] == "sent":
+                sent += 1
+        return {"sent": sent, "recipients": len(rows)}
+
+    @staticmethod
+    async def notify_outlet_train_due(db: AsyncSession, order_id, outlet_id) -> dict:
+        """"Start this one now" push for a train order that has become due.
+
+        Fans out to every staff device at the outlet, exactly like
+        notify_outlet_new_order. Separate KIND so the two are distinguishable
+        in the log and neither suppresses the other.
+
+        The caller has already written KITCHEN_START_NOTIFIED, so idempotency
+        is handled there — this is delivery only, and stays best-effort.
+        """
+        rows = (await db.execute(text("""
+            SELECT id FROM users
+            WHERE outlet_id = :oid AND fcm_token IS NOT NULL AND is_active = true
+        """), {"oid": str(outlet_id)})).fetchall()
+
+        code = await db.scalar(text(
+            "SELECT pickup_code FROM customer_orders WHERE id = :o"),
+            {"o": str(order_id)})
+
+        sent = 0
+        for r in rows:
+            res = await PushService.send_staff(
+                db, user_id=r[0], kind=KIND_TRAIN_START_DUE,
+                title="Start this order now",
+                body=("Customer's train arrives shortly"
+                      + (f" — order {code}" if code else "") + "."),
+                order_id=order_id,
+                data={"reason": "train_declared_arrival"},
             )
             if res["status"] == "sent":
                 sent += 1

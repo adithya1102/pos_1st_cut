@@ -110,6 +110,10 @@ export interface Outlet {
   id: string;
   location_name: string;
   city: string | null;
+  /** Area within the city (migration 012). Null for outlets created before it;
+   *  required at signup from now on. Shown next to the name because it is half
+   *  of the key the approval duplicate guard rejects on. */
+  locality: string | null;
   // Null for every outlet created before migration 009 added the column.
   phone_number: string | null;
   organization_id: string | null;
@@ -119,6 +123,9 @@ export interface Outlet {
   created_at: string | null;
   deactivated_at: string | null;
   is_deactivated: boolean;
+  /** Owner's login username, for support recovering a forgotten login.
+   *  Read-only; no password material is ever exposed. */
+  owner_username: string | null;
 }
 
 export interface LockedOrder {

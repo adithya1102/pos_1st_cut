@@ -51,6 +51,34 @@ LASTMILE_S = 90                       # §12.3
 TRAVEL_RESIDUAL_SIGMA_S = 240         # travel_bias default residual_sigma_s
 HAVERSINE_SIGMA_INFLATE = 2.0         # FR-P4
 
+# --- train mode (addendum Item 1) -------------------------------------------
+# Leg A is the customer's OWN stated arrival time. There is no rail API and no
+# timetable behind it, so σ must reflect self-reported human data, not a
+# punctual-train assumption:
+#   * people round to the nearest 5-10 min when typing a time
+#   * they state the SCHEDULED arrival, not the actual one
+#   * Indian suburban rail routinely runs several minutes late
+#   * the walk from platform to gate is inside neither leg
+# 900s (15 min) is therefore the floor, not a best guess — deliberately wider
+# than haversine's inflated residual (240×2 = 480s), because a wrong guess here
+# means food cooked too early and sitting. Tunable, not magic: raise it if
+# promise_kept rate for train orders comes in low.
+TRAIN_DECLARED_SIGMA_S = 900
+
+# Platform -> restaurant door. Per-outlet override lives in outlet_config under
+# `train_last_mile_seconds`; this is the fallback when an outlet has no row,
+# which is every outlet today (the table is empty). 8 min covers a typical
+# station-adjacent walk without pretending to know the specific outlet.
+TRAIN_LAST_MILE_DEFAULT_S = 480
+TRAIN_LAST_MILE_CONFIG_KEY = "train_last_mile_seconds"
+
+# Subtracted from declared arrival when deciding WHEN to tell the kitchen to
+# start, on top of the prep estimate. Absorbs: staff not looking at the tablet
+# the instant it buzzes, and the prep estimate itself being optimistic. Errs
+# toward telling them early — food ready slightly ahead beats a customer whose
+# train arrived on time waiting at the counter.
+KITCHEN_NOTIFY_SAFETY_BUFFER_S = 300
+
 COST_ALPHA = 3.0                      # §14.2 customer-wait weight
 COST_GAMMA = 15.0                     # §14.2 quality-failure weight
 COST_BETA_BASE = 1.0
@@ -258,16 +286,68 @@ class PredictionService:
         return float(mu), float(sigma), "haversine_fallback"
 
     @staticmethod
-    async def predict_travel(db, outlet_id, origin_lat, origin_lng, outlet_lat, outlet_lng, mode):
+    async def train_last_mile_seconds(db, outlet_id) -> float:
+        """Platform -> door constant for this outlet.
+
+        Reads outlet_config (the existing per-outlet key/value table) rather
+        than adding a column. A missing row is the NORMAL case today — the
+        table is empty — so it resolves to the documented default rather than
+        raising. A non-numeric value is also treated as absent: a typo in a
+        config row must not take down travel prediction.
+        """
+        try:
+            # SAVEPOINT, not a bare try/except. A failed statement aborts the
+            # whole Postgres transaction, so swallowing the error here would
+            # leave the caller's session poisoned — every later query in the
+            # same request would then fail with MissingGreenlet, far from the
+            # cause. begin_nested() confines the damage to this read.
+            async with db.begin_nested():
+                raw = await db.scalar(text("""
+                    SELECT config_value FROM outlet_config
+                    WHERE outlet_id = :o AND config_key = :k
+                """), {"o": str(outlet_id), "k": TRAIN_LAST_MILE_CONFIG_KEY})
+            if raw is not None:
+                return float(raw)
+        except Exception:
+            pass
+        return float(TRAIN_LAST_MILE_DEFAULT_S)
+
+    @staticmethod
+    async def predict_travel(db, outlet_id, origin_lat, origin_lng, outlet_lat,
+                             outlet_lng, mode, declared_arrival_at=None):
         """Step 6 travel ETA. When MAPS_SERVER_KEY is set, use the Google Distance
         Matrix API, cached in travel_cache on (origin_geohash6, outlet_id, mode,
         quarter_hour). Haversine is ALWAYS the fallback on no-key / no-origin /
         timeout / non-OK / quota / any exception (FR-P4 — never removed).
 
         Returns (mu_seconds, sigma_seconds, source), source one of
-        maps_live | maps_cached | haversine_fallback.
+        maps_live | maps_cached | haversine_fallback | customer_declared.
         """
         from app.core.config import settings
+
+        # --- train (addendum Item 1) --------------------------------------
+        # Handled FIRST and returned early: none of the machinery below
+        # applies. Leg A is not a distance problem — it is a time the customer
+        # typed in — so there is no origin to geocode, nothing to ask Maps, and
+        # nothing worth caching. Every other mode's branch is untouched.
+        #
+        # `customer_declared`, not `train_schedule`: naming it after a
+        # timetable would imply an external source we do not have and would
+        # make this number look more trustworthy than it is.
+        if (mode or "").lower() == "train":
+            last_mile = await PredictionService.train_last_mile_seconds(db, outlet_id)
+            declared = declared_arrival_at
+            if declared is None:
+                # Train selected but no arrival time stored — cannot honour the
+                # mode. Fall through to the normal path rather than invent a
+                # number; the caller still gets a usable (if wider) estimate.
+                return PredictionService._haversine_travel(
+                    origin_lat, origin_lng, outlet_lat, outlet_lng, mode)
+            secs_to_arrival = max(
+                0.0, (declared - datetime.now(timezone.utc)).total_seconds())
+            return (float(secs_to_arrival + last_mile),
+                    float(TRAIN_DECLARED_SIGMA_S),
+                    "customer_declared")
 
         fallback = PredictionService._haversine_travel(
             origin_lat, origin_lng, outlet_lat, outlet_lng, mode)
@@ -358,6 +438,7 @@ class PredictionService:
 
         o = (await db.execute(text("""
             SELECT co.id, co.outlet_id, co.status, co.transport_mode,
+                   co.declared_arrival_at,
                    co.origin_lat, co.origin_lng, o.latitude AS olat, o.longitude AS olng
             FROM customer_orders co JOIN outlets o ON o.id = co.outlet_id
             WHERE co.id = :id
@@ -387,7 +468,8 @@ class PredictionService:
             db, order_id, o.outlet_id, backlog, outlet_state)
         hold_tol = outlet_state["_hold_tolerance_s"]
         mu_travel, sigma_travel, tsrc = await PredictionService.predict_travel(
-            db, o.outlet_id, o.origin_lat, o.origin_lng, o.olat, o.olng, o.transport_mode)
+            db, o.outlet_id, o.origin_lat, o.origin_lng, o.olat, o.olng,
+            o.transport_mode, declared_arrival_at=o.declared_arrival_at)
 
         now = datetime.now(timezone.utc)
         d_start, d_end, bucket, cost, buckets = PredictionService.decide_departure(

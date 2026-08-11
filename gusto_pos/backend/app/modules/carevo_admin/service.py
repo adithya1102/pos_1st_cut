@@ -113,12 +113,29 @@ class AdminService:
                 detail=f"Invalid status. Must be one of: {[PENDING, ACTIVE, REJECTED]}",
             )
         rows = (await db.execute(text("""
-            SELECT o.id, o.location_name, o.city, o.phone_number, o.organization_id,
+            SELECT o.id, o.location_name, o.city, o.locality, o.phone_number,
+                   o.organization_id,
                    org.name AS organization_name,
                    o.verification_status, o.is_visible, o.created_at,
-                   o.deactivated_at
+                   o.deactivated_at,
+                   -- Owner account username, so support can recover a login for
+                   -- someone who has forgotten BOTH username and password.
+                   -- /auth/password/forgot already works on a username; the only
+                   -- missing piece was admin having any way to find it.
+                   --
+                   -- Read-only, from the existing outlets -> users relation. An
+                   -- outlet can have several staff rows, so this takes the
+                   -- earliest active one — the account created at registration,
+                   -- i.e. the owner — rather than an arbitrary row.
+                   owner.username AS owner_username
             FROM outlets o
             LEFT JOIN organizations org ON org.id = o.organization_id
+            LEFT JOIN LATERAL (
+                SELECT u.username FROM users u
+                WHERE u.outlet_id = o.id AND u.is_active = true
+                ORDER BY u.created_at ASC NULLS LAST
+                LIMIT 1
+            ) owner ON true
             -- CAST is required: with a NULL bind, Postgres cannot infer the
             -- parameter's type from `:status IS NULL` alone and aborts the
             -- statement with AmbiguousParameterError.
@@ -135,6 +152,7 @@ class AdminService:
                 "id": r.id,
                 "location_name": r.location_name,
                 "city": r.city,
+                "locality": r.locality,
                 "phone_number": r.phone_number,
                 "organization_id": r.organization_id,
                 "organization_name": r.organization_name,
@@ -142,6 +160,7 @@ class AdminService:
                 "is_visible": bool(r.is_visible),
                 "created_at": r.created_at,
                 "deactivated_at": r.deactivated_at,
+                "owner_username": r.owner_username,
                 "is_deactivated": r.deactivated_at is not None,
             }
             for r in rows
@@ -214,7 +233,8 @@ class AdminService:
         reason: Optional[str],
     ) -> dict:
         current = (await db.execute(text(
-            "SELECT id, verification_status FROM outlets WHERE id = :oid"
+            "SELECT id, verification_status, location_name, city, locality "
+            "FROM outlets WHERE id = :oid"
         ), {"oid": str(outlet_id)})).first()
         if not current:
             raise HTTPException(status_code=404, detail="Outlet not found")
@@ -225,6 +245,56 @@ class AdminService:
                 status_code=409,
                 detail=f"Outlet is already '{target_status}'",
             )
+
+        # Duplicate guard: refuse to approve a second outlet with the same
+        # name in the same area of the same city.
+        #
+        # WHY AT APPROVAL AND NOT AT SIGNUP: signup is unauthenticated and
+        # self-service, so blocking there tells an anonymous caller exactly
+        # which restaurants exist and where — and it would also block the
+        # legitimate case of an owner re-registering after a rejection.
+        # Approval is the point where a human is already looking, and it is
+        # the gate that actually matters: nothing is visible to customers
+        # until it passes.
+        #
+        # Compared against ACTIVE, non-deactivated outlets only. Pending rows
+        # are not conflicts — two duplicates can sit in the queue together and
+        # the first one approved is what makes the second a collision.
+        # Rejected and deactivated rows are not live, so they must not block a
+        # real restaurant from taking the name back.
+        #
+        # Case- and whitespace-insensitive on all three parts: "MG Road" and
+        # "mg road " are the same place, and a comparison that misses that is
+        # a guard in name only.
+        if target_status == ACTIVE:
+            clash = (await db.execute(text("""
+                SELECT id, verification_status FROM outlets
+                WHERE id <> :oid
+                  AND verification_status = 'active'
+                  AND deactivated_at IS NULL
+                  AND lower(btrim(location_name)) = lower(btrim(CAST(:name AS varchar)))
+                  AND lower(btrim(COALESCE(city, ''))) = lower(btrim(COALESCE(CAST(:city AS varchar), '')))
+                  AND lower(btrim(COALESCE(locality, ''))) = lower(btrim(COALESCE(CAST(:locality AS varchar), '')))
+                LIMIT 1
+            """), {
+                "oid": str(outlet_id),
+                "name": current.location_name,
+                "city": current.city,
+                "locality": current.locality,
+            })).first()
+            if clash:
+                where = ", ".join(
+                    p for p in (current.locality, current.city) if p
+                ) or "that city"
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"An active outlet named '{current.location_name}' already "
+                        f"exists in {where}. Approving this one would give customers "
+                        f"two identical entries. Ask the owner for a distinguishing "
+                        f"name or the correct locality, then approve."
+                    ),
+                )
 
         row = (await db.execute(text("""
             UPDATE outlets SET verification_status = :s

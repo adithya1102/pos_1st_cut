@@ -10,6 +10,9 @@ class Outlet {
     this.imageUrl,
     this.offerCount = 0,
     this.offerText,
+    this.locality,
+    this.latitude,
+    this.longitude,
   });
 
   final String id;
@@ -18,6 +21,26 @@ class Outlet {
   final bool isOpen;
   final double? distanceKm;
   final String? upiId;
+
+  /// Area within the city (migration 012). Null for outlets that predate it —
+  /// [displayName] then falls back to the bare name.
+  final String? locality;
+
+  /// Outlet coordinates, used only to hand off to Google Maps. Null when the
+  /// outlet never captured a pin; the Maps button hides rather than linking
+  /// nowhere. NOT used for distance — that stays server-computed in
+  /// [distanceKm] from the customer's GPS origin.
+  final double? latitude;
+  final double? longitude;
+
+  /// "{Restaurant Name} · {Locality}", or just the name when there is no
+  /// locality on record. One definition, so the list and the confirm screen
+  /// can never drift apart.
+  String get displayName =>
+      (locality != null && locality!.isNotEmpty) ? '$name · $locality' : name;
+
+  /// True only when Maps can actually be opened for this outlet.
+  bool get hasCoordinates => latitude != null && longitude != null;
 
   /// Storefront photo (migration 011). Null for outlets that never set one —
   /// the card falls back to the generic restaurant glyph.
@@ -37,6 +60,9 @@ class Outlet {
     final upi = json['upi_id'] as String?;
     final img = json['image_url'] as String?;
     final offer = json['offer_text'] as String?;
+    final loc = json['locality'] as String?;
+    final lat = json['latitude'];
+    final lng = json['longitude'];
     return Outlet(
       id: json['id']?.toString() ?? '',
       name: (json['name'] ?? '') as String,
@@ -47,6 +73,12 @@ class Outlet {
       imageUrl: (img != null && img.isNotEmpty) ? img : null,
       offerCount: (json['offer_count'] as num?)?.toInt() ?? 0,
       offerText: (offer != null && offer.isNotEmpty) ? offer : null,
+      locality: (loc != null && loc.isNotEmpty) ? loc : null,
+      // `num?` then toDouble(): the column is Postgres `numeric`, so a value
+      // that happens to be whole arrives as an int and a bare `as double`
+      // cast would throw.
+      latitude: (lat as num?)?.toDouble(),
+      longitude: (lng as num?)?.toDouble(),
     );
   }
 
@@ -62,5 +94,8 @@ class Outlet {
         'image_url': imageUrl,
         'offer_count': offerCount,
         'offer_text': offerText,
+        'locality': locality,
+        'latitude': latitude,
+        'longitude': longitude,
       };
 }

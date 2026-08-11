@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/offer.dart';
+import '../models/outlet.dart';
 import '../services/api_client.dart';
 import '../services/cashfree_service.dart';
 import '../services/location_service.dart';
@@ -26,12 +28,20 @@ enum TransportMode {
   bike('bike', 'Bike', Icons.two_wheeler),
   car('car', 'Car', Icons.directions_car),
   auto('auto', 'Auto', Icons.local_taxi),
-  bus('bus', 'Bus', Icons.directions_bus);
+  bus('bus', 'Bus', Icons.directions_bus),
+  // Addendum Item 1. Unlike every mode above, this leg is NOT derived from a
+  // GPS origin — the customer states an arrival time and the server treats it
+  // as given, so selecting it swaps the origin picker for a time picker.
+  train('train', 'Train', Icons.train);
 
   const TransportMode(this.wire, this.label, this.icon);
   final String wire;
   final String label;
   final IconData icon;
+
+  /// True when this mode is satisfied by a declared arrival time rather than
+  /// an origin location.
+  bool get usesDeclaredArrival => this == TransportMode.train;
 }
 
 /// Step 8: checkout with UPI / Card / Net Banking ONLY (no pay-at-counter).
@@ -77,6 +87,42 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   String _originSource = 'none'; // none | gps | places_autocomplete
   String? _originLabel;
   bool _locating = false;
+
+  /// Train mode only: the arrival time the customer states. Sent as
+  /// `declared_arrival_at`; null for every other mode.
+  DateTime? _declaredArrival;
+
+  /// Upper bound on how far ahead an arrival may be declared.
+  ///
+  /// 6h is generous enough for a genuine long-distance train while still
+  /// rejecting a mistyped date — the real risk is a customer picking a time
+  /// that has already passed today, or fat-fingering tomorrow, and the
+  /// kitchen being told to start cooking at a nonsense moment.
+  static const _maxArrivalAhead = Duration(hours: 6);
+
+  Future<void> _pickArrivalTime() async {
+    final now = DateTime.now();
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(now.add(const Duration(minutes: 45))),
+      helpText: 'When does your train arrive?',
+    );
+    if (picked == null || !mounted) return;
+
+    var when = DateTime(now.year, now.month, now.day, picked.hour, picked.minute);
+    // A time earlier than now means they mean tomorrow — the common case for a
+    // late-evening pick just after midnight, not an error worth rejecting.
+    if (when.isBefore(now)) when = when.add(const Duration(days: 1));
+
+    if (when.difference(now) > _maxArrivalAhead) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Pick a time within the next '
+            '${_maxArrivalAhead.inHours} hours.'),
+      ));
+      return;
+    }
+    setState(() => _declaredArrival = when);
+  }
 
   Future<void> _useMyLocation() async {
     setState(() => _locating = true);
@@ -218,6 +264,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               // code, matching the mutual exclusion the UI already enforces.
               couponCode: _offer == null ? _coupon.text : null,
               promotionId: _offer?.id,
+              declaredArrivalAt:
+                  _transport.usesDeclaredArrival ? _declaredArrival : null,
             ),
           );
       if (!mounted) return;
@@ -316,6 +364,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
           child: NeoButton(
+            key: const Key('checkout_pay'),
             label: 'Pay ${formatRupees(payable)}',
             icon: Icons.lock,
             loading: _placing,
@@ -328,21 +377,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
           children: [
-            NeoCard(
-              color: c.primary,
-              child: Row(
-                children: [
-                  Icon(Icons.storefront, color: c.onPrimary),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'Self pickup at ${cart.outlet?.name ?? 'the outlet'}',
-                      style: textTheme.titleMedium?.copyWith(color: c.onPrimary),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            _PickupOutletCard(outlet: cart.outlet),
             const SizedBox(height: 24),
             Text('How are you getting here?', style: textTheme.headlineSmall),
             const SizedBox(height: 6),
@@ -362,15 +397,50 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               ],
             ),
             const SizedBox(height: 24),
-            Text('Your starting point', style: textTheme.headlineSmall),
-            const SizedBox(height: 12),
-            _OriginCard(
-              originLabel: _originLabel,
-              locating: _locating,
-              placesEnabled: context.read<PlacesService>().isEnabled,
-              onUseLocation: _locating ? null : _useMyLocation,
-              onSearch: _searchLocation,
-            ),
+            // Train replaces the origin picker entirely: Leg A is a stated
+            // time, so a GPS origin would be collected and then ignored.
+            if (_transport.usesDeclaredArrival) ...[
+              Text('When does your train arrive?',
+                  style: textTheme.headlineSmall),
+              const SizedBox(height: 6),
+              Text('We start cooking so it is ready as you walk in.',
+                  style: textTheme.bodyMedium?.copyWith(color: c.inkSoft)),
+              const SizedBox(height: 12),
+              NeoCard(
+                onTap: _pickArrivalTime,
+                color: _declaredArrival != null ? c.accent : c.surface,
+                child: Row(
+                  children: [
+                    Icon(Icons.schedule,
+                        color: _declaredArrival != null ? c.onAccent : c.ink),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Text(
+                        _declaredArrival == null
+                            ? 'Set arrival time'
+                            : TimeOfDay.fromDateTime(_declaredArrival!)
+                                .format(context),
+                        style: textTheme.titleMedium?.copyWith(
+                            color: _declaredArrival != null ? c.onAccent : c.ink),
+                      ),
+                    ),
+                    Icon(Icons.edit,
+                        size: 18,
+                        color: _declaredArrival != null ? c.onAccent : c.inkSoft),
+                  ],
+                ),
+              ),
+            ] else ...[
+              Text('Your starting point', style: textTheme.headlineSmall),
+              const SizedBox(height: 12),
+              _OriginCard(
+                originLabel: _originLabel,
+                locating: _locating,
+                placesEnabled: context.read<PlacesService>().isEnabled,
+                onUseLocation: _locating ? null : _useMyLocation,
+                onSearch: _searchLocation,
+              ),
+            ],
             const SizedBox(height: 24),
             Text('Offers', style: textTheme.headlineSmall),
             const SizedBox(height: 6),
@@ -453,6 +523,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             ),
             const SizedBox(height: 12),
             _TotalRow(
+              key: const Key('checkout_total_row'),
               subtotal: subtotal,
               discount: discount,
               payable: payable,
@@ -460,6 +531,111 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Where the customer is confirming they will collect the order from.
+///
+/// Shows the restaurant as "{Name} · {Locality}", the full address in plain
+/// text, and a hand-off to Google Maps. The address is spelled out rather than
+/// left implicit because this is the last screen before payment — it is where
+/// someone realises they picked the wrong branch of a chain, and a name alone
+/// is exactly what makes two branches indistinguishable.
+///
+/// The Maps hand-off is a plain universal URL, NOT a Maps SDK or an embedded
+/// map: it needs no API key, no billing, and no extra dependency (url_launcher
+/// is already a dependency for the payment flow). It also means the customer
+/// lands in whatever maps app they actually use.
+class _PickupOutletCard extends StatelessWidget {
+  const _PickupOutletCard({required this.outlet});
+
+  final Outlet? outlet;
+
+  /// Opens the outlet's coordinates in Google Maps (or the platform's handler
+  /// for that URL). Never called without coordinates — the button is not
+  /// rendered in that case.
+  Future<void> _openInMaps(BuildContext context) async {
+    final o = outlet;
+    if (o == null || !o.hasCoordinates) return;
+
+    // Coordinates, not a name query: a name search can land on a different
+    // branch of the same chain, which is the precise failure this screen
+    // exists to prevent.
+    final uri = Uri.parse(
+      'https://www.google.com/maps/search/?api=1'
+      '&query=${o.latitude},${o.longitude}',
+    );
+
+    // externalApplication so it opens the Maps app rather than an in-app
+    // webview, which is what a customer about to travel actually wants.
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!ok && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open Maps on this device.')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final textTheme = Theme.of(context).textTheme;
+    final o = outlet;
+
+    return NeoCard(
+      color: c.primary,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.storefront, color: c.onPrimary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Self pickup at ${o?.displayName ?? 'the outlet'}',
+                  style: textTheme.titleMedium?.copyWith(color: c.onPrimary),
+                ),
+              ),
+            ],
+          ),
+          // Full address, plainly. Hidden entirely when the outlet has none on
+          // record rather than showing an empty line.
+          if (o != null && o.address.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Padding(
+              // Aligns under the title, clear of the storefront icon.
+              padding: const EdgeInsets.only(left: 36),
+              child: Text(
+                o.address,
+                style: textTheme.bodyMedium?.copyWith(color: c.onPrimary),
+              ),
+            ),
+          ],
+          // Only offered when there is actually a pin to open. Outlets that
+          // never captured coordinates simply show the address.
+          if (o != null && o.hasCoordinates) ...[
+            const SizedBox(height: 14),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: NeoButton(
+                label: 'Open in Maps',
+                icon: Icons.map_outlined,
+                // Sits on a primary-coloured card, so it takes the neutral
+                // variant — a primary-on-primary button would disappear.
+                variant: NeoButtonVariant.neutral,
+                // Secondary to "Pay now": inline and compact rather than a
+                // full-width bar competing with the actual call to action.
+                expand: false,
+                compact: true,
+                onPressed: () => _openInMaps(context),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -696,6 +872,7 @@ class _OriginAction extends StatelessWidget {
 /// is no discount — a struck-through price identical to the final one is noise.
 class _TotalRow extends StatelessWidget {
   const _TotalRow({
+    super.key,
     required this.subtotal,
     required this.discount,
     required this.payable,

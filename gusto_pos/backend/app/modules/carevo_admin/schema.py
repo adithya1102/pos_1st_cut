@@ -21,6 +21,11 @@ class AdminOutletOut(BaseModel):
     id: uuid.UUID
     location_name: str
     city: Optional[str] = None
+    # Area within the city (migration 012). Null for outlets created before it;
+    # required at signup from now on. Half of the (city, name, locality) key the
+    # approval duplicate guard enforces, so admins need to see it to act on a
+    # 409 from that guard.
+    locality: Optional[str] = None
     # Contact number (migration 009). NULL for every outlet created before it.
     phone_number: Optional[str] = None
     organization_id: Optional[uuid.UUID] = None
@@ -31,6 +36,11 @@ class AdminOutletOut(BaseModel):
     # Soft-delete (migration 007). Non-null => deactivated/hidden, retained data.
     deactivated_at: Optional[datetime] = None
     is_deactivated: bool = False
+    # Owner's login username, so support can help someone who has forgotten
+    # BOTH username and password. Read-only; null for an outlet with no active
+    # staff row yet. No password material is exposed — only the username, which
+    # /auth/password/forgot then accepts to send a reset.
+    owner_username: Optional[str] = None
 
 
 class OutletDecisionIn(BaseModel):

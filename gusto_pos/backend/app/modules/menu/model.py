@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import String, ForeignKey, DECIMAL, Boolean, Integer, Text, DateTime
+from sqlalchemy import String, ForeignKey, DECIMAL, Boolean, Integer, Text, DateTime, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base
 
@@ -33,6 +33,16 @@ class MenuItem(Base):
     base_price: Mapped[float] = mapped_column(DECIMAL(10, 2), nullable=False)
     is_veg: Mapped[bool] = mapped_column(Boolean, default=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Free-form labels ("spicy", "bestseller"), surfaced by /customer/menu.
+    #
+    # JSON, not JSONB, to match what is already live in prod — see migration
+    # 019. Declared here so `Base.metadata.create_all` produces it on a fresh
+    # database; without it the menu endpoint 500s on any DB built from this
+    # repo alone. The other menu_items columns absent from this model
+    # (is_available, prep_time_minutes, image_url, the PE timing fields) are
+    # all created by migrations and read via raw SQL, so they are not the same
+    # kind of gap — `tags` was created by nothing at all.
+    tags: Mapped[dict | list | None] = mapped_column(JSON, nullable=True)
 
     category = relationship("MenuCategory", back_populates="items", lazy="raise")
     modifiers = relationship("ItemModifier", back_populates="menu_item", cascade="all, delete-orphan", lazy="selectin")

@@ -307,3 +307,21 @@ class TestAdminOrders:
         row = next(o for o in r.json() if o["order_id"] == paid_order["id"])
         # The persistence fix: history alone is enough to recover the code.
         assert row["pickup_code"], "history must expose the code, not just checkout"
+
+
+class TestAdminOwnerUsername:
+    async def test_outlet_listing_exposes_owner_username(self, client, seed):
+        """Support can recover a forgotten username from the outlet they know."""
+        r = await client.get(f"{API}/admin/outlets", headers=seed["admin_auth"])
+        assert r.status_code == 200
+        row = next(o for o in r.json() if o["id"] == seed["outlet_id"])
+        assert row["owner_username"] == seed["owner_username"]
+
+    async def test_no_password_material_is_exposed(self, client, seed):
+        r = await client.get(f"{API}/admin/outlets", headers=seed["admin_auth"])
+        blob = str(r.json()).lower()
+        assert "hashed_password" not in blob and "password" not in blob
+
+    async def test_username_still_gated_to_super_admin(self, client, seed):
+        assert (await client.get(f"{API}/admin/outlets",
+                                 headers=seed["owner_auth"])).status_code == 403

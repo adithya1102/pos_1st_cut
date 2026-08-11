@@ -1,4 +1,4 @@
--- Migration 012: outlet locality (PROPOSED — NOT APPLIED)
+-- Migration 012: outlet locality (APPLIED to prod 2026-08-11)
 --
 -- Smallest addition that would let the location picker offer sub-city areas
 -- ("Koramangala", "Indiranagar") instead of only cities.

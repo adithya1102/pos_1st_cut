@@ -93,6 +93,7 @@ class _OtpScreenState extends State<OtpScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     NeoTextField(
+                      key: const Key('otp_code_field'),
                       controller: _controller,
                       hintText: '000000',
                       keyboardType: TextInputType.number,
@@ -108,6 +109,7 @@ class _OtpScreenState extends State<OtpScreen> {
                     ),
                     const SizedBox(height: 20),
                     NeoButton(
+                      key: const Key('otp_verify'),
                       label: 'Verify & Continue',
                       icon: Icons.check_circle_outline,
                       loading: auth.busy,

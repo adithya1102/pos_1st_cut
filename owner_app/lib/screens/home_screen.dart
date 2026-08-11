@@ -34,7 +34,29 @@ class _HomeScreenState extends State<HomeScreen> {
       context.read<HomeState>().load();
       context.read<OrdersState>().load();
       context.read<OffersState>().load();
+
+      // A tapped staff push (new order, or a train order due to start) lands
+      // on the EXISTING Orders tab rather than a new screen.
+      final push = context.read<StaffPushService>();
+      push.attachTapRouting();
+      push.openOrderId.addListener(_onPushTapped);
+      // A cold start from a notification sets the value before this listener
+      // exists, so check once on mount too.
+      if (push.openOrderId.value != null) _onPushTapped();
     });
+  }
+
+  void _onPushTapped() {
+    if (!mounted) return;
+    setState(() => _index = 1);          // Orders tab
+    context.read<OrdersState>().load();  // the pushed order may be brand new
+    context.read<StaffPushService>().openOrderId.value = null;  // consume once
+  }
+
+  @override
+  void dispose() {
+    context.read<StaffPushService>().openOrderId.removeListener(_onPushTapped);
+    super.dispose();
   }
 
   static const _titles = ['Menu & Outlet', 'Orders', 'Offers'];

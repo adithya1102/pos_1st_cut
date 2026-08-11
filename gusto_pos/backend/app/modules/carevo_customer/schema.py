@@ -65,6 +65,17 @@ class OutletOut(BaseModel):
     is_open: bool = True
     distance_km: Optional[float] = None
     upi_id: Optional[str] = None
+    # Area within the city (migration 012). Null for outlets that predate it —
+    # the app then renders the name alone rather than a dangling separator.
+    locality: Optional[str] = None
+    # Outlet coordinates, so the app can hand off to Google Maps without an API
+    # key or a geocoding round trip. Null for outlets that never captured a pin;
+    # the app hides the Maps button in that case rather than linking to nowhere.
+    #
+    # Floats, not Decimal: these are consumed as a URL query string, and the
+    # column is `numeric` which Pydantic would otherwise serialise as a string.
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     # Storefront photo (migration 011). Null -> the app renders its fallback glyph.
     image_url: Optional[str] = None
     # Offer summary (migration 016) so the discovery card can show its inline
@@ -125,7 +136,11 @@ class CreateOrderIn(BaseModel):
     promotion_id: Optional[uuid.UUID] = None
     promotion_code: Optional[str] = Field(None, min_length=3, max_length=24)
     # PE Step 3 (FR-C1/C2): travel context captured at checkout.
-    transport_mode: Optional[str] = None      # bike | car | walk | auto | bus
+    # bike | car | walk | auto | bus | train  (addendum Item 1)
+    transport_mode: Optional[str] = None
+    # Train orders only: the arrival time the customer typed in. Ignored for
+    # every other mode — Leg A for train is a stated time, not a GPS origin.
+    declared_arrival_at: Optional[datetime] = None
     origin_lat: Optional[float] = None
     origin_lng: Optional[float] = None
     origin_source: Optional[str] = None        # gps | places_autocomplete | none
@@ -255,6 +270,17 @@ class RegisterIn(BaseModel):
     #   requested_city -> a new name, recorded as pending for admin approval
     city: Optional[str] = Field(None, max_length=80)
     requested_city: Optional[str] = Field(None, min_length=2, max_length=80)
+
+    # Locality / area within the city (migration 012). REQUIRED as of this
+    # change, following the same pattern phone_number and email already use:
+    # the DB column stays nullable so the outlets that predate it keep NULL,
+    # and this binds new signups only.
+    #
+    # Free text, NOT a reference list like `city`. Cities are a short platform
+    # list an admin can realistically curate; localities are not — every city
+    # has hundreds and they are named inconsistently in real use. The admin
+    # approval collision check is what catches the duplicates that matter.
+    locality: str = Field(..., min_length=2, max_length=80)
 
     # Outlet contact number. REQUIRED as of this change: admins had no reliable
     # way to reach an outlet during verification. Existing rows keep NULL — the

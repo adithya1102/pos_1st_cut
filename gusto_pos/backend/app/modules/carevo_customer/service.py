@@ -205,7 +205,7 @@ class CarevoService:
         city: Optional[str] = None,
     ) -> list[dict]:
         rows = (await db.execute(text(
-            "SELECT id, location_name, city, latitude, longitude, upi_id, image_url "
+            "SELECT id, location_name, city, locality, latitude, longitude, upi_id, image_url "
             "FROM outlets "
             "WHERE is_visible = true AND deactivated_at IS NULL "
             # CAST for the same reason as list_outlets in carevo_admin: with a
@@ -225,7 +225,7 @@ class CarevoService:
 
         out = []
         for r in rows:
-            oid, name, city, o_lat, o_lng, upi_id, image_url = r
+            oid, name, city, locality, o_lat, o_lng, upi_id, image_url = r
             distance = None
             if lat is not None and lng is not None and o_lat is not None and o_lng is not None:
                 distance = CarevoService._haversine_km(lat, lng, float(o_lat), float(o_lng))
@@ -233,11 +233,24 @@ class CarevoService:
             out.append({
                 "id": oid,
                 "name": name,
-                "address": city,
+                # The fullest address this schema holds. `outlets` has no
+                # street-address column at all — locality (migration 012) and
+                # city are the whole of it — so "Koramangala, Bengaluru" IS the
+                # full address, not a truncation of one. Joined here rather than
+                # in each app so both clients read the same string.
+                #
+                # Falls back to whichever part exists: outlets predating 012
+                # have no locality and must still render their city.
+                "address": ", ".join(p for p in (locality, city) if p) or None,
                 "is_open": True,
                 "distance_km": distance,
                 "upi_id": upi_id,
                 "image_url": image_url,
+                "locality": locality,
+                # float() because the column is `numeric` -> Decimal, which
+                # would serialise as a JSON string and break the Maps URL.
+                "latitude": float(o_lat) if o_lat is not None else None,
+                "longitude": float(o_lng) if o_lng is not None else None,
                 "offer_count": (summary or {}).get("count", 0),
                 "offer_text": (summary or {}).get("text"),
             })
@@ -320,12 +333,18 @@ class CarevoService:
 
         # PE Step 3 (FR-C1/C2): persist travel context on the order.
         if any(v is not None for v in (payload.transport_mode, payload.origin_lat,
-                                       payload.origin_lng, payload.origin_source)):
+                                       payload.origin_lng, payload.origin_source,
+                                       getattr(payload, "declared_arrival_at", None))):
             await db.execute(text("""
                 UPDATE customer_orders SET transport_mode=:tm, origin_lat=:la,
-                       origin_lng=:ln, origin_source=:os WHERE id=:id
+                       origin_lng=:ln, origin_source=:os,
+                       declared_arrival_at=:dec
+                WHERE id=:id
             """), {"tm": payload.transport_mode, "la": payload.origin_lat,
                    "ln": payload.origin_lng, "os": payload.origin_source,
+                   # Train only. Stored for any mode that sends it, but nothing
+                   # reads it outside the train branch, so a stray value is inert.
+                   "dec": getattr(payload, "declared_arrival_at", None),
                    "id": str(order.id)})
 
         total = 0.0
@@ -883,6 +902,90 @@ class CarevoService:
         }
 
     @staticmethod
+    async def _notify_kitchen_for_due_trains(
+        db: AsyncSession, *, outlet_id=None
+    ) -> int:
+        """Check-on-read: push the kitchen for any TRAIN order now due to start.
+
+        Same pattern as _expire_stale_pickups, and for the same reason — this
+        deploy has no scheduler and Render's free tier sleeps, so "run at time
+        T" is implemented as "check whether T has passed, on a read that
+        happens often anyway" (GET /pos/orders). No Celery, no APScheduler, no
+        worker process.
+
+        Due when:  now() >= declared_arrival_at - prep_estimate - safety_buffer
+
+        The prep estimate is NOT recomputed here — it is read from the order's
+        twin (ready_sigma_s' sibling `inputs`), which predict_kitchen already
+        produced. Building a second prep estimator was explicitly out of scope.
+
+        Emits KITCHEN_START_NOTIFIED once per order. Idempotency is the event
+        log itself: order_events is append-only and already the source of
+        truth for every other transition, so "have we told them yet" is a
+        NOT EXISTS against it rather than a new flag column.
+
+        Does NOT touch status, PREP_STARTED, or anything else. Purely a push.
+        """
+        from app.modules.prediction.service import KITCHEN_NOTIFY_SAFETY_BUFFER_S
+
+        clauses = [
+            "co.transport_mode = 'train'",
+            "co.declared_arrival_at IS NOT NULL",
+            "co.status = ANY(:live)",
+            # Not already notified — the append-only log IS the flag.
+            "NOT EXISTS (SELECT 1 FROM order_events e "
+            " WHERE e.order_id = co.id AND e.event_type = 'KITCHEN_START_NOTIFIED')",
+            # Due: arrival minus prep minus buffer has passed. COALESCE because
+            # a twin may not exist yet for a very fresh order; falling back to 0
+            # prep makes it fire at (arrival - buffer), i.e. later, never earlier.
+            "now() >= co.declared_arrival_at"
+            "        - make_interval(secs => COALESCE(t.prep_s, 0))"
+            "        - make_interval(secs => :buf)",
+        ]
+        params = {"live": list(_LIVE_STATUSES),
+                  "buf": KITCHEN_NOTIFY_SAFETY_BUFFER_S}
+        if outlet_id is not None:
+            clauses.append("co.outlet_id = :oid")
+            params["oid"] = str(outlet_id)
+
+        rows = (await db.execute(text(f"""
+            SELECT co.id, co.outlet_id, co.declared_arrival_at,
+                   COALESCE(t.prep_s, 0) AS prep_s
+            FROM customer_orders co
+            LEFT JOIN LATERAL (
+                SELECT (ot.inputs ->> 'mu_ready_s')::numeric AS prep_s
+                FROM order_twin ot WHERE ot.order_id = co.id
+            ) t ON true
+            WHERE {' AND '.join(clauses)}
+        """), params)).fetchall()
+        if not rows:
+            return 0
+
+        for r in rows:
+            await pe.write_event(
+                db, r.id, pe.KITCHEN_START_NOTIFIED,
+                actor_type="system", source="system", outlet_id=r.outlet_id,
+                payload={
+                    "declared_arrival_at": r.declared_arrival_at.isoformat()
+                    if r.declared_arrival_at else None,
+                    "prep_estimate_s": float(r.prep_s or 0),
+                    "safety_buffer_s": KITCHEN_NOTIFY_SAFETY_BUFFER_S,
+                },
+            )
+        await db.commit()
+
+        # Push after the event is committed: the event is the record, the push
+        # is best-effort delivery of it. A push failure must not lose the fact
+        # that the order became due.
+        try:
+            from app.modules.push.service import PushService
+            for r in rows:
+                await PushService.notify_outlet_train_due(db, r.id, r.outlet_id)
+        except Exception:
+            await db.rollback()
+        return len(rows)
+
+    @staticmethod
     async def mark_payment_failed(
         db: AsyncSession,
         order: CustomerOrder,
@@ -1302,13 +1405,15 @@ class CarevoService:
             ), {"n": payload.restaurant_name})).scalar()
 
             outlet_id = (await db.execute(text(
-                "INSERT INTO outlets (id, location_name, city, phone_number, latitude, longitude, "
+                "INSERT INTO outlets (id, location_name, city, locality, phone_number, "
+                "  latitude, longitude, "
                 "  geofence_radius_meters, organization_id, verification_status, is_visible, "
                 "  upi_id, created_at) "
-                "VALUES (gen_random_uuid(), :ln, :city, :phone, :lat, :lng, 100, :org, "
+                "VALUES (gen_random_uuid(), :ln, :city, :locality, :phone, :lat, :lng, 100, :org, "
                 "        'pending_verification', false, :upi, now()) RETURNING id"
             ), {
                 "ln": payload.restaurant_name, "city": city_name,
+                "locality": (payload.locality or "").strip(),
                 "phone": (payload.phone_number or "").strip() or None,
                 "lat": payload.latitude, "lng": payload.longitude, "org": str(org_id),
                 "upi": payload.upi_id,
@@ -1403,6 +1508,13 @@ class CarevoService:
         """Active customer_orders for the outlet, newest first. NAME-FREE."""
         # Sweep expired pickups so the queue never shows stale orders.
         await CarevoService._expire_stale_pickups(db, outlet_id=outlet_id)
+        # Same check-on-read slot: push the kitchen for any train order that has
+        # become due. Wrapped because a notification failure must never stop the
+        # owner seeing their order queue.
+        try:
+            await CarevoService._notify_kitchen_for_due_trains(db, outlet_id=outlet_id)
+        except Exception:
+            await db.rollback()
         orders = (await db.execute(text("""
             SELECT id, status, payment_status, is_locked, total_amount, created_at
             FROM customer_orders

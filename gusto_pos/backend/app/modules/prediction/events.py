@@ -40,6 +40,14 @@ PAYMENT_FAILED = "PAYMENT_FAILED"
 # and from PAYMENT_FAILED (gateway): this one is a human decision, and it is
 # the only one of the three that obliges a refund.
 ORDER_REJECTED = "ORDER_REJECTED"
+# Train orders (addendum Item 1): the kitchen has been PUSHED that it is time
+# to start this order, computed back from the customer's declared arrival.
+#
+# Purely a notification. It does NOT set PREP_STARTED and does not move the
+# order's status — whether staff act on it is their call, exactly like any
+# other push. Distinct from PREP_SCHEDULED, which is Item 2's shadow-mode
+# event and is not emitted by this path at all.
+KITCHEN_START_NOTIFIED = "KITCHEN_START_NOTIFIED"
 
 # actor_type ∈ {customer, staff, system}; source ∈ {tap, geofence, system, inferred}
 

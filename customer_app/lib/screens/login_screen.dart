@@ -104,6 +104,8 @@ class _LoginScreenState extends State<LoginScreen> {
                         const SizedBox(width: 10),
                         Expanded(
                           child: NeoTextField(
+                            // Stable driver target — see integration_test/.
+                            key: const Key('login_phone_field'),
                             controller: _controller,
                             hintText: '98765 43210',
                             keyboardType: TextInputType.phone,
@@ -119,6 +121,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 20),
                     NeoButton(
+                      key: const Key('login_send_otp'),
                       label: 'Send OTP',
                       icon: Icons.sms_outlined,
                       loading: auth.busy,

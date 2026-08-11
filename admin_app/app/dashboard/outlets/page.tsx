@@ -109,6 +109,7 @@ export default function OutletsPage() {
               <th className={th}>Organization</th>
               <th className={th}>City</th>
               <th className={th}>Phone</th>
+              <th className={th}>Owner login</th>
               <th className={th}>Verification</th>
               <th className={th}>Visible</th>
               <th className={th}>Created</th>
@@ -121,7 +122,17 @@ export default function OutletsPage() {
             {outlets?.map((o) => (
               <tr key={o.id} className={o.is_deactivated ? "bg-slate-50/60" : undefined}>
                 <td className={`${td} font-medium`}>
+                  {/* "{Restaurant Name} · {Locality}". The separator is
+                      suppressed entirely when locality is null (outlets
+                      predating migration 012) so the cell never renders a
+                      dangling "· ". */}
                   {o.location_name}
+                  {o.locality && (
+                    <span className="text-slate-500 font-normal">
+                      {" · "}
+                      {o.locality}
+                    </span>
+                  )}
                   {o.is_deactivated && (
                     <span className="ml-2 inline-block rounded bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-600">
                       deactivated
@@ -134,6 +145,12 @@ export default function OutletsPage() {
                     who skipped the optional field at signup. */}
                 <td className={`${td} font-mono text-xs text-slate-600`}>
                   {o.phone_number ?? "—"}
+                </td>
+                {/* Username only — enough for support to point someone at
+                    /auth/password/forgot, which already works on a username.
+                    Null when the outlet has no active staff row yet. */}
+                <td className={`${td} font-mono text-xs text-slate-600`}>
+                  {o.owner_username ?? "—"}
                 </td>
                 <td className={td}>
                   <StatusBadge status={o.verification_status} />

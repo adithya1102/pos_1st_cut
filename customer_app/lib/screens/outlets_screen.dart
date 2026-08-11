@@ -177,7 +177,9 @@ class _OutletCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(outlet.name, style: textTheme.titleLarge),
+                    // "{Restaurant Name} · {Locality}" — two branches of the
+                    // same chain can no longer look identical in the list.
+                    Text(outlet.displayName, style: textTheme.titleLarge),
                     const SizedBox(height: 2),
                     Text(
                       outlet.address,

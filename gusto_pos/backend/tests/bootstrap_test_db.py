@@ -116,7 +116,7 @@ async def create() -> None:
     # separately rather than silently papered over.
     conn = await asyncpg.connect(TEST_DSN)
     try:
-        await conn.execute("ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS tags jsonb")
+        pass  # tags now comes from the ORM model + migration 019
     finally:
         await conn.close()
 

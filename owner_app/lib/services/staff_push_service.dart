@@ -3,6 +3,14 @@ import 'package:flutter/foundation.dart';
 
 import 'order_service.dart';
 
+/// Push kinds the backend sends to staff. Mirrors PushService's KIND_* values.
+class StaffPushKind {
+  static const newOrder = 'STAFF_NEW_ORDER';
+  /// Addendum Item 1: "start this one now", derived from a train order's
+  /// declared arrival. Purely a prompt — it moves no status.
+  static const trainStartDue = 'TRAIN_START_DUE';
+}
+
 /// FCM registration for the signed-in STAFF user (migration 017).
 ///
 /// Mirrors customer_app's PushService deliberately — same shape, same
@@ -29,6 +37,36 @@ class StaffPushService {
 
   /// Avoids re-POSTing an unchanged token on every app start.
   String? _lastRegistered;
+
+  /// Set when a staff push is TAPPED. HomeScreen watches this and switches to
+  /// the existing Orders tab — no new screen, and no navigation logic living
+  /// inside a service.
+  ///
+  /// A ValueNotifier rather than a stream because the payload is one nullable
+  /// id and a late listener should still see the pending value: a push that
+  /// launched the app from cold arrives before HomeScreen has mounted.
+  final ValueNotifier<String?> openOrderId = ValueNotifier<String?>(null);
+
+  void _handleTap(RemoteMessage? m) {
+    if (m == null) return;
+    final kind = m.data['kind'];
+    if (kind != StaffPushKind.newOrder && kind != StaffPushKind.trainStartDue) {
+      return;
+    }
+    openOrderId.value = m.data['order_id'] as String?;
+  }
+
+  /// Wire tap handling. Safe to call before login — it only listens.
+  Future<void> attachTapRouting() async {
+    try {
+      // App opened FROM a notification while backgrounded.
+      FirebaseMessaging.onMessageOpenedApp.listen(_handleTap);
+      // App launched cold by a notification: the message is waiting.
+      _handleTap(await _fm.getInitialMessage());
+    } catch (e) {
+      if (kDebugMode) debugPrint('StaffPushService.attachTapRouting: $e');
+    }
+  }
 
   /// Ask for permission and register the token. Call AFTER login — the backend
   /// stores it against the authenticated staff user, so earlier has nowhere to
