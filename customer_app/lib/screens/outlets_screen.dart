@@ -269,54 +269,135 @@ class _ActiveOrderBannerState extends State<_ActiveOrderBanner> {
   @override
   Widget build(BuildContext context) {
     if (_active.isEmpty) return const SizedBox.shrink();
-    final c = AppColors.of(context);
     final textTheme = Theme.of(context).textTheme;
-    final first = _active.first;
-    final more = _active.length - 1;
 
+    // ONE CARD PER ORDER, each showing its own outlet and its own code.
+    //
+    // The previous single banner showed only _active.first's code and counted
+    // the rest ("3 orders in progress"), so with more than one order the other
+    // codes were reachable only by navigating — which is precisely the moment
+    // someone is standing at a counter being asked for one. Collapsing several
+    // codes behind a count made the common multi-order case the slowest.
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-      child: NeoCard(
-        color: c.primary,
-        onTap: () async {
-          await Navigator.of(context).push(MaterialPageRoute(
-            builder: (_) => PickupScreen(
-              orderId: first.orderId,
-              amount: first.totalAmount,
-              fromHistory: true,
-            ),
-          ));
-          // The order may have been collected while they were in there.
-          if (mounted) _load();
-        },
-        child: Row(
-          children: [
-            Icon(Icons.receipt_long, color: c.onPrimary),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    more > 0
-                        ? '${_active.length} orders in progress'
-                        : 'Order in progress',
-                    style: textTheme.titleMedium?.copyWith(color: c.onPrimary),
-                  ),
-                  Text(
-                    first.pickupCode != null
-                        ? 'Pickup code ${first.pickupCode}'
-                        : 'Tap to track it',
-                    style: textTheme.bodySmall?.copyWith(color: c.onPrimary),
-                  ),
-                ],
-              ),
-            ),
-            Icon(Icons.chevron_right, color: c.onPrimary),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_active.length > 1) ...[
+            Text('${_active.length} orders in progress',
+                style: textTheme.titleSmall),
+            const SizedBox(height: 8),
           ],
-        ),
+          for (final order in _active) ...[
+            _ActiveOrderCard(order: order, onChanged: _load),
+            if (order != _active.last) const SizedBox(height: 10),
+          ],
+        ],
       ),
     );
+  }
+}
+
+/// One in-progress order: outlet name and pickup code, both readable without
+/// tapping anything. Tapping still opens the full pickup screen for live status.
+class _ActiveOrderCard extends StatelessWidget {
+  const _ActiveOrderCard({required this.order, required this.onChanged});
+
+  final OrderHistoryEntry order;
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final textTheme = Theme.of(context).textTheme;
+    final code = order.pickupCode;
+    final hasCode = code != null && code.isNotEmpty;
+
+    return NeoCard(
+      key: Key('active_order_${order.orderId}'),
+      color: c.primary,
+      onTap: () async {
+        await Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => PickupScreen(
+            orderId: order.orderId,
+            amount: order.totalAmount,
+            fromHistory: true,
+          ),
+        ));
+        // It may have been collected while they were in there — reload so a
+        // finished order leaves the stack.
+        onChanged();
+      },
+      child: Row(
+        children: [
+          Icon(Icons.receipt_long, color: c.onPrimary),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  order.outletName ?? 'Your order',
+                  style: textTheme.titleMedium?.copyWith(color: c.onPrimary),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  // Status word, so two cards are distinguishable at a glance
+                  // when both are mid-flight.
+                  _statusLabel(order.status),
+                  style: textTheme.bodySmall?.copyWith(
+                    color: c.onPrimary.withValues(alpha: 0.85),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          // The code itself, at a size that can be read at arm's length across
+          // a counter rather than squinted at.
+          if (hasCode)
+            Container(
+              key: Key('active_order_code_${order.orderId}'),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: c.accent,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: c.border, width: 2),
+              ),
+              child: Text(
+                code,
+                style: textTheme.titleLarge?.copyWith(
+                  color: c.onAccent,
+                  letterSpacing: 3,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            )
+          else
+            // No code yet (payment still settling). Says so rather than
+            // showing a blank slot.
+            Text('Code soon',
+                style: textTheme.bodySmall?.copyWith(color: c.onPrimary)),
+        ],
+      ),
+    );
+  }
+
+  static String _statusLabel(String status) {
+    switch (status.toUpperCase()) {
+      case 'READY':
+        return 'Ready to collect';
+      case 'PREPARING':
+        return 'Being prepared';
+      case 'RECEIVED':
+        return 'Order received';
+      case 'PAID':
+        return 'Payment confirmed';
+      default:
+        return 'In progress';
+    }
   }
 }
 

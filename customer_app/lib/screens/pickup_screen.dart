@@ -253,17 +253,26 @@ class _PickupScreenState extends State<PickupScreen> {
                     _NotifyBanner(notify: _banner!, onDismiss: _dismissBanner),
                     const SizedBox(height: 16),
                   ],
+                  // COMPLETED is checked BEFORE step >= 2. The stepper puts
+                  // READY and COMPLETED on the same index, so without this an
+                  // order already handed over still read "Ready to collect!" —
+                  // telling someone walking away with their food to go collect
+                  // it.
                   Text(
-                    step >= 2
-                        ? 'Ready to\ncollect!'
-                        : (isPaid ? 'Order\nconfirmed.' : 'Almost\nthere.'),
+                    completed
+                        ? 'Enjoy your\nfood!'
+                        : (step >= 2
+                            ? 'Ready to\ncollect!'
+                            : (isPaid ? 'Order\nconfirmed.' : 'Almost\nthere.')),
                     style: textTheme.displaySmall,
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    isPaid
-                        ? 'Show or say your pickup code at the counter.'
-                        : 'Confirming your payment — this is usually instant.',
+                    completed
+                        ? 'Collected — that\'s everything. Thanks for skipping the line.'
+                        : (isPaid
+                            ? 'Show or say your pickup code at the counter.'
+                            : 'Confirming your payment — this is usually instant.'),
                     style: textTheme.bodyLarge?.copyWith(color: c.inkSoft),
                   ),
                   const SizedBox(height: 20),
@@ -297,8 +306,11 @@ class _PickupScreenState extends State<PickupScreen> {
                   ],
                   _PickupCodeCard(
                     code: status?.pickupCode,
-                    highlight: step >= 2,
+                    // Stop highlighting once collected: the code has been used
+                    // and no longer needs to pull the eye.
+                    highlight: step >= 2 && !completed,
                     paid: isPaid,
+                    completed: completed,
                   ),
                   // FR-C5 — perceived-wait prompt, shown once after pickup.
                   if (completed && !_feedbackSent) ...[
@@ -594,10 +606,16 @@ class _PickupCodeCard extends StatelessWidget {
     required this.code,
     required this.highlight,
     required this.paid,
+    this.completed = false,
   });
   final String? code;
   final bool highlight;
   final bool paid;
+
+  /// Already handed over. The code stays visible as a receipt, but every piece
+  /// of copy switches out of the imperative — nothing here is an instruction
+  /// once the food is in their hands.
+  final bool completed;
 
   @override
   Widget build(BuildContext context) {
@@ -612,7 +630,7 @@ class _PickupCodeCard extends StatelessWidget {
       child: Column(
         children: [
           Text(
-            'PICKUP CODE',
+            completed ? 'COLLECTED' : 'PICKUP CODE',
             style: textTheme.labelLarge?.copyWith(color: onColor, letterSpacing: 4),
           ),
           const SizedBox(height: 12),
@@ -629,9 +647,11 @@ class _PickupCodeCard extends StatelessWidget {
           ],
           const SizedBox(height: 6),
           Text(
-            hasCode
-                ? (highlight ? 'Your food is ready!' : 'Keep this handy')
-                : 'The restaurant will confirm your payment shortly.',
+            completed
+                ? 'Handed over. Hope it was worth skipping the line for.'
+                : hasCode
+                    ? (highlight ? 'Your food is ready!' : 'Keep this handy')
+                    : 'The restaurant will confirm your payment shortly.',
             textAlign: TextAlign.center,
             style: textTheme.bodyMedium?.copyWith(color: onColor.withValues(alpha: 0.85)),
           ),

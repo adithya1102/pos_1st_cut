@@ -420,3 +420,101 @@ compare a DB-generated timestamp against a Python-generated one in an
 assertion** — pick one clock, and prefer the clock the code under test uses.
 
 ---
+
+## 2026-08-12 — customer_app: dead-session handling, multi-order OTP, collected state
+
+Builds on `06fb2de4`. Six files, all in `customer_app`. No backend change, no
+migration.
+
+### The bug that made the integration test fail
+
+`ApiClient._send` threw on a 401 but **never cleared the stored token**.
+`clearToken()` existed and was only ever called from profile logout / account
+deletion. So a dead session was kept forever: every request 401'd while
+`isAuthenticated` stayed `true`, and the app sat on a permanently empty screen
+with no route back to login.
+
+This is exactly what a token from ANOTHER environment does. A JWT signed with a
+different `SECRET_KEY` cannot be decoded by this backend, so *every* endpoint
+401s at once. It is what broke the Flutter integration test when it was pointed
+at a local backend while holding a token minted by prod.
+
+Fixed centrally in `_send`, so it covers every endpoint and every verb rather
+than the one call site that surfaced it:
+
+- clears the persisted token, bumps an `authFailures` `ValueNotifier`, throws a
+  distinct `AuthExpiredException`
+- `main.dart` gained a global navigator key + listener →
+  `pushAndRemoveUntil(LoginScreen)`. Named route, so a burst of simultaneous
+  401s (the normal case — several screens poll at once) produces ONE redirect
+  instead of one per failed request.
+- `AuthState` drops its cached `Customer` on the same signal, so no screen shows
+  a name for a session that no longer exists.
+
+**401 ONLY — 403 is deliberately excluded.** `get_current_customer` raises 401
+for a bad token, but this API also returns 403 for ordinary authorisation
+denials (`"Not your order"`, `"Simulation disabled"`) where the session is
+perfectly valid. Clearing on 403 would sign a customer out for a permission
+error they could not have avoided. There is a regression test pinning this
+distinction; do not "simplify" it to `>= 401`.
+
+### Multi-order OTP visibility
+
+The single active-order banner showed only `_active.first`'s pickup code and
+collapsed the rest into a count ("3 orders in progress"). Every other code was
+reachable only by navigating — precisely when someone is standing at a counter
+being asked for one. Replaced with **one card per in-progress order**: outlet
+name, status word, and the code itself in a large accent chip, all readable
+without tapping. Reuses the existing `isActive` / `activeStatuses` filtering
+already built for Order History rather than inventing a second rule. Cards carry
+`Key('active_order_<id>')`; an order whose payment has not settled shows
+"Code soon" rather than a blank slot.
+
+### READY vs COMPLETED — a stepper-index collision
+
+`stepIndex` maps **both** `READY` and `COMPLETED` to 2, and the pickup screen
+branched on `step >= 2`. So an order already handed over still read
+"Ready to collect!" — telling a customer walking away with their food to go and
+collect it. `completed` was already computed on that screen and simply unused in
+the headline.
+
+Now checked BEFORE `step >= 2`: "Enjoy your food!" with collected copy, the code
+card label flips `PICKUP CODE` → `COLLECTED`, and the highlight switches off
+since the code has been used. `COMPLETED` is already absent from
+`activeStatuses`, so a collected order also leaves the main-screen stack on its
+own — no extra filtering needed.
+
+### Tests
+
+`customer_app`: **29 passing** (was 16; +13 new in
+`test/session_and_active_orders_test.dart`). Backend unchanged at **110**.
+
+Two harness traps found while writing them, both worth remembering:
+
+1. A missing `ThemeProvider` made the shared AppBar actions throw
+   `ProviderNotFound`, which rendered an error widget whose *overflow* was the
+   only visible symptom — it masked every real assertion in the group. If a
+   widget test fails with a RenderFlex overflow in a toolbar, check for a
+   missing provider before touching layout.
+2. `_StatusStepper` overflows under `flutter test` because `GoogleFonts` cannot
+   fetch a webfont there, so text measures differently than on a device. Given
+   a wider logical surface rather than reshaping real layout around a
+   font-metrics artifact.
+
+### Disk cleanup performed alongside (not part of the commit)
+
+Freed ~12 GB: `.gradle` (regrows on next build, expected), and the .NET
+`GustoPOS/bin|obj` + `GustoWaiter/bin|obj` trees.
+
+**Consequence worth knowing: those obj/bin trees are TRACKED in git.** Deleting
+them showed up as **16,631 deletions** in `git status`. They were deliberately
+NOT staged here — this commit contains only the six source files plus this entry.
+The artifacts are restorable with `git checkout` or by rebuilding. Whether ~1.6 GB
+of .NET build output should be tracked at all is a separate decision, left open
+rather than resolved by a cleanup side effect.
+
+Deliberately NOT deleted: `customer_app/build` (holds the signed `.aab`),
+`.android/avd` (the emulator), and `Desktop/demo1` + `Desktop/meet` (outside this
+repo, contents unknown — flagged rather than guessed at).
+
+---

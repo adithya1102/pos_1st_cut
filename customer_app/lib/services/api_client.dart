@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -15,6 +16,16 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
+/// The stored session is no longer usable — expired, malformed, or issued by a
+/// DIFFERENT backend (a token signed with another SECRET_KEY fails to decode).
+///
+/// Separate from [ApiException] so a caller can tell "you are logged out" from
+/// "that request failed", and so a screen does not render an auth error as a
+/// retryable network problem.
+class AuthExpiredException extends ApiException {
+  AuthExpiredException(super.message) : super(statusCode: 401);
+}
+
 /// Thin HTTP wrapper that behaves like an interceptor: it holds the bearer
 /// token, attaches it to every request, and centralizes JSON decoding.
 class ApiClient {
@@ -24,6 +35,15 @@ class ApiClient {
 
   final http.Client _client;
   String? _token;
+
+  /// Bumped every time a request is rejected as unauthenticated. The app root
+  /// listens and routes to login; AuthState listens and drops its cached
+  /// customer.
+  ///
+  /// A notifier rather than a callback so several listeners can react to the
+  /// same event without one of them having to chain the others — and because
+  /// the failure can surface from any screen, on any request, at any time.
+  final ValueNotifier<int> authFailures = ValueNotifier<int>(0);
 
   String? get token => _token;
   bool get isAuthenticated => _token != null && _token!.isNotEmpty;
@@ -103,6 +123,28 @@ class ApiClient {
       return body;
     }
 
+    // A dead session, handled ONCE here rather than per call site.
+    //
+    // Before this, a stale token was kept forever: every request 401'd while
+    // isAuthenticated stayed true, so the app sat on a permanently empty
+    // screen and never offered a way back to login. That is exactly what a
+    // token from another environment does — one signed with a different
+    // SECRET_KEY cannot be decoded by this backend, so EVERY endpoint 401s.
+    //
+    // 401 ONLY, deliberately. This API also returns 403 for ordinary
+    // authorisation denials ("Not your order", "Simulation disabled") where
+    // the session is perfectly valid — clearing it there would sign people out
+    // for a permission error they could not have avoided.
+    if (res.statusCode == 401) {
+      await clearToken();
+      authFailures.value++;
+      throw AuthExpiredException(
+        body is Map && body['detail'] != null
+            ? body['detail'].toString()
+            : 'Your session has expired. Please sign in again.',
+      );
+    }
+
     final detail = body is Map && body['detail'] != null
         ? body['detail'].toString()
         : (body is Map && body['message'] != null
@@ -119,5 +161,8 @@ class ApiClient {
     }
   }
 
-  void dispose() => _client.close();
+  void dispose() {
+    authFailures.dispose();
+    _client.close();
+  }
 }

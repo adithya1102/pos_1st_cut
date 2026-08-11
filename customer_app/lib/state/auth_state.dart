@@ -11,7 +11,24 @@ import '../services/push_service.dart';
 /// Holds session state and drives the two login flows: phone OTP through
 /// [OtpAuthService], and Google through [GoogleAuthService].
 class AuthState extends ChangeNotifier {
-  AuthState(this._api, this._otp, this._google, this._push);
+  AuthState(this._api, this._otp, this._google, this._push) {
+    // A 401 anywhere clears the token inside ApiClient. Without this, the
+    // cached Customer would survive it and screens reading the session copy
+    // would still show a name for a session that no longer exists.
+    _api.authFailures.addListener(_onSessionLost);
+  }
+
+  void _onSessionLost() {
+    _customer = null;
+    _error = null;
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _api.authFailures.removeListener(_onSessionLost);
+    super.dispose();
+  }
 
   final ApiClient _api;
   final OtpAuthService _otp;
