@@ -345,13 +345,20 @@ class _PickupScreenState extends State<PickupScreen> {
                   if (status != null) _OrderSummaryCard(status: status),
                   const SizedBox(height: 24),
                   NeoButton(
-                    label: 'Order more',
-                    icon: Icons.add,
+                    label: widget.fromHistory ? 'Back to orders' : 'Order more',
+                    icon: widget.fromHistory ? Icons.arrow_back : Icons.add,
                     variant: NeoButtonVariant.neutral,
-                    onPressed: () => Navigator.of(context).pushAndRemoveUntil(
-                      MaterialPageRoute(builder: (_) => const LocationScreen()),
-                      (route) => false,
-                    ),
+                    // Opened from history: just pop. Clearing the whole stack
+                    // here would throw the customer out of the list they came
+                    // from — the same stack-nuking that made the pickup code
+                    // unrecoverable in the first place.
+                    onPressed: widget.fromHistory
+                        ? () => Navigator.of(context).pop()
+                        : () => Navigator.of(context).pushAndRemoveUntil(
+                              MaterialPageRoute(
+                                  builder: (_) => const LocationScreen()),
+                              (route) => false,
+                            ),
                   ),
                 ],
               ),
