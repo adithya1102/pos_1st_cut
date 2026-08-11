@@ -303,11 +303,37 @@ class _ItemUnavailableChecklistState extends State<ItemUnavailableChecklist> {
       ));
   }
 
+  /// Mirrors the server's COMPOSITION_LOCKED_STATUSES. Once the food is made,
+  /// telling the customer an item "won't be prepared" is false — it already
+  /// was. The server rejects this with a 409 regardless; disabling here just
+  /// stops staff tapping something that cannot work.
+  static const _locked = {
+    'READY', 'COMPLETED', 'PICKED_UP', 'CANCELLED', 'ABANDONED',
+  };
+
+  bool get _pastCutoff => _locked.contains(widget.order.status.toUpperCase());
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final items = widget.order.items;
     if (items.isEmpty) return const SizedBox.shrink();
+
+    if (_pastCutoff) {
+      return Row(
+        children: [
+          Icon(Icons.lock_clock, size: 16, color: theme.colorScheme.outline),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Too late to mark items unavailable — this order is already '
+              '${widget.order.status.toLowerCase()}.',
+              style: theme.textTheme.bodySmall,
+            ),
+          ),
+        ],
+      );
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

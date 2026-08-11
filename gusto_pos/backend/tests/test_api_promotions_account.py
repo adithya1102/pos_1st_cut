@@ -245,3 +245,65 @@ class TestAdmin:
         r = await client.get(f"{API}/pos/offers", headers=seed["owner_auth"])
         mine = [p for p in r.json() if p["id"] == pid][0]
         assert mine["redemption_count"] == 1
+
+
+class TestAdminOrders:
+    async def test_orders_gated_and_paginated(self, client, seed, paid_order):
+        assert (await client.get(f"{API}/admin/orders",
+                                 headers=seed["owner_auth"])).status_code == 403
+        r = await client.get(f"{API}/admin/orders?limit=5&offset=0",
+                             headers=seed["admin_auth"])
+        assert r.status_code == 200
+        page = r.json()
+        assert {"total", "limit", "offset", "orders"} <= set(page)
+        assert page["limit"] == 5 and page["offset"] == 0
+        assert page["total"] >= 1
+
+    async def test_order_row_carries_the_reporting_fields(self, client, seed, paid_order):
+        r = await client.get(f"{API}/admin/orders?limit=50", headers=seed["admin_auth"])
+        row = next(o for o in r.json()["orders"] if o["order_id"] == paid_order["id"])
+        assert row["pickup_code"]
+        assert row["outlet_name"]
+        assert row["customer_name"]
+        assert row["total_amount"] == 200.0
+        assert [i["name"] for i in row["items"]] == ["Test Dish"]
+
+    async def test_distance_is_null_when_origin_never_captured(self, client, seed,
+                                                               paid_order):
+        r = await client.get(f"{API}/admin/orders?limit=50", headers=seed["admin_auth"])
+        row = next(o for o in r.json()["orders"] if o["order_id"] == paid_order["id"])
+        # Never fabricate a distance — no origin means unknown, not zero.
+        assert row["distance_km"] is None
+
+    async def test_distance_computed_when_origin_present(self, client, seed, db):
+        await db.execute(text(
+            "UPDATE outlets SET latitude=12.9716, longitude=77.5946 WHERE id=:o"),
+            {"o": seed["outlet_id"]})
+        await db.commit()
+        r = await client.post(f"{API}/customer/orders", headers=seed["customer_auth"], json={
+            "outlet_id": seed["outlet_id"],
+            "items": [{"menu_item_id": seed["menu_item_id"], "quantity": 1}],
+            "origin_lat": 13.0827, "origin_lng": 80.2707, "origin_source": "gps"})
+        oid = r.json()["id"]
+        page = await client.get(f"{API}/admin/orders?limit=50", headers=seed["admin_auth"])
+        row = next(o for o in page.json()["orders"] if o["order_id"] == oid)
+        # Bengaluru -> Chennai is ~290km; assert the order of magnitude only.
+        assert row["distance_km"] is not None and 250 < row["distance_km"] < 350
+
+    async def test_promotion_surfaces_on_the_order_row(self, client, seed):
+        c = await client.post(f"{API}/pos/offers", headers=seed["owner_auth"], json={
+            "discount_type": "FLAT", "discount_value": 20, "is_active": True})
+        r = await client.post(f"{API}/customer/orders", headers=seed["customer_auth"], json={
+            "outlet_id": seed["outlet_id"],
+            "items": [{"menu_item_id": seed["menu_item_id"], "quantity": 1}],
+            "promotion_id": c.json()["id"]})
+        oid = r.json()["id"]
+        page = await client.get(f"{API}/admin/orders?limit=50", headers=seed["admin_auth"])
+        row = next(o for o in page.json()["orders"] if o["order_id"] == oid)
+        assert row["promotion_label"] and row["promotion_discount"] == 20.0
+
+    async def test_history_now_carries_pickup_code(self, client, seed, paid_order):
+        r = await client.get(f"{API}/customer/orders", headers=seed["customer_auth"])
+        row = next(o for o in r.json() if o["order_id"] == paid_order["id"])
+        # The persistence fix: history alone is enough to recover the code.
+        assert row["pickup_code"], "history must expose the code, not just checkout"

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -21,6 +22,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.users.model import User
+# Reused rather than reimplemented — one haversine in the codebase, so the
+# admin log and the customer's distance sort can never disagree.
+from app.modules.carevo_customer.service import CarevoService
 
 # ---------------------------------------------------------------------------
 # Activity heuristic (NOT a churn model, NOT a prediction).
@@ -649,6 +653,93 @@ class AdminService:
             ],
             "outcome": outcome_out,
         }
+
+    # ------------------------------ orders ---------------------------------
+    @staticmethod
+    async def list_orders(db: AsyncSession, *, limit: int = 50,
+                          offset: int = 0) -> dict:
+        """One row per order, across every outlet. Read-only.
+
+        PAGINATED, not capped-and-truncated: the customer directory's
+        `LIMIT 200` silently hides row 201, which is survivable for a directory
+        but not for an order log that grows with every sale. Returns `total` so
+        the caller can page rather than guess.
+
+        Composed as one query plus one items fetch — the same two-pass shape
+        list_my_orders uses — rather than a row-per-item join that would need
+        de-duplicating in Python.
+        """
+        total = await db.scalar(text("SELECT count(*) FROM customer_orders")) or 0
+
+        rows = (await db.execute(text("""
+            SELECT co.id, co.pickup_code, co.status, co.payment_status,
+                   co.total_amount, co.discount_amount, co.created_at,
+                   co.origin_lat, co.origin_lng,
+                   c.name  AS customer_name,
+                   c.phone_number AS customer_phone,
+                   c.email AS customer_email,
+                   o.location_name AS outlet_name,
+                   o.latitude  AS outlet_lat,
+                   o.longitude AS outlet_lng,
+                   p.label AS promotion_label,
+                   p.code  AS promotion_code,
+                   pr.discount_amount AS promotion_discount
+            FROM customer_orders co
+            LEFT JOIN customers c ON c.id = co.customer_id
+            LEFT JOIN outlets   o ON o.id = co.outlet_id
+            -- promotion_redemptions is the ledger; promotions carries the name.
+            -- LEFT JOINed because most orders have no promotion, and an INNER
+            -- join would silently drop them from the log entirely.
+            LEFT JOIN promotion_redemptions pr ON pr.order_id = co.id
+            LEFT JOIN promotions p ON p.id = pr.promotion_id
+            ORDER BY co.created_at DESC NULLS LAST
+            LIMIT :limit OFFSET :offset
+        """), {"limit": limit, "offset": offset})).fetchall()
+
+        ids = [str(r.id) for r in rows]
+        by_order: dict = defaultdict(list)
+        if ids:
+            for it in (await db.execute(text("""
+                SELECT customer_order_id, name_snap, quantity
+                FROM customer_order_items
+                WHERE customer_order_id = ANY(:ids)
+                ORDER BY name_snap
+            """), {"ids": ids})).fetchall():
+                by_order[str(it.customer_order_id)].append(
+                    {"name": it.name_snap, "quantity": it.quantity})
+
+        out = []
+        for r in rows:
+            # Distance is only meaningful when the customer actually shared an
+            # origin. Returning null (rendered "—") rather than 0 or the outlet
+            # coordinates keeps "we don't know" distinguishable from "nearby".
+            distance = None
+            if (r.origin_lat is not None and r.origin_lng is not None
+                    and r.outlet_lat is not None and r.outlet_lng is not None):
+                distance = CarevoService._haversine_km(
+                    float(r.origin_lat), float(r.origin_lng),
+                    float(r.outlet_lat), float(r.outlet_lng))
+
+            out.append({
+                "order_id": r.id,
+                "pickup_code": r.pickup_code,
+                "status": r.status,
+                "payment_status": r.payment_status,
+                "created_at": r.created_at,
+                "customer_name": r.customer_name,
+                "customer_phone": r.customer_phone,
+                "customer_email": r.customer_email,
+                "outlet_name": r.outlet_name,
+                "items": by_order.get(str(r.id), []),
+                "total_amount": float(r.total_amount or 0),
+                "discount_amount": float(r.discount_amount or 0),
+                "promotion_label": r.promotion_label,
+                "promotion_code": r.promotion_code,
+                "promotion_discount": (float(r.promotion_discount)
+                                       if r.promotion_discount is not None else None),
+                "distance_km": distance,
+            })
+        return {"total": int(total), "limit": limit, "offset": offset, "orders": out}
 
     # --------------------------- audit log ---------------------------------
     @staticmethod

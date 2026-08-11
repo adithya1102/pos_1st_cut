@@ -11,6 +11,7 @@ class OrderHistoryEntry {
     this.totalAmount = 0,
     this.discountAmount = 0,
     this.createdAt,
+    this.pickupCode,
     this.items = const [],
   });
 
@@ -21,9 +22,20 @@ class OrderHistoryEntry {
   final double totalAmount;
   final double discountAmount;
   final DateTime? createdAt;
+
+  /// Null until payment lands. Carried in the list so an in-progress order can
+  /// be reopened from history — before this the code lived only on the
+  /// transient post-checkout screen and was lost the moment you left it.
+  final String? pickupCode;
   final List<OrderHistoryLine> items;
 
   bool get isPaid => (paymentStatus ?? '').toUpperCase() == 'PAID';
+
+  /// Still going: the customer has paid and has not collected yet. These are
+  /// the orders that need to stay reachable.
+  static const activeStatuses = {'PAID', 'RECEIVED', 'PREPARING', 'READY'};
+
+  bool get isActive => activeStatuses.contains(status.toUpperCase());
 
   /// One-line summary of the basket, e.g. "2x Masala Dosa, 1x Filter Coffee".
   String get itemSummary => items.isEmpty
@@ -40,6 +52,7 @@ class OrderHistoryEntry {
       totalAmount: num(json['total_amount']),
       discountAmount: num(json['discount_amount']),
       createdAt: DateTime.tryParse(json['created_at']?.toString() ?? ''),
+      pickupCode: json['pickup_code']?.toString(),
       items: ((json['items'] as List?) ?? const [])
           .whereType<Map<String, dynamic>>()
           .map(OrderHistoryLine.fromJson)

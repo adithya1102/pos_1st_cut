@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../services/customer_service.dart';
 import '../widgets/account_button.dart';
+import 'pickup_screen.dart';
 
 /// The signed-in customer's past orders.
 ///
@@ -72,12 +73,38 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                           ),
                         ],
                       )
-                    : ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                        itemCount: orders.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 12),
-                        itemBuilder: (_, i) => _OrderCard(order: orders[i]),
-                      ),
+                    : Builder(builder: (context) {
+                        // Active orders float to the top and stay reachable —
+                        // they are the ones with a pickup code still to show.
+                        final active =
+                            orders.where((o) => o.isActive).toList();
+                        final past =
+                            orders.where((o) => !o.isActive).toList();
+                        return ListView(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                          children: [
+                            if (active.isNotEmpty) ...[
+                              Text('In progress',
+                                  style: theme.textTheme.titleMedium),
+                              const SizedBox(height: 8),
+                              ...active.map((o) => Padding(
+                                    padding: const EdgeInsets.only(bottom: 12),
+                                    child: _OrderCard(order: o),
+                                  )),
+                              const SizedBox(height: 12),
+                            ],
+                            if (past.isNotEmpty) ...[
+                              Text(active.isEmpty ? 'Orders' : 'Past orders',
+                                  style: theme.textTheme.titleMedium),
+                              const SizedBox(height: 8),
+                              ...past.map((o) => Padding(
+                                    padding: const EdgeInsets.only(bottom: 12),
+                                    child: _OrderCard(order: o),
+                                  )),
+                            ],
+                          ],
+                        );
+                      }),
               ),
       ),
     );
@@ -101,7 +128,7 @@ class _OrderCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Card(
+    final card = Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -141,11 +168,50 @@ class _OrderCard extends StatelessWidget {
                 _Chip(label: order.status),
                 const SizedBox(width: 8),
                 if (order.isPaid) const _Chip(label: 'PAID'),
+                if (order.isActive && order.pickupCode != null) ...[
+                  const Spacer(),
+                  // The whole point of the fix: the code is visible in the
+                  // list itself, not only behind a tap.
+                  Text('Code ${order.pickupCode}',
+                      style: theme.textTheme.labelLarge?.copyWith(
+                          color: theme.colorScheme.primary)),
+                ],
               ],
             ),
+            if (order.isActive) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Icon(Icons.touch_app_outlined,
+                      size: 14, color: theme.colorScheme.outline),
+                  const SizedBox(width: 6),
+                  Text('Tap to track this order',
+                      style: theme.textTheme.bodySmall),
+                ],
+              ),
+            ],
           ],
         ),
       ),
+    );
+
+    // Only in-progress orders open the live screen. A completed order has no
+    // pickup code left to show and nothing to poll, so tapping it would open a
+    // screen that just says "picked up" — worse than not being tappable.
+    if (!order.isActive) return card;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => PickupScreen(
+            orderId: order.orderId,
+            amount: order.totalAmount,
+            // Gives it a back button and stops "Order more" nuking the stack.
+            fromHistory: true,
+          ),
+        ),
+      ),
+      child: card,
     );
   }
 }

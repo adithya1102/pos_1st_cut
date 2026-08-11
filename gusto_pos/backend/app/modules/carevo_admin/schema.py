@@ -68,6 +68,47 @@ class UnlockOrderOut(BaseModel):
     failed_attempts: int
 
 
+class AdminOrderItemOut(BaseModel):
+    name: Optional[str] = None
+    quantity: int = 1
+
+
+class AdminOrderOut(BaseModel):
+    """One order, flattened for the admin log."""
+
+    order_id: uuid.UUID
+    pickup_code: Optional[str] = None
+    status: str
+    payment_status: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    # Nullable since migration 008: an OTP customer has no email, a Google
+    # customer has no phone, and a deleted account has neither.
+    customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
+    customer_email: Optional[str] = None
+
+    outlet_name: Optional[str] = None
+    items: list[AdminOrderItemOut] = []
+
+    total_amount: float = 0
+    discount_amount: float = 0
+    promotion_label: Optional[str] = None
+    promotion_code: Optional[str] = None
+    promotion_discount: Optional[float] = None
+
+    # NULL when the customer never shared an origin. Deliberately not 0 —
+    # "unknown" and "at the restaurant" must not render identically.
+    distance_km: Optional[float] = None
+
+
+class AdminOrderPageOut(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    orders: list[AdminOrderOut] = []
+
+
 class AuditLogOut(BaseModel):
     id: uuid.UUID
     actor_username: Optional[str] = None

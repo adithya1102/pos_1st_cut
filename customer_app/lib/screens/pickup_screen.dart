@@ -27,10 +27,19 @@ class PickupScreen extends StatefulWidget {
     required this.orderId,
     this.amount,
     this.paymentHint,
+    this.fromHistory = false,
   });
 
   final String orderId;
   final double? amount;
+
+  /// True when reached from Order History rather than straight from checkout.
+  ///
+  /// Straight after checkout there must be NO back button — back would land on
+  /// the checkout screen of an order that has already been paid for. Reopened
+  /// later that reasoning is inverted: the customer came from a list and needs
+  /// to get back to it, and "Order more" must not detonate their nav stack.
+  final bool fromHistory;
 
   /// Set when Cashfree's sheet reported a problem. Advisory ONLY — this screen
   /// keeps polling regardless, because the SDK callback is not authoritative:
@@ -228,7 +237,9 @@ class _PickupScreenState extends State<PickupScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        automaticallyImplyLeading: false,
+        // No back button straight after checkout; a normal one when the
+        // screen was opened from history.
+        automaticallyImplyLeading: widget.fromHistory,
         title: const Text('Pickup'),
         actions: careVoActions(),
       ),

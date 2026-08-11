@@ -158,3 +158,41 @@ class TestOrderLifecycle:
         total = await db.scalar(text("SELECT total_amount FROM customer_orders WHERE id=:o"),
                                 {"o": paid_order["id"]})
         assert float(total) == 200.0, "the paid order's total must not be adjusted"
+
+    async def test_item_unavailable_blocked_once_ready(self, client, seed, paid_order, db):
+        """Item 3 cutoff: composition cannot change once the food is made."""
+        items = [str(i[0]) for i in (await db.execute(text(
+            "SELECT id FROM customer_order_items WHERE customer_order_id=:o"),
+            {"o": paid_order["id"]})).fetchall()]
+        await db.execute(text("UPDATE customer_orders SET status='READY' WHERE id=:o"),
+                         {"o": paid_order["id"]})
+        await db.commit()
+
+        batch = await client.post(f"{API}/pos/orders/{paid_order['id']}/items/unavailable",
+                                  headers=seed["owner_auth"], json={"item_ids": items})
+        assert batch.status_code == 409
+        assert "ready for pickup" in batch.json()["detail"]
+
+        # the older single-item path must be closed too, not just the checklist
+        single = await client.post(f"{API}/pos/orders/{paid_order['id']}/notify",
+                                   headers=seed["owner_auth"],
+                                   json={"type": "item_unavailable", "item_id": items[0]})
+        assert single.status_code == 409
+
+        n = await db.scalar(text(
+            "SELECT count(*) FROM order_events WHERE order_id=:o "
+            "AND event_type='ITEM_UNAVAILABLE'"), {"o": paid_order["id"]})
+        assert n == 0, "a rejected cutoff must write no event"
+
+    async def test_item_unavailable_still_allowed_before_ready(self, client, seed,
+                                                               paid_order, db):
+        for status in ("PAID", "RECEIVED", "PREPARING"):
+            await db.execute(text("UPDATE customer_orders SET status=:s WHERE id=:o"),
+                             {"s": status, "o": paid_order["id"]})
+            await db.commit()
+            items = [str(i[0]) for i in (await db.execute(text(
+                "SELECT id FROM customer_order_items WHERE customer_order_id=:o"),
+                {"o": paid_order["id"]})).fetchall()]
+            r = await client.post(f"{API}/pos/orders/{paid_order['id']}/items/unavailable",
+                                  headers=seed["owner_auth"], json={"item_ids": items[:1]})
+            assert r.status_code == 200, f"{status} should still allow it: {r.text}"

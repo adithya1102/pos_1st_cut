@@ -217,6 +217,41 @@ export interface PromotionCreateBody {
   is_active?: boolean;
 }
 
+/** One order in the admin log (GET /admin/orders). Separate from CustomerRow
+ *  on purpose — the Customers directory is per-person, this is per-order, and
+ *  its columns are left untouched. */
+export interface AdminOrderItem {
+  name: string | null;
+  quantity: number;
+}
+
+export interface AdminOrder {
+  order_id: string;
+  pickup_code: string | null;
+  status: string;
+  payment_status: string | null;
+  created_at: string | null;
+  customer_name: string | null;
+  customer_phone: string | null;
+  customer_email: string | null;
+  outlet_name: string | null;
+  items: AdminOrderItem[];
+  total_amount: number;
+  discount_amount: number;
+  promotion_label: string | null;
+  promotion_code: string | null;
+  promotion_discount: number | null;
+  /** Null when the customer never shared an origin — render "—", not 0. */
+  distance_km: number | null;
+}
+
+export interface AdminOrderPage {
+  total: number;
+  limit: number;
+  offset: number;
+  orders: AdminOrder[];
+}
+
 export interface AuditLog {
   id: string;
   actor_username: string | null;
@@ -360,6 +395,9 @@ export const adminApi = {
     api.post<City>(`/api/v1/admin/cities/${id}/approve`, {}),
   rejectCity: (id: string) =>
     api.post<City>(`/api/v1/admin/cities/${id}/reject`, {}),
+
+  orders: (limit = 50, offset = 0) =>
+    api.get<AdminOrderPage>(`/api/v1/admin/orders?limit=${limit}&offset=${offset}`),
 
   auditLogs: (limit = 100) =>
     api.get<AuditLog[]>(`/api/v1/admin/audit-logs?limit=${limit}`),

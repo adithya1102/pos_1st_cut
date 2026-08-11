@@ -772,6 +772,43 @@ class CarevoService:
     # longer true, and the customer may already be walking over.
     REJECTABLE_STATUSES = {"PAID", "RECEIVED", "PREPARING"}
 
+    # Statuses at or past which an order's COMPOSITION can no longer change.
+    # Expressed as a deny-list rather than an allow-list on purpose: the
+    # question is "has the kitchen finished or has the order ended", and a
+    # status nobody has thought of yet should default to still-changeable
+    # rather than being silently blocked.
+    #
+    # Same boundary as REJECTABLE_STATUSES for the same reason — once the food
+    # is made, telling the customer an item "won't be prepared" is false: it
+    # already was. Past that point the remedy is a refund conversation, not an
+    # availability notice.
+    COMPOSITION_LOCKED_STATUSES = {
+        "READY", "COMPLETED", "PICKED_UP", "CANCELLED", "ABANDONED",
+    }
+
+    @staticmethod
+    def _assert_composition_open(status: Optional[str], *, count: int = 1) -> None:
+        """Reject an item-unavailable action once the order is READY or over.
+
+        Server-side half of the cutoff. The owner app also disables the control,
+        but the UI is never the enforcement point — a stale screen, a replayed
+        request or a second device would otherwise walk straight past it.
+        """
+        s = (status or "").upper()
+        if s not in CarevoService.COMPOSITION_LOCKED_STATUSES:
+            return
+        noun = "This item" if count == 1 else "These items"
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{noun} can no longer be marked unavailable — the order is "
+                f"already {s.lower()}."
+                if s != "READY" else
+                f"{noun} can no longer be marked unavailable — the order is "
+                "already ready for pickup."
+            ),
+        )
+
     @staticmethod
     async def auto_receive(db: AsyncSession, order: CustomerOrder) -> CustomerOrder:
         """PAID -> RECEIVED with no human gate.
@@ -1436,7 +1473,7 @@ class CarevoService:
 
         # Order must exist and belong to the caller's outlet.
         order = (await db.execute(text(
-            "SELECT id, outlet_id FROM customer_orders WHERE id = :oid"
+            "SELECT id, outlet_id, status FROM customer_orders WHERE id = :oid"
         ), {"oid": str(order_id)})).first()
         if not order:
             raise HTTPException(status_code=404, detail="Order not found")
@@ -1447,6 +1484,10 @@ class CarevoService:
         resolved_item_id: Optional[uuid.UUID] = None
 
         if notify_type == "item_unavailable":
+            # Same cutoff as the batch endpoint. This single-item path is the
+            # older one and is still reachable, so guarding only the checklist
+            # would leave the hole open through a different door.
+            CarevoService._assert_composition_open(order.status)
             if item_id is None:
                 raise HTTPException(
                     status_code=422,
@@ -1627,10 +1668,12 @@ class CarevoService:
         """
         # Ownership first — never leak whether an order id exists elsewhere.
         order = (await db.execute(text(
-            "SELECT id, outlet_id FROM customer_orders WHERE id = :oid"
+            "SELECT id, outlet_id, status FROM customer_orders WHERE id = :oid"
         ), {"oid": str(order_id)})).first()
         if not order or str(order.outlet_id) != str(outlet_id):
             raise HTTPException(status_code=404, detail="Order not found for this outlet")
+        # Cutoff: once the food is made, "won't be prepared" is simply untrue.
+        CarevoService._assert_composition_open(order.status, count=len(item_ids))
 
         # Collapse duplicates but keep the submitted order for stable output.
         seen, wanted = set(), []
@@ -1770,7 +1813,12 @@ class CarevoService:
         orders = (await db.execute(text("""
             SELECT co.id, co.outlet_id, o.location_name AS outlet_name,
                    co.status, co.payment_status, co.total_amount,
-                   co.discount_amount, co.created_at
+                   co.discount_amount, co.created_at,
+                   -- Needed so history can surface the pickup code for an
+                   -- order still in progress. Before this the code existed
+                   -- only on the transient post-checkout screen, so leaving
+                   -- that screen lost it permanently.
+                   co.pickup_code
             FROM customer_orders co
             LEFT JOIN outlets o ON o.id = co.outlet_id
             WHERE co.customer_id = :cid
@@ -1803,6 +1851,7 @@ class CarevoService:
                 "total_amount": float(o.total_amount or 0),
                 "discount_amount": float(o.discount_amount or 0),
                 "created_at": o.created_at,
+                "pickup_code": o.pickup_code,
                 "items": by_order.get(str(o.id), []),
             }
             for o in orders

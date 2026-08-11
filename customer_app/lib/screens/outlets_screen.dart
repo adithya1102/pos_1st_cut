@@ -4,11 +4,13 @@ import 'package:provider/provider.dart';
 import '../models/outlet.dart';
 import '../services/api_client.dart';
 import '../services/catalog_service.dart';
+import '../services/customer_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/widgets/neo_button.dart';
 import '../theme/widgets/neo_card.dart';
 import 'menu_screen.dart';
+import 'pickup_screen.dart';
 import '../widgets/account_button.dart';
 import '../widgets/offer_sheet.dart';
 
@@ -80,6 +82,7 @@ class _OutletsScreenState extends State<OutletsScreen> {
                 ],
               ),
             ),
+            const _ActiveOrderBanner(),
             Expanded(
               child: FutureBuilder<List<Outlet>>(
                 future: _future,
@@ -132,6 +135,7 @@ class _OutletCard extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
 
     return NeoCard(
+      key: Key('outlet_card_${outlet.id}'),
       onTap: outlet.isOpen
           ? () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => MenuScreen(outlet: outlet)),
@@ -224,6 +228,96 @@ class _OutletCard extends StatelessWidget {
   }
 }
 
+/// "1 active order — tap to see your code" strip above the restaurant list.
+///
+/// Exists because the pickup code was previously reachable only via
+/// Profile → Order History, three taps deep, which is exactly where a customer
+/// standing at a counter will not think to look. Renders nothing when there is
+/// no active order, so the screen is unchanged in the common case.
+///
+/// Fetches once on build rather than polling: the strip only needs to know an
+/// active order EXISTS. Live status belongs on the pickup screen it opens.
+class _ActiveOrderBanner extends StatefulWidget {
+  const _ActiveOrderBanner();
+
+  @override
+  State<_ActiveOrderBanner> createState() => _ActiveOrderBannerState();
+}
+
+class _ActiveOrderBannerState extends State<_ActiveOrderBanner> {
+  List<OrderHistoryEntry> _active = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final orders = await context.read<CustomerService>().orders(limit: 20);
+      if (!mounted) return;
+      setState(() => _active = orders.where((o) => o.isActive).toList());
+    } catch (_) {
+      // Silent: a failed lookup must never block restaurant discovery. The
+      // strip simply does not appear.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_active.isEmpty) return const SizedBox.shrink();
+    final c = AppColors.of(context);
+    final textTheme = Theme.of(context).textTheme;
+    final first = _active.first;
+    final more = _active.length - 1;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+      child: NeoCard(
+        color: c.primary,
+        onTap: () async {
+          await Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => PickupScreen(
+              orderId: first.orderId,
+              amount: first.totalAmount,
+              fromHistory: true,
+            ),
+          ));
+          // The order may have been collected while they were in there.
+          if (mounted) _load();
+        },
+        child: Row(
+          children: [
+            Icon(Icons.receipt_long, color: c.onPrimary),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    more > 0
+                        ? '${_active.length} orders in progress'
+                        : 'Order in progress',
+                    style: textTheme.titleMedium?.copyWith(color: c.onPrimary),
+                  ),
+                  Text(
+                    first.pickupCode != null
+                        ? 'Pickup code ${first.pickupCode}'
+                        : 'Tap to track it',
+                    style: textTheme.bodySmall?.copyWith(color: c.onPrimary),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, color: c.onPrimary),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// The inline "there's an offer here" line on an outlet card.
 ///
 /// Tapping opens the full list (CareVo campaigns aimed at this restaurant plus
@@ -242,6 +336,7 @@ class _OfferChip extends StatelessWidget {
     final extra = outlet.offerCount - 1;
 
     return GestureDetector(
+      key: const Key('outlet_offer_chip'),
       behavior: HitTestBehavior.opaque,
       onTap: () => showOffersSheet(context, outlet: outlet),
       child: Container(

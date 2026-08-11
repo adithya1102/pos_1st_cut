@@ -515,6 +515,10 @@ class OrderHistoryOut(BaseModel):
     total_amount: float = 0
     discount_amount: float = 0
     created_at: Optional[datetime] = None
+    # Null until payment lands. Present here so an in-progress order can be
+    # reopened from history — previously the code was only ever shown on the
+    # transient post-checkout screen and was unrecoverable once left.
+    pickup_code: Optional[str] = None
     items: list[OrderHistoryItemOut] = []
 
 

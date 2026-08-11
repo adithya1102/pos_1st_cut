@@ -126,6 +126,27 @@ async def list_customers(
     return await AdminService.list_customers(db, limit=limit)
 
 
+# ------------------------------ orders -------------------------------------
+@router.get("/orders", response_model=s.AdminOrderPageOut)
+async def list_orders(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    _admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Every order across every outlet, newest first.
+
+    Paginated rather than capped. The customer directory takes a bare `limit`
+    and silently drops everything past it — tolerable for a directory, not for
+    an order log that grows with each sale, so this returns `total` and an
+    `offset` the caller can page with.
+
+    Deliberately GET-only and separate from /admin/customers: this is an order
+    log, and the customer directory's columns are left exactly as they were.
+    """
+    return await AdminService.list_orders(db, limit=limit, offset=offset)
+
+
 # ------------------------------ cities -------------------------------------
 # Same shape as the outlet verification queue above, deliberately: pending rows
 # listed, then approve/reject, each writing an admin_audit_logs entry.
