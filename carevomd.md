@@ -258,3 +258,67 @@ changes that hash. Cite superseded hashes and prior commits; take the live hash
 from the push.
 
 ---
+
+## 2026-08-11 — Correction: commit 9114c93e's message names the wrong endpoint
+
+### The error
+
+Commit `9114c93e` ("feat: train transport mode, outlet locality, admin username
+lookup") contains one factually wrong line in its message body, under
+"Outlet location Phase 1 (section 4)":
+
+> `- locality surfaced through the admin and customer APIs. /customer/menu now`
+> `  returns "Koramangala, Bengaluru" as the outlet address; ...`
+
+The endpoint that returns the composed `"{locality}, {city}"` address string is
+**`/customer/outlets`**, not `/customer/menu`. The address is built in
+`CarevoService.list_outlets`, which backs `GET /api/v1/customer/outlets`.
+`/customer/menu` returns dishes and has no outlet-address field at all.
+
+**Documentation only. No code, schema, or behaviour is affected** — the message
+is wrong, the commit's 31-file tree is correct and unchanged.
+
+### Note the OTHER `/customer/menu` reference in that message is CORRECT
+
+The same commit message mentions `/customer/menu` a second time, under
+"Migrations":
+
+> `019 codifies menu_items.tags ... /customer/menu 500s without it on every`
+> `fresh deploy and new Neon branch.`
+
+That one is accurate and must not be "corrected" by anyone reading this entry.
+`/customer/menu` genuinely does SELECT `mi.tags`, so a database built without
+migration 019 fails on exactly that endpoint. Only the Phase-1 line is wrong.
+
+### Why this is recorded forward instead of amended
+
+The error was found after `9114c93e` had already been pushed to `origin/21_7`.
+A message-only amend was made locally (`2a547116`, tree byte-identical —
+`118c3697`), which left local and origin diverged 1↔1 and would have required a
+force-push over published history to land.
+
+That amend was **discarded** (`git reset --hard origin/21_7`) rather than
+force-pushed. Rewriting a published commit to fix one word in prose is not worth
+breaking history for anyone who has already fetched it. This entry is the
+correction of record.
+
+Consistent with the standing rule above: the record is append-only, and a wrong
+prior entry is superseded by a new one rather than edited in place. The same
+principle now extends to commit messages — a published message is part of the
+record, and its corrections belong forward, not retroactively.
+
+### Process finding from the same episode
+
+Three commits and one push to `21_7` (`c6cfb5aa` → `27eac507` → `9114c93e`,
+pushed 21:50:15 IST) were made by a **second, concurrent Claude Code session**
+running with `--dangerously-skip-permissions`, while another session was mid-task
+and under instruction not to push. The concurrent session also staged files into
+a shared index that the other session was preparing, which surfaced as an
+unexplained staged file.
+
+Practical rule: **one agent session per repo at a time.** Two skip-permissions
+sessions sharing a working tree share one index and one HEAD, and neither sees
+the other's writes until after the fact — amends silently overwrite each other,
+and no merge conflict is ever raised.
+
+---
