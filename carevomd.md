@@ -322,3 +322,101 @@ the other's writes until after the fact — amends silently overwrite each other
 and no merge conflict is ever raised.
 
 ---
+
+## 2026-08-11 — Timing Engine addendum Item 2: cold-start JIT fallback (shadow mode)
+
+Builds on `bb668762`. Two files: `app/modules/prediction/service.py` and a new
+`tests/test_api_cold_start_jit.py`. **No migration** — see below.
+
+### What it does, and what it deliberately does not
+
+Fires only when BOTH halves of a conjunction hold, a pairing that existed
+nowhere in the repo before:
+
+```
+trusted_order_count(outlet) < 30   AND   hold_tolerance_seconds(order) < 300
+```
+
+When it fires it writes `order_twin.scheduled_prep_start_at` /
+`latest_safe_start_at` and emits one `PREP_SCHEDULED` event.
+
+**IT DOES NOT CHANGE WHEN ANY KITCHEN STARTS COOKING.** Nothing reads either
+column or that event to control prep — verified by search across the backend and
+all three clients before building, and the payload carries `shadow_mode: true`
+so no later reader mistakes a logged schedule for an instruction that was
+actually given. `mark_paid` is untouched and still emits its inferred
+`ORDER_ACCEPTED`/`PREP_STARTED` exactly as before. The departure-window display
+stays behind the existing `GRADUATION_THRESHOLD = 300` gate in
+`carevo_admin/service.py`, which this change does not touch.
+
+### The buffer is station-specific, and grounded in existing code
+
+The master timing-engine doc (§11.3/§11.4) is **still not in this repo** —
+searched again, still absent. So the buffer comes from `STATION_DEFAULTS`, this
+codebase's actual pool-defaults table, rather than a number invented for the
+occasion.
+
+`STATION_DEFAULTS` is a dict of **3-tuples**, not objects — there is no
+`.hold_tolerance_s` attribute. The field is the third element, called `d_hold`
+in `_resolve_item`, and the new `_jit_station_buffer_s()` reads it by the same
+tuple-unpack idiom (not an index literal, so it survives the tuple gaining a
+field) with `STATION_DEFAULTS["other"]` as the fallback for a missing station.
+
+```
+effective_buffer_s = min(station_pool_default, this order's own hold_tol)
+```
+
+Whichever is tighter wins. **The observable band is narrow and worth knowing:**
+the gate already requires `hold_tol < 300`, and every station default except
+fryer (240) and griddle (300) is >= 300 — so outside fryer-bound orders with
+`hold_tol` in [240, 300), the dish's own value still wins exactly as it did
+under the flat constant. Per-station is more honest than one number; it is not
+expected to move much data.
+
+The **gate threshold** (`COLD_START_JIT_HOLD_TRIGGER_S = 300`) was deliberately
+left flat and NOT made station-specific. It is a hard spec threshold about
+cold-start uncertainty, which is a property of the outlet's missing history, not
+of any station.
+
+### Station dimension on an order-level twin
+
+`PREP_SCHEDULED`'s payload carries `binding_station` and `station_load_s`,
+stashed from `predict_kitchen` via the same `outlet_state` idiom
+`_hold_tolerance_s` already used. `order_twin` stays order-level: it has one
+`scheduled_prep_start_at` column, not one per station. That mismatch is the
+known simultaneous-start modelling gap — μ_ready assumes every station begins at
+once, with no stagger. Carrying the breakdown in the event payload is what makes
+the gap measurable from logged data before anyone builds real per-station
+scheduling on an order-level column.
+
+### No migration needed — verified, not assumed
+
+`order_twin.scheduled_prep_start_at` and `latest_safe_start_at` already exist as
+`timestamptz` nullable from migration 006, confirmed against
+`information_schema` on **both** `carevo_test` and prod. Prod had **0 non-null
+rows** in either column — written by no code path until now. `order_events` has
+**zero CHECK constraints**, so `PREP_SCHEDULED` needed no widening (unlike
+`push_notifications.kind`, which did in migration 018).
+
+This is the first `PREP_SCHEDULED` write site in the repo. It is emitted once
+per order, mirroring `PROMISE_ISSUED`'s guard — `recompute_twin` runs on every
+status read, and re-emitting would turn an append-only event log into a poll log.
+
+### Tests
+
+**110 passing** overall, 20 in the new file (zero Item-2 tests existed before).
+Seven of the twenty are regression assertions that shadow mode really is
+shadow: `mark_paid`'s inferred events intact, `PREP_STARTED`'s timestamp
+unmoved, order status unchanged, departure window still produced,
+`PROMISE_ISSUED` still once, Item 1 (train mode) intact, Item 3
+(`ITEM_UNAVAILABLE` cutoff) still enforced.
+
+**Flaky-test finding worth remembering:** one test failed roughly 1 run in 4 by
+comparing Postgres's `SELECT now()` against a clamp that uses Python's
+`datetime.now()`. On Windows, Python's clock has ~15ms timer granularity while
+Postgres reads a finer one, so the two disagree by a few milliseconds at random
+(the observed delta was ~3ms). It was a test bug, not a code bug. **Do not
+compare a DB-generated timestamp against a Python-generated one in an
+assertion** — pick one clock, and prefer the clock the code under test uses.
+
+---
