@@ -23,10 +23,21 @@ class AppColors {
   static const Color tomato = Color(0xFFE2603A);
   static const Color sky = Color(0xFF7FB3E8);
 
-  // Dark theme surfaces.
-  static const Color darkBg = Color(0xFF1C1A17);
-  static const Color darkSurface = Color(0xFF262320);
-  static const Color darkInk = Color(0xFFF6EFE2);
+  // ---- Dark theme (v2) --------------------------------------------------
+  // Replaces the old pale-brown dark surfaces, which read as a washed-out
+  // version of the light theme rather than as a deliberate dark mode.
+  //
+  // paperCenter is the warm tan the ticket is printed on in dark mode;
+  // contrastDark is the near-black surface/ink it sits against; contrastVibrant
+  // is the single focal accent; contrastSlate is its complementary partner.
+  static const Color paperCenter = Color(0xFFB5783A);
+  static const Color contrastSlate = Color(0xFF3A77B5);
+  static const Color contrastVibrant = Color(0xFF00D4FF);
+  static const Color contrastDark = Color(0xFF0B1B2B);
+
+  static const Color darkBg = contrastDark;
+  static const Color darkSurface = Color(0xFF122436);
+  static const Color darkInk = Color(0xFFEAF4FA);
 
   /// Resolve the role-based scheme for the active brightness.
   static AppColorScheme of(BuildContext context) {
@@ -34,33 +45,40 @@ class AppColors {
     return isDark ? dark : light;
   }
 
-  static const AppColorScheme light = AppColorScheme(
-    background: cream,
-    surface: paper,
-    surfaceAlt: creamDim,
-    ink: ink,
-    inkSoft: Color(0xFF4A453D),
-    primary: purple,
-    onPrimary: cream,
-    accent: mint,
-    onAccent: ink,
-    border: ink,
-    shadow: ink,
-  );
-
-  static const AppColorScheme dark = AppColorScheme(
-    background: darkBg,
-    surface: darkSurface,
-    surfaceAlt: Color(0xFF33302B),
-    ink: darkInk,
-    inkSoft: Color(0xFFC7BFB0),
-    primary: mint,
-    onPrimary: ink,
-    accent: purple,
-    onAccent: cream,
-    border: darkInk,
+  /// THE app scheme. v2 is single-theme: the old pale/cream light values are
+  /// gone, not toggled away from.
+  ///
+  /// Contrast, measured against the shell (#0B1B2B):
+  ///   white on shell        17.41:1  -> body text
+  ///   vibrant on shell       9.84:1  -> safe for text-weight accents
+  ///   slate  on shell        3.72:1  -> LARGE / UI ONLY, never body text
+  ///   shell  on paperCenter  4.74:1  -> ticket ink
+  ///   vibrant on paperCenter 2.08:1  -> FAILS; never put vibrant on a ticket
+  static const AppColorScheme v2 = AppColorScheme(
+    background: contrastDark,
+    surface: Color(0xFF122436),
+    surfaceAlt: Color(0xFF1B3247),
+    ink: Color(0xFFEAF4FA),
+    // 7.4:1 on the shell — readable secondary text, unlike slate.
+    inkSoft: Color(0xFF9FB8C9),
+    // Vibrant is the SINGLE accent: active states and focal highlights only.
+    // Dark text on it reads at 9.84:1, so it is safe as a button fill.
+    primary: contrastVibrant,
+    onPrimary: contrastDark,
+    // Slate is the secondary, deliberately quieter so two accents never
+    // compete. White on slate is 4.68:1, so filled slate can carry a label.
+    accent: contrastSlate,
+    onAccent: Color(0xFFFFFFFF),
+    border: Color(0xFFEAF4FA),
     shadow: Color(0xFF000000),
   );
+
+  /// Both aliases point at [v2]. Kept so existing `AppColors.light` /
+  /// `AppColors.dark` call sites keep compiling while the app is single-theme —
+  /// flipping the system toggle now changes nothing, by design.
+  static const AppColorScheme light = v2;
+
+  static const AppColorScheme dark = v2;
 }
 
 /// Role-based color set consumed by widgets so light/dark both look correct.

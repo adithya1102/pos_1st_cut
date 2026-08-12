@@ -11,6 +11,7 @@ class Outlet {
     this.offerCount = 0,
     this.offerText,
     this.locality,
+    this.phoneNumber,
     this.latitude,
     this.longitude,
   });
@@ -25,6 +26,14 @@ class Outlet {
   /// Area within the city (migration 012). Null for outlets that predate it —
   /// [displayName] then falls back to the bare name.
   final String? locality;
+
+  /// Outlet contact number (migration 009). Null for MOST outlets — 5 of the 6
+  /// customer-visible ones in prod have none — so the call action is hidden
+  /// rather than rendered as a button that cannot dial.
+  final String? phoneNumber;
+
+  /// True only when there is actually a number to call.
+  bool get canCall => phoneNumber != null && phoneNumber!.trim().isNotEmpty;
 
   /// Outlet coordinates, used only to hand off to Google Maps. Null when the
   /// outlet never captured a pin; the Maps button hides rather than linking
@@ -61,6 +70,7 @@ class Outlet {
     final img = json['image_url'] as String?;
     final offer = json['offer_text'] as String?;
     final loc = json['locality'] as String?;
+    final phone = json['phone_number'] as String?;
     final lat = json['latitude'];
     final lng = json['longitude'];
     return Outlet(
@@ -74,6 +84,7 @@ class Outlet {
       offerCount: (json['offer_count'] as num?)?.toInt() ?? 0,
       offerText: (offer != null && offer.isNotEmpty) ? offer : null,
       locality: (loc != null && loc.isNotEmpty) ? loc : null,
+      phoneNumber: (phone != null && phone.trim().isNotEmpty) ? phone.trim() : null,
       // `num?` then toDouble(): the column is Postgres `numeric`, so a value
       // that happens to be whole arrives as an int and a bare `as double`
       // cast would throw.
@@ -95,6 +106,7 @@ class Outlet {
         'offer_count': offerCount,
         'offer_text': offerText,
         'locality': locality,
+        'phone_number': phoneNumber,
         'latitude': latitude,
         'longitude': longitude,
       };

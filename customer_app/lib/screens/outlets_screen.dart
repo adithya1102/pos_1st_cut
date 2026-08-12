@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/outlet.dart';
 import '../services/api_client.dart';
@@ -9,6 +10,9 @@ import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/widgets/neo_button.dart';
 import '../theme/widgets/neo_card.dart';
+import '../theme/widgets/neo_chip.dart';
+import '../theme/widgets/neo_text_field.dart';
+import '../theme/widgets/ticket_card.dart';
 import 'menu_screen.dart';
 import 'pickup_screen.dart';
 import '../widgets/account_button.dart';
@@ -28,6 +32,50 @@ class OutletsScreen extends StatefulWidget {
 
 class _OutletsScreenState extends State<OutletsScreen> {
   late Future<List<Outlet>> _future;
+
+  // v2 §1 screen 5 — search + filter chips over the already-fetched list.
+  //
+  // Filtering client-side, not server-side: the list is one small page the app
+  // already holds, so a round trip per keystroke would add latency and offline
+  // fragility for no benefit.
+  final _search = TextEditingController();
+  bool _nearestFirst = false;
+  bool _offersOnly = false;
+  bool _openOnly = false;
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  /// Apply search + chips. Kept pure and separate from build so the ordering
+  /// rules are readable in one place.
+  List<Outlet> _apply(List<Outlet> all) {
+    final q = _search.text.trim().toLowerCase();
+    var out = all.where((o) {
+      if (_offersOnly && !o.hasOffers) return false;
+      if (_openOnly && !o.isOpen) return false;
+      if (q.isEmpty) return true;
+      return o.name.toLowerCase().contains(q) ||
+          (o.locality ?? '').toLowerCase().contains(q) ||
+          o.address.toLowerCase().contains(q);
+    }).toList();
+
+    if (_nearestFirst) {
+      // Outlets with no distance (no GPS origin, or no pin) sort last rather
+      // than being treated as distance 0 — claiming an unknown outlet is the
+      // closest would be a lie the customer acts on.
+      out.sort((a, b) {
+        final ad = a.distanceKm, bd = b.distanceKm;
+        if (ad == null && bd == null) return 0;
+        if (ad == null) return 1;
+        if (bd == null) return -1;
+        return ad.compareTo(bd);
+      });
+    }
+    return out;
+  }
 
   @override
   void initState() {
@@ -83,6 +131,50 @@ class _OutletsScreenState extends State<OutletsScreen> {
               ),
             ),
             const _ActiveOrderBanner(),
+            // ---- search + filters (v2) ----
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+              child: NeoTextField(
+                key: const Key('outlet_search'),
+                controller: _search,
+                hintText: 'Search restaurants or areas',
+                prefixIcon: Icons.search,
+                onChanged: (_) => setState(() {}),
+              ),
+            ),
+            SizedBox(
+              height: 44,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                children: [
+                  NeoChip(
+                    key: const Key('chip_nearest'),
+                    label: 'Nearest first',
+                    icon: Icons.near_me_outlined,
+                    selected: _nearestFirst,
+                    onTap: () => setState(() => _nearestFirst = !_nearestFirst),
+                  ),
+                  const SizedBox(width: 8),
+                  NeoChip(
+                    key: const Key('chip_offers'),
+                    label: 'Offers',
+                    icon: Icons.local_offer_outlined,
+                    selected: _offersOnly,
+                    onTap: () => setState(() => _offersOnly = !_offersOnly),
+                  ),
+                  const SizedBox(width: 8),
+                  NeoChip(
+                    key: const Key('chip_open'),
+                    label: 'Open now',
+                    icon: Icons.schedule,
+                    selected: _openOnly,
+                    onTap: () => setState(() => _openOnly = !_openOnly),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
             Expanded(
               child: FutureBuilder<List<Outlet>>(
                 future: _future,
@@ -98,7 +190,18 @@ class _OutletsScreenState extends State<OutletsScreen> {
                       onRetry: _retry,
                     );
                   }
-                  final outlets = snap.data ?? [];
+                  final outlets = _apply(snap.data ?? const []);
+                  if (outlets.isEmpty && (snap.data ?? const []).isNotEmpty) {
+                    // Filtered to nothing — distinct from "no restaurants
+                    // here", because the fix is different: clear a chip.
+                    return _ErrorState(
+                      message: 'No restaurants match those filters.',
+                      onRetry: () => setState(() {
+                        _search.clear();
+                        _nearestFirst = _offersOnly = _openOnly = false;
+                      }),
+                    );
+                  }
                   if (outlets.isEmpty) {
                     return _ErrorState(
                       message: widget.areaLabel != null
@@ -218,6 +321,13 @@ class _OutletCard extends StatelessWidget {
                 ),
               ],
               const Spacer(),
+              // Direct call (v2 §3.6). Rendered ONLY when the outlet actually
+              // has a number — 5 of the 6 visible outlets in prod have none, so
+              // a always-present button would be dead most of the time.
+              if (outlet.canCall) ...[
+                _CallButton(outlet: outlet),
+                const SizedBox(width: 8),
+              ],
               if (outlet.isOpen)
                 Icon(Icons.arrow_forward, color: c.primary)
               else
@@ -278,21 +388,82 @@ class _ActiveOrderBannerState extends State<_ActiveOrderBanner> {
     // codes were reachable only by navigating — which is precisely the moment
     // someone is standing at a counter being asked for one. Collapsing several
     // codes behind a count made the common multi-order case the slowest.
+    // Height-capped and internally scrollable.
+    //
+    // This stack sits ABOVE the outlet list, outside its scroll view, so its
+    // height is taken straight out of the list's. Ticket cards are much taller
+    // than the single banner they replaced, and three concurrent orders were
+    // enough to squeeze the restaurant list down to a few pixels — the orders
+    // pushed the thing you came to the screen to do off the bottom. Capping it
+    // at ~38% of the viewport keeps both usable no matter how many orders are
+    // live; past the cap the stack scrolls on its own.
+    final maxH = MediaQuery.sizeOf(context).height * 0.38;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (_active.length > 1) ...[
-            Text('${_active.length} orders in progress',
-                style: textTheme.titleSmall),
-            const SizedBox(height: 8),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: maxH),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (_active.length > 1) ...[
+              Text('${_active.length} orders in progress',
+                  style: textTheme.titleSmall),
+              const SizedBox(height: 8),
+            ],
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                padding: EdgeInsets.zero,
+                itemCount: _active.length,
+                separatorBuilder: (_, _) => const SizedBox(height: 10),
+                itemBuilder: (_, i) =>
+                    _ActiveOrderCard(order: _active[i], onChanged: _load),
+              ),
+            ),
           ],
-          for (final order in _active) ...[
-            _ActiveOrderCard(order: order, onChanged: _load),
-            if (order != _active.last) const SizedBox(height: 10),
-          ],
-        ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Direct-call action (v2 §3.6).
+///
+/// Uses the EXISTING outlets.phone_number rather than any new field. Its own
+/// gesture sits above the card's, so tapping it dials instead of opening the
+/// menu — the same pattern the offer chip already uses.
+class _CallButton extends StatelessWidget {
+  const _CallButton({required this.outlet});
+  final Outlet outlet;
+
+  Future<void> _call(BuildContext context) async {
+    // tel: rather than a dialler package — no dependency, and it hands off to
+    // whatever the customer's phone already uses.
+    final uri = Uri(scheme: 'tel', path: outlet.phoneNumber);
+    final ok = await launchUrl(uri);
+    if (!ok && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not start a call to ${outlet.phoneNumber}')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return InkResponse(
+      key: Key('call_outlet_${outlet.id}'),
+      onTap: () => _call(context),
+      radius: 22,
+      child: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: c.accent,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: c.border, width: 2),
+        ),
+        child: Icon(Icons.call, size: 18, color: c.onAccent),
       ),
     );
   }
@@ -308,14 +479,15 @@ class _ActiveOrderCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    final textTheme = Theme.of(context).textTheme;
+    final t = TicketColors.of(context);
     final code = order.pickupCode;
     final hasCode = code != null && code.isNotEmpty;
 
-    return NeoCard(
+    // v2 §2 ticket visual, matching the pickup screen this opens — the card and
+    // the screen behind it are the same object, so they read as the same paper.
+    return TicketCard(
       key: Key('active_order_${order.orderId}'),
-      color: c.primary,
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
       onTap: () async {
         await Navigator.of(context).push(MaterialPageRoute(
           builder: (_) => PickupScreen(
@@ -328,58 +500,41 @@ class _ActiveOrderCard extends StatelessWidget {
         // finished order leaves the stack.
         onChanged();
       },
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Icon(Icons.receipt_long, color: c.onPrimary),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
                   order.outletName ?? 'Your order',
-                  style: textTheme.titleMedium?.copyWith(color: c.onPrimary),
+                  style: TextStyle(
+                    color: t.ink,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                  ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  // Status word, so two cards are distinguishable at a glance
-                  // when both are mid-flight.
-                  _statusLabel(order.status),
-                  style: textTheme.bodySmall?.copyWith(
-                    color: c.onPrimary.withValues(alpha: 0.85),
-                  ),
-                ),
-              ],
-            ),
+              ),
+              Icon(Icons.chevron_right, color: t.inkSoft),
+            ],
           ),
-          const SizedBox(width: 10),
-          // The code itself, at a size that can be read at arm's length across
-          // a counter rather than squinted at.
+          const TicketDivider(verticalPadding: 10),
           if (hasCode)
-            Container(
+            TicketRow(
               key: Key('active_order_code_${order.orderId}'),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: c.accent,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: c.border, width: 2),
-              ),
-              child: Text(
-                code,
-                style: textTheme.titleLarge?.copyWith(
-                  color: c.onAccent,
-                  letterSpacing: 3,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
+              label: 'PICKUP CODE',
+              value: code,
+              emphasize: true,
             )
           else
             // No code yet (payment still settling). Says so rather than
             // showing a blank slot.
-            Text('Code soon',
-                style: textTheme.bodySmall?.copyWith(color: c.onPrimary)),
+            const TicketRow(label: 'PICKUP CODE', value: 'Code soon'),
+          const SizedBox(height: 6),
+          TicketRow(label: 'STATUS', value: _statusLabel(order.status)),
         ],
       ),
     );

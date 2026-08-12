@@ -14,6 +14,7 @@ import '../state/cart_state.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/widgets/neo_button.dart';
+import '../theme/widgets/ticket_card.dart';
 import '../theme/widgets/neo_card.dart';
 import '../widgets/price_text.dart';
 import 'location_screen.dart';
@@ -52,6 +53,13 @@ class PickupScreen extends StatefulWidget {
 }
 
 class _PickupScreenState extends State<PickupScreen> {
+  /// v2 §3.3 — the customer's own "I've picked this up" acknowledgment.
+  ///
+  /// Client-side ONLY and intentionally not persisted: it is a courtesy
+  /// affordance, not a record. The authoritative signal is the order reaching
+  /// COMPLETED via staff verification, which this never triggers.
+  bool _ackPickedUp = false;
+
   static const _steps = ['Received', 'Preparing', 'Ready'];
 
   Timer? _timer;
@@ -312,6 +320,51 @@ class _PickupScreenState extends State<PickupScreen> {
                     paid: isPaid,
                     completed: completed,
                   ),
+                  // v2 §3.3 — ACKNOWLEDGMENT ONLY.
+                  //
+                  // This changes nothing server-side. It calls no endpoint,
+                  // moves no status, and completes no order: staff verifying
+                  // the code in owner_app remains the ONLY way an order
+                  // actually completes. It exists so a customer who has walked
+                  // away with their food can quieten their own screen, and it
+                  // resolves itself the moment the real COMPLETED status
+                  // arrives from polling.
+                  if (isPaid && !completed && !_ackPickedUp) ...[
+                    const SizedBox(height: 12),
+                    NeoButton(
+                      key: const Key('ack_picked_up'),
+                      label: 'I\'ve picked this up',
+                      icon: Icons.check_circle_outline,
+                      variant: NeoButtonVariant.neutral,
+                      onPressed: () => setState(() => _ackPickedUp = true),
+                    ),
+                  ],
+                  if (isPaid && !completed && _ackPickedUp) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: c.surfaceAlt,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: c.border, width: 2),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.info_outline, size: 18, color: c.inkSoft),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              'Thanks — noted on your side. The restaurant still '
+                              'confirms the handover, so this stays open until '
+                              'they do.',
+                              key: const Key('ack_picked_up_note'),
+                              style: textTheme.bodySmall?.copyWith(color: c.inkSoft),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   // FR-C5 — perceived-wait prompt, shown once after pickup.
                   if (completed && !_feedbackSent) ...[
                     const SizedBox(height: 16),
@@ -619,33 +672,55 @@ class _PickupCodeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    final textTheme = Theme.of(context).textTheme;
-    final onColor = highlight ? c.onAccent : c.onPrimary;
+    final t = TicketColors.of(context);
     final hasCode = code != null && code!.isNotEmpty;
-    return NeoCard(
-      color: highlight ? c.accent : c.primary,
-      shadowOffset: const Offset(6, 6),
-      padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
+
+    // v2 §2 — the ticket visual. Fixed cream/brown regardless of theme: a paper
+    // ticket reads as paper in dark mode too, and recolouring it would lose the
+    // metaphor this screen is built on.
+    return TicketCard(
+      stampText: completed ? 'COLLECTED' : null,
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
             completed ? 'COLLECTED' : 'PICKUP CODE',
-            style: textTheme.labelLarge?.copyWith(color: onColor, letterSpacing: 4),
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: t.inkSoft,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 4,
+            ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           if (hasCode)
             Text(
               code!,
-              style: GoogleFonts.bevan(color: onColor, fontSize: 56, letterSpacing: 8),
+              textAlign: TextAlign.center,
+              style: GoogleFonts.bevan(
+                color: t.ink,
+                fontSize: 54,
+                letterSpacing: 8,
+                // Struck through once collected: kept as a record, but it can
+                // no longer be used.
+                decoration:
+                    completed ? TextDecoration.lineThrough : TextDecoration.none,
+                decorationColor: t.ink,
+                decorationThickness: 3,
+              ),
             )
           else ...[
-            Icon(Icons.lock_clock, color: onColor.withValues(alpha: 0.9), size: 40),
-            const SizedBox(height: 10),
-            Text('Appears after payment',
-                style: textTheme.titleMedium?.copyWith(color: onColor)),
+            Icon(Icons.lock_clock, color: t.inkSoft, size: 38),
+            const SizedBox(height: 8),
+            Text(
+              'Appears after payment',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  color: t.ink, fontSize: 16, fontWeight: FontWeight.w700),
+            ),
           ],
-          const SizedBox(height: 6),
+          const TicketDivider(),
           Text(
             completed
                 ? 'Handed over. Hope it was worth skipping the line for.'
@@ -653,7 +728,7 @@ class _PickupCodeCard extends StatelessWidget {
                     ? (highlight ? 'Your food is ready!' : 'Keep this handy')
                     : 'The restaurant will confirm your payment shortly.',
             textAlign: TextAlign.center,
-            style: textTheme.bodyMedium?.copyWith(color: onColor.withValues(alpha: 0.85)),
+            style: TextStyle(color: t.inkSoft, fontSize: 14),
           ),
         ],
       ),

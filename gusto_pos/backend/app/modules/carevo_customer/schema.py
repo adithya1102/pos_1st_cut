@@ -68,6 +68,11 @@ class OutletOut(BaseModel):
     # Area within the city (migration 012). Null for outlets that predate it —
     # the app then renders the name alone rather than a dangling separator.
     locality: Optional[str] = None
+    # Outlet contact number (migration 009), so the app can offer a direct call.
+    # NULL for most outlets today — 5 of the 6 customer-visible ones in prod
+    # have none — so the app HIDES the call action rather than rendering a
+    # button that cannot dial. Absence is the common case, not an edge case.
+    phone_number: Optional[str] = None
     # Outlet coordinates, so the app can hand off to Google Maps without an API
     # key or a geocoding round trip. Null for outlets that never captured a pin;
     # the app hides the Maps button in that case rather than linking to nowhere.
@@ -108,6 +113,10 @@ class MenuCategoryOut(BaseModel):
 
 class MenuOut(BaseModel):
     outlet_id: uuid.UUID
+    # Carried here too so the menu screen can offer the call button without a
+    # second request — it is reached by tapping an outlet, and re-fetching the
+    # whole discovery list just for one phone number would be wasteful.
+    outlet_phone_number: Optional[str] = None
     categories: list[MenuCategoryOut] = []
 
 

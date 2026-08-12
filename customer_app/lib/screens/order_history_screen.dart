@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../services/customer_service.dart';
 import '../widgets/account_button.dart';
+import '../theme/widgets/ticket_card.dart';
 import 'pickup_screen.dart';
 
 /// The signed-in customer's past orders.
@@ -127,109 +128,95 @@ class _OrderCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final card = Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Text(
-                    order.outletName ?? 'Outlet',
-                    style: theme.textTheme.titleSmall,
+    final t = TicketColors.of(context);
+    final collected = !order.isActive;
+
+    // v2 §2 — history is the same paper as the live ticket, just stamped.
+    // Using the ticket visual here (rather than a plain Card) is what makes an
+    // order feel like one continuous object from payment through collection.
+    return TicketCard(
+      key: Key('history_order_${order.orderId}'),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      // Only in-progress orders open the live screen. A completed order has no
+      // code left to show and nothing to poll, so tapping it would open a
+      // screen that just says "picked up" — worse than not being tappable.
+      onTap: order.isActive
+          ? () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => PickupScreen(
+                  orderId: order.orderId,
+                  amount: order.totalAmount,
+                  // Gives it a back button and stops "Order more" nuking the stack.
+                  fromHistory: true,
+                ),
+              ))
+          : null,
+      // Collected orders carry the stamp, so the list reads at a glance without
+      // needing to parse a status chip on every row.
+      stampText: collected ? 'COLLECTED' : null,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  order.outletName ?? 'Outlet',
+                  style: TextStyle(
+                    color: t.ink,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
                   ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                Text(
-                  '₹${order.totalAmount.toStringAsFixed(2)}',
-                  style: theme.textTheme.titleSmall,
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(_date(order.createdAt), style: theme.textTheme.bodySmall),
-            const SizedBox(height: 8),
-            Text(order.itemSummary, style: theme.textTheme.bodyMedium),
-            // Only shown when a coupon actually reduced this order, so a normal
-            // order stays uncluttered.
-            if (order.discountAmount > 0) ...[
-              const SizedBox(height: 6),
+              ),
               Text(
-                'Coupon saved ₹${order.discountAmount.toStringAsFixed(2)}',
-                style: theme.textTheme.bodySmall,
+                '₹${order.totalAmount.toStringAsFixed(2)}',
+                style: TextStyle(
+                    color: t.ink, fontSize: 16, fontWeight: FontWeight.w800),
               ),
             ],
+          ),
+          const SizedBox(height: 2),
+          Text(_date(order.createdAt),
+              style: TextStyle(color: t.inkSoft, fontSize: 12)),
+          const TicketDivider(verticalPadding: 10),
+          Text(order.itemSummary,
+              style: TextStyle(color: t.ink, fontSize: 13)),
+          if (order.discountAmount > 0) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Coupon saved ₹${order.discountAmount.toStringAsFixed(2)}',
+              style: TextStyle(color: t.inkSoft, fontSize: 12),
+            ),
+          ],
+          const TicketDivider(verticalPadding: 10),
+          TicketRow(label: 'STATUS', value: order.status),
+          if (order.pickupCode != null) ...[
+            const SizedBox(height: 6),
+            TicketRow(
+              label: 'PICKUP CODE',
+              value: order.pickupCode!,
+              emphasize: order.isActive,
+              // A collected order keeps its code as a record, struck through
+              // because it can no longer be used.
+              strikethrough: collected,
+            ),
+          ],
+          if (order.isActive) ...[
             const SizedBox(height: 10),
             Row(
               children: [
-                _Chip(label: order.status),
-                const SizedBox(width: 8),
-                if (order.isPaid) const _Chip(label: 'PAID'),
-                if (order.isActive && order.pickupCode != null) ...[
-                  const Spacer(),
-                  // The whole point of the fix: the code is visible in the
-                  // list itself, not only behind a tap.
-                  Text('Code ${order.pickupCode}',
-                      style: theme.textTheme.labelLarge?.copyWith(
-                          color: theme.colorScheme.primary)),
-                ],
+                Icon(Icons.touch_app_outlined, size: 14, color: t.inkSoft),
+                const SizedBox(width: 6),
+                Text('Tap to track this order',
+                    style: TextStyle(color: t.inkSoft, fontSize: 12)),
               ],
             ),
-            if (order.isActive) ...[
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Icon(Icons.touch_app_outlined,
-                      size: 14, color: theme.colorScheme.outline),
-                  const SizedBox(width: 6),
-                  Text('Tap to track this order',
-                      style: theme.textTheme.bodySmall),
-                ],
-              ),
-            ],
           ],
-        ),
+        ],
       ),
-    );
-
-    // Only in-progress orders open the live screen. A completed order has no
-    // pickup code left to show and nothing to poll, so tapping it would open a
-    // screen that just says "picked up" — worse than not being tappable.
-    if (!order.isActive) return card;
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: () => Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => PickupScreen(
-            orderId: order.orderId,
-            amount: order.totalAmount,
-            // Gives it a back button and stops "Order more" nuking the stack.
-            fromHistory: true,
-          ),
-        ),
-      ),
-      child: card,
-    );
-  }
-}
-
-class _Chip extends StatelessWidget {
-  const _Chip({required this.label});
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Text(label, style: const TextStyle(fontSize: 11)),
     );
   }
 }

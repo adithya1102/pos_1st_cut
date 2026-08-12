@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/menu.dart';
 import '../models/outlet.dart';
@@ -121,8 +122,29 @@ class _MenuScreenState extends State<MenuScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.outlet.name),
-        actions: careVoActions(),
+        // Name · locality, so a chain's branches stay distinguishable here too.
+        title: Text(widget.outlet.displayName),
+        actions: [
+          // Direct call (v2 §3.6). Only when the outlet actually has a number —
+          // most do not, and a permanently dead icon in the app bar would be
+          // worse than no icon.
+          if (widget.outlet.canCall)
+            IconButton(
+              key: Key('call_outlet_${widget.outlet.id}'),
+              icon: const Icon(Icons.call),
+              tooltip: 'Call ${widget.outlet.name}',
+              onPressed: () async {
+                final uri = Uri(scheme: 'tel', path: widget.outlet.phoneNumber);
+                final ok = await launchUrl(uri);
+                if (!ok && context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Could not start a call.')),
+                  );
+                }
+              },
+            ),
+          ...careVoActions(),
+        ],
       ),
       bottomNavigationBar: CartBar(onView: _openCart),
       body: SafeArea(

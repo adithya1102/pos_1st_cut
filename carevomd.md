@@ -580,3 +580,139 @@ plus a working owner login (verified by actually logging in), and that the
 password is stored hashed.
 
 ---
+
+## 2026-08-12 — v2 UI redesign: ticket visual language, dark theme, call button
+
+Follows the onboarding commit. Scope is the RESOLVED portion of
+`UI_REDESIGN_HANDOFF.md`; §3.1/§3.2 (restricted locations, zone hierarchy) are
+deferred and NOTHING was built or scaffolded for them.
+
+### Verified before building — some things did not need building
+
+- **§3.7 payment method picker: NOT built.** The integration already uses
+  `CFWebCheckoutPaymentBuilder` — Cashfree's *hosted* checkout, which presents
+  UPI/card/netbanking/wallet inside its own page. A new picker would duplicate it.
+- **Menu category chips + veg filter chips already existed** and already used
+  `NeoChip`. Rebuilding them would have been churn.
+- **Multi-order concurrency needs no backend change** — no single-active-order
+  guard exists server-side.
+
+### §3.6 direct call — the backend addition WAS needed
+
+`phone_number` was absent from both `OutletOut` and `MenuOut` on live, so it was
+added to `list_outlets` and `get_menu` (as `outlet_phone_number`, carried on the
+menu payload so the menu screen needs no second request). Empty strings are
+normalised to NULL.
+
+**The hidden case is the COMMON case:** 5 of 7 prod outlets have no phone, and 5
+of the 6 customer-visible ones. The call button is hidden entirely when null
+rather than rendered dead — and that path is the one tested hardest.
+
+### §3.3 pickup acknowledgment — acknowledgment ONLY
+
+A plain client-side bool. Calls no endpoint, moves no status, is not persisted.
+Staff verification in owner_app remains the only way an order completes. On tap
+it is replaced by a note saying exactly that, so the tap cannot be misread as
+"done". The test asserts on **what was NOT called** — it records every request
+and fails on any POST/PATCH/DELETE after the tap.
+
+### §3.5 OTP — system keyboard kept
+
+The prototype's custom in-app numeric keypad was NOT built, by instruction.
+
+### Ticket visual language + new dark theme
+
+New `lib/theme/widgets/ticket_card.dart`: perforated top edge and dashed rules
+drawn with `CustomPainter` (no image assets), plus a rotated ghost stamp.
+Applied to the pickup ticket, the multi-order active stack, and order history —
+so an order reads as one continuous paper object from payment to collection.
+
+**Dark theme replaced.** The old pale-brown surfaces read as a washed-out light
+theme rather than a deliberate dark mode. New palette:
+
+```
+paperCenter     #B5783A   ticket stock in dark mode
+contrastDark    #0B1B2B   app background + ticket ink
+contrastVibrant #00D4FF   primary / focal accent
+contrastSlate   #3A77B5   secondary accent
+```
+
+`TicketColors` is theme-aware with two hand-tuned schemes, NOT one dimmed: light
+is cream stock with brown ink, dark is warm tan stock printed near-black.
+Dimming the cream produced a glary panel that looked like a rendering bug.
+
+**Supersedes an earlier note in this log** which recorded the ticket palette as
+deliberately theme-independent. That decision was reversed; the palette is now
+theme-aware.
+
+### A real layout bug this surfaced
+
+Taller ticket cards plus the new search bar exposed a genuine fault: the
+active-order stack renders OUTSIDE the outlet list's scroll view, so its height
+comes straight out of the list's. Three concurrent orders squeezed the
+restaurant list to **6 pixels** — the orders pushed away the thing you opened the
+screen to do. Caught by a test. Fixed by capping the stack at ~38% of viewport
+height and letting it scroll internally, NOT by relaxing the assertion.
+
+### Could not be built honestly
+
+The prototype's **veg and rating filter chips for the outlet LIST** were not
+built: `Outlet` has no veg or rating field and neither exists server-side. The
+three chips the data actually supports were built instead (Nearest first /
+Offers / Open now). Rating would need a new table and a review flow — its own
+decision, not a silent stub.
+
+### Tests
+
+`customer_app` **41 passing** (was 29): +9 in new `test/v2_redesign_test.dart`,
++3 search/filter. Backend **118**. One existing assertion updated, not a
+regression: the collected ticket renders "COLLECTED" twice (header label + ghost
+stamp), so `findsOneWidget` became `findsNWidgets(2)`.
+
+**Still not restyled:** login, OTP, cart, checkout.
+
+### Amendment — v2 is SINGLE-THEME, and the palette is pinned by tests
+
+The light/dark toggle is gone. The pale/cream light scheme was **replaced**, not
+toggled away from: `AppColors.light` and `AppColors.dark` are now both aliases of
+one `AppColors.v2` scheme, both `AppTheme` entry points build it at
+`Brightness.dark`, `themeMode` is pinned, and the theme-toggle button was removed
+from the shared app-bar actions rather than left as a control that visibly does
+nothing. `ThemeProvider` is retained — it still persists a preference a future
+variant could read.
+
+```
+paperCenter     #B5783A   ticket stock ONLY — stays warm/paper-toned
+contrastDark    #0B1B2B   app shell + ticket ink
+contrastVibrant #00D4FF   single accent: active states, focal highlights
+contrastSlate   #3A77B5   secondary, large/UI only
+```
+
+**Measured contrast decided where each colour is allowed:**
+
+| pair | ratio | rule |
+|---|---|---|
+| `#00D4FF` on `#0B1B2B` | 9.84:1 | accent is text-safe on the shell |
+| `#0B1B2B` on `#B5783A` | 4.74:1 | ticket ink passes for body text |
+| `#00D4FF` on `#B5783A` | **2.08:1** | **FAILS — accent never goes on a ticket** |
+| `#3A77B5` on `#0B1B2B` | 3.72:1 | large/UI only, never body text |
+| white on `#0B1B2B` | 17.41:1 | body text |
+| white on `#3A77B5` | 4.68:1 | filled slate may carry a label |
+
+The ticket keeps warm tan stock while the shell is near-black. That contrast is
+the point — the ticket must read as a physical object sitting on the UI, not as
+another dark panel.
+
+New `test/palette_test.dart` (14 tests) pins all of the above, including the
+FAILING pair: a future change that "brightens up the ticket" with the accent
+would ship unreadable text, and now breaks a test instead. Asserted at the
+SCHEME level rather than by building `ThemeData`, because `AppTheme._build` calls
+`GoogleFonts`, which cannot fetch a webfont under `flutter test`.
+
+Pre-existing and NOT introduced here: `cream on tomato` on the danger button is
+3.08:1 — large-text only. Left alone, flagged.
+
+`customer_app` **55 passing** (was 41). No existing test asserted on colour
+values, so the swap broke nothing.
+
+---

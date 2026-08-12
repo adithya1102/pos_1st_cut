@@ -205,7 +205,8 @@ class CarevoService:
         city: Optional[str] = None,
     ) -> list[dict]:
         rows = (await db.execute(text(
-            "SELECT id, location_name, city, locality, latitude, longitude, upi_id, image_url "
+            "SELECT id, location_name, city, locality, latitude, longitude, upi_id, image_url, "
+            "       phone_number "
             "FROM outlets "
             "WHERE is_visible = true AND deactivated_at IS NULL "
             # CAST for the same reason as list_outlets in carevo_admin: with a
@@ -225,7 +226,8 @@ class CarevoService:
 
         out = []
         for r in rows:
-            oid, name, city, locality, o_lat, o_lng, upi_id, image_url = r
+            (oid, name, city, locality, o_lat, o_lng, upi_id, image_url,
+             phone_number) = r
             distance = None
             if lat is not None and lng is not None and o_lat is not None and o_lng is not None:
                 distance = CarevoService._haversine_km(lat, lng, float(o_lat), float(o_lng))
@@ -247,6 +249,9 @@ class CarevoService:
                 "upi_id": upi_id,
                 "image_url": image_url,
                 "locality": locality,
+                # Normalised to None so an empty string never renders a call
+                # button that dials nothing.
+                "phone_number": (phone_number or "").strip() or None,
                 # float() because the column is `numeric` -> Decimal, which
                 # would serialise as a JSON string and break the Maps URL.
                 "latitude": float(o_lat) if o_lat is not None else None,
@@ -307,7 +312,13 @@ class CarevoService:
                     "tags": r.tags,
                     "customizations": mods.get(str(r.item_id), []),
                 })
-        return {"outlet_id": outlet_id, "categories": [cats[k] for k in order]}
+        phone = (await db.execute(text(
+            "SELECT phone_number FROM outlets WHERE id = :o"), {"o": str(outlet_id)})).scalar()
+        return {
+            "outlet_id": outlet_id,
+            "outlet_phone_number": (phone or "").strip() or None,
+            "categories": [cats[k] for k in order],
+        }
 
     # ----------------------------- Orders ----------------------------------
     @staticmethod

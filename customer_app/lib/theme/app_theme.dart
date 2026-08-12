@@ -13,8 +13,10 @@ class AppTheme {
   static const double borderWidth = 3.0;
   static const Offset hardShadowOffset = Offset(4, 4);
 
-  static ThemeData light() => _build(AppColors.light, Brightness.light);
-  static ThemeData dark() => _build(AppColors.dark, Brightness.dark);
+  /// v2 is SINGLE-THEME. Both entry points build the same dark-shell scheme, so
+  /// the platform light/dark setting cannot produce a half-migrated look.
+  static ThemeData light() => _build(AppColors.v2, Brightness.dark);
+  static ThemeData dark() => _build(AppColors.v2, Brightness.dark);
 
   static ThemeData _build(AppColorScheme c, Brightness brightness) {
     final display = GoogleFonts.bevanTextTheme();

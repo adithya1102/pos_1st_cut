@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../screens/profile_screen.dart';
-import 'theme_toggle_button.dart';
 
 /// The account entry point, defined ONCE and reused by every top-level screen.
 ///
@@ -42,10 +41,10 @@ class AccountButton extends StatelessWidget {
 ///
 /// Pass `account: false` on screens where an account link makes no sense
 /// (login/OTP), and on the Account screen itself.
+/// v2 is single-theme, so the light/dark toggle was removed rather than left
+/// as a control that visibly does nothing. ThemeProvider itself is retained —
+/// it still persists a preference a future variant could read.
 List<Widget> careVoActions({bool account = true}) => [
       if (account) const AccountButton(),
-      const Padding(
-        padding: EdgeInsets.only(right: 16),
-        child: ThemeToggleButton(),
-      ),
+      const SizedBox(width: 8),
     ];

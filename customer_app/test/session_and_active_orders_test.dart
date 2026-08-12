@@ -311,7 +311,9 @@ void main() {
       // The bug this replaces: a collected order told the customer to go and
       // collect the food they were already holding.
       expect(find.text('Ready to\ncollect!'), findsNothing);
-      expect(find.text('COLLECTED'), findsOneWidget);
+      // TWO now, not one: the ticket header label plus the v2 rotated ghost
+      // stamp across the ticket. Both are intended.
+      expect(find.text('COLLECTED'), findsNWidgets(2));
       expect(find.text('PICKUP CODE'), findsNothing);
     });
 
