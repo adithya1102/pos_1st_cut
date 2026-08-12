@@ -30,6 +30,7 @@ class AuthService {
     required String restaurantName,
     String? city,
     String? requestedCity,
+    required String locality,
     required String phoneNumber,
     required String email,
     required String username,
@@ -44,6 +45,9 @@ class AuthService {
       if (city != null && city.trim().isNotEmpty) 'city': city.trim(),
       if (requestedCity != null && requestedCity.trim().isNotEmpty)
         'requested_city': requestedCity.trim(),
+      // Area within the city (migration 012). Mandatory server-side as of
+      // the locality work — a signup without it is rejected with 422.
+      'locality': locality.trim(),
       // Now mandatory server-side, so always sent.
       'phone_number': phoneNumber.trim(),
       // Required as of migration 015 — it is what makes forgot-password work.

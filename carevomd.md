@@ -518,3 +518,65 @@ Deliberately NOT deleted: `customer_app/build` (holds the signed `.aab`),
 repo, contents unknown — flagged rather than guessed at).
 
 ---
+
+## 2026-08-12 — Onboarding forms brought back in line with /register
+
+Builds on `3ea1a0d4`. Fixes a LIVE breakage: **both** onboarding forms had been
+rejected with 422 on every submission.
+
+### What was broken, and how it happened
+
+`locality` was made REQUIRED on `RegisterIn` in `9114c93e` (the outlet-locality
+work) and deployed — but neither signup UI was updated to send it. That is a
+self-inflicted regression from this same session's earlier work.
+
+Investigating it turned up a second, older gap: admin_app's onboarding form was
+missing **three** required fields, not one.
+
+| Form | Missing before this commit |
+|---|---|
+| `owner_app` self-signup | `locality` |
+| `admin_app` admin-assisted onboarding | `locality`, `phone_number`, `email` |
+
+Both post to the SAME `POST /api/v1/register`. Verified against the LIVE
+deployed `/openapi.json`, not source:
+`required: [email, locality, password, phone_number, restaurant_name, upi_id, username]`
+
+Confirmed end-to-end against the live backend before fixing: a body without
+`locality` returns 422 `{"loc":["body","locality"],"msg":"Field required"}`
+(no write), and a complete body returns 201 with a correct pending outlet.
+That live check used a `TEST_CAREVO_`-prefixed fixture with teardown proven —
+delta 0 across organizations/outlets/users/menus/categories, 0 rows left.
+
+### What changed
+
+- **owner_app** — required "Area / locality" field, threaded through
+  `signup_screen` -> `AuthState.register` -> `AuthService.register` -> body.
+- **admin_app** — added `locality`, `phone_number`, `email`; **city is now a
+  dropdown of APPROVED cities** loaded from `adminApi.cities("active")` rather
+  than free text, because `/register` only accepts a city already active in the
+  canonical list and a typed one is refused 422 with nothing on screen
+  explaining why; latitude/longitude made required WITH range validation.
+
+**lat/lng are required by the FORM, not by the server.** The server still
+accepts an outlet with no pin, and a test pins that so nobody later assumes
+otherwise. The form-level rule exists because without coordinates the customer
+app cannot show the restaurant on a map or compute a distance to it.
+
+`city` is subtler than "optional": `city` and `requested_city` are each
+individually optional in the schema, but the `_exactly_one_city` validator
+rejects both-or-neither, so exactly one is effectively mandatory.
+
+### Tests
+
+New `tests/test_api_onboarding_contract.py` (8 tests). Backend **118 passing**.
+
+The load-bearing one enumerates required fields from `RegisterIn.model_fields`
+itself rather than a hand-written list, so **the next field made required is
+covered automatically** — which is precisely the failure mode that produced this
+commit. Also asserts a missing field is a readable 422 naming the field and
+explicitly NOT a 500, that the admin-shaped body yields the same pending outlet
+plus a working owner login (verified by actually logging in), and that the
+password is stored hashed.
+
+---

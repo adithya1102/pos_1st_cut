@@ -437,7 +437,18 @@ export const adminApi = {
 
 export interface RegisterOutletBody {
   restaurant_name: string;
+  /** Must be an already-approved city. The server rejects both-or-neither of
+   *  city / requested_city, so exactly one is sent. */
   city?: string | null;
+  /** Area within the city (migration 012). REQUIRED server-side — a body
+   *  without it is rejected 422, which is what this form used to do. */
+  locality: string;
+  /** Required server-side: admins had no reliable way to reach an outlet
+   *  during verification without it. */
+  phone_number: string;
+  /** Required server-side (migration 015) — it is what makes the owner's
+   *  forgot-password flow possible. */
+  email: string;
   latitude?: number | null;
   longitude?: number | null;
   username: string;

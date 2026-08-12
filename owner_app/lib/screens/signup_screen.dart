@@ -19,6 +19,7 @@ class _SignupScreenState extends State<SignupScreen> {
   // both into the database. The owner now picks from the approved list, or
   // explicitly requests a new city for admin approval.
   final _newCity = TextEditingController();
+  final _locality = TextEditingController();
   final _phone = TextEditingController();
   final _email = TextEditingController();
 
@@ -40,6 +41,7 @@ class _SignupScreenState extends State<SignupScreen> {
   void dispose() {
     _restaurant.dispose();
     _newCity.dispose();
+    _locality.dispose();
     _phone.dispose();
     _email.dispose();
     _upi.dispose();
@@ -87,6 +89,7 @@ class _SignupScreenState extends State<SignupScreen> {
           // Exactly one of the two, matching the server's rule.
           city: _requestingNewCity ? null : _selectedCity,
           requestedCity: _requestingNewCity ? _newCity.text : null,
+          locality: _locality.text,
           phoneNumber: _phone.text,
           email: _email.text,
           username: _username.text,
@@ -197,6 +200,30 @@ class _SignupScreenState extends State<SignupScreen> {
                         child: const Text("My city isn't listed"),
                       ),
                     ],
+                    const SizedBox(height: 16),
+                    // Area within the city (migration 012). REQUIRED server-side
+                    // since locality became part of the (city, name, locality)
+                    // duplicate check admin approval enforces — and it is what
+                    // customers see under the restaurant name, so two branches
+                    // of one chain stay distinguishable.
+                    //
+                    // Free text, not a dropdown: cities are a short curated list
+                    // an admin can maintain, localities are not.
+                    TextFormField(
+                      controller: _locality,
+                      textCapitalization: TextCapitalization.words,
+                      decoration: const InputDecoration(
+                        labelText: 'Area / locality',
+                        helperText: 'e.g. Koramangala, HSR Layout',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.map_outlined),
+                      ),
+                      validator: (v) {
+                        final s = (v ?? '').trim();
+                        if (s.isEmpty) return 'Enter the area within your city';
+                        return s.length < 2 ? 'Enter a valid area' : null;
+                      },
+                    ),
                     const SizedBox(height: 16),
                     TextFormField(
                       controller: _phone,

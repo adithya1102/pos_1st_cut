@@ -1,31 +1,55 @@
 "use client";
 
-import { useState } from "react";
-import { ApiError, RegisterOutletResult, adminApi } from "@/lib/api";
+import { useEffect, useState } from "react";
+import { ApiError, City, RegisterOutletResult, adminApi } from "@/lib/api";
 import { Button, ErrorBox } from "@/components/ui";
 
 const inputCls =
   "w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none";
 const VPA_RE = /^[^@\s]+@[^@\s]+$/;
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 /**
  * Admin-assisted onboarding. Sets up a restaurant on behalf of a non-technical
  * owner via the same public /register flow the owner_app self-signup uses — the
  * new outlet lands as pending_verification, then appears in the pending queue.
+ *
+ * The field set is kept in step with RegisterIn deliberately. This form
+ * previously omitted locality, phone_number and email — all three REQUIRED
+ * server-side — so every submission was rejected 422 before it reached the
+ * queue. Anything added to RegisterIn must be added here too.
  */
 export default function OnboardPage() {
   const [form, setForm] = useState({
     restaurant_name: "",
     city: "",
+    locality: "",
+    phone_number: "",
+    email: "",
     latitude: "",
     longitude: "",
     username: "",
     password: "",
     upi_id: "",
   });
+  const [cities, setCities] = useState<City[] | null>(null);
+  const [citiesError, setCitiesError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<RegisterOutletResult | null>(null);
+
+  // A dropdown of APPROVED cities rather than free text: /register only accepts
+  // a city already active in the canonical list, so a typed one would be
+  // rejected 422 with nothing on screen explaining why.
+  useEffect(() => {
+    adminApi
+      .cities("active")
+      .then(setCities)
+      .catch(() => {
+        setCities([]);
+        setCitiesError("Could not load cities.");
+      });
+  }, []);
 
   function set(key: keyof typeof form, value: string) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -33,12 +57,27 @@ export default function OnboardPage() {
 
   function validate(): string | null {
     if (form.restaurant_name.trim().length < 2) return "Enter the restaurant name.";
+    if (!form.city.trim()) return "Select the city.";
+    if (form.locality.trim().length < 2) return "Enter the area / locality.";
+    if (form.phone_number.trim().length < 6) return "Enter a valid contact phone number.";
+    if (!EMAIL_RE.test(form.email.trim())) return "Enter a valid owner email.";
     if (!VPA_RE.test(form.upi_id.trim())) return "Enter a valid UPI ID (name@bank).";
     if (form.username.trim().length < 3) return "Username must be at least 3 characters.";
     if (form.password.length < 8) return "Password must be at least 8 characters.";
+
+    // Coordinates are required BY THIS FORM, not by the server. An outlet with
+    // no pin cannot be shown on a map, so the customer app hides its "Open in
+    // Maps" button and can compute no distance to it — the restaurant is
+    // effectively unverifiable to a customer deciding whether to walk there.
     for (const k of ["latitude", "longitude"] as const) {
-      if (form[k].trim() && Number.isNaN(Number(form[k]))) return `Invalid ${k}.`;
+      const raw = form[k].trim();
+      if (!raw) return `Enter the ${k}.`;
+      if (Number.isNaN(Number(raw))) return `Invalid ${k}.`;
     }
+    const lat = Number(form.latitude);
+    const lng = Number(form.longitude);
+    if (lat < -90 || lat > 90) return "Latitude must be between -90 and 90.";
+    if (lng < -180 || lng > 180) return "Longitude must be between -180 and 180.";
     return null;
   }
 
@@ -55,22 +94,25 @@ export default function OnboardPage() {
     try {
       const res = await adminApi.registerOutlet({
         restaurant_name: form.restaurant_name.trim(),
-        city: form.city.trim() || null,
-        latitude: form.latitude.trim() ? Number(form.latitude) : null,
-        longitude: form.longitude.trim() ? Number(form.longitude) : null,
+        city: form.city.trim(),
+        locality: form.locality.trim(),
+        phone_number: form.phone_number.trim(),
+        email: form.email.trim().toLowerCase(),
+        latitude: Number(form.latitude),
+        longitude: Number(form.longitude),
         username: form.username.trim(),
         password: form.password,
         upi_id: form.upi_id.trim(),
       });
       setResult(res);
       setForm({
-        restaurant_name: "", city: "", latitude: "", longitude: "",
-        username: "", password: "", upi_id: "",
+        restaurant_name: "", city: "", locality: "", phone_number: "", email: "",
+        latitude: "", longitude: "", username: "", password: "", upi_id: "",
       });
     } catch (err) {
       if (err instanceof ApiError) {
         setError(
-          err.status === 409 ? "That username is already taken."
+          err.status === 409 ? "That username or email is already registered."
           : err.status === 429 ? "Too many attempts — try again shortly."
           : err.message,
         );
@@ -107,20 +149,63 @@ export default function OnboardPage() {
           <input className={inputCls} value={form.restaurant_name}
             onChange={(e) => set("restaurant_name", e.target.value)} />
         </Field>
-        <Field label="City (optional)">
-          <input className={inputCls} value={form.city}
-            onChange={(e) => set("city", e.target.value)} />
+
+        <Field label="City">
+          <select
+            className={inputCls}
+            value={form.city}
+            disabled={cities === null}
+            onChange={(e) => set("city", e.target.value)}
+          >
+            <option value="">
+              {cities === null ? "Loading cities…" : "Select a city"}
+            </option>
+            {(cities ?? []).map((c) => (
+              <option key={c.id} value={c.name}>{c.name}</option>
+            ))}
+          </select>
+          {citiesError && (
+            <span className="text-xs text-red-600">{citiesError}</span>
+          )}
         </Field>
+
+        <Field label="Area / locality">
+          <input className={inputCls} placeholder="e.g. Koramangala"
+            value={form.locality}
+            onChange={(e) => set("locality", e.target.value)} />
+          <span className="text-xs text-slate-500">
+            Shown to customers as “{form.restaurant_name || "Restaurant"} ·{" "}
+            {form.locality || "Area"}”, and used to catch duplicate listings.
+          </span>
+        </Field>
+
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Latitude (optional)">
-            <input className={inputCls} value={form.latitude}
+          <Field label="Latitude">
+            <input className={inputCls} placeholder="12.9352" value={form.latitude}
               onChange={(e) => set("latitude", e.target.value)} />
           </Field>
-          <Field label="Longitude (optional)">
-            <input className={inputCls} value={form.longitude}
+          <Field label="Longitude">
+            <input className={inputCls} placeholder="77.6245" value={form.longitude}
               onChange={(e) => set("longitude", e.target.value)} />
           </Field>
         </div>
+        <p className="text-xs text-slate-500">
+          Required here: without coordinates the customer app cannot show this
+          restaurant on a map or work out how far away it is.
+        </p>
+
+        <Field label="Contact phone">
+          <input className={inputCls} value={form.phone_number}
+            onChange={(e) => set("phone_number", e.target.value)} />
+        </Field>
+        <Field label="Owner email">
+          <input className={inputCls} type="email" placeholder="owner@example.com"
+            value={form.email}
+            onChange={(e) => set("email", e.target.value)} />
+          <span className="text-xs text-slate-500">
+            Used for the owner’s password recovery.
+          </span>
+        </Field>
         <Field label="Restaurant UPI ID">
           <input className={inputCls} placeholder="name@bank" value={form.upi_id}
             onChange={(e) => set("upi_id", e.target.value)} />
