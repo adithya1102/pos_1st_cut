@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="ic_launcher_background">#FFFFFF</color>
+    <!-- The app shell's warm white (AppColors.paper). Pinned as a literal so
+         the launch window matches the first Flutter frame exactly, in BOTH
+         Android light and dark mode — the app itself is light-only. -->
+    <color name="carevo_paper">#FFF8F3</color>
 </resources>

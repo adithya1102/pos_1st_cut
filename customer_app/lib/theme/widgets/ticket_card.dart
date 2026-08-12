@@ -10,19 +10,18 @@ import 'package:flutter/material.dart';
 /// cards. The split is the point: a ticket is a thing you hold and show
 /// someone, and it should not look like the browsing UI it came from.
 ///
-/// The ticket palette is a SINGLE set, matching the app's single theme.
+/// The ticket palette is a SINGLE set, matching the app's single light theme.
 ///
-/// `paperCenter` (#B5783A) deliberately stays warm and paper-toned while the
-/// rest of the app shell is near-black. That contrast is the whole point: the
-/// ticket has to look like a physical object sitting on top of the UI, not like
-/// another dark panel. Making it navy would erase the metaphor these screens
-/// are built on.
+/// The stock (#FAEEDA) is a cream receipt printed in brown ink (#412402) — the
+/// prototype's values, unchanged. It reads as warmer and slightly darker than
+/// the warm-white shell it sits on, which is the whole point: the ticket has to
+/// look like a physical object placed on top of the UI, not like another card.
 ///
 /// Measured contrast:
-///   ink   (#0B1B2B) on paperCenter  4.74:1  -> passes for body text
-///   vibrant (#00D4FF) on paperCenter 2.08:1 -> FAILS, so the accent is never
-///   used on a ticket. Focal highlights stay on the dark shell where they read
-///   at 9.84:1.
+///   ink     (#412402) on stock  12.39:1  -> body text, comfortably
+///   inkSoft (#7A5426) on stock   5.86:1  -> secondary lines, still normal-text
+///   mint    (#AAF2CA) on stock   1.13:1  -> FAILS. Mint appears on a ticket
+///   only as a FILL behind dark text (the status pill), never as a text colour.
 class TicketColors {
   const TicketColors._();
 
@@ -31,20 +30,23 @@ class TicketColors {
   static const TicketColors _instance = TicketColors._();
   static TicketColors of(BuildContext context) => _instance;
 
-  /// Ticket stock — warm, paper-toned, intentionally NOT the dark shell.
-  final Color paper = const Color(0xFFB5783A);
+  /// Ticket stock — cream receipt paper.
+  final Color paper = const Color(0xFFFAEEDA);
 
-  /// Slightly deeper stock for the perforated stub band.
-  final Color paperDim = const Color(0xFF9A6531);
+  /// Slightly deeper stock for the perforated stub band, so the tear-off edge
+  /// reads as a separate strip rather than a flat continuation.
+  final Color paperDim = const Color(0xFFEFDFC1);
 
-  /// Printed ink — the app's shell colour, 4.74:1 on the stock.
-  final Color ink = const Color(0xFF0B1B2B);
+  /// Printed ink.
+  final Color ink = const Color(0xFF412402);
 
-  /// Faded ink for secondary lines.
-  final Color inkSoft = const Color(0xFF3A2A18);
+  /// Faded ink for secondary lines. Deliberately darker than the prototype's
+  /// #8A6A2E, which measures 4.38:1 on the stock and would fail normal text.
+  final Color inkSoft = const Color(0xFF7A5426);
 
-  /// Dashed rules and the perforation line.
-  final Color rule = const Color(0xFF7A5124);
+  /// Dashed rules and the perforation line. Decorative only — never carries
+  /// text, so it is free to sit below text contrast.
+  final Color rule = const Color(0xFF8A6A2E);
 }
 
 /// A paper ticket: perforated top edge, cream stock, brown ink.

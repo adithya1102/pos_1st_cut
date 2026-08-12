@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../models/cart_item.dart';
 import '../models/offer.dart';
 import '../models/outlet.dart';
 import '../services/api_client.dart';
@@ -14,6 +15,7 @@ import '../state/cart_state.dart';
 import '../theme/app_colors.dart';
 import '../theme/widgets/neo_button.dart';
 import '../theme/widgets/neo_card.dart';
+import '../theme/widgets/ticket_card.dart';
 import '../widgets/offer_sheet.dart';
 import '../widgets/price_text.dart';
 import 'payment_processing_screen.dart';
@@ -377,6 +379,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
           children: [
+            Text('Confirm order', style: textTheme.headlineSmall),
+            const SizedBox(height: 5),
+            Text('Review your details before paying.',
+                style: textTheme.titleSmall?.copyWith(color: c.inkSoft)),
+            const SizedBox(height: 16),
             _PickupOutletCard(outlet: cart.outlet),
             const SizedBox(height: 24),
             Text('How are you getting here?', style: textTheme.headlineSmall),
@@ -521,13 +528,20 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 ],
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 20),
             _TotalRow(
               key: const Key('checkout_total_row'),
+              items: cart.items,
               subtotal: subtotal,
               discount: discount,
               payable: payable,
               offerLabel: _offer?.benefitText,
+            ),
+            const SizedBox(height: 14),
+            Text(
+              'Your pickup code appears the moment payment succeeds.',
+              textAlign: TextAlign.center,
+              style: textTheme.bodySmall?.copyWith(color: c.inkSoft),
             ),
           ],
         ),
@@ -870,15 +884,27 @@ class _OriginAction extends StatelessWidget {
 ///
 /// Collapses to the single "Amount payable" row it has always been when there
 /// is no discount — a struck-through price identical to the final one is noise.
+/// The order summary, printed as a ticket (prototype §2, screen 08).
+///
+/// Checkout is the first place the ticket visual appears — deliberately. The
+/// same object the customer will hold at the counter is what they approve here,
+/// so the pickup ticket that follows payment is recognisably the thing they
+/// just confirmed rather than a new screen they have never seen.
+///
+/// The struck-through original total and the offer line have no equivalent in
+/// the prototype; they are existing behaviour and are kept, set in ticket ink
+/// rather than the app's purple, which fails contrast on the cream stock.
 class _TotalRow extends StatelessWidget {
   const _TotalRow({
     super.key,
+    required this.items,
     required this.subtotal,
     required this.discount,
     required this.payable,
     this.offerLabel,
   });
 
+  final List<CartItem> items;
   final double subtotal;
   final double discount;
   final double payable;
@@ -887,58 +913,70 @@ class _TotalRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
-    final c = AppColors.of(context);
+    final t = TicketColors.of(context);
     final hasDiscount = discount > 0;
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+    return TicketCard(
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          Text(
+            'ORDER SUMMARY',
+            textAlign: TextAlign.center,
+            style: textTheme.labelLarge?.copyWith(
+              color: t.ink,
+              letterSpacing: 2.6,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const TicketDivider(verticalPadding: 12),
+          for (final line in items)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${line.quantity}× ${line.item.name}',
+                      style: textTheme.bodyLarge?.copyWith(color: t.ink),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    formatRupees(line.lineTotal),
+                    style: textTheme.bodyLarge?.copyWith(
+                      color: t.ink,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          const TicketDivider(verticalPadding: 4),
+          const SizedBox(height: 8),
           if (hasDiscount) ...[
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('Item total',
-                    style: textTheme.bodyMedium?.copyWith(color: c.inkSoft)),
-                Text(
-                  formatRupees(subtotal),
-                  style: textTheme.bodyMedium?.copyWith(
-                    color: c.inkSoft,
-                    decoration: TextDecoration.lineThrough,
-                  ),
-                ),
-              ],
+            TicketRow(label: 'SUBTOTAL', value: formatRupees(subtotal)),
+            const SizedBox(height: 8),
+            TicketRow(
+              label: offerLabel == null
+                  ? 'OFFER'
+                  : 'OFFER · ${offerLabel!.toUpperCase()}',
+              value: '− ${formatRupees(discount)}',
             ),
-            const SizedBox(height: 6),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Text(
-                    offerLabel == null ? 'Offer applied' : 'Offer • $offerLabel',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: textTheme.bodyMedium?.copyWith(color: c.primary),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Text(
-                  '− ${formatRupees(discount)}',
-                  style: textTheme.bodyMedium?.copyWith(
-                      color: c.primary, fontWeight: FontWeight.w700),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
+          ] else ...[
+            TicketRow(label: 'SUBTOTAL', value: formatRupees(subtotal)),
+            const SizedBox(height: 8),
           ],
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Amount payable', style: textTheme.titleMedium),
-              PriceText(payable,
-                  style: textTheme.headlineSmall
-                      ?.copyWith(fontWeight: FontWeight.w700)),
-            ],
+          TicketRow(label: 'TAXES & FEES', value: formatRupees(0)),
+          const SizedBox(height: 12),
+          Container(height: 2, color: t.ink),
+          const SizedBox(height: 12),
+          TicketRow(
+            label: 'TOTAL',
+            value: formatRupees(payable),
+            emphasize: true,
           ),
         ],
       ),

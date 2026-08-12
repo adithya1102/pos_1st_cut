@@ -138,9 +138,10 @@ class _CareVoAppState extends State<CareVoApp> {
 
   @override
   Widget build(BuildContext context) {
-    // v2 is SINGLE-THEME: both ThemeData entry points build the same dark-shell
-    // scheme, so themeMode is pinned rather than followed. Leaving it on
-    // ThemeMode.system would imply a light variant that no longer exists.
+    // v2 is SINGLE-THEME and that theme is LIGHT: both ThemeData entry points
+    // build the same scheme, so themeMode is pinned rather than followed.
+    // Leaving it on ThemeMode.system would imply a dark variant that does not
+    // exist — the dark shell was reviewed and dropped.
     context.watch<ThemeProvider>();
     return MaterialApp(
       title: AppConfig.appName,
@@ -148,7 +149,7 @@ class _CareVoAppState extends State<CareVoApp> {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
-      themeMode: ThemeMode.dark,
+      themeMode: ThemeMode.light,
       navigatorObservers: [
         _RouteNameObserver((name) => _currentRouteName = name),
       ],

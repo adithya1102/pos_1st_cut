@@ -2,86 +2,91 @@ import 'package:flutter/material.dart';
 
 /// Neobrutalist + retro-diner palette for CareVo Skip.
 ///
-/// Colors are exposed both as raw brand constants and as light/dark
-/// role sets so widgets can pull the correct value for the active theme
-/// via `AppColors.of(context)`.
+/// The app is SINGLE-THEME and that single theme is LIGHT. The v2 prototype
+/// (`design/CareVo Skip v2.dc.html`) is drawn entirely in light values — warm
+/// white screens, white cards, near-black borders with hard offset shadows —
+/// and the app now matches it rather than re-interpreting it.
+///
+/// An earlier iteration shipped a dark shell (navy #0B1B2B + cyan accent). It
+/// was rejected on review: it is gone, not toggled away from. `AppColors.light`
+/// and `AppColors.dark` are both aliases of the one scheme so every existing
+/// call site keeps compiling, and flipping the platform toggle changes nothing.
 class AppColors {
   AppColors._();
 
-  // ---- Brand constants (fixed regardless of theme) ----
+  // ---- Brand constants --------------------------------------------------
+  /// Wordmark / link purple. Deeper than [purple] so it stays legible as TEXT
+  /// on the warm-white shell (10.65:1); [purple] is the button FILL.
+  static const Color brand = Color(0xFF53089B);
   static const Color purple = Color(0xFF6B2FB3);
   static const Color purpleDeep = Color(0xFF4C1D86);
-  static const Color mint = Color(0xFF8FD6B0);
-  static const Color mintDeep = Color(0xFF5FB98B);
+
+  /// Mint pair: [mint] fills chips and secondary buttons, [mintDeep] the
+  /// stronger "View menu" / status pills.
+  static const Color mint = Color(0xFFAAF2CA);
+  static const Color mintDeep = Color(0xFF8FD6B0);
+
+  /// Green used for text ON mint (the prototype's chip label colour).
+  static const Color mintInk = Color(0xFF2A7151);
+
   static const Color cream = Color(0xFFF6EFE2);
   static const Color creamDim = Color(0xFFEDE3CF);
+
+  /// Border/shadow ink. Every hard shadow and 2-3px border in the system.
   static const Color ink = Color(0xFF171512);
-  static const Color paper = Color(0xFFFFFDF7);
+
+  /// Warm white the screens are painted on, and the white of a card.
+  static const Color paper = Color(0xFFFFF8F3);
+  static const Color paperCool = Color(0xFFF9F9F7);
 
   // Accents used for status / feedback.
   static const Color sunny = Color(0xFFF4C542);
   static const Color tomato = Color(0xFFE2603A);
   static const Color sky = Color(0xFF7FB3E8);
 
-  // ---- Dark theme (v2) --------------------------------------------------
-  // Replaces the old pale-brown dark surfaces, which read as a washed-out
-  // version of the light theme rather than as a deliberate dark mode.
-  //
-  // paperCenter is the warm tan the ticket is printed on in dark mode;
-  // contrastDark is the near-black surface/ink it sits against; contrastVibrant
-  // is the single focal accent; contrastSlate is its complementary partner.
-  static const Color paperCenter = Color(0xFFB5783A);
-  static const Color contrastSlate = Color(0xFF3A77B5);
-  static const Color contrastVibrant = Color(0xFF00D4FF);
-  static const Color contrastDark = Color(0xFF0B1B2B);
-
-  static const Color darkBg = contrastDark;
-  static const Color darkSurface = Color(0xFF122436);
-  static const Color darkInk = Color(0xFFEAF4FA);
-
   /// Resolve the role-based scheme for the active brightness.
-  static AppColorScheme of(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return isDark ? dark : light;
-  }
-
-  /// THE app scheme. v2 is single-theme: the old pale/cream light values are
-  /// gone, not toggled away from.
   ///
-  /// Contrast, measured against the shell (#0B1B2B):
-  ///   white on shell        17.41:1  -> body text
-  ///   vibrant on shell       9.84:1  -> safe for text-weight accents
-  ///   slate  on shell        3.72:1  -> LARGE / UI ONLY, never body text
-  ///   shell  on paperCenter  4.74:1  -> ticket ink
-  ///   vibrant on paperCenter 2.08:1  -> FAILS; never put vibrant on a ticket
+  /// Single-theme, so this always returns [v2]. Kept as a lookup so call sites
+  /// read uniformly and a future variant needs no screen-level edits.
+  static AppColorScheme of(BuildContext context) => v2;
+
+  /// THE app scheme.
+  ///
+  /// Contrast, measured against the shell (#FFF8F3):
+  ///   ink      on shell   16.34:1  -> body text
+  ///   inkSoft  on shell    8.87:1  -> secondary text
+  ///   brand    on shell   10.65:1  -> links, wordmark
+  ///   white    on primary  7.83:1  -> primary button label
+  ///   ink      on accent  13.31:1  -> mint chips and secondary buttons
   static const AppColorScheme v2 = AppColorScheme(
-    background: contrastDark,
-    surface: Color(0xFF122436),
-    surfaceAlt: Color(0xFF1B3247),
-    ink: Color(0xFFEAF4FA),
-    // 7.4:1 on the shell — readable secondary text, unlike slate.
-    inkSoft: Color(0xFF9FB8C9),
-    // Vibrant is the SINGLE accent: active states and focal highlights only.
-    // Dark text on it reads at 9.84:1, so it is safe as a button fill.
-    primary: contrastVibrant,
-    onPrimary: contrastDark,
-    // Slate is the secondary, deliberately quieter so two accents never
-    // compete. White on slate is 4.68:1, so filled slate can carry a label.
-    accent: contrastSlate,
-    onAccent: Color(0xFFFFFFFF),
-    border: Color(0xFFEAF4FA),
-    shadow: Color(0xFF000000),
+    // Warm white, not pure white: pure white next to the cream ticket stock
+    // reads as two different kinds of "unpainted" rather than one surface.
+    background: paper,
+    surface: Color(0xFFFFFFFF),
+    // The muted band behind +91 tags, image placeholders and inset rows.
+    surfaceAlt: Color(0xFFEDE7E2),
+    ink: Color(0xFF1D1B18),
+    inkSoft: Color(0xFF4B4453),
+    // Purple is the primary FILL; white on it reads at 7.83:1.
+    primary: purple,
+    onPrimary: Color(0xFFFFFFFF),
+    // Mint is the secondary fill. It is deliberately never a text colour —
+    // mint type on any pale surface is unreadable (see palette_test).
+    accent: mint,
+    onAccent: Color(0xFF1D1B18),
+    border: ink,
+    shadow: ink,
   );
 
   /// Both aliases point at [v2]. Kept so existing `AppColors.light` /
-  /// `AppColors.dark` call sites keep compiling while the app is single-theme —
-  /// flipping the system toggle now changes nothing, by design.
+  /// `AppColors.dark` call sites keep compiling while the app is single-theme.
   static const AppColorScheme light = v2;
 
   static const AppColorScheme dark = v2;
 }
 
-/// Role-based color set consumed by widgets so light/dark both look correct.
+/// Role-based color set consumed by widgets so every screen pulls the same
+/// values rather than hard-coding hexes.
 class AppColorScheme {
   const AppColorScheme({
     required this.background,

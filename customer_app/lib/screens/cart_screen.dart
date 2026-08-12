@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/cart_item.dart';
 import '../state/cart_state.dart';
 import '../theme/app_colors.dart';
+import '../theme/app_theme.dart';
 import '../theme/widgets/neo_button.dart';
 import '../theme/widgets/neo_card.dart';
 import '../theme/widgets/neo_text_field.dart';
@@ -59,11 +60,19 @@ class _CartScreenState extends State<CartScreen> {
             : ListView(
                 padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
                 children: [
+                  Text('Your order', style: textTheme.headlineSmall),
+                  const SizedBox(height: 5),
+                  Text(
+                    [
+                      cart.outlet?.name,
+                      cart.outlet?.locality,
+                    ].whereType<String>().where((s) => s.isNotEmpty).join(' · '),
+                    style: textTheme.titleSmall?.copyWith(color: AppColors.brand),
+                  ),
+                  const SizedBox(height: 16),
                   // SELF PICKUP callout — the signature, prominent element.
                   _SelfPickupCallout(outletName: cart.outlet?.name ?? 'the outlet'),
                   const SizedBox(height: 20),
-                  Text('Items', style: textTheme.headlineSmall),
-                  const SizedBox(height: 12),
                   for (final line in cart.items) ...[
                     _CartLineCard(line: line),
                     const SizedBox(height: 12),
@@ -78,12 +87,11 @@ class _CartScreenState extends State<CartScreen> {
                   ),
                   const SizedBox(height: 20),
                   _BillSummary(subtotal: cart.subtotal),
-                  const SizedBox(height: 12),
-                  Center(
-                    child: Text(
-                      'No delivery fees — you pick it up yourself.',
-                      style: textTheme.bodySmall?.copyWith(color: c.inkSoft),
-                    ),
+                  const SizedBox(height: 14),
+                  Text(
+                    'Pickup only. You collect at the counter — no delivery, '
+                    'no wait.',
+                    style: textTheme.bodyMedium?.copyWith(color: c.inkSoft),
                   ),
                 ],
               ),
@@ -229,30 +237,61 @@ class _BillSummary extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     final textTheme = Theme.of(context).textTheme;
-    Widget row(String label, double value, {bool bold = false}) => Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
+
+    Widget row(String label, double value) => Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(label,
-                  style: bold ? textTheme.titleMedium : textTheme.bodyLarge),
+                  style: textTheme.bodyLarge?.copyWith(color: c.inkSoft)),
               PriceText(value,
-                  style: bold ? textTheme.titleLarge : textTheme.bodyLarge),
+                  style: textTheme.bodyLarge?.copyWith(color: c.inkSoft)),
             ],
           ),
         );
 
+    // Zero padding on the card: the mint "To pay" band has to run edge to edge
+    // inside the border, the way the prototype draws it. Clipped locally rather
+    // than by NeoCard, which must keep letting a child's hard shadow overhang.
     return NeoCard(
-      child: Column(
-        children: [
-          row('Subtotal', subtotal),
-          row('Taxes & charges', 0),
-          const SizedBox(height: 4),
-          const Divider(thickness: 2),
-          const SizedBox(height: 4),
-          row('Total', subtotal, bold: true),
-        ],
+      padding: EdgeInsets.zero,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(AppTheme.radius - 3),
+        child: Column(
+          children: [
+            row('Item total', subtotal),
+            Container(height: 2, color: c.surfaceAlt),
+            row('Taxes & fees', 0),
+            Container(height: 2, color: c.border),
+            Container(
+              width: double.infinity,
+              color: c.accent,
+              padding: const EdgeInsets.all(14),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'To pay',
+                    style: textTheme.titleLarge?.copyWith(
+                      color: c.onAccent,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  PriceText(
+                    subtotal,
+                    style: textTheme.titleLarge?.copyWith(
+                      color: c.onAccent,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -284,7 +323,7 @@ class _CheckoutBar extends StatelessWidget {
             const SizedBox(width: 16),
             Expanded(
               child: NeoButton(
-                label: 'Checkout',
+                label: 'Continue to payment',
                 icon: Icons.lock_outline,
                 onPressed: onCheckout,
               ),

@@ -4,14 +4,19 @@ import 'package:provider/provider.dart';
 
 import '../state/auth_state.dart';
 import '../theme/app_colors.dart';
+import '../theme/app_theme.dart';
 import '../theme/widgets/neo_button.dart';
 import '../theme/widgets/neo_card.dart';
 import '../theme/widgets/neo_text_field.dart';
-import '../widgets/theme_toggle_button.dart';
 import 'location_screen.dart';
 import 'otp_screen.dart';
 
 /// Step 2 of the flow: mobile number entry to request an OTP.
+///
+/// v2 layout (prototype screen 01): no app bar — the auth screens are the only
+/// ones without the app chrome — a centred wordmark, then one card holding both
+/// sign-in routes. The card is vertically centred so the whole screen reads as a
+/// single object rather than a form pinned under a header.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -73,88 +78,113 @@ class _LoginScreenState extends State<LoginScreen> {
     final textTheme = Theme.of(context).textTheme;
 
     return Scaffold(
-      appBar: AppBar(
-        actions: const [
-          Padding(padding: EdgeInsets.only(right: 16), child: ThemeToggleButton()),
-        ],
-      ),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: 12),
-              Text('Skip the\nline.', style: textTheme.displaySmall),
-              const SizedBox(height: 12),
-              Text(
-                'Order ahead, pay online, and pick up your food without waiting.',
-                style: textTheme.bodyLarge?.copyWith(color: c.inkSoft),
-              ),
-              const SizedBox(height: 32),
-              NeoCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Enter your mobile number', style: textTheme.titleMedium),
-                    const SizedBox(height: 16),
-                    Row(
+        child: LayoutBuilder(
+          builder: (context, constraints) => SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 24, 20, 30),
+            child: ConstrainedBox(
+              // Centres the card on a tall screen but lets it scroll normally
+              // once the keyboard is up, instead of overflowing.
+              constraints: BoxConstraints(minHeight: constraints.maxHeight - 54),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'CareVo Skip',
+                    textAlign: TextAlign.center,
+                    style: textTheme.headlineMedium?.copyWith(
+                      color: AppColors.brand,
+                      letterSpacing: -0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Skip the queue.',
+                    textAlign: TextAlign.center,
+                    style: textTheme.titleMedium?.copyWith(color: c.inkSoft),
+                  ),
+                  const SizedBox(height: 28),
+                  NeoCard(
+                    padding: const EdgeInsets.all(22),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _CountryTag(color: c.surfaceAlt, border: c.border),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: NeoTextField(
-                            // Stable driver target — see integration_test/.
-                            key: const Key('login_phone_field'),
-                            controller: _controller,
-                            hintText: '98765 43210',
-                            keyboardType: TextInputType.phone,
-                            maxLength: 10,
-                            inputFormatters: [
-                              FilteringTextInputFormatter.digitsOnly,
-                            ],
-                            onChanged: (_) => setState(() {}),
-                            onSubmitted: (_) => _valid ? _submit() : null,
-                          ),
+                        Text('Welcome back', style: textTheme.titleLarge),
+                        const SizedBox(height: 18),
+                        Text(
+                          'Phone number',
+                          style: textTheme.labelLarge?.copyWith(color: c.ink),
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            const _CountryTag(),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: NeoTextField(
+                                // Stable driver target — see integration_test/.
+                                key: const Key('login_phone_field'),
+                                controller: _controller,
+                                hintText: '98765 43210',
+                                keyboardType: TextInputType.phone,
+                                maxLength: 10,
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.digitsOnly,
+                                ],
+                                onChanged: (_) => setState(() {}),
+                                onSubmitted: (_) => _valid ? _submit() : null,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 20),
+                        NeoButton(
+                          key: const Key('login_send_otp'),
+                          label: 'Send OTP',
+                          icon: Icons.send,
+                          loading: auth.busy,
+                          onPressed: _valid ? _submit : null,
+                        ),
+                        const SizedBox(height: 20),
+                        Row(
+                          children: [
+                            Expanded(child: _Rule(color: c.border)),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 14),
+                              child: Text(
+                                'OR',
+                                style: textTheme.labelLarge
+                                    ?.copyWith(color: c.inkSoft),
+                              ),
+                            ),
+                            Expanded(child: _Rule(color: c.border)),
+                          ],
+                        ),
+                        const SizedBox(height: 20),
+                        NeoButton(
+                          label: 'Continue with Google',
+                          icon: Icons.account_circle_outlined,
+                          // Mint, not the purple primary: the prototype gives
+                          // phone entry the single loud action and keeps Google
+                          // visually secondary to it.
+                          variant: NeoButtonVariant.accent,
+                          loading: auth.busy,
+                          onPressed: auth.busy ? null : _google,
+                        ),
+                        const SizedBox(height: 18),
+                        Text(
+                          'We use your number only to hold your order and show '
+                          'your pickup code.',
+                          textAlign: TextAlign.center,
+                          style: textTheme.bodySmall?.copyWith(color: c.inkSoft),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 20),
-                    NeoButton(
-                      key: const Key('login_send_otp'),
-                      label: 'Send OTP',
-                      icon: Icons.sms_outlined,
-                      loading: auth.busy,
-                      onPressed: _valid ? _submit : null,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  Expanded(child: Divider(color: c.border, thickness: 2)),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: Text('OR', style: textTheme.labelLarge),
                   ),
-                  Expanded(child: Divider(color: c.border, thickness: 2)),
                 ],
               ),
-              const SizedBox(height: 20),
-              NeoButton(
-                label: 'Continue with Google',
-                icon: Icons.account_circle_outlined,
-                variant: NeoButtonVariant.neutral,
-                loading: auth.busy,
-                onPressed: auth.busy ? null : _google,
-              ),
-              const SizedBox(height: 20),
-              Text(
-                'By continuing you agree to receive a one-time verification code.',
-                style: textTheme.bodySmall,
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -162,21 +192,22 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
+/// The fixed "+91" prefix. Butts against the number field with a shared border
+/// so the two read as one control, the way the prototype draws it.
 class _CountryTag extends StatelessWidget {
-  const _CountryTag({required this.color, required this.border});
-  final Color color;
-  final Color border;
+  const _CountryTag();
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 18),
       decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: border, width: 3),
+        color: c.surfaceAlt,
+        borderRadius: BorderRadius.circular(AppTheme.radius),
+        border: Border.all(color: c.border, width: AppTheme.borderWidth),
         boxShadow: [
-          BoxShadow(color: border, offset: const Offset(3, 3), blurRadius: 0),
+          BoxShadow(color: c.shadow, offset: const Offset(3, 3), blurRadius: 0),
         ],
       ),
       child: Text(
@@ -188,4 +219,13 @@ class _CountryTag extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The solid 2px rule either side of "OR".
+class _Rule extends StatelessWidget {
+  const _Rule({required this.color});
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Container(height: 2, color: color);
 }

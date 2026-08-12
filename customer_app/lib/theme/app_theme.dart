@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import 'app_colors.dart';
@@ -13,10 +14,11 @@ class AppTheme {
   static const double borderWidth = 3.0;
   static const Offset hardShadowOffset = Offset(4, 4);
 
-  /// v2 is SINGLE-THEME. Both entry points build the same dark-shell scheme, so
-  /// the platform light/dark setting cannot produce a half-migrated look.
-  static ThemeData light() => _build(AppColors.v2, Brightness.dark);
-  static ThemeData dark() => _build(AppColors.v2, Brightness.dark);
+  /// v2 is SINGLE-THEME and that theme is LIGHT. Both entry points build the
+  /// same scheme at [Brightness.light], so the platform light/dark setting
+  /// cannot produce a half-migrated look.
+  static ThemeData light() => _build(AppColors.v2, Brightness.light);
+  static ThemeData dark() => _build(AppColors.v2, Brightness.light);
 
   static ThemeData _build(AppColorScheme c, Brightness brightness) {
     final display = GoogleFonts.bevanTextTheme();
@@ -57,8 +59,11 @@ class AppTheme {
       onPrimary: c.onPrimary,
       secondary: c.accent,
       onSecondary: c.onAccent,
-      error: AppColors.tomato,
-      onError: AppColors.cream,
+      // The prototype's error pair. Material's own error surfaces (form
+      // validation, error icons) use these; the chunky danger BUTTON keeps
+      // AppColors.tomato, see NeoButton.
+      error: const Color(0xFF93000A),
+      onError: const Color(0xFFFFFFFF),
       surface: c.surface,
       onSurface: c.ink,
     );
@@ -75,6 +80,14 @@ class AppTheme {
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         centerTitle: false,
+        // Stated rather than inferred. Flutter would derive this from the app
+        // bar's brightness, but OEM shells disagree about that derivation, and
+        // guessing wrong paints white status-bar icons onto a warm-white bar.
+        systemOverlayStyle: const SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: Brightness.dark,
+          statusBarBrightness: Brightness.light,
+        ),
         iconTheme: IconThemeData(color: c.ink),
         titleTextStyle: GoogleFonts.bevan(
           color: c.ink,

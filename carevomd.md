@@ -716,3 +716,106 @@ Pre-existing and NOT introduced here: `cream on tomato` on the danger button is
 values, so the swap broke nothing.
 
 ---
+
+## 2026-08-12 — Dark theme REVERSED: v2 is now end-to-end LIGHT
+
+### Why the redesign never showed up in testing
+
+Not a bug in the implementation. The APK on the test device was
+`Desktop/carevo-apks/carevo-customer-v3.apk`, built **2026-08-11 11:08** — about
+28 hours before any v2 source file was written. Verified by unzipping it: its
+`libapp.so` contains `PickupScreen` and `OutletsScreen` but **zero** occurrences
+of `TicketCard`. The debug APK in `build/` (2026-08-12 03:40) is equally stale;
+only the release APK built at 15:43 contained the work, and it was never copied
+to the distribution folder. Nothing was lost and nothing was broken — the build
+simply never reached the phone.
+
+### The dark shell is gone, not toggled away from
+
+Reviewed and rejected. `AppColors.v2` now holds the prototype's own light
+values; `AppTheme.light()` and `.dark()` both build at `Brightness.light` and
+`themeMode` is pinned to `ThemeMode.light`. The navy/cyan constants
+(`paperCenter`, `contrastDark`, `contrastVibrant`, `contrastSlate`) were deleted
+rather than left unreferenced.
+
+```
+paper   #FFF8F3   app shell (warm white, not pure white)
+surface #FFFFFF   cards
+brand   #53089B   wordmark + links (text-safe: 10.65:1 on the shell)
+purple  #6B2FB3   primary button FILL (white on it: 7.83:1)
+mint    #AAF2CA   accent FILL — never a text colour
+ink     #171512   every border and hard shadow
+ticket  #FAEEDA stock / #412402 ink   (12.39:1)
+```
+
+**Measured contrast decided where each colour is allowed:**
+
+| pair | ratio | rule |
+|---|---|---|
+| ink on shell | 16.34:1 | body text |
+| inkSoft `#4B4453` on shell | 8.87:1 | secondary text |
+| brand on shell | 10.65:1 | links, wordmark |
+| white on purple | 7.83:1 | primary button label |
+| ink on mint | 13.31:1 | mint chips carry dark labels |
+| ticket ink on stock | 12.39:1 | ticket body text |
+| ticket inkSoft `#7A5426` on stock | 5.86:1 | secondary ticket lines |
+| **mint on shell / on stock** | **1.23 / 1.13:1** | **FAILS — fill only, never type** |
+
+Ticket `inkSoft` is deliberately darker than the prototype's `#8A6A2E`, which
+measures 4.38:1 on the stock and would fail normal text.
+
+### Light theme means the Android resources too
+
+`values-night/styles.xml` still inherited `Theme.Black.NoTitleBar`, and
+`drawable-v21/launch_background.xml` used `?android:colorBackground`. On a phone
+with OS dark mode on, that painted a **black** launch window and a black window
+background behind a light app. Both now pin `@color/carevo_paper` (#FFF8F3), and
+`appBarTheme.systemOverlayStyle` states dark status-bar icons rather than
+letting the OEM shell infer them.
+
+### Frames built this pass
+
+Login, OTP, cart, checkout — the four the previous pass left unrestyled. The
+other eight frames were already built and only needed the palette to land.
+
+Checkout now opens with "Confirm order" and ends with the order summary printed
+as a **ticket**, so the object the customer approves is recognisably the one
+they will hold at the counter. The struck-through total and offer line have no
+prototype equivalent; they are existing behaviour, kept, and re-inked in ticket
+brown because the app's purple is not a ticket colour.
+
+### Deliberately NOT built
+
+- **Restricted-access gate (frame 04)** — deferred by explicit decision. No
+  schema scaffolded for it either.
+- **In-app OTP numeric keypad (frame 02)** — rejected. The system keyboard is
+  what carries SMS one-time-code autofill. The six OTP cells are a *rendering*
+  of one real `TextField` (transparent, stretched under them) that keeps
+  `AutofillHints.oneTimeCode`. Six separate fields would have broken autofill,
+  which is the thing being protected. Pinned by tests, including one asserting
+  no on-screen digit keys exist.
+- **Location drill-down (frame 03)** — blocked BY the gate exclusion, not an
+  oversight. Its middle level *is* the building list, and those rows carry the
+  restricted badge. `location_screen.dart` remains the two-level city/area
+  picker fed by `GET /customer/areas`.
+
+### Incidental fix this surfaced
+
+`GoogleAuthService` read `FirebaseAuth.instance` in its **constructor**, so
+merely providing the service crashed any widget test without an initialized
+Firebase app. Now resolved lazily at sign-in. Production path unchanged —
+`main()` initializes Firebase first.
+
+`ThemeToggleButton` deleted: it was still in the login app bar, doing nothing.
+
+### Tests
+
+`customer_app` **68 passing** (was 55). `palette_test.dart` rewritten for the
+light palette (18 tests, including the mint-as-text failure); new
+`v2_light_screens_test.dart` (10) covers the four restyled frames and pins both
+exclusions. Backend **118**, unchanged and unaffected.
+
+Theme assertions had to move from `test` to `testWidgets`: `AppTheme._build`
+calls `GoogleFonts`, which throws on the webfont fetch outside a widget binding.
+
+---

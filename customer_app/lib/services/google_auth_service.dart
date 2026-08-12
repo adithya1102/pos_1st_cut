@@ -17,11 +17,19 @@ import 'otp_auth_service.dart';
 /// re-verifies it against Google's public keys and reads email + uid from the
 /// claims. Nothing identifying is taken from the client's word.
 class GoogleAuthService {
-  GoogleAuthService(this._api, {FirebaseAuth? auth})
-      : _auth = auth ?? FirebaseAuth.instance;
+  GoogleAuthService(this._api, {FirebaseAuth? auth}) : _authOverride = auth;
 
   final ApiClient _api;
-  final FirebaseAuth _auth;
+
+  /// Resolved lazily, NOT in the constructor.
+  ///
+  /// `FirebaseAuth.instance` throws unless `Firebase.initializeApp()` has
+  /// already run. Reading it at construction time made merely *providing* this
+  /// service enough to crash — which is fine in `main()`, where Firebase is
+  /// initialized first, but broke any widget test that put an [AuthState] in
+  /// scope without a Firebase app. Sign-in is the only thing that needs it.
+  final FirebaseAuth? _authOverride;
+  FirebaseAuth get _auth => _authOverride ?? FirebaseAuth.instance;
 
   /// `initialize` is required once before any other call in google_sign_in 7.x
   /// and is idempotent on the plugin side; the flag just avoids the round trip.
