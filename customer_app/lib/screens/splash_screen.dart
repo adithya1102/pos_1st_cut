@@ -40,7 +40,12 @@ class _SplashScreenState extends State<SplashScreen> {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     return Scaffold(
-      backgroundColor: c.primary,
+      // Cream, not purple. AppColors.cream (#F6EFE2) is the app's already-
+      // defined warm tone — no new hex invented. The Android launch window is
+      // painted the same colour (@color/carevo_splash), so the native splash
+      // and this screen are one continuous surface rather than a cream flash
+      // followed by a purple one.
+      backgroundColor: AppColors.cream,
       body: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -61,10 +66,12 @@ class _SplashScreenState extends State<SplashScreen> {
               ),
             ),
             const SizedBox(height: 18),
+            // Ink, not onPrimary. onPrimary is white — correct on the old
+            // purple field, invisible on cream.
             Text(
               'SKIP THE LINE',
               style: GoogleFonts.spaceGrotesk(
-                color: c.onPrimary,
+                color: c.ink,
                 fontSize: 16,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 4,
@@ -74,13 +81,13 @@ class _SplashScreenState extends State<SplashScreen> {
             SizedBox(
               width: 28,
               height: 28,
-              child: CircularProgressIndicator(color: c.onPrimary, strokeWidth: 3),
+              child: CircularProgressIndicator(color: c.ink, strokeWidth: 3),
             ),
             const SizedBox(height: 40),
             Text(
               AppConfig.appName,
               style: GoogleFonts.spaceGrotesk(
-                color: c.onPrimary.withValues(alpha: 0.7),
+                color: c.inkSoft,
                 fontSize: 12,
               ),
             ),

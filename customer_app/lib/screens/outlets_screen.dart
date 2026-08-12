@@ -7,6 +7,7 @@ import '../services/api_client.dart';
 import '../services/catalog_service.dart';
 import '../services/customer_service.dart';
 import '../theme/app_colors.dart';
+import '../theme/widgets/page_header.dart';
 import '../theme/app_theme.dart';
 import '../theme/widgets/neo_button.dart';
 import '../theme/widgets/neo_card.dart';
@@ -117,7 +118,7 @@ class _OutletsScreenState extends State<OutletsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Pick a\nspot.', style: textTheme.displaySmall),
+                  const PageHeader('Pick a spot'),
                   const SizedBox(height: 8),
                   Row(
                     children: [

@@ -147,6 +147,25 @@ async def list_orders(
     return await AdminService.list_orders(db, limit=limit, offset=offset)
 
 
+@router.get("/orders/by-restaurant", response_model=list[s.RestaurantGroupOut])
+async def list_orders_by_restaurant(
+    days: int = Query(30, ge=1, le=365),
+    limit: int = Query(2000, ge=1, le=5000),
+    _admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Orders grouped restaurant -> day -> time, for the Restaurant tab.
+
+    A different VIEW of the same rows /admin/orders returns — no new table and
+    no new column. Same SUPER_ADMIN gate as every other route in this module.
+
+    Windowed (`days`) rather than paginated: paging a tree can split one
+    restaurant's days across two pages, producing a group that looks complete
+    and is not.
+    """
+    return await AdminService.list_orders_by_restaurant(db, days=days, limit=limit)
+
+
 # ------------------------------ cities -------------------------------------
 # Same shape as the outlet verification queue above, deliberately: pending rows
 # listed, then approve/reject, each writing an admin_audit_logs entry.

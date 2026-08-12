@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import HTTPException
@@ -810,6 +810,109 @@ class AdminService:
                 "distance_km": distance,
             })
         return {"total": int(total), "limit": limit, "offset": offset, "orders": out}
+
+    # ------------------ Restaurant tab: restaurant -> day -> time -----------
+    @staticmethod
+    async def list_orders_by_restaurant(
+        db: AsyncSession, *, days: int = 30, limit: int = 2000
+    ) -> list[dict]:
+        """Orders grouped restaurant -> day -> time. Read-only, no new schema.
+
+        `customer_orders.outlet_id` and `outlets` already carry everything this
+        needs; the hierarchy is a GROUP BY over rows that exist, not a
+        data-model change.
+
+        Windowed to the last `days` days rather than paginated. Pagination and
+        a tree fight each other — page 2 of a flat list can cut a restaurant's
+        days in half, leaving a group that renders as complete but is not. A
+        time window slices along a boundary the reader already understands.
+
+        Grouping happens in SQL for the day bucket (so the DB's timezone handling
+        decides the date, consistently with every other query here) and in Python
+        for the nesting, which keeps the ordering rules readable in one place.
+        """
+        days = max(1, min(days, 365))
+        limit = max(1, min(limit, 5000))
+
+        rows = (await db.execute(text("""
+            SELECT co.id, co.status, co.payment_status, co.pickup_code,
+                   co.total_amount, co.created_at,
+                   to_char(co.created_at, 'YYYY-MM-DD') AS day,
+                   to_char(co.created_at, 'HH24:MI')    AS at_time,
+                   co.outlet_id,
+                   o.location_name AS outlet_name,
+                   o.city          AS city,
+                   o.locality      AS locality,
+                   (SELECT coalesce(sum(i.quantity), 0)
+                      FROM customer_order_items i
+                     WHERE i.customer_order_id = co.id) AS item_count
+            FROM customer_orders co
+            LEFT JOIN outlets o ON o.id = co.outlet_id
+            WHERE co.created_at >= now() - CAST(:window AS interval)
+            ORDER BY co.created_at DESC
+            LIMIT :lim
+        """), {
+            # timedelta, not a string — asyncpg maps it to interval directly.
+            "window": timedelta(days=days),
+            "lim": limit,
+        })).fetchall()
+
+        # Insertion order is already newest-first from the query, and dicts
+        # preserve it — so restaurants come out ordered by their most recent
+        # order, and days within a restaurant likewise, with no re-sorting.
+        groups: dict = {}
+        for r in rows:
+            key = str(r.outlet_id) if r.outlet_id else "__unassigned__"
+            g = groups.get(key)
+            if g is None:
+                g = {
+                    "outlet_id": r.outlet_id,
+                    "outlet_name": r.outlet_name,
+                    "city": r.city,
+                    "locality": r.locality,
+                    "order_count": 0,
+                    "total_amount": 0.0,
+                    "_days": {},
+                }
+                groups[key] = g
+
+            amount = float(r.total_amount or 0)
+            g["order_count"] += 1
+            g["total_amount"] += amount
+
+            day = g["_days"].get(r.day)
+            if day is None:
+                day = {"day": r.day, "order_count": 0,
+                       "total_amount": 0.0, "orders": []}
+                g["_days"][r.day] = day
+            day["order_count"] += 1
+            day["total_amount"] += amount
+            day["orders"].append({
+                "order_id": r.id,
+                "time": r.at_time,
+                "created_at": r.created_at,
+                "status": r.status,
+                "payment_status": r.payment_status,
+                "pickup_code": r.pickup_code,
+                "total_amount": amount,
+                "item_count": int(r.item_count or 0),
+            })
+
+        return [
+            {
+                "outlet_id": g["outlet_id"],
+                "outlet_name": g["outlet_name"],
+                "city": g["city"],
+                "locality": g["locality"],
+                "order_count": g["order_count"],
+                "total_amount": round(g["total_amount"], 2),
+                "days": [
+                    {**d, "total_amount": round(d["total_amount"], 2)}
+                    for d in g["_days"].values()
+                ],
+            }
+            for g in groups.values()
+        ]
 
     # --------------------------- audit log ---------------------------------
     @staticmethod

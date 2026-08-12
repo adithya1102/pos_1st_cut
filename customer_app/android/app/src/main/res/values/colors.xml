@@ -5,4 +5,7 @@
          the launch window matches the first Flutter frame exactly, in BOTH
          Android light and dark mode — the app itself is light-only. -->
     <color name="carevo_paper">#FFF8F3</color>
+    <!-- AppColors.cream. The Flutter SplashScreen paints this exact value, so
+         the native launch window hands over to it with no colour step. -->
+    <color name="carevo_splash">#F6EFE2</color>
 </resources>

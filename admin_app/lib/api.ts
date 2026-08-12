@@ -259,6 +259,39 @@ export interface AdminOrderPage {
   orders: AdminOrder[];
 }
 
+/** Restaurant tab (GET /admin/orders/by-restaurant): the same orders as
+ *  /admin/orders, grouped restaurant -> day -> time. A view, not new data —
+ *  no schema backs this beyond customer_orders + outlets. */
+export interface RestaurantOrder {
+  order_id: string;
+  /** Local wall-clock "HH:MM" — the "time" level of the grouping. */
+  time: string;
+  created_at: string | null;
+  status: string;
+  payment_status: string | null;
+  pickup_code: string | null;
+  total_amount: number;
+  item_count: number;
+}
+
+export interface RestaurantDay {
+  /** ISO "YYYY-MM-DD". */
+  day: string;
+  order_count: number;
+  total_amount: number;
+  orders: RestaurantOrder[];
+}
+
+export interface RestaurantGroup {
+  outlet_id: string | null;
+  outlet_name: string | null;
+  city: string | null;
+  locality: string | null;
+  order_count: number;
+  total_amount: number;
+  days: RestaurantDay[];
+}
+
 export interface AuditLog {
   id: string;
   actor_username: string | null;
@@ -405,6 +438,14 @@ export const adminApi = {
 
   orders: (limit = 50, offset = 0) =>
     api.get<AdminOrderPage>(`/api/v1/admin/orders?limit=${limit}&offset=${offset}`),
+
+  // Windowed by days rather than paginated: paging a tree can split one
+  // restaurant's days across two pages, producing a group that looks complete
+  // and is not.
+  ordersByRestaurant: (days = 30) =>
+    api.get<RestaurantGroup[]>(
+      `/api/v1/admin/orders/by-restaurant?days=${days}`,
+    ),
 
   auditLogs: (limit = 100) =>
     api.get<AuditLog[]>(`/api/v1/admin/audit-logs?limit=${limit}`),

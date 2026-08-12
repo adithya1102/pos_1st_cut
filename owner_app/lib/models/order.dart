@@ -32,6 +32,15 @@ class Order {
   final bool isLocked;
   final double totalAmount;
   final String createdAt;
+
+  /// When staff confirmed the pickup code, if they have.
+  ///
+  /// The server keeps a verified order in this feed for 30 minutes after this
+  /// moment and then stops returning it (CarevoService.COMPLETED_GRACE), so the
+  /// app never runs its own removal timer — a timer would reset on every
+  /// relaunch and resurrect rows that had already aged out.
+  final String? pickupVerifiedAt;
+
   final List<OrderLineItem> items;
 
   const Order({
@@ -42,10 +51,26 @@ class Order {
     required this.totalAmount,
     required this.createdAt,
     required this.items,
+    this.pickupVerifiedAt,
   });
 
   /// True once staff have confirmed payment (manual UPI-intent tick).
   bool get isPaid => paymentStatus.toUpperCase() == 'PAID';
+
+  /// Collected, and inside its grace window — the only reason a COMPLETED
+  /// order is in this feed at all.
+  bool get isCollected => status.toUpperCase() == 'COMPLETED';
+
+  /// Minutes since the pickup was verified, for the "collected Nm ago" label.
+  /// Null when not yet verified or the timestamp is unparseable.
+  int? get minutesSinceCollected {
+    final raw = pickupVerifiedAt;
+    if (raw == null || raw.isEmpty) return null;
+    final at = DateTime.tryParse(raw);
+    if (at == null) return null;
+    final mins = DateTime.now().toUtc().difference(at.toUtc()).inMinutes;
+    return mins < 0 ? 0 : mins;
+  }
 
   factory Order.fromJson(Map<String, dynamic> json) {
     final rawItems = (json['items'] as List<dynamic>?) ?? const [];
@@ -56,6 +81,7 @@ class Order {
       isLocked: (json['is_locked'] as bool?) ?? false,
       totalAmount: _toDouble(json['total_amount']),
       createdAt: (json['created_at'] as String?) ?? '',
+      pickupVerifiedAt: json['pickup_verified_at']?.toString(),
       items: rawItems
           .map((e) => OrderLineItem.fromJson(e as Map<String, dynamic>))
           .toList(),

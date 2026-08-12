@@ -17,6 +17,18 @@ class OrderCard extends StatefulWidget {
   State<OrderCard> createState() => _OrderCardState();
 }
 
+/// "Collected just now" / "Collected 12m ago — clearing soon".
+///
+/// Deliberately vague about the exact removal moment: the server owns the
+/// cutoff, and promising a precise countdown the app does not control would be
+/// a number that drifts.
+String _collectedLabel(Order order) {
+  final mins = order.minutesSinceCollected;
+  if (mins == null) return 'Collected — clearing soon';
+  if (mins < 1) return 'Collected just now — clearing soon';
+  return 'Collected ${mins}m ago — clearing soon';
+}
+
 class _OrderCardState extends State<OrderCard> {
   bool _expanded = false;
 
@@ -62,6 +74,20 @@ class _OrderCardState extends State<OrderCard> {
                           '  •  ₹${order.totalAmount.toStringAsFixed(0)}',
                           style: theme.textTheme.bodySmall,
                         ),
+                        // Only ever visible during the 30-minute grace window:
+                        // the server stops returning the order once it closes,
+                        // so this row cannot linger past its own message.
+                        if (order.isCollected) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            _collectedLabel(order),
+                            key: const Key('collected_grace_label'),
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.outline,
+                              fontStyle: FontStyle.italic,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),

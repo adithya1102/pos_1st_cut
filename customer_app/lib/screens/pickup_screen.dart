@@ -564,10 +564,18 @@ class _TravelControls extends StatelessWidget {
       );
     }
 
+    // No purple anywhere in this flow. These controls sit directly beneath the
+    // pickup ticket, and the app's purple is not a ticket colour — a purple
+    // slab under cream stock reads as a different app's button pasted on. The
+    // ticket's own ink and stock carry it instead, so the whole pickup screen
+    // is one object.
+    final t = TicketColors.of(context);
+
     if (!departed) {
       return NeoButton(
         label: departing ? 'One sec…' : 'I\'m leaving now',
         icon: Icons.directions_run,
+        variant: NeoButtonVariant.neutral,
         loading: departing,
         onPressed: onLeaving,
       );
@@ -575,17 +583,17 @@ class _TravelControls extends StatelessWidget {
 
     // Departed, not yet arrived.
     return NeoCard(
-      color: c.surface,
+      color: t.paper,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(Icons.navigation, color: c.primary),
+              Icon(Icons.navigation, color: t.ink),
               const SizedBox(width: 12),
               Expanded(
                 child: Text('On your way — we\'re timing your food.',
-                    style: textTheme.titleMedium),
+                    style: textTheme.titleMedium?.copyWith(color: t.ink)),
               ),
             ],
           ),

@@ -432,6 +432,11 @@ class OwnerOrderOut(BaseModel):
     is_locked: bool
     total_amount: float
     created_at: Optional[datetime] = None
+    #: Set once staff confirm the pickup code. The owner app uses it to mark
+    #: the row as collected during its 30-minute grace window; the row itself
+    #: stops being returned once that window closes (CarevoService.
+    #: COMPLETED_GRACE), so the app never has to time the removal itself.
+    pickup_verified_at: Optional[datetime] = None
     items: list[OwnerOrderLineOut] = []
 
 

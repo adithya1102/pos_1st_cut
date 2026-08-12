@@ -4,7 +4,7 @@
     <!-- Literal, not ?android:colorBackground: that attribute resolves to black
          under the OS dark-mode theme, which flashed a black splash on a
          light-only app. -->
-    <item android:drawable="@color/carevo_paper" />
+    <item android:drawable="@color/carevo_splash" />
 
     <!-- You can insert your own image assets here -->
     <!-- <item>

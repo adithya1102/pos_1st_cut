@@ -48,6 +48,15 @@ _LIVE_STATUSES = {"PAID", "RECEIVED", "PREPARING", "READY"}
 
 
 class CarevoService:
+    #: How long a verified pickup stays in the owner app's LIVE order queue
+    #: after staff confirm it, before dropping out of the default view.
+    #:
+    #: Server-side and derived from customer_orders.pickup_verified_at, so the
+    #: window survives app restarts and is identical on every device looking at
+    #: the same outlet. Only /pos/orders honours it — order history and the
+    #: admin order log are unaffected.
+    COMPLETED_GRACE = timedelta(minutes=30)
+
     # ------------------------------ OTP ------------------------------------
     @staticmethod
     def check_otp_rate_limit(phone_number: str) -> None:
@@ -1526,12 +1535,36 @@ class CarevoService:
             await CarevoService._notify_kitchen_for_due_trains(db, outlet_id=outlet_id)
         except Exception:
             await db.rollback()
+        # A verified pickup lingers for COMPLETED_GRACE, then drops out on its
+        # own. It used to vanish the instant staff tapped verify, which left no
+        # window to notice a mistake — and no way to confirm the right order was
+        # closed. The cutoff is computed from pickup_verified_at IN SQL, not
+        # from a client timer, so closing and reopening the app cannot revive a
+        # row that has already aged out, and two devices always agree.
+        #
+        # Order history and the admin order log read their own queries and are
+        # untouched: this thins the live kitchen queue only.
         orders = (await db.execute(text("""
-            SELECT id, status, payment_status, is_locked, total_amount, created_at
+            SELECT id, status, payment_status, is_locked, total_amount,
+                   created_at, pickup_verified_at
             FROM customer_orders
-            WHERE outlet_id = :oid AND status NOT IN ('COMPLETED','CANCELLED','ABANDONED')
+            WHERE outlet_id = :oid
+              AND (
+                    status NOT IN ('COMPLETED','CANCELLED','ABANDONED')
+                 OR (
+                      status = 'COMPLETED'
+                      AND pickup_verified_at IS NOT NULL
+                      AND pickup_verified_at >= now() - CAST(:grace AS interval)
+                    )
+              )
             ORDER BY created_at DESC
-        """), {"oid": str(outlet_id)})).fetchall()
+        """), {
+            "oid": str(outlet_id),
+            # A timedelta, not a string: the CAST tells asyncpg to expect an
+            # interval, and it maps timedelta -> interval natively while
+            # rejecting '1800 seconds' outright.
+            "grace": CarevoService.COMPLETED_GRACE,
+        })).fetchall()
         if not orders:
             return []
         order_ids = [str(o.id) for o in orders]
@@ -1554,6 +1587,7 @@ class CarevoService:
                 "is_locked": bool(o.is_locked),
                 "total_amount": float(o.total_amount) if o.total_amount is not None else 0.0,
                 "created_at": o.created_at,
+                "pickup_verified_at": o.pickup_verified_at,
                 "items": by_order.get(str(o.id), []),
             }
             for o in orders

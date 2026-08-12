@@ -5,9 +5,9 @@ import '../services/api_client.dart';
 import '../services/catalog_service.dart';
 import '../services/location_service.dart';
 import '../theme/app_colors.dart';
+import '../theme/widgets/page_header.dart';
 import '../theme/app_theme.dart';
 import '../theme/widgets/neo_button.dart';
-import '../theme/widgets/neo_card.dart';
 import 'outlets_screen.dart';
 import '../widgets/account_button.dart';
 import '../widgets/area_picker.dart';
@@ -103,71 +103,41 @@ class _LocationScreenState extends State<LocationScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Task 3 — header/title overlap.
-              // Bevan (the display font) has tall ascenders, and the theme sets
-              // displaySmall to height: 1.1, TIGHTER than the font's natural
-              // line box. Flutter then lets the first line's glyphs overflow
-              // ABOVE the text widget's top edge, where they collided with the
-              // app bar across the previous 8px gap.
-              //
-              // applyHeightToFirstAscent: false makes the first line use the
-              // font's real ascent instead of the compressed one, so glyphs sit
-              // inside their box; the larger gap adds separation on top of that.
+              // The Bevan-ascender fix that used to live here now lives inside
+              // PageHeader, which every page title goes through.
               const SizedBox(height: 20),
-              Text(
-                'Where are\nyou?',
-                style: textTheme.displaySmall,
-                textHeightBehavior: const TextHeightBehavior(
-                  applyHeightToFirstAscent: false,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'We use your location to find restaurants near you for pickup.',
-                style: textTheme.bodyLarge?.copyWith(color: c.inkSoft),
-              ),
-              const SizedBox(height: 24),
-              NeoCard(
-                color: c.primary,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(Icons.my_location, color: c.onPrimary, size: 30),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Use my current location',
-                      style: textTheme.titleLarge?.copyWith(color: c.onPrimary),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Fastest way to see the closest outlets.',
-                      style: textTheme.bodyMedium?.copyWith(
-                        color: c.onPrimary.withValues(alpha: 0.85),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    NeoButton(
-                      label: 'Allow location',
-                      icon: Icons.gps_fixed,
+              // The location affordance is a SMALL control anchored top-right,
+              // not the half-screen purple panel it used to be. It was the
+              // loudest thing on a screen whose real content is the city list,
+              // and it only opens the OS permission dialog — the actual
+              // decision surface, which the app cannot style or size.
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Expanded(child: PageHeader('Where are you?')),
+                  const SizedBox(width: 12),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: NeoButton(
+                      key: const Key('use_my_location'),
+                      label: 'Near me',
+                      icon: Icons.my_location,
                       variant: NeoButtonVariant.accent,
+                      expand: false,
+                      compact: true,
                       loading: _locating,
                       onPressed: _useMyLocation,
                     ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 28),
-              Row(
-                children: [
-                  Expanded(child: Divider(color: c.border, thickness: 2)),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: Text('OR CHOOSE AREA', style: textTheme.labelLarge),
                   ),
-                  Expanded(child: Divider(color: c.border, thickness: 2)),
                 ],
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 12),
+              Text(
+                'Pick your city below, or use "Near me" to find the closest '
+                'outlets.',
+                style: textTheme.bodyLarge?.copyWith(color: c.inkSoft),
+              ),
+              const SizedBox(height: 22),
               AreaPicker(
                 areas: _areas,
                 error: _areasError,
@@ -176,12 +146,15 @@ class _LocationScreenState extends State<LocationScreen> {
                 onRetry: _loadAreas,
               ),
               const SizedBox(height: 24),
+              // The ONLY thing that navigates. Tapping a city row selects it and
+              // nothing more — so a mis-tap while scanning the list costs a
+              // second tap to correct, not a screen transition to back out of.
               NeoButton(
+                key: const Key('show_outlets_cta'),
                 label: _selectedArea == null
-                    ? 'Select an area to continue'
+                    ? 'Pick a city to continue'
                     : 'Show outlets in $_selectedArea',
                 icon: Icons.arrow_forward,
-                variant: NeoButtonVariant.neutral,
                 onPressed: _selectedArea == null
                     ? null
                     : () => _goToOutlets(areaLabel: _selectedArea),

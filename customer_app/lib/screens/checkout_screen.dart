@@ -16,6 +16,7 @@ import '../theme/app_colors.dart';
 import '../theme/widgets/neo_button.dart';
 import '../theme/widgets/neo_card.dart';
 import '../theme/widgets/ticket_card.dart';
+import '../widgets/arrival_time_picker.dart';
 import '../widgets/offer_sheet.dart';
 import '../widgets/price_text.dart';
 import 'payment_processing_screen.dart';
@@ -94,6 +95,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   /// `declared_arrival_at`; null for every other mode.
   DateTime? _declaredArrival;
 
+  /// Set when Pay is tapped in train mode with no arrival time chosen. Drives
+  /// the inline error; cleared as soon as a time is picked or the mode changes.
+  bool _arrivalMissing = false;
+
   /// Upper bound on how far ahead an arrival may be declared.
   ///
   /// 6h is generous enough for a genuine long-distance train while still
@@ -104,26 +109,21 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   Future<void> _pickArrivalTime() async {
     final now = DateTime.now();
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(now.add(const Duration(minutes: 45))),
-      helpText: 'When does your train arrive?',
+    // Scrolling wheels, not the clock dial. The dial asks you to think in
+    // angles; a train arrival is a number you were told. The sheet does its own
+    // roll-to-tomorrow and its own max-ahead check, so it can never hand back a
+    // value this screen would then have to reject.
+    final when = await ArrivalTimePicker.show(
+      context,
+      initial: now.add(const Duration(minutes: 45)),
+      maxAhead: _maxArrivalAhead,
     );
-    if (picked == null || !mounted) return;
-
-    var when = DateTime(now.year, now.month, now.day, picked.hour, picked.minute);
-    // A time earlier than now means they mean tomorrow — the common case for a
-    // late-evening pick just after midnight, not an error worth rejecting.
-    if (when.isBefore(now)) when = when.add(const Duration(days: 1));
-
-    if (when.difference(now) > _maxArrivalAhead) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Pick a time within the next '
-            '${_maxArrivalAhead.inHours} hours.'),
-      ));
-      return;
-    }
-    setState(() => _declaredArrival = when);
+    if (when == null || !mounted) return;
+    setState(() {
+      _declaredArrival = when;
+      // Clear the blocking message the moment it stops being true.
+      _arrivalMissing = false;
+    });
   }
 
   Future<void> _useMyLocation() async {
@@ -251,6 +251,19 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   Future<void> _payNow() async {
     final cart = context.read<CartState>();
+
+    // Train mode REQUIRES an arrival time — it is the only input the timing
+    // engine has for this mode (there is no GPS origin to infer from), so an
+    // order without it cannot be scheduled at all.
+    //
+    // Surfaced as an inline message on the field, not a silently disabled Pay
+    // button: a button that does nothing when tapped teaches the customer that
+    // the app is broken, and gives them nothing to act on.
+    if (_transport.usesDeclaredArrival && _declaredArrival == null) {
+      setState(() => _arrivalMissing = true);
+      return;
+    }
+
     setState(() => _placing = true);
     try {
       if (!await _ensureAvailable(cart)) return;
@@ -399,7 +412,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   _TransportChip(
                     mode: mode,
                     selected: _transport == mode,
-                    onTap: () => setState(() => _transport = mode),
+                    // Switching away from train retires the error with the
+                    // requirement that produced it.
+                    onTap: () => setState(() {
+                      _transport = mode;
+                      if (!mode.usesDeclaredArrival) _arrivalMissing = false;
+                    }),
                   ),
               ],
             ),
@@ -410,12 +428,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               Text('When does your train arrive?',
                   style: textTheme.headlineSmall),
               const SizedBox(height: 6),
-              Text('We start cooking so it is ready as you walk in.',
+              Text('Required — it is the only timing signal train mode has.',
                   style: textTheme.bodyMedium?.copyWith(color: c.inkSoft)),
               const SizedBox(height: 12),
               NeoCard(
+                key: const Key('arrival_field'),
                 onTap: _pickArrivalTime,
                 color: _declaredArrival != null ? c.accent : c.surface,
+                // A red border, not a red field: the control is incomplete, not
+                // wrong, and it stays readable while it is being corrected.
+                borderColor: _arrivalMissing ? AppColors.tomato : null,
                 child: Row(
                   children: [
                     Icon(Icons.schedule,
@@ -425,8 +447,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       child: Text(
                         _declaredArrival == null
                             ? 'Set arrival time'
-                            : TimeOfDay.fromDateTime(_declaredArrival!)
-                                .format(context),
+                            : '${DayPart.forHour(_declaredArrival!.hour).label}'
+                                ' · '
+                                '${TimeOfDay.fromDateTime(_declaredArrival!).format(context)}',
                         style: textTheme.titleMedium?.copyWith(
                             color: _declaredArrival != null ? c.onAccent : c.ink),
                       ),
@@ -437,6 +460,25 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   ],
                 ),
               ),
+              if (_arrivalMissing) ...[
+                const SizedBox(height: 8),
+                Row(
+                  key: const Key('arrival_required_error'),
+                  children: [
+                    Icon(Icons.error_outline,
+                        size: 18, color: AppColors.tomato),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Set your arrival time before paying — we cannot time '
+                        'the kitchen without it.',
+                        style: textTheme.bodyMedium
+                            ?.copyWith(color: AppColors.tomato),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ] else ...[
               Text('Your starting point', style: textTheme.headlineSmall),
               const SizedBox(height: 12),

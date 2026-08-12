@@ -819,3 +819,126 @@ Theme assertions had to move from `test` to `testWidgets`: `AppTheme._build`
 calls `GoogleFonts`, which throws on the webfont fetch outside a widget binding.
 
 ---
+
+## 2026-08-12 — Batch 2 UI/UX revision list (Tasks 1-9)
+
+Revert point tagged **`pre-batch2-redesign`** = `2604ddf5`, pushed. Recover with
+`git reset --hard pre-batch2-redesign`.
+
+### Splash is cream, and so is the window behind it
+
+`SplashScreen` was purple; it is now `AppColors.cream` (#F6EFE2) — the app's
+existing warm tone, no new hex. The white-on-purple text went to ink, which is
+the actual work: `c.onPrimary` is white and would have been invisible.
+
+A new Android colour `carevo_splash` paints the native launch window the same
+value, so launch hands over to the Flutter splash with no colour step.
+`carevo_paper` (#FFF8F3) still backs the app shell.
+
+### The location prompt was in-app, so it was resizable
+
+Answering the question the task asked first: **"Allow location" was a custom
+in-app NeoCard**, roughly half the screen, purple. The native OS dialog only
+appears *after* tapping it. So the panel is now a small `Near me` chip anchored
+top-right beside the header. The OS dialog is untouched and untouchable.
+
+### City selection: rows, always-search, alphabetical
+
+`AreaPicker` was chips, with a search field that appeared only above 8 cities.
+Now: one presentation at every size — a search field, then a full list of rows,
+each carrying the city name and its restaurant count, **sorted alphabetically
+ascending**. Sorting happens in the widget, not the endpoint: `/customer/areas`
+orders by outlet count for its own reasons and other callers may depend on it.
+
+**The premise that selection and navigation were the same action was wrong.**
+They were already decoupled — `onSelect` set state, and a separate button
+navigated. That is now pinned by a test rather than left as an accident.
+
+### Page headers render on one line
+
+New `PageHeader` widget: one line, scaled down to fit rather than wrapped.
+`Pick a\nspot.` and `Where are\nyou?` carried hard line breaks; both are gone.
+The Bevan-ascender fix that used to be copy-pasted per screen now lives inside
+the widget.
+
+**The "Shock Surgent" font could not be applied — it does not exist anywhere
+reachable.** Not in `design/` (which holds only the two prototypes, support.js
+and a thumbnail), not as any font file in the repo, not in the google_fonts
+catalogue, and not referenced in any source file. No substitute was guessed.
+When the file arrives it is a one-line change inside `PageHeader`.
+
+### Train arrival: wheels, not a clock dial
+
+`showTimePicker` replaced with `ArrivalTimePicker` — two scrolling columns and
+a band label that updates live as the hour scrolls. The label is what makes a
+mis-scroll obvious: 07:30 and 19:30 read identically at a glance and only one
+of them says "Evening".
+
+**ASSUMED band ranges — reasonable defaults, NOT confirmed:**
+
+```
+Morning    05:00-11:59      Evening   17:00-20:59
+Afternoon  12:00-16:59      Night     21:00-04:59  (wraps midnight)
+```
+
+Pinned by test so a correction is a deliberate edit with a visible diff. Wheel
+digits are `w300` — thinner, not smaller.
+
+Arrival time is now **mandatory in train mode**: it is the only timing signal
+that mode has (no GPS origin to infer from). Blocked with an inline message on
+the field plus a red border, not a silently disabled Pay button — a button that
+does nothing when tapped teaches people the app is broken.
+
+### "I'm leaving" has no purple left
+
+The button and the en-route card sat directly under the cream pickup ticket in
+the app's purple, reading as another app's button pasted on. Both now use the
+ticket's own stock and ink.
+
+### owner_app: a collected order lingers 30 minutes
+
+It used to vanish the instant staff tapped verify — `WHERE status NOT IN
+('COMPLETED',...)` — leaving no window to notice a mis-tap. `/pos/orders` now
+also returns COMPLETED orders whose `pickup_verified_at` is inside
+`CarevoService.COMPLETED_GRACE` (30 min), and `pickup_verified_at` is exposed
+on `OwnerOrderOut` so the row can label itself "Collected 12m ago".
+
+**The cutoff is SQL, not a client timer.** A timer would reset on every
+relaunch and resurrect rows that had aged out. A test rewinds the stored
+timestamp and expects the row to disappear with no client involved at all —
+only possible if the server owns the window. History and the admin log read
+their own queries and are untouched; a third test holds that line.
+
+### admin_app: phone_number was ALREADY there
+
+Verified rather than rebuilt, as asked. `<Field label="Contact phone">` is
+present in `onboard/page.tsx`, in state, validated, and submitted — landed in
+`8f76aa1f`, which is an ancestor of `origin/21_7`, so it is in the deployed
+build. Confirmed in the compiled bundle, not just the source. **No work needed.**
+
+### admin_app: new Restaurant tab
+
+`GET /admin/orders/by-restaurant` — orders grouped restaurant -> day -> time.
+No schema change: `customer_orders` + `outlets` already carry it, and the
+hierarchy is a GROUP BY over rows that exist. Same `get_current_super_admin`
+gate as every other admin route, asserted by test.
+
+**Windowed by days, not paginated.** Paging a tree can split one restaurant's
+days across two pages and render a group that looks complete but is not. The UI
+is a two-level accordion; `Panel` gained an optional `actions` slot for the
+7/30/90-day switch, omitted everywhere else so existing pages are unchanged.
+
+### An asyncpg trap worth remembering
+
+`CAST(:p AS interval)` makes asyncpg expect an interval and it rejects the
+string `'30 minutes'` outright — pass a `timedelta`. Cost two failing tests
+before it was obvious; it bit both new queries and the test helper.
+
+### Tests
+
+Backend **125** (was 118): +3 grace window, +4 Restaurant tab.
+customer_app **82** (was 68): +12 arrival picker, and `area_picker_test`
+rewritten for the row/always-search model the chip/threshold tests no longer
+described. owner_app **1** (unchanged).
+
+---

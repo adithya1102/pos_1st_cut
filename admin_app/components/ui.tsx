@@ -46,17 +46,26 @@ export function StatusBadge({ status }: { status: string }) {
 export function Panel({
   title,
   subtitle,
+  actions,
   children,
 }: {
   title: string;
   subtitle?: string;
+  /** Optional controls rendered at the right of the header (filters, toggles).
+   *  Omitted on every existing page, so the header is unchanged there. */
+  actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <section className="rounded border border-slate-200 bg-white">
-      <header className="border-b border-slate-200 px-4 py-3">
-        <h2 className="text-base font-semibold">{title}</h2>
-        {subtitle && <p className="mt-0.5 text-sm text-slate-500">{subtitle}</p>}
+      <header className="flex items-start justify-between gap-4 border-b border-slate-200 px-4 py-3">
+        <div>
+          <h2 className="text-base font-semibold">{title}</h2>
+          {subtitle && (
+            <p className="mt-0.5 text-sm text-slate-500">{subtitle}</p>
+          )}
+        </div>
+        {actions}
       </header>
       <div className="overflow-x-auto">{children}</div>
     </section>

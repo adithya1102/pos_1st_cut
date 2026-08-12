@@ -119,6 +119,46 @@ class AdminOrderPageOut(BaseModel):
     orders: list[AdminOrderOut] = []
 
 
+# ---------------- Restaurant tab: orders grouped restaurant -> day -> time ---
+# A VIEW over customer_orders + outlets. No new tables, no new columns — the
+# hierarchy is produced by grouping rows that already exist.
+class RestaurantOrderOut(BaseModel):
+    """One order at the leaf of the restaurant -> day -> time tree."""
+
+    order_id: uuid.UUID
+    #: Local wall-clock "HH:MM" — the "time" level of the grouping.
+    time: str
+    created_at: Optional[datetime] = None
+    status: str
+    payment_status: Optional[str] = None
+    pickup_code: Optional[str] = None
+    total_amount: float = 0
+    item_count: int = 0
+
+
+class RestaurantDayOut(BaseModel):
+    """One calendar day at one restaurant."""
+
+    #: ISO date, "YYYY-MM-DD".
+    day: str
+    order_count: int = 0
+    total_amount: float = 0
+    #: Newest first within the day.
+    orders: list[RestaurantOrderOut] = []
+
+
+class RestaurantGroupOut(BaseModel):
+    """One restaurant, with its days nested newest first."""
+
+    outlet_id: Optional[uuid.UUID] = None
+    outlet_name: Optional[str] = None
+    city: Optional[str] = None
+    locality: Optional[str] = None
+    order_count: int = 0
+    total_amount: float = 0
+    days: list[RestaurantDayOut] = []
+
+
 class AuditLogOut(BaseModel):
     id: uuid.UUID
     actor_username: Optional[str] = None

@@ -2,21 +2,30 @@ import 'package:flutter/material.dart';
 
 import '../services/catalog_service.dart';
 import '../theme/app_colors.dart';
-import '../theme/widgets/neo_chip.dart';
+import '../theme/app_theme.dart';
 
 /// City selector for the Location screen, backed by `GET /customer/areas`.
 ///
-/// Renders one of five states: loading, load-failed (retry), no serviceable
-/// cities, chips, or search + chips. A city only reaches here if it has at
-/// least one orderable outlet, so a selection can never lead to an empty list.
+/// Renders one of four states: loading, load-failed (retry), no serviceable
+/// cities, or search + list. A city only reaches here if it has at least one
+/// orderable outlet, so a selection can never lead to an empty list.
 ///
-/// ## Why a threshold rather than always-search
-/// With a handful of cities, a search box is pure friction — the whole list is
-/// already on screen and scannable in one glance. Past a certain count the
-/// chips wrap into an unscannable block and typing beats hunting. So the
-/// component switches presentation based on how much data there actually is,
-/// and the chips themselves are byte-identical in both modes (same
-/// [_buildChips]), so crossing the threshold only adds a field above them.
+/// ## Selection is NOT navigation
+/// Tapping a row only highlights it. Nothing moves until the caller's explicit
+/// "Show outlets in {city}" action fires. Those were always two separate
+/// things here; this component has no navigation capability at all — it takes
+/// an [onSelect] callback and that is the entirety of what a tap can do.
+///
+/// ## Always a search field, always a list
+/// An earlier version showed chips, and only grew a search field past 8 cities.
+/// Both are gone: chips wrap into a shape that is hard to scan and gave the
+/// restaurant count no room, and a search box that appears only sometimes means
+/// the screen a customer learns is not the screen they get next month. One
+/// presentation, at every list size.
+///
+/// Rows are sorted alphabetically ASCENDING here rather than server-side. The
+/// endpoint orders by outlet count for its own reasons and other callers may
+/// rely on that; sort order in a picker is a presentation decision.
 ///
 /// Lives in its own file rather than as a private class in location_screen so
 /// it can be widget-tested directly — see test/area_picker_test.dart.
@@ -37,14 +46,13 @@ class AreaPicker extends StatefulWidget {
   final ValueChanged<String> onSelect;
   final VoidCallback onRetry;
 
-  /// At or below this many cities the list renders as plain chips. Above it, a
-  /// search field appears. Exposed so the threshold is testable and there is
-  /// exactly one place to change it.
-  static const int searchThreshold = 8;
-
-  /// Whether [count] cities should be presented with a search field.
-  /// `count > searchThreshold` — 8 stays chips, 9 switches.
-  static bool usesSearch(int count) => count > searchThreshold;
+  /// Alphabetical ascending, case-insensitive so "bengaluru" and "Bengaluru"
+  /// cannot land in different halves of the list.
+  static List<AreaOption> sortedAlphabetically(List<AreaOption> all) {
+    final out = List<AreaOption>.of(all);
+    out.sort((a, b) => a.city.toLowerCase().compareTo(b.city.toLowerCase()));
+    return out;
+  }
 
   @override
   State<AreaPicker> createState() => _AreaPickerState();
@@ -60,39 +68,12 @@ class _AreaPickerState extends State<AreaPicker> {
     super.dispose();
   }
 
-  @override
-  void didUpdateWidget(AreaPicker oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // If the list shrinks back below the threshold, a stale query would keep
-    // filtering chips the customer can now see in full. Drop it.
-    final count = widget.areas?.length ?? 0;
-    if (!AreaPicker.usesSearch(count) && _query.isNotEmpty) {
-      _query = '';
-      _search.clear();
-    }
-  }
-
-  List<AreaOption> _filtered(List<AreaOption> all) {
+  List<AreaOption> _visible(List<AreaOption> all) {
+    final sorted = AreaPicker.sortedAlphabetically(all);
     final q = _query.trim().toLowerCase();
-    if (q.isEmpty) return all;
-    return all.where((a) => a.city.toLowerCase().contains(q)).toList();
+    if (q.isEmpty) return sorted;
+    return sorted.where((a) => a.city.toLowerCase().contains(q)).toList();
   }
-
-  /// The chip row. Shared by both modes so switching presentation never
-  /// changes how an individual chip looks.
-  Widget _buildChips(List<AreaOption> list) => Wrap(
-        spacing: 10,
-        runSpacing: 10,
-        children: [
-          for (final a in list)
-            NeoChip(
-              label: '${a.city}  ·  ${a.subtitle}',
-              icon: Icons.place_outlined,
-              selected: widget.selected == a.city,
-              onTap: () => widget.onSelect(a.city),
-            ),
-        ],
-      );
 
   @override
   Widget build(BuildContext context) {
@@ -112,7 +93,7 @@ class _AreaPickerState extends State<AreaPicker> {
         children: [
           Expanded(
             child: Text(
-              'Could not load areas.',
+              'Could not load cities.',
               style: textTheme.bodyMedium?.copyWith(color: c.inkSoft),
             ),
           ),
@@ -126,38 +107,27 @@ class _AreaPickerState extends State<AreaPicker> {
       // Bangalore areas here and send the customer to a blank list.
       return Text(
         'No restaurants are taking pickup orders yet. '
-        'Try "Use my current location" to check nearby.',
+        'Try "Near me" to check nearby.',
         style: textTheme.bodyMedium?.copyWith(color: c.inkSoft),
       );
     }
 
-    // Small list: chips only, exactly as before this component existed.
-    if (!AreaPicker.usesSearch(list.length)) {
-      return _buildChips(list);
-    }
+    final matches = _visible(list);
 
-    // Large list: search field above the same chips, filtered live.
-    final matches = _filtered(list);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        TextField(
+        _SearchField(
           controller: _search,
-          decoration: InputDecoration(
-            hintText: 'Search ${list.length} cities',
-            prefixIcon: const Icon(Icons.search),
-            suffixIcon: _query.isEmpty
-                ? null
-                : IconButton(
-                    icon: const Icon(Icons.clear),
-                    tooltip: 'Clear search',
-                    onPressed: () {
-                      _search.clear();
-                      setState(() => _query = '');
-                    },
-                  ),
-          ),
+          hint: list.length == 1
+              ? 'Search cities'
+              : 'Search ${list.length} cities',
+          query: _query,
           onChanged: (v) => setState(() => _query = v),
+          onClear: () {
+            _search.clear();
+            setState(() => _query = '');
+          },
         ),
         const SizedBox(height: 16),
         if (matches.isEmpty)
@@ -166,8 +136,149 @@ class _AreaPickerState extends State<AreaPicker> {
             style: textTheme.bodyMedium?.copyWith(color: c.inkSoft),
           )
         else
-          _buildChips(matches),
+          for (final a in matches)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: _CityRow(
+                area: a,
+                selected: widget.selected == a.city,
+                onTap: () => widget.onSelect(a.city),
+              ),
+            ),
       ],
+    );
+  }
+}
+
+class _SearchField extends StatelessWidget {
+  const _SearchField({
+    required this.controller,
+    required this.hint,
+    required this.query,
+    required this.onChanged,
+    required this.onClear,
+  });
+
+  final TextEditingController controller;
+  final String hint;
+  final String query;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        color: c.surface,
+        borderRadius: BorderRadius.circular(AppTheme.radius),
+        border: Border.all(color: c.border, width: AppTheme.borderWidth),
+        boxShadow: [
+          BoxShadow(color: c.shadow, offset: const Offset(3, 3), blurRadius: 0),
+        ],
+      ),
+      child: TextField(
+        key: const Key('city_search_field'),
+        controller: controller,
+        onChanged: onChanged,
+        style: Theme.of(context).textTheme.bodyLarge,
+        decoration: InputDecoration(
+          hintText: hint,
+          hintStyle:
+              Theme.of(context).textTheme.bodyLarge?.copyWith(color: c.inkSoft),
+          prefixIcon: Icon(Icons.search, color: c.inkSoft),
+          suffixIcon: query.isEmpty
+              ? null
+              : IconButton(
+                  icon: const Icon(Icons.clear),
+                  tooltip: 'Clear search',
+                  onPressed: onClear,
+                ),
+          border: InputBorder.none,
+          focusedBorder: InputBorder.none,
+          enabledBorder: InputBorder.none,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 4, vertical: 16),
+        ),
+      ),
+    );
+  }
+}
+
+/// One city row: name, and how many restaurants are behind it.
+///
+/// The count is the reason this is a row and not a chip — it is what tells the
+/// customer whether a city is worth choosing, and it needs somewhere to live
+/// that is not crammed into a pill.
+class _CityRow extends StatelessWidget {
+  const _CityRow({
+    required this.area,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final AreaOption area;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final textTheme = Theme.of(context).textTheme;
+
+    return Semantics(
+      selected: selected,
+      button: true,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+          decoration: BoxDecoration(
+            color: selected ? c.accent : c.surface,
+            borderRadius: BorderRadius.circular(AppTheme.radius),
+            border: Border.all(color: c.border, width: AppTheme.borderWidth),
+            boxShadow: [
+              BoxShadow(
+                color: c.shadow,
+                // The selected row sits "down": the shadow collapses, so
+                // selection is legible without relying on colour alone.
+                offset: selected ? Offset.zero : const Offset(3, 3),
+                blurRadius: 0,
+              ),
+            ],
+          ),
+          transform: Matrix4.translationValues(
+            selected ? 3 : 0,
+            selected ? 3 : 0,
+            0,
+          ),
+          child: Row(
+            children: [
+              Icon(
+                selected ? Icons.check_circle : Icons.place_outlined,
+                size: 20,
+                color: selected ? c.onAccent : c.inkSoft,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  area.city,
+                  style: textTheme.titleMedium?.copyWith(
+                    color: selected ? c.onAccent : c.ink,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                area.subtitle,
+                style: textTheme.bodyMedium?.copyWith(
+                  color: selected ? c.onAccent : c.inkSoft,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
