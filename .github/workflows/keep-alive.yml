@@ -1,0 +1,75 @@
+name: keep-alive (Render free tier)
+
+# Keeps the free-tier Render backend warm during the Play review + testing
+# window. Render's free plan spins a service down after ~15 minutes with no
+# inbound request, and the cold start back up costs ~40s (measured
+# 2026-08-20) — long enough that a tester tapping the app hits what looks
+# like a dead backend.
+#
+# Target: GET https://gusto-pos-backend.onrender.com/ — the `root()` route in
+# gusto_pos/backend/app/main.py. It takes no `Depends(get_db)`, opens no
+# session, and returns a static dict; CORSMiddleware is the only middleware in
+# the stack. So this is a pure read with no database contact and no writes —
+# safe to fire at any frequency against prod. Deliberately NOT /docs (the
+# Render healthCheckPath): that renders Swagger UI plus openapi.json, far more
+# work per hit for the same wake-up.
+#
+# Cost: this repo is public, so Actions minutes are unmetered.
+#
+# TEMPORARY. Delete this workflow once the backend moves off the free tier or
+# the review/testing window closes — otherwise it pointlessly pins a service
+# awake (and keeps a job running) forever.
+
+on:
+  schedule:
+    # Every 10 minutes. GitHub's floor is 5, but scheduled runs are best-effort
+    # and get delayed under load — sometimes well past 15 minutes, which would
+    # let the service sleep anyway. The in-job second ping below covers that.
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+# Never let a delayed run stack on top of the next one.
+concurrency:
+  group: keep-alive
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      # Two pings 5 minutes apart, so one scheduled run covers its own 10-minute
+      # window. Effective cadence is ~5 min against Render's ~15 min idle timer,
+      # which leaves room for GitHub to run late without the service dropping.
+      - name: Ping backend
+        env:
+          URL: https://gusto-pos-backend.onrender.com/
+        run: |
+          set -uo pipefail
+          fail=0
+          for attempt in 1 2; do
+            if [ "$attempt" -gt 1 ]; then
+              echo "sleeping 300s before ping $attempt"
+              sleep 300
+            fi
+            # --max-time 120: a cold start legitimately takes ~40s, so a short
+            # timeout would report a healthy-but-waking service as down.
+            # --retry 2 absorbs a single transient network blip.
+            code=$(curl --silent --show-error --location \
+                        --request GET \
+                        --max-time 120 --retry 2 --retry-delay 10 \
+                        --output /dev/null --write-out '%{http_code}' \
+                        "$URL") || code="000"
+            echo "ping $attempt -> HTTP $code"
+            case "$code" in
+              2*) ;;
+              *) fail=1 ;;
+            esac
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::keep-alive ping did not return 2xx — backend may be down, not merely asleep"
+            exit 1
+          fi
