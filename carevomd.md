@@ -1041,3 +1041,86 @@ stray paste sitting uncommitted in the working tree, breaking the light-palette
 block's rendering. Not anyone's intended edit; corrected here.
 
 ---
+
+## 2026-08-20 — Correction: the keep-alive ping was never firing
+
+### What the previous entry got wrong
+
+The entry immediately above states the keep-alive workflow "pings
+`GET https://gusto-pos-backend.onrender.com/` on `*/10 * * * *`". **It was not
+pinging anything.** At the time that entry was committed the workflow had never
+run and could not run.
+
+`.github/workflows/keep-alive.yml` was committed to `21_7` (`2ed5a645`). **A
+`schedule` trigger only fires from the repository's DEFAULT branch**, which here
+is `main`. GitHub had not registered the workflow at all: `gh workflow list
+--all` returned only `admin_app CI (Linux)`, and
+`GET contents/.github/workflows/keep-alive.yml?ref=main` was a **404**.
+`workflow_dispatch` was equally dead — that trigger also requires the file on the
+default branch, so there was not even a manual fallback.
+
+### Why this was easy to miss, and how to not miss it again
+
+`admin-ci.yml` lives on `21_7` and works fine, which makes putting a workflow on
+the working branch look proven. It works because it triggers on **`push`**, and
+push events DO run from any branch. `schedule` and `workflow_dispatch` do not.
+The precedent was real but did not generalise, which is the whole trap.
+
+**Do not treat "the file is committed" as "the workflow is live."** The check
+that actually settles it is `gh workflow list --all` — a workflow absent from
+that list is not registered no matter what is in the tree.
+
+### The fix
+
+`2ed5a645` cherry-picked onto `main` as **`ab2cc25a`**, pushed
+(`e6059ccf..ab2cc25a`). One file, content verified byte-identical to the `21_7`
+copy. Now confirmed live:
+
+- `gh workflow list --all` → `keep-alive (Render free tier)  active  338073584`
+- the file reads on `main` (3054 bytes) instead of 404
+- a `workflow_dispatch` run was accepted on `main`, which is itself proof, since
+  that trigger has the same default-branch requirement that was blocking it
+
+**`main` was genuinely dormant before this** — checked, not assumed: tip
+`e6059ccf` dated **2026-07-13** (~5 weeks stale), **zero** commits present on
+`main` and absent from `21_7` (it is fully contained; `21_7` is 68 ahead), no
+open PRs, no branch protection, and both `render.yaml` services deploy from
+`21_7`. Nothing on `main` could be disrupted.
+
+### The file now exists on BOTH branches — only main's copy fires
+
+`21_7`'s copy is inert and kept only so the branches do not diverge. **The
+deletion note in the previous entry now means two deletions, not one.** Removing
+it from `21_7` alone would leave the ping running from `main` with nothing in the
+working branch to show for it.
+
+### A repo trap worth recording: main cannot be checked out in place
+
+Switching the primary working tree to `main` was rejected as unsafe — 635 tracked
+files differ between the branches and the tree carries 16,639 uncommitted changes
+(mostly the deleted MAUI artifacts). The `.aab` itself was NOT at risk;
+`customer_app/.gitignore` line 33 (`/build/`) covers it, verified rather than
+assumed.
+
+A plain `git worktree add <path> main` then **failed outright** on Windows
+`MAX_PATH`: dozens of `error: unable to create file ... Filename too long` on
+`gusto_pos/GustoPOS/{bin,obj}/**` — the MAUI artifact paths
+(`...Microsoft.Windows.ApplicationModel.Background.UniversalBGTask.dll`,
+`...RecyclerView_OnChildAttachStateChangeListenerImplementor.java`) exceed 260
+chars under any non-trivial worktree root. The half-built worktree had to be
+force-removed and pruned.
+
+What worked, and what to reach for next time:
+
+```
+git worktree add --no-checkout <path> main
+git -C <path> sparse-checkout init --cone
+git -C <path> sparse-checkout set .github
+git -C <path> checkout
+```
+
+Only `.github` plus the root files materialise, so the 17,113-file checkout —
+and every long path in it — never happens. The primary tree was never touched:
+still on `21_7`, still 16,639 pending changes, throughout.
+
+---
