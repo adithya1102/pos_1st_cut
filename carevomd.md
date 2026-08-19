@@ -942,3 +942,102 @@ rewritten for the row/always-search model the chip/threshold tests no longer
 described. owner_app **1** (unchanged).
 
 ---
+
+## 2026-08-20 — Release .aab verified AD_ID-clean; Render keep-alive workflow
+
+Infra and verification only. No schema change, no app-code change, no migration.
+
+### The advertising-ID check had to be redone, not read off
+
+`com.google.android.gms.permission.AD_ID` is **absent** from the release build —
+but the first answer to that question was given against a merged manifest dated
+**2026-08-13**, while `android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java`
+had changed on **08-14**. That file is regenerated when the plugin set changes,
+so the manifest predated the current dependency graph and could not settle the
+question. AD_ID is exactly the permission that arrives transitively, without any
+edit to the app's own manifest, so a stale artifact is not evidence.
+
+Rebuilt clean (`flutter clean` — verified `build/` was gone before building —
+then `flutter build appbundle --release`, `bundleRelease` 225.9s, exit 0) and
+re-checked. Absent at **both** layers, which is the part worth keeping:
+
+- merged manifest (`processReleaseMainManifest/AndroidManifest.xml`, sha256
+  `38D2FBDF…`): no `ad_id`, `advertising`, `advertis`, or `gms.permission`.
+  13 `uses-permission` entries.
+- **the shipped `base/manifest/AndroidManifest.xml` extracted from inside the
+  `.aab` itself** — the intermediate is only the merger's input; the protobuf in
+  the bundle is what Play actually reads. Also clean.
+
+The shipped manifest carries four permissions the merged intermediate does not
+list as `<uses-permission>`: `BIND_JOB_SERVICE` and `DUMP` (declared on
+components), `c2dm.permission.SEND`, and
+`gms.auth.api.signin.permission.REVOCATION_NOTIFICATION` from Google Sign-In.
+All expected, none advertising-related. Anyone re-running this check should
+expect them rather than treat them as a finding.
+
+**The rebuilt `.aab` is byte-identical in size to the 08-13 one (58,882,493
+bytes, delta exactly 0)** — a reproducible build with no intervening source
+change, not a failed clean. sha256 `C85C5E1E24A93DE82CEF03A441508CE37859D58E9D2FDE8815DDDC361EAB166F`,
+built 2026-08-20 00:25:39, at
+`customer_app/build/app/outputs/bundle/release/app-release.aab`. Play Console
+upload is manual and was NOT performed.
+
+Build warnings, none fatal: `flutter_google_places_sdk_android` still applies
+the Kotlin Gradle Plugin (future Flutter versions will fail the build on this —
+a real deadline, not noise), Java source/target 8 obsolete, 31 packages held
+back by constraints.
+
+### Keep-alive: `.github/workflows/keep-alive.yml`
+
+Render's free plan sleeps a service after ~15 min idle. Measured the cold start
+directly rather than citing a figure: **42.6s** on a `GET /` that had gone cold.
+To a tester that is indistinguishable from a dead backend.
+
+Pings `GET https://gusto-pos-backend.onrender.com/` on `*/10 * * * *`.
+
+**Why `/` and not `/docs`**, which is the `healthCheckPath` in `render.yaml`:
+`root()` in `app/main.py` takes no `Depends(get_db)`, opens no session, and
+returns a static dict; `CORSMiddleware` is the only middleware in the stack, so
+there is no request-logging or event-sourcing interceptor to write a row. It is
+a pure read that cannot touch prod data at any frequency. `/docs` renders
+Swagger UI plus openapi.json for the same wake-up.
+
+**Two pings 5 min apart inside one run**, rather than trusting the cron. GitHub
+scheduled workflows are best-effort and run late under load — late enough to
+exceed a 15-minute idle timer, which would defeat the entire point. The in-job
+second ping makes the effective cadence ~5 min regardless of when the run lands.
+`--max-time 120` because a legitimate cold start takes ~40s and a short timeout
+would report a waking service as down. `concurrency: keep-alive` stops a delayed
+run stacking on the next one.
+
+Free because the repo is public (`adithya1102/pos_1st_cut`, verified PUBLIC), so
+Actions minutes are unmetered. On a private repo this would burn roughly 4,300
+minutes/month against a 2,000-minute free quota — it is only free here.
+
+**TEMPORARY, and it will not announce itself.** Delete it when the backend
+leaves the free tier or the review window closes. Two failure modes to know:
+GitHub disables scheduled workflows in a repo with no pushes for 60 days, and
+the job hard-fails on a non-2xx so a genuinely down backend is visible instead
+of being masked by a green tick.
+
+### Screenshot assets pruned (earlier the same day)
+
+`customer_app/assets/marketing/store_screenshots/`: `chrome2.0/`, `chromebook/`
+and `tab_7/` deleted, 16 files, keeping the 6 root phone shots. SHA-256 first
+established that `chrome2.0/` and `chromebook/` were byte-identical to each
+other while `tab_7/` was unique.
+
+**These were untracked AND ungitignored**, so git held no copy and the deletion
+had no undo path — 11 distinct images gone permanently. A backup was placed in
+the session scratchpad, which is temporary. With the tablet and Chromebook sets
+gone the listing serves phone form factors only; a configured tablet or
+Chromebook listing will show a missing-assets warning until new ones are
+supplied.
+
+### Repaired in passing
+
+`carevomd.md` line 741 had `color``` ` where a bare code fence belonged — a
+stray paste sitting uncommitted in the working tree, breaking the light-palette
+block's rendering. Not anyone's intended edit; corrected here.
+
+---
