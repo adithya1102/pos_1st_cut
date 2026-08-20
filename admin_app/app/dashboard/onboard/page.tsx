@@ -8,6 +8,9 @@ const inputCls =
   "w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none";
 const VPA_RE = /^[^@\s]+@[^@\s]+$/;
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+// Sentinel <option> value. Deliberately not a plausible city name, so it can
+// never collide with a real entry from the cities list.
+const REQUEST_NEW_CITY = "__request_new_city__";
 
 /**
  * Admin-assisted onboarding. Sets up a restaurant on behalf of a non-technical
@@ -23,6 +26,7 @@ export default function OnboardPage() {
   const [form, setForm] = useState({
     restaurant_name: "",
     city: "",
+    requested_city: "",
     locality: "",
     phone_number: "",
     email: "",
@@ -34,6 +38,11 @@ export default function OnboardPage() {
   });
   const [cities, setCities] = useState<City[] | null>(null);
   const [citiesError, setCitiesError] = useState<string | null>(null);
+  // Mirrors owner_app's signup screen (_requestingNewCity there): the dropdown
+  // carries a sentinel entry that swaps in a text input, rather than allowing
+  // free text alongside the list. Free-text city is what let
+  // "Bangalore"/"Bengaluru" diverge in the first place.
+  const [requestingNewCity, setRequestingNewCity] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<RegisterOutletResult | null>(null);
@@ -57,7 +66,17 @@ export default function OnboardPage() {
 
   function validate(): string | null {
     if (form.restaurant_name.trim().length < 2) return "Enter the restaurant name.";
-    if (!form.city.trim()) return "Select the city.";
+    if (requestingNewCity) {
+      const asked = form.requested_city.trim();
+      if (asked.length < 2) return "Enter the new city's name.";
+      if (asked.length > 80) return "City name is too long (max 80 characters).";
+      // NOT blocked on an existing name: the admin route reuses the existing
+      // row (case-insensitively) rather than duplicating it, so typing a city
+      // that already exists is a no-op that still onboards the outlet
+      // correctly. `cities` guarantees this with a unique index on lower(name).
+    } else if (!form.city.trim()) {
+      return "Select the city.";
+    }
     if (form.locality.trim().length < 2) return "Enter the area / locality.";
     if (form.phone_number.trim().length < 6) return "Enter a valid contact phone number.";
     if (!EMAIL_RE.test(form.email.trim())) return "Enter a valid owner email.";
@@ -92,9 +111,27 @@ export default function OnboardPage() {
     setError(null);
     setResult(null);
     try {
+      // A new city typed by an ADMIN is created active up front, then the
+      // outlet registers against it by name like any other. That is why this
+      // sends `city` and never `requested_city`: `requested_city` means "file a
+      // pending request", which is owner_app's self-service path and is not
+      // what an admin — the approval authority — is doing here.
+      //
+      // Two calls rather than one, deliberately: /register is unauthenticated,
+      // so a "create this city as active" flag on it would let anyone extend
+      // the canonical list. The privilege lives on the SUPER_ADMIN-gated route.
+      let cityName = form.city.trim();
+      if (requestingNewCity) {
+        const created = await adminApi.createCity(form.requested_city.trim());
+        // Use the row's canonical spelling, not what was typed — if the city
+        // already existed as "Kochi" and "kochi" was entered, the outlet must
+        // carry the canonical one.
+        cityName = created.name;
+      }
+
       const res = await adminApi.registerOutlet({
         restaurant_name: form.restaurant_name.trim(),
-        city: form.city.trim(),
+        city: cityName,
         locality: form.locality.trim(),
         phone_number: form.phone_number.trim(),
         email: form.email.trim().toLowerCase(),
@@ -106,7 +143,8 @@ export default function OnboardPage() {
       });
       setResult(res);
       setForm({
-        restaurant_name: "", city: "", locality: "", phone_number: "", email: "",
+        restaurant_name: "", city: "", requested_city: "", locality: "",
+        phone_number: "", email: "",
         latitude: "", longitude: "", username: "", password: "", upi_id: "",
       });
     } catch (err) {
@@ -153,9 +191,19 @@ export default function OnboardPage() {
         <Field label="City">
           <select
             className={inputCls}
-            value={form.city}
+            value={requestingNewCity ? REQUEST_NEW_CITY : form.city}
             disabled={cities === null}
-            onChange={(e) => set("city", e.target.value)}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === REQUEST_NEW_CITY) {
+                setRequestingNewCity(true);
+                set("city", "");
+              } else {
+                setRequestingNewCity(false);
+                set("requested_city", "");
+                set("city", v);
+              }
+            }}
           >
             <option value="">
               {cities === null ? "Loading cities…" : "Select a city"}
@@ -163,11 +211,30 @@ export default function OnboardPage() {
             {(cities ?? []).map((c) => (
               <option key={c.id} value={c.name}>{c.name}</option>
             ))}
+            <option value={REQUEST_NEW_CITY}>+ Add a new city…</option>
           </select>
           {citiesError && (
             <span className="text-xs text-red-600">{citiesError}</span>
           )}
         </Field>
+
+        {requestingNewCity && (
+          <Field label="New city name">
+            <input
+              className={inputCls}
+              value={form.requested_city}
+              autoFocus
+              placeholder="e.g. Coimbatore"
+              onChange={(e) => set("requested_city", e.target.value)}
+            />
+            <span className="text-xs text-slate-500">
+              Added as <b>active</b> immediately and selectable by everyone from
+              then on — you are the approval authority, so there is no pending
+              step. If the city already exists in any spelling, that entry is
+              reused rather than duplicated.
+            </span>
+          </Field>
+        )}
 
         <Field label="Area / locality">
           <input className={inputCls} placeholder="e.g. Koramangala"

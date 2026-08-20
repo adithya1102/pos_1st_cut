@@ -225,3 +225,34 @@ class CityDecisionOut(BaseModel):
     name: str
     status: str
     decided_at: Optional[datetime] = None
+
+
+class CityCreateIn(BaseModel):
+    """Admin adds a city directly. No pending state: the admin IS the approval
+    authority, so routing their own entry through a queue they alone service is
+    ceremony. owner_app's self-service path is unchanged and still gated."""
+    name: str = Field(..., min_length=2, max_length=80)
+
+
+class CityCreateOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    status: str
+    #: False when an existing row was reused rather than a new one inserted.
+    #: Reuse is not an error — the caller asked for a city to exist and it does.
+    created: bool
+
+
+class CityRenameIn(BaseModel):
+    name: str = Field(..., min_length=2, max_length=80)
+
+
+class CityRenameOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    previous_name: str
+    status: str
+    #: How many `outlets` rows had their denormalised `city` string rewritten.
+    #: outlets.city is a varchar, NOT a FK to cities.id — nothing cascades, so
+    #: the rename has to carry them explicitly or they are orphaned.
+    outlets_updated: int

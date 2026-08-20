@@ -1124,3 +1124,349 @@ and every long path in it — never happens. The primary tree was never touched:
 still on `21_7`, still 16,639 pending changes, throughout.
 
 ---
+
+## 2026-08-20 — PROD DATA: 7 outlets renamed, menus replaced, owner logins reset
+
+**This entry records a change to live production data, not to schema or code.**
+No migration ran; no table was altered. Committed in one transaction against the
+prod Neon database (`ep-morning-meadow-ao6m0otk-pooler`).
+
+### Backup taken first, outside the repo
+
+`C:\Users\Adithya\Desktop\carevo-backups\prod-outlets-backup-20260820-205311.json`
+(33,153 bytes) — outlets 7, menus 7, categories 34, menu_items 19, users 8,
+organizations 7, plus the 17 `menu_item_id`s referenced by `customer_order_items`.
+Written, then re-read and re-parsed from disk before any write ran.
+
+**Deliberately outside the repo**: the `users` rows carry `hashed_password`, and
+this repo is public. Same reason `geocodes.json` and the one-off reset script live
+there too rather than under `demo2/`.
+
+### The 7 renames, with real coordinates
+
+| was | now | locality | city | lat, lng |
+|---|---|---|---|---|
+| Spice Route Kitchen | Annapoorna Tiffin Room | Koramangala | Bengaluru | 12.935737, 77.624081 |
+| Rudrarthi | The Brew House Café | Indiranagar | Bengaluru | 12.973291, 77.640467 |
+| Walk N Style | Meenakshi Bhavan | T Nagar | Chennai | 13.037829, 80.231836 |
+| Bistro | Chettinad Spice Corner | Adyar | Chennai | 13.006450, 80.257779 |
+| Vj | Golden Wok | Anna Nagar | Chennai | 13.088249, 80.207340 |
+| Kochi_test | Malabar Spice Kitchen | Kakkanad | Kochi | 10.016570, 76.342750 |
+| kolkata.roll | Bengal Rasoi | Salt Lake | Kolkata | 22.584789, 88.423172 |
+
+**Coordinates came from OpenStreetMap Nominatim, not from invention.** The
+project's own Maps key was tried first and refused: `REQUEST_DENIED — This API is
+not activated on your API project` for the Geocoding API (the key is scoped to
+Places/Distance Matrix). Nominatim needs no key; queries were rate-limited to
+1/sec per its usage policy and the resolved `display_name` for each is kept in
+`carevo-backups\geocodes.json` so any coordinate can be traced to what was asked.
+
+**Six of the seven had `latitude`/`longitude` NULL before this**, and all seven had
+`locality` NULL. So "Open in Maps" and GPS distance-sort were dead for those six
+and work now for the first time — this was not a cosmetic rename.
+
+### Menus: soft-delete, never hard-delete
+
+19 existing items across the 7 menus set to `is_active=false, is_available=false`;
+42 new items inserted (7 × 6). Post-state verified: 42 active, 19 inactive.
+
+**Hard-deleting would have orphaned real order history.** 17 of the 19 are
+referenced by `customer_order_items` across 80 real `customer_orders`. All 17 were
+re-counted as still present after the change. `customer_order_items` also carries
+`name_snap`/`price_snap`, so historical orders keep the old name and price
+regardless — but the FK still needs its row.
+
+**Existing categories reused, none created or removed**, per instruction. One
+consequence worth recording: Annapoorna Tiffin Room's menu has only three
+categories (Beverages, Mains, Starters) where the other six have five. **Kesari
+Bath therefore sits under Mains, not Desserts** — there is no Desserts category on
+that menu. That is a data-shape artifact, not a classification decision, and it is
+the thing to fix first if that menu ever looks wrong.
+
+`price_rules` is empty (0 rows) repo-wide, so items follow the existing
+`base_price` convention with `normal/ac/lounge_price` NULL — matching every row
+that was already there. `image_url` left NULL throughout: images are coming
+separately.
+
+### Credentials: a DELIBERATE weak-ish shared password, with a hard trigger
+
+Usernames `smith1`–`smith7` (in the table order above), with a single shared
+password for all seven. **The literal is deliberately NOT written here** — this
+file is committed to a public repo, and these are working credentials into a
+publicly reachable backend. It was delivered to the user in-session and is
+recorded nowhere in this repository. Hashed through
+`app.core.security.get_password_hash` — passlib `sha256_crypt`, the same call
+owner registration uses at `carevo_customer/service.py:1471`. **No new hashing
+path was introduced.** All 7 outlets already had exactly one linked user, so all
+7 were updated in place; none had to be created. Prior usernames (`spice_owner`,
+`smith@123`, `walknstyle_owner`, `bistro`, `Vijaya`, `adithyac`, `adithyaC`) no
+longer exist and no longer authenticate.
+
+**This is a known, accepted choice — not an accident, and not a default that
+slipped through.** It is scoped to seven dummy/test outlets with no real
+proprietor and no real revenue. An earlier plan for a four-letter password was
+rejected in favour of a longer one specifically because the backend is publicly
+reachable on Render and staff login is not gated by `CUSTOMER_AUTH_ENABLED`.
+
+**REPLACEMENT TRIGGER — event, not date:** these credentials must be replaced with
+real, non-trivial, per-owner secrets **the moment the first genuine restaurant
+owner account is created on this deployment.** Not "before launch", not "when we
+get to it", not on any calendar. The trigger is the existence of one real owner,
+because from that instant a shared known password sits in the same table as a
+real proprietor's, and every one of these seven is a working credential into a
+publicly reachable backend. Whoever creates that first real account owns this
+cleanup.
+
+### Verified against the live backend, not just the DB
+
+All 7 `POST /api/v1/auth/login` against
+`https://gusto-pos-backend.onrender.com` returned **HTTP 200 with a bearer token**
+— a DB write alone was not treated as proof. Two negative controls confirm the
+check is real rather than an endpoint that accepts anything: `smith1` + a wrong
+password → **401**, and the old `spice_owner` + the new password → **401**.
+
+`GET /api/v1/customer/outlets` returns 401 unauthenticated, as designed, so the
+customer-facing view of the rename was not verified from outside; the DB state was
+verified directly instead.
+
+### Tests
+
+Backend **125 passed**, 0 failed (unchanged). customer_app **82**, owner_app **1**
+— both unchanged. Nothing here touches code, so a moved count would itself have
+been the surprise.
+
+### Not committed
+
+Working tree only at time of writing, by instruction: this is a prod data change,
+and the commit decision was deliberately left with the user. The one-off script
+`reset_outlets.py` was moved OUT of the repo to `carevo-backups\` after running —
+it contains the plaintext password in a literal, and this repo is public.
+
+---
+
+## 2026-08-20 — TRACKED BUG (NOT FIXED): naive datetimes shift by the client's timezone
+
+**Open item. Deliberately left unfixed — do not "tidy" this in passing.** It was
+found while building the owner-queue rename filter and is unrelated to it;
+folding a model-layer datetime change into that work would have put a verified
+fix at risk for no reason.
+
+### What is wrong
+
+Every `created_at`/`updated_at` in `carevo_customer/model.py` (lines 46, 49, 83,
+107, 110, 142, 183) is declared `DateTime(timezone=True)` — a Postgres
+`timestamptz` — with `default=datetime.utcnow`, which returns a **naive**
+datetime. SQLAlchemy's asyncpg dialect localises a naive value using the
+**client machine's** timezone before binding it. So the instant written depends
+on where the process runs.
+
+Measured on an IST developer box: an order created at 16:56 UTC wall-clock was
+stored as **11:26 UTC** — 5h30m in the past.
+
+### It is CLIENT-side, which is the counter-intuitive part
+
+The obvious diagnosis is the database session timezone, and that diagnosis is
+WRONG — it was tried and disproved. With `carevo_test` set to `timezone = UTC`
+and `now()` returning correct UTC, `created_at` was **still** written 5h30m
+early. Anyone re-investigating should not spend time on the server setting.
+
+### Why production is currently correct
+
+Render runs its containers in UTC, so `datetime.utcnow()` is localised as UTC
+and the stored instant is right. Prod `timezone` is `GMT`, offset `00:00:00`,
+confirmed by query. **Prod data is not corrupt and needs no backfill.** The bug
+is latent: it produces wrong timestamps on any non-UTC machine, which today
+means every local dev run and anything a contributor runs outside UTC.
+
+### Blast radius if it ever fires in prod
+
+`customer_orders.created_at` now drives more than display: the owner queue's
+`RENAME_CUTOFF` filter, `COMPLETED_GRACE`, the train-mode due sweep, and the
+admin Restaurant tab's day buckets. A 5h30m shift would silently hide fresh
+orders from an owner's queue.
+
+### The correct fix — separate task, separate review
+
+At the **model layer**, not at the call sites and not in the database: replace
+`default=datetime.utcnow` with an explicitly UTC-aware default
+(`lambda: datetime.now(timezone.utc)`, or `server_default=func.now()` so the DB
+stamps it). Aware values bind unambiguously and the client's timezone stops
+mattering. Every one of the seven columns above should move together, with a
+test that asserts a written row's `created_at` is within seconds of `now()`
+while the process runs under a non-UTC `TZ`.
+
+### What was done instead, tonight, to keep the suite honest
+
+`CarevoService.RENAME_CUTOFF` reads `RENAME_CUTOFF_ISO`, defaulting to the real
+production instant, and `conftest.py` sets it to the epoch so the suite is not
+coupled to one production date. That is a test-isolation choice, **not** a
+workaround for this bug — the skew is still there on any non-UTC machine and
+still needs the model-layer fix.
+
+`carevo_test`'s default timezone was set to `UTC`
+(`ALTER DATABASE carevo_test SET timezone TO 'UTC'`). Kept deliberately: it does
+NOT touch the skew above, but it makes the test database match prod's `GMT`,
+which matters because `carevo_admin/service.py:840` buckets the Restaurant tab
+with `to_char(co.created_at, 'YYYY-MM-DD')` — and `to_char` on a `timestamptz`
+renders in the **session** timezone. Before the change the test DB bucketed days
+5h30m off from prod. The query's own comment already says "the DB's timezone
+handling decides the date", so aligning test with prod is the correct posture,
+not a partial fix.
+
+---
+
+## 2026-08-20 — Owner queue hides pre-rename orders; OTP diagnosed, NOT changed
+
+### Owner queue filter
+
+`list_active_orders` gained `AND created_at >= :rename_cutoff`. Effect measured
+on prod data: the owner-facing queue drops from 54 rows to 2, with Annapoorna
+Tiffin Room alone shedding 32 of the previous tenant's orders.
+
+**Two premises corrected while doing it.** owner_app has **no order-history view
+and no dashboard/summary view** — its only order call is `GET /pos/orders`. And
+that live queue was where old-identity orders actually surfaced, because 52 of
+them sit in non-terminal statuses (50 `CREATED`, 2 `PAID`) and so were never
+excluded by the existing status filter. There was no history query to change.
+
+Cosmetic only: 82 `customer_orders` and 88 `customer_order_items` untouched, and
+the admin log still shows everything — it reads its own queries in
+`carevo_admin/service.py` and `RENAME_CUTOFF` is referenced nowhere in them.
+`tests/test_api_rename_cutoff.py` (3 tests) pins the hiding AND the
+not-deleting, because a later "cleanup" that turned this into a DELETE would
+satisfy the hiding assertion alone.
+
+Cutoff `2026-08-20T15:40:32.960232+00:00`, taken from the rename transaction's
+own clock — the identical `created_at` on all 42 inserted `menu_items` — not the
+backup filename, which was 17 minutes earlier.
+
+### OTP: both mechanisms were already present
+
+Investigated, **nothing changed**. `autofillHints: [AutofillHints.oneTimeCode]`
+is present (`otp_screen.dart:256`), inside an `AutofillGroup`, on a real
+`TextField`, auto-submitting at six digits. Firebase auto-retrieval is enabled —
+`verificationCompleted` stores `_autoCredential` and `verifyOtp` prefers it.
+
+The actual cause of "feels slow" is neither: `AppConfig.forceRecaptchaFlow`
+defaults `true`, forcing the reCAPTCHA webview instead of Play Integrity. Added
+in `e5a1dacf` (2026-08-03) because the app was sideloaded and Play Integrity
+returned `17028`. Its own comment names the exit condition — "flip this off once
+the app ships on a Play track" — and that condition is now met.
+
+**Not flipped.** Play Integrity was still failing as recently as this evening
+(`INVALID_CERT_HASH 400`, `17093`), the fingerprint reached Firebase only hours
+ago, and the Play-signed path has never once been observed working. Stability
+must be demonstrated across several attempts before a flag governing every
+tester's sign-in changes.
+
+### Internal-testing artifact (versionCode 4)
+
+Built with `--dart-define=FORCE_RECAPTCHA_FLOW=false`. **The committed default in
+`app_config.dart` is deliberately still `true`** (`git diff` on that file is
+empty) — only this one artifact carries the flag off, so no other build changes
+behaviour.
+
+```
+app-release.aab   58,878,598 bytes   2026-08-20 22:41:53
+sha256 2FFD4E92BE5E9E80DAF87C0896D487AA6BB826C2371A6906287861F165F47DAE
+versionCode 4 / versionName 1.0.0
+```
+
+**A `--dart-define` cannot be verified statically** — it compiles into the AOT
+Dart snapshot. The only proof the flag took effect is behavioural: on the
+internal track, sign-in proceeds with no reCAPTCHA webview. Destined for the
+**internal testing** track specifically, so the 25 real testers on the closed
+track are untouched while this is verified.
+
+### Tests
+
+Backend **128** (was 125: +3 rename cutoff), customer_app **82**, owner_app **1**.
+
+---
+
+## 2026-08-21 — Admin city management: request wiring, direct add, rename
+
+**This commit contains the city work only.** The owner-queue rename filter, the
+OTP diagnosis and the timezone tracked-bug entries above describe changes that
+are still in the working tree, uncommitted, at the time this lands.
+
+### admin_app could not add a city at all; the capability already existed
+
+Investigated before building, and almost nothing needed building. Migration 013
+already provided `cities` (`status IN ('active','pending','rejected')`,
+`requested_by_outlet_id`, **unique index on `lower(name)`**),
+`RegisterIn.requested_city` with the `_exactly_one_city` validator, the pending
+INSERT with `ON CONFLICT (lower(name)) DO NOTHING`, and admin approve/reject.
+owner_app had driven it since day one via `_requestingNewCity`.
+
+Both onboarding forms post to the SAME `/register`. So this was a missing UI,
+not a missing capability. The tell: `RegisterOutletBody` in `admin_app/lib/api.ts`
+already carried a comment about "both-or-neither of city / requested_city"
+while never declaring the field.
+
+### Two paths, deliberately different, and that is the point
+
+- **owner_app (self-service): still gated.** `requested_city` lands `pending`
+  and is invisible in `/cities` until an admin approves. Untouched by this
+  commit — **no file under `owner_app/` was modified**, which is the concrete
+  proof rather than an assurance.
+- **admin_app: ungated.** New `POST /admin/cities` creates the city `active`
+  immediately. An admin IS the approval authority, so routing their entry
+  through a queue only they service is ceremony with no safety value.
+
+**A separate SUPER_ADMIN route rather than a flag on `/register`**, because
+`/register` is unauthenticated — a "create as active" parameter there would let
+any anonymous caller extend the canonical list. The admin form creates the city
+first, then registers against it by name, so it sends `city` and never
+`requested_city`.
+
+Reuse over duplicate: an existing name in any casing returns that row
+(`created: false`) instead of inserting. A pending/rejected name an admin asks
+for is promoted to active and audited.
+
+### Rename — and the thing that makes it non-trivial
+
+**`outlets.city` is a denormalised varchar, NOT a foreign key to `cities.id`.**
+Verified against the live schema, not assumed: `outlets` has exactly ONE foreign
+key and it is `organization_id`; there is no `city_id` column anywhere.
+
+So nothing cascades. Renaming the `cities` row alone would strand every outlet
+on the old spelling — a name no longer in the canonical list, making those
+outlets unselectable at signup and invisible to any name-based lookup.
+`PATCH /admin/cities/{id}` therefore rewrites `cities.name` **and** every
+matching `outlets.city` in one transaction, and returns `outlets_updated` so the
+UI can state the blast radius ("Renamed X to Y. N outlets updated.") instead of
+implying it. A test asserts the outlet moved and that zero rows keep the old
+name — that is what stops the UPDATE being "tidied away" later by someone who
+assumes a FK exists.
+
+**A collision is refused (409), never merged.** Pointing two cities' outlets at
+one row relocates real restaurants and cannot be undone by renaming back. The
+error names the other city and says to pick a distinct name. Case-only renames
+(`Kochi` -> `KOCHI`) still work: the clash check excludes the row itself.
+
+**Checked for existing split spellings before building — none.** All 7 outlets
+sit on Bengaluru/Chennai/Kochi/Kolkata, each present in `cities`, and no
+`lower(city)` group has more than one variant. Nothing was merged.
+
+### Tests
+
+New `test_api_admin_new_city.py` (4) and `test_api_admin_city_admin_ops.py` (6).
+Backend **138 collected**. customer_app **82**, owner_app **1** — re-run, not
+carried over, and unchanged because no file under either app was touched.
+
+admin_app has **no test framework** (no test script, no test dir; CI is
+`npm ci && npm run build`). Verified instead with `tsc --noEmit`, `eslint` and a
+full `next build`, all clean. Adding a React harness is its own decision and was
+not slipped in here.
+
+### Known failing test at time of this commit
+
+`test_api_restaurant_tab.py::test_the_window_excludes_older_orders` fails, and
+is UNRELATED to this work — it fails in isolation and that query touches neither
+`cities` nor `RENAME_CUTOFF`. `carevo_test` has accumulated 2,057 orders inside
+30 days against the query's `LIMIT 2000`, so the test's deliberately-backdated
+row falls off the truncated end. Fixed in the next commit rather than papered
+over by truncating the database.
+
+---

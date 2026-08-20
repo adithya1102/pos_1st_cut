@@ -165,6 +165,27 @@ export interface CustomerRow {
   activity_status: "No orders" | "Active" | "At Risk" | "Churned" | string;
 }
 
+/** Result of an admin adding a city directly. */
+export interface CityCreateResult {
+  id: string;
+  name: string;
+  status: string;
+  /** False when an existing row was reused (case-insensitive) instead of a new
+   *  one created. Not an error — the city the caller wanted now exists. */
+  created: boolean;
+}
+
+/** Result of renaming a city. */
+export interface CityRenameResult {
+  id: string;
+  name: string;
+  previous_name: string;
+  status: string;
+  /** outlets.city is a denormalised varchar, not a FK — the rename rewrites
+   *  those rows explicitly, and this is how many it touched. */
+  outlets_updated: number;
+}
+
 /** A city in the canonical list (migration 013). */
 export interface City {
   id: string;
@@ -436,6 +457,17 @@ export const adminApi = {
   rejectCity: (id: string) =>
     api.post<City>(`/api/v1/admin/cities/${id}/reject`, {}),
 
+  /** Admin-added city, live immediately — no pending gate, because the admin
+   *  is the approval authority. Reuses an existing row (case-insensitive)
+   *  rather than failing. owner_app's self-service path is unchanged. */
+  createCity: (name: string) =>
+    api.post<CityCreateResult>("/api/v1/admin/cities", { name }),
+
+  /** Rename in place. 409 if the new name collides case-insensitively with a
+   *  DIFFERENT city — that would be a merge, not a rename. */
+  renameCity: (id: string, name: string) =>
+    api.patch<CityRenameResult>(`/api/v1/admin/cities/${id}`, { name }),
+
   orders: (limit = 50, offset = 0) =>
     api.get<AdminOrderPage>(`/api/v1/admin/orders?limit=${limit}&offset=${offset}`),
 
@@ -481,6 +513,11 @@ export interface RegisterOutletBody {
   /** Must be an already-approved city. The server rejects both-or-neither of
    *  city / requested_city, so exactly one is sent. */
   city?: string | null;
+  /** A city not yet on the canonical list. The server records it in `cities`
+   *  as status='pending' for admin approval (migration 013) and the outlet
+   *  carries the name meanwhile. Mutually exclusive with `city` — RegisterIn's
+   *  _exactly_one_city validator rejects both-or-neither with a 422. */
+  requested_city?: string | null;
   /** Area within the city (migration 012). REQUIRED server-side — a body
    *  without it is rejected 422, which is what this form used to do. */
   locality: string;

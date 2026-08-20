@@ -197,6 +197,38 @@ async def reject_city(
     return await AdminService.decide_city(db, admin, city_id, "rejected")
 
 
+@router.post("/cities", response_model=s.CityCreateOut, status_code=201)
+async def create_city(
+    payload: s.CityCreateIn,
+    admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add a city that is immediately selectable.
+
+    SUPER_ADMIN only, and deliberately a separate route from the public
+    `/register` rather than a bypass flag on it: `/register` is
+    unauthenticated, so a "skip the pending gate" parameter there would be an
+    open privilege escalation. owner_app's `requested_city` path is untouched
+    and still lands as 'pending'.
+    """
+    return await AdminService.create_active_city(db, admin, payload.name)
+
+
+@router.patch("/cities/{city_id}", response_model=s.CityRenameOut)
+async def rename_city(
+    city_id: uuid.UUID,
+    payload: s.CityRenameIn,
+    admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Rename in place, carrying every outlet that holds the old spelling.
+
+    409 on a case-insensitive collision with a different city: that would be a
+    merge, not a rename, and merges do not happen as a side effect of an edit.
+    """
+    return await AdminService.rename_city(db, admin, city_id, payload.name)
+
+
 # -------------------- prediction engine (shadow mode) ----------------------
 # Read-only observability over migration 006's PE tables. No response_model:
 # the payloads are nested and mix UUID/datetime/Decimal/JSONB, which FastAPI's

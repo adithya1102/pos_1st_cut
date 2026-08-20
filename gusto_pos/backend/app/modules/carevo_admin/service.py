@@ -1018,3 +1018,132 @@ class AdminService:
         return {
             "id": row[0], "name": row[1], "status": row[2], "decided_at": row[3],
         }
+
+    @staticmethod
+    async def create_active_city(db: AsyncSession, actor: User, name: str) -> dict:
+        """Admin adds a city that goes live immediately.
+
+        Deliberately NOT the owner path. An owner's `requested_city` lands as
+        'pending' because a self-service caller must not be able to extend the
+        canonical list unilaterally — that gate is what stops
+        "Bangalore"/"Bengaluru" style drift. An admin is the approval authority,
+        so making them file a request and then approve their own request is
+        ceremony with no safety value.
+
+        Reuse over duplicate: if the name already exists in ANY casing, that row
+        is returned rather than a second one created. `cities` has a unique index
+        on lower(name), so inserting would fail anyway — this turns a 500 into
+        the outcome the caller actually wanted.
+        """
+        clean = (name or "").strip()
+        if len(clean) < 2:
+            raise HTTPException(status_code=422, detail="City name is too short.")
+
+        existing = (await db.execute(text(
+            "SELECT id, name, status FROM cities WHERE lower(name) = lower(:n)"
+        ), {"n": clean})).first()
+
+        if existing:
+            # A previously rejected or still-pending name asked for by an admin
+            # is a decision to accept it; promote rather than silently returning
+            # a row the onboarding form cannot then select.
+            if existing.status != "active":
+                await db.execute(text(
+                    "UPDATE cities SET status = 'active', decided_at = now() WHERE id = :cid"
+                ), {"cid": str(existing.id)})
+                await AdminService._audit(
+                    db, actor, action="city.activate",
+                    target_type="city", target_id=existing.id,
+                    detail={"name": existing.name, "from": existing.status, "to": "active"},
+                )
+                await db.commit()
+            return {
+                "id": existing.id, "name": existing.name, "status": "active",
+                "created": False,
+            }
+
+        row = (await db.execute(text("""
+            INSERT INTO cities (id, name, status, created_at, decided_at)
+            VALUES (gen_random_uuid(), :n, 'active', now(), now())
+            RETURNING id, name, status
+        """), {"n": clean})).first()
+
+        await AdminService._audit(
+            db, actor, action="city.create",
+            target_type="city", target_id=row[0],
+            detail={"name": clean, "status": "active"},
+        )
+        await db.commit()
+        return {"id": row[0], "name": row[1], "status": row[2], "created": True}
+
+    @staticmethod
+    async def rename_city(
+        db: AsyncSession, actor: User, city_id: uuid.UUID, new_name: str
+    ) -> dict:
+        """Rename a city and carry every outlet that referenced it.
+
+        **`outlets.city` is a denormalised varchar, not a FK to `cities.id`** —
+        verified against the live schema: `outlets` has exactly one foreign key
+        and it is `organization_id`. So nothing cascades. Renaming the `cities`
+        row alone would leave every outlet holding the OLD spelling, which is
+        absent from the canonical list — those outlets would then be unselectable
+        at signup and invisible to any lookup that joins on the name. The UPDATE
+        of `outlets.city` below is what makes the rename honest, and it runs in
+        the same transaction so the two can never disagree.
+
+        A collision is REFUSED, never merged. Pointing two cities' outlets at one
+        row is a data merge: it cannot be undone by renaming back, and it silently
+        relocates real restaurants. That needs its own deliberate operation with
+        its own confirmation, not a side effect of an edit box.
+        """
+        clean = (new_name or "").strip()
+        if len(clean) < 2:
+            raise HTTPException(status_code=422, detail="City name is too short.")
+
+        current = (await db.execute(text(
+            "SELECT id, name, status FROM cities WHERE id = :cid"
+        ), {"cid": str(city_id)})).first()
+        if not current:
+            raise HTTPException(status_code=404, detail="City not found")
+
+        clash = (await db.execute(text(
+            "SELECT id, name, status FROM cities "
+            "WHERE lower(name) = lower(:n) AND id <> :cid"
+        ), {"n": clean, "cid": str(city_id)})).first()
+        if clash:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"'{clash.name}' already exists as a separate city "
+                    f"({clash.status}). Renaming '{current.name}' onto it would "
+                    "merge two cities' outlets, which is a separate operation — "
+                    "rename to a distinct name instead."
+                ),
+            )
+
+        # Case-only change (Kochi -> KOCHI) is a legitimate rename and must not
+        # be blocked by the clash check above; it is excluded by `id <> :cid`.
+        outlets_updated = 0
+        if clean != current.name:
+            res = await db.execute(text(
+                "UPDATE outlets SET city = :new WHERE lower(city) = lower(:old)"
+            ), {"new": clean, "old": current.name})
+            outlets_updated = res.rowcount or 0
+
+            await db.execute(text("UPDATE cities SET name = :n WHERE id = :cid"),
+                             {"n": clean, "cid": str(city_id)})
+
+            await AdminService._audit(
+                db, actor, action="city.rename",
+                target_type="city", target_id=city_id,
+                detail={
+                    "from": current.name, "to": clean,
+                    "outlets_updated": outlets_updated,
+                },
+            )
+            await db.commit()
+
+        return {
+            "id": current.id, "name": clean, "previous_name": current.name,
+            "status": current.status, "outlets_updated": outlets_updated,
+        }
