@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import secrets
 import string
 import time
@@ -56,6 +57,38 @@ class CarevoService:
     #: the same outlet. Only /pos/orders honours it — order history and the
     #: admin order log are unaffected.
     COMPLETED_GRACE = timedelta(minutes=30)
+
+    #: Instant the seven demo outlets were renamed to their current identities
+    #: (2026-08-20 21:10:32.960232 IST = 15:40:32.960232 UTC). Taken from the
+    #: created_at that the single rename transaction stamped on all 42 inserted
+    #: menu_items — the transaction's own clock, not an estimate from the backup
+    #: filename or a rounded wall-clock guess.
+    #:
+    #: Orders older than this belong to the outlet's PREVIOUS identity (Spice
+    #: Route Kitchen, Rudrarthi, Bistro, ...) and are hidden from the owner app
+    #: so a new restaurant does not open its queue onto a stranger's history.
+    #:
+    #: COSMETIC ONLY — a WHERE clause, never a delete. All 82 customer_orders
+    #: and every customer_order_items row stay exactly as they are, and the
+    #: ADMIN order log deliberately still shows the full history: it reads its
+    #: own queries in carevo_admin/service.py and does not pass through here.
+    #:
+    #: One timestamp covers all seven because the rename was one transaction.
+    #: If outlets are ever re-identified individually this must become a
+    #: per-outlet column rather than a constant.
+    #:
+    #: Overridable via RENAME_CUTOFF_ISO. The tests set it to the epoch, which
+    #: disables the filter: a test database is built from scratch and has no
+    #: pre-rename orders, so applying a real-world cutoff there only couples the
+    #: suite to one production data event. It also sidesteps a genuine trap —
+    #: models default these columns to the NAIVE `datetime.utcnow`, and
+    #: SQLAlchemy's asyncpg dialect localises a naive value using the CLIENT
+    #: machine's timezone before binding it to timestamptz. On an IST developer
+    #: box a "now" order is therefore written 5h30m in the past. Render runs UTC
+    #: so production rows are correct, but a local run is not.
+    RENAME_CUTOFF = datetime.fromisoformat(
+        os.getenv("RENAME_CUTOFF_ISO", "2026-08-20T15:40:32.960232+00:00")
+    )
 
     # ------------------------------ OTP ------------------------------------
     @staticmethod
@@ -1544,11 +1577,15 @@ class CarevoService:
         #
         # Order history and the admin order log read their own queries and are
         # untouched: this thins the live kitchen queue only.
+        # Orders predating the outlet's rename belong to its previous identity
+        # and are hidden here. Cosmetic: the rows are untouched and the admin
+        # order log still shows all of them. See CarevoService.RENAME_CUTOFF.
         orders = (await db.execute(text("""
             SELECT id, status, payment_status, is_locked, total_amount,
                    created_at, pickup_verified_at
             FROM customer_orders
             WHERE outlet_id = :oid
+              AND created_at >= :rename_cutoff
               AND (
                     status NOT IN ('COMPLETED','CANCELLED','ABANDONED')
                  OR (
@@ -1560,6 +1597,7 @@ class CarevoService:
             ORDER BY created_at DESC
         """), {
             "oid": str(outlet_id),
+            "rename_cutoff": CarevoService.RENAME_CUTOFF,
             # A timedelta, not a string: the CAST tells asyncpg to expect an
             # interval, and it maps timedelta -> interval natively while
             # rejecting '1800 seconds' outright.

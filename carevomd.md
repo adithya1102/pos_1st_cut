@@ -1529,3 +1529,49 @@ array is normalised into an envelope with `truncated: false`. Either service can
 land first without the tab breaking in the gap.
 
 ---
+
+## 2026-08-21 — Owner-queue rename cutoff: the code lands
+
+The entry "Owner queue hides pre-rename orders; OTP diagnosed, NOT changed"
+above described this work while it was still only in the working tree — the
+"Admin city management" entry says so explicitly. **The code is now committed.**
+Nothing about the behaviour changed in between; this entry exists so the log
+does not leave a described-but-absent change hanging.
+
+Three files: the `RENAME_CUTOFF` constant plus the `AND created_at >= ...` clause
+in `carevo_customer/service.py`, the `RENAME_CUTOFF_ISO` epoch default in
+`tests/conftest.py`, and `tests/test_api_rename_cutoff.py`.
+
+**Committed on its own, deliberately.** `carevo_customer/service.py` also holds
+`check_otp_rate_limit` / `request_otp` / `verify_otp`, and Firebase/OTP work is
+starting next. Leaving this uncommitted would have put an orders change and an
+auth change in one dirty file, separable afterwards only with care. No textual
+overlap existed — the cutoff sits at the class constant and the owner-queue
+query, the OTP helpers are ~1,500 lines away — so this is about keeping the two
+commits legible, not about avoiding a conflict.
+
+Suite at time of commit: backend **141 passed, 0 failed**, customer_app **82**,
+owner_app **1**.
+
+### Still uncommitted after this, and why
+
+- `customer_app/pubspec.yaml` (`1.0.0+1` -> `+4`) and `owner_app/pubspec.yaml`
+  (`+1` -> `+2`) — version bumps from tonight's builds. Held back pending
+  confirmation of which versionCodes actually reached Play, so the committed
+  baseline records reality rather than a guess.
+- `.claude/settings.local.json` — local tool permissions, not app behaviour.
+- `UI_REDESIGN_HANDOFF.md`, `design/`, `pdf/`,
+  `customer_app/assets/marketing/`, `play_store_icon_512.png` — untracked docs
+  and assets, each its own decision.
+- ~16,631 deleted MAUI `bin`/`obj` artifacts, tracked in git, from a disk
+  cleanup. Long-standing; whether that output belongs in the repo at all is
+  still open.
+
+**`customer_app/android/app/google-services.json` is GITIGNORED**
+(`customer_app/android/.gitignore:23`) and therefore not in any of this. The
+refreshed copy carrying the `fa681f7c...` fingerprint exists on one machine
+only. Correct for a public repo, but it means any other machine or CI builds
+against the OLD single-fingerprint config and the Firebase fix would appear not
+to work there. Worth knowing before the OTP work starts.
+
+---

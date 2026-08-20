@@ -30,6 +30,12 @@ os.environ.setdefault("SECRET_KEY", "test-secret-not-a-real-key")
 os.environ.setdefault("ALGORITHM", "HS256")
 os.environ.setdefault("PAYMENT_GATEWAY", "stub")
 os.environ.setdefault("CUSTOMER_AUTH_ENABLED", "true")
+# Disable the owner-queue rename cutoff for the suite. It describes one
+# production data event (the 2026-08-20 outlet rename); a test database is
+# seeded from scratch and has no pre-rename orders, so enforcing it here would
+# only couple every order test to a real-world date. Tests that exercise the
+# cutoff set CarevoService.RENAME_CUTOFF themselves.
+os.environ.setdefault("RENAME_CUTOFF_ISO", "1970-01-01T00:00:00+00:00")
 
 assert "127.0.0.1" in TEST_URL and "carevo_test" in TEST_URL, \
     "refusing to run: tests are only ever allowed against the local carevo_test DB"
