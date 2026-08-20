@@ -159,6 +159,25 @@ class RestaurantGroupOut(BaseModel):
     days: list[RestaurantDayOut] = []
 
 
+class RestaurantTabOut(BaseModel):
+    """Envelope so truncation can be STATED rather than silently happening.
+
+    Previously this endpoint returned a bare list with a hidden `LIMIT`, so past
+    the cap the tree lost its oldest rows and rendered as if complete — exactly
+    the failure the tab avoids pagination to prevent. Raising the cap would only
+    postpone it, so the cap stays and the caller is told when it bit.
+    """
+
+    groups: list[RestaurantGroupOut] = []
+    #: True when more orders matched the window than `cap` allowed back.
+    truncated: bool = False
+    #: The cap actually applied (after clamping).
+    cap: int = 0
+    #: Orders represented in `groups` — never more than `cap`.
+    returned_orders: int = 0
+    window_days: int = 0
+
+
 class AuditLogOut(BaseModel):
     id: uuid.UUID
     actor_username: Optional[str] = None

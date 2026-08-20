@@ -13,13 +13,30 @@ import pytest
 API = "/api/v1"
 
 
-async def _groups(client, seed, days: int = 30):
+async def _tab(client, seed, days: int = 30, *, scoped: bool = True, limit=None):
+    """The full envelope.
+
+    `scoped=True` by default: every assertion here is about the seeded outlet,
+    and scoping to it makes these tests independent of how many orders the rest
+    of the database happens to hold. That is not cosmetic — the unscoped feed is
+    capped, so a test asserting a specific order is present would begin failing
+    the day total volume crossed the cap, for reasons unrelated to what it
+    checks. That is exactly what happened before this parameter existed.
+    """
+    q = f"days={days}"
+    if scoped:
+        q += f"&outlet_id={seed['outlet_id']}"
+    if limit is not None:
+        q += f"&limit={limit}"
     r = await client.get(
-        f"{API}/admin/orders/by-restaurant?days={days}",
-        headers=seed["admin_auth"],
+        f"{API}/admin/orders/by-restaurant?{q}", headers=seed["admin_auth"]
     )
     assert r.status_code == 200, r.text
     return r.json()
+
+
+async def _groups(client, seed, days: int = 30, *, scoped: bool = True):
+    return (await _tab(client, seed, days, scoped=scoped))["groups"]
 
 
 @pytest.mark.asyncio
@@ -101,6 +118,12 @@ async def test_the_window_excludes_older_orders(client, seed, paid_order, db):
     assert mine_7 is None, "a 10-day-old order is outside a 7-day window"
 
     # Widen the window and it comes back — the row was filtered, not lost.
+    #
+    # Scoped to this outlet deliberately. Against the unscoped feed this
+    # assertion is not about windowing at all past a few thousand orders: the
+    # safety cap returns newest-first, so a deliberately-backdated row is the
+    # first thing to fall off, and the test fails on total database volume
+    # rather than on the behaviour it names.
     thirty = await _groups(client, seed, days=30)
     mine_30 = next(
         (g for g in thirty if str(g["outlet_id"]) == seed["outlet_id"]), None
@@ -122,3 +145,62 @@ async def test_route_is_gated_to_super_admin(client, seed):
 
     anon = await client.get(f"{API}/admin/orders/by-restaurant")
     assert anon.status_code in (401, 403)
+
+
+# --------------------------------------------------------------------------
+# The safety cap. Previously a bare LIMIT applied in silence: past it the tree
+# dropped its oldest rows and still rendered as if complete — the same defect
+# this tab avoids pagination to prevent. Raising the number would only move the
+# date it resumed, so the cap stays and the response now says when it bit.
+#
+# These assertions are deliberately expressed against a cap the TEST chooses,
+# not against the production default. A test written against "2000" starts
+# failing the day real volume crosses it, which is precisely how the previous
+# one rotted.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_hitting_the_cap_is_reported_not_silent(client, seed, paid_order):
+    """limit=1 with more than one order present must announce the truncation."""
+    # Two orders for this outlet, so a cap of 1 is guaranteed to bite.
+    r = await client.post(
+        f"{API}/customer/orders",
+        headers=seed["customer_auth"],
+        json={
+            "outlet_id": seed["outlet_id"],
+            "items": [{"menu_item_id": seed["menu_item_id"], "quantity": 1}],
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    tab = await _tab(client, seed, days=30, limit=1)
+    assert tab["truncated"] is True, (
+        "a capped response must SAY it is capped — a short tree that stays "
+        "silent is indistinguishable from a complete one"
+    )
+    assert tab["cap"] == 1
+    assert tab["returned_orders"] == 1, "never more rows than the cap"
+
+    counted = sum(g["order_count"] for g in tab["groups"])
+    assert counted == tab["returned_orders"], (
+        "the tree must describe exactly the rows that survived the cap"
+    )
+
+
+@pytest.mark.asyncio
+async def test_not_truncated_when_the_cap_is_not_reached(client, seed, paid_order):
+    """The flag must mean something — it cannot simply always be True."""
+    tab = await _tab(client, seed, days=30, limit=5000)
+    assert tab["truncated"] is False
+    assert tab["returned_orders"] <= tab["cap"]
+
+
+@pytest.mark.asyncio
+async def test_scoping_to_one_outlet_excludes_every_other(client, seed, paid_order):
+    """The scope that makes these tests volume-independent must actually scope."""
+    tab = await _tab(client, seed, days=30)
+    ids = {str(g["outlet_id"]) for g in tab["groups"]}
+    assert ids <= {seed["outlet_id"]}, (
+        f"outlet_id must return only that outlet, got {ids}"
+    )

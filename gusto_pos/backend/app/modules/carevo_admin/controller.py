@@ -147,10 +147,11 @@ async def list_orders(
     return await AdminService.list_orders(db, limit=limit, offset=offset)
 
 
-@router.get("/orders/by-restaurant", response_model=list[s.RestaurantGroupOut])
+@router.get("/orders/by-restaurant", response_model=s.RestaurantTabOut)
 async def list_orders_by_restaurant(
     days: int = Query(30, ge=1, le=365),
     limit: int = Query(2000, ge=1, le=5000),
+    outlet_id: Optional[uuid.UUID] = Query(None),
     _admin: User = Depends(get_current_super_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -161,9 +162,13 @@ async def list_orders_by_restaurant(
 
     Windowed (`days`) rather than paginated: paging a tree can split one
     restaurant's days across two pages, producing a group that looks complete
-    and is not.
+    and is not. `limit` remains a safety cap, but the response now reports
+    `truncated` when it bites, so a short tree is never mistaken for a complete
+    one. `outlet_id` scopes to a single restaurant.
     """
-    return await AdminService.list_orders_by_restaurant(db, days=days, limit=limit)
+    return await AdminService.list_orders_by_restaurant(
+        db, days=days, limit=limit, outlet_id=outlet_id
+    )
 
 
 # ------------------------------ cities -------------------------------------

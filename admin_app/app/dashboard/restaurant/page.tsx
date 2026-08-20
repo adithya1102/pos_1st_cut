@@ -51,6 +51,9 @@ export default function RestaurantPage() {
   const [groups, setGroups] = useState<RestaurantGroup[] | null>(null);
   const [days, setDays] = useState<number>(30);
   const [error, setError] = useState<string | null>(null);
+  // Surfaced, not swallowed: a capped tree that says nothing reads as the
+  // complete picture, which is precisely the bug this replaced.
+  const [truncation, setTruncation] = useState<string | null>(null);
   const [openOutlets, setOpenOutlets] = useState<Set<string>>(new Set());
   const [openDays, setOpenDays] = useState<Set<string>>(new Set());
 
@@ -58,7 +61,12 @@ export default function RestaurantPage() {
     (window: number) =>
       adminApi.ordersByRestaurant(window).then(
         (data) => {
-          setGroups(data);
+          setGroups(data.groups);
+          setTruncation(
+            data.truncated
+              ? `Showing the most recent ${data.returned_orders} orders — the ${data.cap}-order cap was reached, so older orders in this window are not shown. Narrow the window to see them.`
+              : null,
+          );
           setError(null);
         },
         (err: unknown) =>
@@ -106,6 +114,11 @@ export default function RestaurantPage() {
       }
     >
       {error && <ErrorBox message={error} />}
+      {truncation && (
+        <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-slate-700">
+          {truncation}
+        </div>
+      )}
 
       {groups !== null && groups.length === 0 && !error && (
         <p className="px-4 py-6 text-sm text-slate-500">

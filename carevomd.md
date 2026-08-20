@@ -1470,3 +1470,62 @@ row falls off the truncated end. Fixed in the next commit rather than papered
 over by truncating the database.
 
 ---
+
+## 2026-08-21 — Restaurant tab: the cap now announces itself, and scopes
+
+Fixes the failure recorded in the entry above. **The number was not raised** —
+that is the same bug with a later date on it.
+
+### What was actually wrong
+
+`LIMIT 2000` was applied in SILENCE, before grouping. Past the cap the tree
+dropped its oldest rows and still rendered as though complete — which is exactly
+the failure mode the endpoint's own docstring cites as its reason for refusing
+pagination ("a group that renders as complete but is not"). The cap reproduced
+the defect it was written to avoid.
+
+The test failure was the symptom: `carevo_test` crossed 2,057 orders in a
+30-day window, the deliberately-backdated row was the oldest, and newest-first
+ordering pushed it off the end. Prod is nowhere near 2000 yet, so this would
+have surfaced first as a silently short admin tree, not as an error.
+
+### Approach: keep the cap, report it (not pagination)
+
+Pagination was rejected for the same reason the original author rejected it — a
+tree and a page boundary fight, and page 2 can cut a restaurant's days in half.
+That reasoning still holds. An unbounded query on a growing table is a real
+hazard, so the cap stays and becomes honest instead:
+
+- the query asks for `limit + 1` rows; getting more than `limit` back PROVES
+  more exist. The spare row is discarded and `truncated` is set.
+- the response is now an envelope — `groups`, `truncated`, `cap`,
+  `returned_orders`, `window_days` — because a bare list has nowhere to say it
+  is incomplete.
+- the dashboard renders an amber banner naming the cap and suggesting a
+  narrower window, rather than quietly showing a short tree.
+
+### `outlet_id` scope — and why the test needed it
+
+New optional `outlet_id` filter. This is what makes the regression test immune
+to platform-wide volume: **a test asserting a specific order is present in the
+UNSCOPED feed is not testing windowing at all once volume passes the cap** — it
+is testing how many orders the database happens to hold. That is precisely how
+the previous test rotted, and raising the cap would have re-armed it.
+
+New tests are written against a cap the TEST chooses (`limit=1`), never the
+production default, so no future volume can reach them:
+
+- hitting the cap sets `truncated`, `returned_orders == cap`, and the tree's
+  counts sum to exactly the surviving rows
+- NOT hitting the cap leaves `truncated` false — the flag has to mean something,
+  it cannot simply always be true
+- `outlet_id` returns that outlet and no other
+
+### Deploy-order safety
+
+The response shape changed, and backend + dashboard deploy from the same branch
+but not atomically. `ordersByRestaurant` therefore accepts BOTH shapes: a bare
+array is normalised into an envelope with `truncated: false`. Either service can
+land first without the tab breaking in the gap.
+
+---

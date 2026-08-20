@@ -814,8 +814,9 @@ class AdminService:
     # ------------------ Restaurant tab: restaurant -> day -> time -----------
     @staticmethod
     async def list_orders_by_restaurant(
-        db: AsyncSession, *, days: int = 30, limit: int = 2000
-    ) -> list[dict]:
+        db: AsyncSession, *, days: int = 30, limit: int = 2000,
+        outlet_id: Optional[uuid.UUID] = None,
+    ) -> dict:
         """Orders grouped restaurant -> day -> time. Read-only, no new schema.
 
         `customer_orders.outlet_id` and `outlets` already carry everything this
@@ -830,6 +831,20 @@ class AdminService:
         Grouping happens in SQL for the day bucket (so the DB's timezone handling
         decides the date, consistently with every other query here) and in Python
         for the nesting, which keeps the ordering rules readable in one place.
+
+        **`limit` is a safety cap, and its truncation is now REPORTED.** It used
+        to be applied silently, which was the same defect the paragraph above
+        rejects pagination for: past the cap the tree rendered as complete while
+        missing its oldest rows, and nothing said so. Raising the number would
+        only move the date at which that resumes. So the query asks for
+        `limit + 1` rows: getting more than `limit` back proves more exist, the
+        extra row is discarded, and `truncated` says so — the caller can then
+        narrow `days` or scope to one outlet rather than trusting a short tree.
+
+        `outlet_id` scopes to a single restaurant. That makes a caller's view
+        independent of platform-wide volume — the property the regression test
+        relies on, since a test asserting against the unscoped feed would start
+        failing the day total orders crossed the cap.
         """
         days = max(1, min(days, 365))
         limit = max(1, min(limit, 5000))
@@ -849,13 +864,20 @@ class AdminService:
             FROM customer_orders co
             LEFT JOIN outlets o ON o.id = co.outlet_id
             WHERE co.created_at >= now() - CAST(:window AS interval)
+              AND (CAST(:oid AS uuid) IS NULL OR co.outlet_id = CAST(:oid AS uuid))
             ORDER BY co.created_at DESC
             LIMIT :lim
         """), {
             # timedelta, not a string — asyncpg maps it to interval directly.
             "window": timedelta(days=days),
-            "lim": limit,
+            # One more than asked for, purely to detect that more exist.
+            "lim": limit + 1,
+            "oid": str(outlet_id) if outlet_id else None,
         })).fetchall()
+
+        truncated = len(rows) > limit
+        if truncated:
+            rows = rows[:limit]
 
         # Insertion order is already newest-first from the query, and dicts
         # preserve it — so restaurants come out ordered by their most recent
@@ -898,21 +920,29 @@ class AdminService:
                 "item_count": int(r.item_count or 0),
             })
 
-        return [
-            {
-                "outlet_id": g["outlet_id"],
-                "outlet_name": g["outlet_name"],
-                "city": g["city"],
-                "locality": g["locality"],
-                "order_count": g["order_count"],
-                "total_amount": round(g["total_amount"], 2),
-                "days": [
-                    {**d, "total_amount": round(d["total_amount"], 2)}
-                    for d in g["_days"].values()
-                ],
-            }
-            for g in groups.values()
-        ]
+        return {
+            "groups": [
+                {
+                    "outlet_id": g["outlet_id"],
+                    "outlet_name": g["outlet_name"],
+                    "city": g["city"],
+                    "locality": g["locality"],
+                    "order_count": g["order_count"],
+                    "total_amount": round(g["total_amount"], 2),
+                    "days": [
+                        {**d, "total_amount": round(d["total_amount"], 2)}
+                        for d in g["_days"].values()
+                    ],
+                }
+                for g in groups.values()
+            ],
+            # Metadata, not decoration: `truncated` is the difference between a
+            # short tree that is the whole truth and one that merely looks like it.
+            "truncated": truncated,
+            "cap": limit,
+            "returned_orders": len(rows),
+            "window_days": days,
+        }
 
     # --------------------------- audit log ---------------------------------
     @staticmethod

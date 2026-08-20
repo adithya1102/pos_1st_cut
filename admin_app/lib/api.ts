@@ -313,6 +313,18 @@ export interface RestaurantGroup {
   days: RestaurantDay[];
 }
 
+/** Restaurant tab envelope. The metadata is the point: `truncated` is what
+ *  distinguishes a short tree that is the whole truth from one that only looks
+ *  like it. */
+export interface RestaurantTab {
+  groups: RestaurantGroup[];
+  /** More orders matched the window than the server's cap returned. */
+  truncated: boolean;
+  cap: number;
+  returned_orders: number;
+  window_days: number;
+}
+
 export interface AuditLog {
   id: string;
   actor_username: string | null;
@@ -474,10 +486,27 @@ export const adminApi = {
   // Windowed by days rather than paginated: paging a tree can split one
   // restaurant's days across two pages, producing a group that looks complete
   // and is not.
-  ordersByRestaurant: (days = 30) =>
-    api.get<RestaurantGroup[]>(
-      `/api/v1/admin/orders/by-restaurant?days=${days}`,
-    ),
+  // `limit` is a safety cap on the server, and the response now REPORTS when it
+  // bit — a short tree used to be indistinguishable from a complete one.
+  // Tolerates the old bare-array shape too, so backend and dashboard can deploy
+  // in either order without the tab breaking in the gap.
+  ordersByRestaurant: (days = 30, outletId?: string) =>
+    api
+      .get<RestaurantTab | RestaurantGroup[]>(
+        `/api/v1/admin/orders/by-restaurant?days=${days}` +
+          (outletId ? `&outlet_id=${encodeURIComponent(outletId)}` : ""),
+      )
+      .then<RestaurantTab>((res) =>
+        Array.isArray(res)
+          ? {
+              groups: res,
+              truncated: false,
+              cap: 0,
+              returned_orders: 0,
+              window_days: days,
+            }
+          : res,
+      ),
 
   auditLogs: (limit = 100) =>
     api.get<AuditLog[]>(`/api/v1/admin/audit-logs?limit=${limit}`),
