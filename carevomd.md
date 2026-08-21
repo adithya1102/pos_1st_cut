@@ -1604,6 +1604,17 @@ never saw them.
 testing artifact (sha256 `2FFD4E92...`); it is NOT the next upload and would
 have to be rebuilt at `+3` if that flag configuration is still wanted.
 
+### Immediately after: bumped to +3 for the next release
+
+`1.0.0+3` committed straight after the reconciliation above, so the two entries
+are not in tension — the invariant going forward is **"pubspec carries the
+versionCode the NEXT upload will use"**, and the `+2` step existed only to clear
+the `+4`-vs-`+1` drift before choosing that number. `+3` is reusable precisely
+because Play never received it.
+
+Committed rather than left dirty: an uncommitted bump is how the `+4` drift
+started, and the fix is an hour old.
+
 ### owner_app deliberately NOT reconciled here
 
 `owner_app/pubspec.yaml` remains uncommitted at `1.0.0+2` (committed baseline
