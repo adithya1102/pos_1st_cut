@@ -1575,3 +1575,43 @@ against the OLD single-fingerprint config and the Firebase fix would appear not
 to work there. Worth knowing before the OTP work starts.
 
 ---
+
+## 2026-08-21 — customer_app versionCode reconciled to what Play actually has
+
+`customer_app/pubspec.yaml` committed at **`1.0.0+2`**.
+
+### Why it moved DOWN from +4
+
+The working tree had drifted to `+4` across three local builds while the
+committed baseline still read `+1` — so the repo disagreed with the machine, and
+neither matched Play. Confirmed with the user: **only versionCode 2 was ever
+uploaded.** `+3` (built 2026-08-20 19:55) and `+4` (the internal-testing build
+with `--dart-define=FORCE_RECAPTCHA_FLOW=false`, built 22:41) were produced
+locally and never submitted.
+
+Independent corroboration for `+2` rather than taking it on trust: the test
+device carries `com.carevo.customer_app versionCode=2` with
+`installerPackageName=com.android.vending`, i.e. genuinely Play-installed.
+
+**The baseline records what Play has, not the high-water mark of local builds.**
+A pubspec sitting at `+4` when Play has `+2` invites the next release to be
+numbered from fiction — and Play rejects a re-upload at an existing versionCode
+while silently accepting a gap, so the failure mode is a confusing rejection
+later rather than an error now. `+3` and `+4` are free to be reused because Play
+never saw them.
+
+**Next release is `+3`.** The `.aab` currently on disk is the `+4` internal-
+testing artifact (sha256 `2FFD4E92...`); it is NOT the next upload and would
+have to be rebuilt at `+3` if that flag configuration is still wanted.
+
+### owner_app deliberately NOT reconciled here
+
+`owner_app/pubspec.yaml` remains uncommitted at `1.0.0+2` (committed baseline
+`+1`). It was outside this task, and owner_app is not distributed through Play
+at all — the build on the test device was installed by
+`com.google.android.packageinstaller`, i.e. sideloaded. Its versionCode
+therefore has no Play constraint to reconcile against, and the bump is left as
+an open decision rather than swept in alongside a change made for a different
+reason.
+
+---
