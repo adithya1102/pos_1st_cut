@@ -34,6 +34,13 @@ class _OtpScreenState extends State<OtpScreen> {
   final _focus = FocusNode();
   bool get _valid => _controller.text.trim().length == 6;
 
+  /// Persisted rejection message, shown under the cells until the next keypress.
+  ///
+  /// Deliberately NOT a SnackBar any more. A rejected code now clears the cells,
+  /// so a message that disappears after a few seconds would leave an empty field
+  /// and no explanation of why — the two changes only make sense together.
+  String? _error;
+
   @override
   void dispose() {
     _controller.dispose();
@@ -60,9 +67,16 @@ class _OtpScreenState extends State<OtpScreen> {
         (route) => false,
       );
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(auth.error ?? 'Invalid code.')),
-      );
+      // A rejected code is never worth keeping. Retyping six digits over a
+      // wrong six is six deletions first, and the field auto-submits at six
+      // characters — so a half-corrected code fires another doomed attempt and
+      // burns another try against the rate limit.
+      setState(() {
+        _error = auth.error ?? 'Invalid code. Please try again.';
+        _controller.clear();
+      });
+      // Bring the keyboard straight back so retry is immediate.
+      _focus.requestFocus();
     }
   }
 
@@ -74,11 +88,27 @@ class _OtpScreenState extends State<OtpScreen> {
 
     return Scaffold(
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+        // The entry row is pushed toward the vertical middle rather than sitting
+        // just under the header. Android drops the incoming-SMS heads-up banner
+        // from the TOP of the screen, directly over where these cells used to
+        // be — so the field was covered at exactly the moment the code arrived.
+        //
+        // ConstrainedBox(minHeight) + IntrinsicHeight is what lets Spacer work
+        // inside a scroll view: the column would otherwise have unbounded
+        // height and a flex child cannot resolve against that. The scroll view
+        // stays, so a small screen with the keyboard up still scrolls instead
+        // of overflowing.
+        child: LayoutBuilder(
+          builder: (context, constraints) => SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minHeight: (constraints.maxHeight - 44).clamp(0.0, double.infinity),
+              ),
+              child: IntrinsicHeight(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
               NeoIconButton(
                 icon: Icons.arrow_back,
                 tooltip: 'Back',
@@ -102,15 +132,45 @@ class _OtpScreenState extends State<OtpScreen> {
                   ],
                 ),
               ),
-              const SizedBox(height: 22),
+              // Clears the notification shade's reach. flex 3 above / 4 below
+              // lands the cells slightly above true centre, which keeps the
+              // Verify button on screen with the keyboard raised.
+              const Spacer(flex: 3),
               _OtpCells(
                 controller: _controller,
                 focusNode: _focus,
                 onChanged: (v) {
-                  setState(() {});
+                  // Typing is the retry — drop the rejection message so it
+                  // cannot linger over a fresh code.
+                  setState(() => _error = null);
                   if (v.trim().length == 6) _verify();
                 },
               ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Row(
+                  key: const Key('otp_error'),
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // tomato measures ~3.4:1 on the shell — fine for an icon,
+                    // NOT for body text (the palette notes record it as
+                    // large-text only). The message itself stays in ink, which
+                    // is 16.34:1, and carries its weight instead of its colour.
+                    const Icon(Icons.error_outline,
+                        size: 18, color: AppColors.tomato),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _error!,
+                        style: textTheme.bodyMedium?.copyWith(
+                          color: c.ink,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               const SizedBox(height: 22),
               NeoButton(
                 key: const Key('otp_verify'),
@@ -152,6 +212,7 @@ class _OtpScreenState extends State<OtpScreen> {
                 ),
               ],
               const SizedBox(height: 14),
+              const Spacer(flex: 4),
               Center(
                 child: TextButton(
                   onPressed: auth.busy
@@ -164,7 +225,10 @@ class _OtpScreenState extends State<OtpScreen> {
                   ),
                 ),
               ),
-            ],
+                  ],
+                ),
+              ),
+            ),
           ),
         ),
       ),

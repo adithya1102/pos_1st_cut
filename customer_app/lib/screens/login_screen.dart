@@ -126,7 +126,12 @@ class _LoginScreenState extends State<LoginScreen> {
                                 // Stable driver target — see integration_test/.
                                 key: const Key('login_phone_field'),
                                 controller: _controller,
-                                hintText: '98765 43210',
+                                // Instructional, not a specimen number. A
+                                // realistic-looking placeholder reads as a
+                                // pre-filled value at a glance — people tap
+                                // "continue" on it, or try to delete digits
+                                // that were never there.
+                                hintText: 'Enter mobile number',
                                 keyboardType: TextInputType.phone,
                                 maxLength: 10,
                                 inputFormatters: [

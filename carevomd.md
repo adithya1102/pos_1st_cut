@@ -1615,7 +1615,7 @@ because Play never received it.
 Committed rather than left dirty: an uncommitted bump is how the `+4` drift
 started, and the fix is an hour old.
 
-### owner_app deliberately NOT reconciled here
+### owner_app deliberately NOT reconciled here (see below for the OTP work)
 
 `owner_app/pubspec.yaml` remains uncommitted at `1.0.0+2` (committed baseline
 `+1`). It was outside this task, and owner_app is not distributed through Play
@@ -1624,5 +1624,123 @@ at all — the build on the test device was installed by
 therefore has no Play constraint to reconcile against, and the bump is left as
 an open decision rather than swept in alongside a change made for a different
 reason.
+
+---
+
+## 2026-08-21 — Play Integrity enabled; three OTP entry fixes
+
+### FORCE_RECAPTCHA_FLOW default flipped to false
+
+The flag's own comment set the condition — "flip this off once the app ships on
+a Play track" — and it is met: the device build is
+`installerPackageName=com.android.vending`, genuinely Play-installed and
+therefore vouchable by Play Integrity.
+
+**Two causes, not one.** The original `17028` was a sideloading artefact. A
+second cause surfaced later: the Play App Signing certificate's SHA-1 was not
+registered in Firebase, so `/getProjectConfig` answered `INVALID_CERT_HASH 400`
+and phone auth died before any SMS was sent. Registering `FA:68:1F:7C:...`
+fixed that. Flipping the flag on the strength of the first cause alone would
+have been wrong.
+
+**Three successful sign-ins on the Play build before flipping**, spaced
+deliberately rather than run back to back: 01:31, 01:44 and 15:20 — the last
+after a 13.5-hour gap and a cold app start, so Play Integrity's token caches had
+long since expired and re-fetched.
+
+**Honest limit on that evidence: only 2 of the 3 were confirmed in logcat.** The
+device dropped mid-capture on the third and the buffer was lost. The behavioural
+result is near-conclusive anyway for this failure mode — `INVALID_CERT_HASH` /
+`17093` prevent the SMS from being sent at all, which was the original symptom,
+and an OTP was received and entered — but the log line itself was never seen and
+is not claimed.
+
+Restoring the reCAPTCHA path for a SIDELOADED build is still one flag:
+`--dart-define=FORCE_RECAPTCHA_FLOW=true`.
+
+### The three fixes
+
+1. **OTP cells moved toward the vertical middle.** They sat just under the
+   header — exactly where Android drops its incoming-SMS heads-up banner, so the
+   field was covered at the moment the code arrived. `LayoutBuilder` +
+   `ConstrainedBox(minHeight)` + `IntrinsicHeight` is what lets `Spacer` resolve
+   inside a `SingleChildScrollView`; without it a flex child has unbounded
+   height and throws. flex 3 above / 4 below lands the cells slightly above true
+   centre so the Verify button survives the raised keyboard, and the scroll view
+   stays so short screens scroll instead of overflowing.
+
+2. **A rejected code clears itself and refocuses.** The SnackBar was REPLACED by
+   a persistent inline error, not supplemented: once the field clears, a message
+   that vanishes after four seconds leaves an empty field and no explanation of
+   why. It dismisses on the next keypress so a stale rejection cannot hang over a
+   fresh code. The failure this prevents is specific — the field auto-submits at
+   six characters, so a half-corrected code fires another doomed attempt and
+   burns another try against the per-hour OTP rate limit.
+
+3. **Phone placeholder** `98765 43210` -> `Enter mobile number`. A realistic
+   number reads as a pre-filled value at a glance.
+
+**Error text is `ink`, not red.** The palette's only red is `AppColors.tomato` at
+~3.4:1 on the shell, already recorded here as large-text-only; body-sized red
+would have been an accessibility regression. Tomato is on the icon, the message
+carries weight instead of colour.
+
+### Build
+
+`1.0.0+3`, built with NO `--dart-define` — the committed default is the real
+configuration now, not a build-time override.
+
+```
+app-release.aab   58,892,562 bytes   2026-08-21 15:37:04
+sha256 6F8E12667A1A61D819E043D0C33BD795AD05318B7A0DBDA8214627C14BDF6B10
+versionCode 3 / versionName 1.0.0
+```
+
+**AD_ID regression check: absent**, 13 uses-permission, unchanged set. Worth
+recording HOW, because a naive scan misleads: a raw byte sweep of the bundle
+DOES hit `ad_id`/`advertis` in `classes.dex` and `libflutter.so`. Those are not
+the permission — the shipped `base/manifest/AndroidManifest.xml` is clean, the
+literal `com.google.android.gms.permission.AD_ID` is absent from every entry,
+and the dex hit resolves to the string **`thread_id`**. Expect those substring
+hits rather than treating them as a finding.
+
+Tests: customer_app **87** (82 unchanged + 5 new in `otp_entry_fixes_test.dart`).
+`flutter analyze` clean. Backend and owner_app untouched.
+
+### SmsRetrieverHelper timeout — INVESTIGATED, NOT FIXED
+
+`[SmsRetrieverHelper] Timed out waiting for SMS` fired in both logged attempts,
+so autofill is not working in practice and the code is typed by hand. Recorded
+as its own open item; no fix attempted, by instruction.
+
+It is **not** a missing permission — the SMS Retriever API deliberately requires
+none, and correctly there are none. It is also a DIFFERENT mechanism from
+`AutofillHints.oneTimeCode`, which goes through Android Autofill and the keyboard
+suggestion strip; the timeout is Firebase's Play-Services retriever specifically.
+
+The retriever matches an 11-character app hash appended to the SMS body, derived
+from package name + signing certificate, and Firebase generates that hash from
+the **SHA-256** of the registered certificate. If the Play App Signing SHA-256 is
+not registered, the SMS carries a hash that cannot match this build and the
+retriever waits until it times out — exactly the observed behaviour.
+
+**Unconfirmed, and `google-services.json` cannot settle it**: that file carries
+only SHA-1 by schema (all three entries are 40 chars), so its silence on SHA-256
+proves nothing. Check Firebase Console -> Project settings -> Your apps ->
+`com.carevo.customer_app` -> SHA certificate fingerprints for a SHA-256 entry
+matching the Play App Signing cert. From the signing-block extraction,
+`FA:68:1F:7C:...` has SHA-256
+`60:2E:02:D0:A0:1E:A1:32:DF:B8:03:4B:8C:52:F1:E7:8F:94:7D:42:B2:1A:6A:F5:AA:AD:0C:E9:D7:EE:8C:42`.
+
+If that is the cause it is **not fixable app-side** — a console registration, no
+code change — so flipping the flag will not have altered it either way.
+
+### Untested path
+
+**This build's sign-in has never been exercised.** All three successful attempts
+ran on versionCode 2, which used the reCAPTCHA flow. This is the first artifact
+that actually takes the Play Integrity path in production configuration — the
+thing those attempts justified but did not themselves test. Internal track and a
+real sign-in before Alpha.
 
 ---

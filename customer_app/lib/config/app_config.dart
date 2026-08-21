@@ -52,12 +52,24 @@ class AppConfig {
   /// fall back on its own here: reCAPTCHA is automatic only when Play Integrity
   /// is *unavailable*, not when it returns a token that is refused.
   ///
-  /// Flip this off once the app ships on a Play track (Play Integrity is the
-  /// nicer flow — no webview challenge):
-  ///   flutter run --dart-define=FORCE_RECAPTCHA_FLOW=false
+  /// FLIPPED TO false on 2026-08-21. The condition this comment set out — "once
+  /// the app ships on a Play track" — is met: the build on the test device is
+  /// `installerPackageName=com.android.vending`, i.e. genuinely Play-installed
+  /// and therefore vouchable by Play Integrity.
+  ///
+  /// The 17028 rejection above was a SIDELOADING artefact plus a second cause
+  /// found later: the Play App Signing certificate's SHA-1 was not registered in
+  /// Firebase, so `/getProjectConfig` answered `INVALID_CERT_HASH 400` and phone
+  /// auth died before any SMS. Registering `FA:68:1F:7C:...` fixed that, and
+  /// three phone sign-ins then succeeded on the Play build — 2026-08-21 01:31,
+  /// 01:44 and 15:20, the last after a 13.5-hour gap and a cold start.
+  ///
+  /// Restore the reCAPTCHA path for a SIDELOADED build, where Play Integrity
+  /// still cannot vouch for the app:
+  ///   flutter run --dart-define=FORCE_RECAPTCHA_FLOW=true
   static const bool forceRecaptchaFlow = bool.fromEnvironment(
     'FORCE_RECAPTCHA_FLOW',
-    defaultValue: true,
+    defaultValue: false,
   );
 
   /// How often the pickup screen polls order status.
