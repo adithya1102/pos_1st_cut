@@ -330,6 +330,91 @@ class TestCustomerOutletPayload:
         assert row["distance_km"] == pytest.approx(0.0, abs=0.01)
 
 
+# --------------------- multi-city filter (2026-08-24) -----------------------
+class TestCustomerOutletCityFilter:
+    """`?city=` became REPEATABLE when the app's city picker went multi-select.
+
+    It was a single equality match (`lower(city) = lower(:city)`); it is now
+    `lower(city) = ANY(:cities)`. These pin both the new union behaviour and
+    the single-city case that had to keep working unchanged.
+    """
+
+    async def _second_outlet(self, db, seed, city: str) -> str:
+        """A second visible outlet in a different city, same org as the seed."""
+        other_id = uuid.uuid4()
+        await db.execute(text("""
+            INSERT INTO outlets (id, organization_id, location_name, city,
+                                 is_visible, upi_id, geofence_radius_meters,
+                                 verification_status, created_at)
+            SELECT :i, organization_id, 'Second Outlet', :c, true, 'test@upi',
+                   150, 'active', now()
+            FROM outlets WHERE id = :seed"""),
+            {"i": str(other_id), "c": city, "seed": seed["outlet_id"]})
+        await db.commit()
+        return str(other_id)
+
+    async def test_two_cities_returns_the_union(self, client, db, seed):
+        await db.execute(
+            text("UPDATE outlets SET city = 'Bengaluru' WHERE id = :i"),
+            {"i": seed["outlet_id"]})
+        await db.commit()
+        other = await self._second_outlet(db, seed, "Chennai")
+
+        r = await client.get(
+            f"{API}/customer/outlets?city=Bengaluru&city=Chennai",
+            headers=seed["customer_auth"])
+        assert r.status_code == 200, r.text
+        ids = {o["id"] for o in r.json()}
+        assert seed["outlet_id"] in ids
+        assert other in ids
+
+    async def test_one_city_still_excludes_the_other(self, client, db, seed):
+        """The narrowing must still actually narrow — a list bind that
+        silently matched everything would pass the union test above."""
+        await db.execute(
+            text("UPDATE outlets SET city = 'Bengaluru' WHERE id = :i"),
+            {"i": seed["outlet_id"]})
+        await db.commit()
+        other = await self._second_outlet(db, seed, "Chennai")
+
+        r = await client.get(f"{API}/customer/outlets?city=Bengaluru",
+                             headers=seed["customer_auth"])
+        ids = {o["id"] for o in r.json()}
+        assert seed["outlet_id"] in ids
+        assert other not in ids
+
+    async def test_city_match_is_case_insensitive(self, client, db, seed):
+        await db.execute(
+            text("UPDATE outlets SET city = 'Bengaluru' WHERE id = :i"),
+            {"i": seed["outlet_id"]})
+        await db.commit()
+
+        r = await client.get(f"{API}/customer/outlets?city=bENGALURU",
+                             headers=seed["customer_auth"])
+        assert seed["outlet_id"] in {o["id"] for o in r.json()}
+
+    async def test_no_city_param_returns_everything(self, client, db, seed):
+        await db.execute(
+            text("UPDATE outlets SET city = 'Bengaluru' WHERE id = :i"),
+            {"i": seed["outlet_id"]})
+        await db.commit()
+        other = await self._second_outlet(db, seed, "Chennai")
+
+        r = await client.get(f"{API}/customer/outlets",
+                             headers=seed["customer_auth"])
+        ids = {o["id"] for o in r.json()}
+        assert seed["outlet_id"] in ids and other in ids
+
+    async def test_created_at_is_returned_for_the_newest_sort(
+        self, client, seed
+    ):
+        """The app's "Newest" sort orders on this; it was not previously sent."""
+        r = await client.get(f"{API}/customer/outlets",
+                             headers=seed["customer_auth"])
+        row = next(o for o in r.json() if o["id"] == seed["outlet_id"])
+        assert row["created_at"] is not None
+
+
 # ------------------------------ admin list ----------------------------------
 class TestAdminOutletList:
     async def test_admin_list_exposes_locality(self, client, db, seed):

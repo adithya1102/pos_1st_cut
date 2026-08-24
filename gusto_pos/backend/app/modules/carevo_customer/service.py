@@ -244,20 +244,36 @@ class CarevoService:
         db: AsyncSession,
         lat: Optional[float],
         lng: Optional[float],
-        city: Optional[str] = None,
+        city: Optional[list[str]] = None,
     ) -> list[dict]:
+        """Visible outlets, optionally narrowed to one or more cities.
+
+        `city` became a LIST (was a single string) when the app's city picker
+        went multi-select. An empty/None list means "no city filter" — the
+        caller decides whether that is reachable; the app disables its CTA
+        rather than sending an empty selection.
+        """
+        # Normalised here rather than at the edge so every caller gets the same
+        # treatment: blanks dropped, lowercased once for the comparison below.
+        cities = [c.strip().lower() for c in (city or []) if c and c.strip()]
+
         rows = (await db.execute(text(
             "SELECT id, location_name, city, locality, latitude, longitude, upi_id, image_url, "
-            "       phone_number "
+            "       phone_number, created_at "
             "FROM outlets "
             "WHERE is_visible = true AND deactivated_at IS NULL "
+            # `= ANY(array)` rather than an IN-list built by string
+            # interpolation: one bound parameter, no injection surface, and it
+            # works unchanged for one city or ten.
+            #
             # CAST for the same reason as list_outlets in carevo_admin: with a
-            # NULL bind Postgres cannot infer the parameter type from
-            # `:city IS NULL` alone. Case-insensitive so the city picked from
-            # /customer/areas matches regardless of stored capitalisation.
-            "  AND (CAST(:city AS varchar) IS NULL "
-            "       OR lower(city) = lower(CAST(:city AS varchar)))"
-        ), {"city": city})).fetchall()
+            # NULL/empty bind Postgres cannot infer the parameter type from the
+            # comparison alone. Case-insensitive on both sides so a city picked
+            # from /customer/areas matches regardless of stored capitalisation.
+            "  AND (CAST(:cities AS varchar[]) IS NULL "
+            "       OR cardinality(CAST(:cities AS varchar[])) = 0 "
+            "       OR lower(city) = ANY(CAST(:cities AS varchar[])))"
+        ), {"cities": cities or None})).fetchall()
 
         # Offer summary for the inline chip (migration 016). ONE query for the
         # whole list — a per-card lookup would be N round trips on the first
@@ -269,7 +285,7 @@ class CarevoService:
         out = []
         for r in rows:
             (oid, name, city, locality, o_lat, o_lng, upi_id, image_url,
-             phone_number) = r
+             phone_number, created_at) = r
             distance = None
             if lat is not None and lng is not None and o_lat is not None and o_lng is not None:
                 distance = CarevoService._haversine_km(lat, lng, float(o_lat), float(o_lng))
@@ -300,6 +316,10 @@ class CarevoService:
                 "longitude": float(o_lng) if o_lng is not None else None,
                 "offer_count": (summary or {}).get("count", 0),
                 "offer_text": (summary or {}).get("text"),
+                # Backs the app's "Newest" sort. Real column, not a proxy —
+                # sorting by it is the outlet's actual join date, so the label
+                # means what it says.
+                "created_at": created_at,
             })
         if lat is not None and lng is not None:
             out.sort(key=lambda x: (x["distance_km"] is None, x["distance_km"] or 0))
@@ -308,7 +328,21 @@ class CarevoService:
     # ------------------------------ Menu -----------------------------------
     @staticmethod
     async def get_menu(db: AsyncSession, outlet_id: uuid.UUID) -> dict:
-        # Categories of the latest menu for this outlet, with available/active items.
+        # Categories of the latest menu for this outlet.
+        #
+        # `is_active` still filters (a deleted item should not exist for the
+        # customer at all), but `is_available` NO LONGER DOES: temporarily
+        # sold-out items are returned with `is_available: false` so the app can
+        # render them as greyed, non-orderable placeholders.
+        #
+        # Hiding them outright was worse than it looked. A regular who is
+        # scanning for their usual dish cannot tell "sold out today" from
+        # "taken off the menu" from "I'm on the wrong restaurant" — the row is
+        # simply absent, and absence has no explanation attached to it.
+        #
+        # This does NOT make an unavailable item orderable. check_cart_availability
+        # and create_order both re-check the flag server-side, and the app
+        # refuses to add these to the cart.
         rows = (await db.execute(text("""
             SELECT c.id AS cat_id, c.name AS cat_name,
                    mi.id AS item_id, mi.name AS item_name, mi.base_price,
@@ -319,7 +353,6 @@ class CarevoService:
             LEFT JOIN menu_items mi
                    ON mi.category_id = c.id
                   AND mi.is_active = true
-                  AND mi.is_available = true
             WHERE m.outlet_id = :oid AND m.is_latest = true
             ORDER BY c.name, mi.name
         """), {"oid": str(outlet_id)})).fetchall()
@@ -2309,11 +2342,15 @@ class CarevoService:
     ) -> dict:
         """Re-check a cart against live menu state, BEFORE payment.
 
-        Exists because the customer menu query filters `is_available = true`, so
-        an item turned off after it was added simply vanishes from the menu -
-        the already-populated cart keeps it, and nothing notices until
-        create_order raises 409. This endpoint moves that discovery earlier, to
-        a point where the customer can still fix it without having paid.
+        Exists because an item turned off after it was added stays in the
+        already-populated cart, and nothing notices until create_order raises
+        409. This endpoint moves that discovery earlier, to a point where the
+        customer can still fix it without having paid.
+
+        Still required now that get_menu RETURNS unavailable items rather than
+        filtering them out (they render as greyed placeholders). Returning them
+        makes the state visible while browsing; it does not make an unavailable
+        item orderable, and this gate is what enforces that.
 
         Read-only and side-effect free: it never mutates the cart or the order.
         create_order remains the authority - this is a courtesy pre-check, not a

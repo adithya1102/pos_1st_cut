@@ -64,6 +64,9 @@ class OutletOut(BaseModel):
     address: Optional[str] = None
     is_open: bool = True
     distance_km: Optional[float] = None
+    # When this outlet joined. Backs the app's "Newest" sort; Optional because
+    # the column is nullable on rows that predate the current schema.
+    created_at: Optional[datetime] = None
     upi_id: Optional[str] = None
     # Area within the city (migration 012). Null for outlets that predate it —
     # the app then renders the name alone rather than a dangling separator.

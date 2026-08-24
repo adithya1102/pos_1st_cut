@@ -28,8 +28,38 @@ class TestCart:
         assert r.json()["ok"] is False
         assert r.json()["unavailable"][0]["menu_item_id"] == seed["menu_item_id"]
 
-    async def test_menu_hides_unavailable_items(self, client, seed, db):
+    async def test_menu_returns_unavailable_items_flagged_not_hidden(
+        self, client, seed, db
+    ):
+        """Sold-out items are RETURNED, marked `is_available: false`.
+
+        Changed 2026-08-24 (was `test_menu_hides_unavailable_items`). Hiding
+        them left the customer unable to tell "sold out today" from "removed
+        from the menu" — an absent row carries no explanation. The app now
+        renders them as greyed, non-orderable placeholders, which it can only
+        do if the API sends them.
+
+        The safety property the old test was really protecting is asserted
+        below and separately by test_create_order_rejects_unavailable_item:
+        visible must not mean orderable.
+        """
         await db.execute(text("UPDATE menu_items SET is_available=false WHERE id=:i"),
+                         {"i": seed["menu_item_id"]})
+        await db.commit()
+        r = await client.get(f"{API}/customer/menu/{seed['outlet_id']}",
+                             headers=seed["customer_auth"])
+        items = [i for c in r.json()["categories"] for i in c["items"]]
+        match = [i for i in items if i["id"] == seed["menu_item_id"]]
+        assert match, "an unavailable item must still appear on the menu"
+        assert match[0]["is_available"] is False
+
+    async def test_menu_still_hides_INACTIVE_items(self, client, seed, db):
+        """`is_active=false` is deletion, not sold-out — it stays hidden.
+
+        The two flags were filtered together before; only `is_available`
+        stopped filtering. This pins that `is_active` did not come along.
+        """
+        await db.execute(text("UPDATE menu_items SET is_active=false WHERE id=:i"),
                          {"i": seed["menu_item_id"]})
         await db.commit()
         r = await client.get(f"{API}/customer/menu/{seed['outlet_id']}",

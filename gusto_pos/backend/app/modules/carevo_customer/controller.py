@@ -5,7 +5,7 @@ import json
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -227,14 +227,19 @@ async def list_areas(
 async def list_outlets(
     lat: Optional[float] = None,
     lng: Optional[float] = None,
-    city: Optional[str] = None,
+    city: Optional[list[str]] = Query(None),
     _: Customer = Depends(get_current_customer),
     db: AsyncSession = Depends(get_db),
 ):
     """Visible outlets, optionally filtered by `city` and sorted by distance.
 
-    `city` comes from /customer/areas. Passing one actually filters — before
-    this, the app's area chips only changed a subtitle string.
+    `city` comes from /customer/areas and is REPEATABLE:
+    `?city=Bengaluru&city=Chennai` returns the union of both. It went from a
+    single value to a list when the app's city picker became multi-select.
+
+    Backwards compatible for existing callers: a single `?city=X` still parses
+    into a one-element list and behaves exactly as before, and omitting it
+    entirely still means "no city filter".
     """
     return await CarevoService.list_outlets(db, lat, lng, city=city)
 
