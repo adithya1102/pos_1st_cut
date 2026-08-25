@@ -208,7 +208,17 @@ class CarevoService:
                 detail="Firebase authentication is not enabled on this deployment",
             )
 
-        email, uid, name = await verify_google_token(id_token)
+        # The third element is the Google profile display name. It is READ and
+        # DISCARDED on purpose: `customers.name` is what the customer told US,
+        # captured once after signup by the app's name screen and written only
+        # by PATCH /customer/me. Nothing else may write that column.
+        #
+        # Seeding it from the provider is exactly the bug this removes — the
+        # row came back with a name the customer never chose, the app had no
+        # way to tell it apart from one they did, and the greeting showed the
+        # Google name. Keeping the provider out of that field means there is
+        # only ever one writer, so there is nothing to arbitrate.
+        email, uid, _google_display_name = await verify_google_token(id_token)
 
         res = await db.execute(select(Customer).where(Customer.google_uid == uid))
         customer = res.scalars().first()
@@ -222,12 +232,15 @@ class CarevoService:
         if not customer:
             # No phone: this is the standalone-identity case the nullable
             # phone_number column (migration 008) exists for.
-            customer = Customer(email=email, google_uid=uid, name=name)
+            #
+            # `name` is deliberately NOT copied from the Google profile. See
+            # the note on the unpack above: customers.name is the customer's
+            # own answer, and seeding it here is what used to make the app
+            # greet people by their Google display name.
+            customer = Customer(email=email, google_uid=uid)
             db.add(customer)
             await db.commit()
             await db.refresh(customer)
-            # created=True: `name` here is the Google profile name, not one the
-            # customer chose. The app overrides it with whatever they typed.
             return customer, True
 
         # Existing row — reconcile it with what Google just told us.
@@ -237,9 +250,6 @@ class CarevoService:
             changed = True
         if customer.email != email:
             customer.email = email
-            changed = True
-        if name and not customer.name:
-            customer.name = name
             changed = True
         if changed:
             await db.commit()
