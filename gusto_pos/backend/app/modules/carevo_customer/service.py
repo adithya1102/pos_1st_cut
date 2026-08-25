@@ -130,7 +130,9 @@ class CarevoService:
         return customer
 
     @staticmethod
-    async def verify_firebase_token(db: AsyncSession, id_token: str) -> Customer:
+    async def verify_firebase_token(
+        db: AsyncSession, id_token: str
+    ) -> tuple[Customer, bool]:
         """Exchange a verified Firebase phone-auth token for a Customer row.
 
         Independent of OTP_STUB_MODE: this path never trusts a client-supplied
@@ -158,21 +160,28 @@ class CarevoService:
         )
         customer = res.scalars().first()
 
+        created = False
         if not customer:
             customer = Customer(phone_number=canonical)
             db.add(customer)
             await db.commit()
             await db.refresh(customer)
+            created = True
         elif customer.phone_number != canonical:
             # Upgrade the stored number to E.164 now that it is provider-verified.
             customer.phone_number = canonical
             await db.commit()
             await db.refresh(customer)
 
-        return customer
+        # This path never sets a name (a phone row has no profile to take one
+        # from), so `created` changes nothing here today. Returned anyway so
+        # both auth routes have the same shape and the app applies one rule.
+        return customer, created
 
     @staticmethod
-    async def verify_google_token(db: AsyncSession, id_token: str) -> Customer:
+    async def verify_google_token(
+        db: AsyncSession, id_token: str
+    ) -> tuple[Customer, bool]:
         """Exchange a verified Firebase Google-provider token for a Customer row.
 
         Standalone identity: the resulting customer has NO phone number. The app
@@ -183,6 +192,13 @@ class CarevoService:
         key (an email can be reassigned by a Workspace admin); email is the
         fallback that reunites a Google login with a row created by an earlier
         Google sign-in before uid was stored, and backfills the uid onto it.
+
+        Returns `(customer, created)`. `created` distinguishes a SIGNUP from a
+        sign-in, which the app needs and cannot work out for itself: on a brand
+        new row the `name` below came from the Google profile moments ago, so a
+        name the customer typed at sign-in should replace it. On an existing
+        row that same name may be one they deliberately chose, and must not be
+        overwritten. Both look identical in the response without this flag.
         """
         from app.modules.carevo_customer.firebase import verify_google_token
 
@@ -210,7 +226,9 @@ class CarevoService:
             db.add(customer)
             await db.commit()
             await db.refresh(customer)
-            return customer
+            # created=True: `name` here is the Google profile name, not one the
+            # customer chose. The app overrides it with whatever they typed.
+            return customer, True
 
         # Existing row — reconcile it with what Google just told us.
         changed = False
@@ -227,7 +245,7 @@ class CarevoService:
             await db.commit()
             await db.refresh(customer)
 
-        return customer
+        return customer, False
 
     # --------------------------- Discovery ---------------------------------
     @staticmethod

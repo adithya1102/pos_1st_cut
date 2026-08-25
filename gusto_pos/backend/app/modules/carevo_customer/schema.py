@@ -55,6 +55,18 @@ class VerifyOtpOut(BaseModel):
     access_token: str
     token_type: str = "bearer"
     customer: CustomerPublic
+    # True when this exchange CREATED the customer row — i.e. a signup rather
+    # than a sign-in.
+    #
+    # The app needs it to decide whether a name typed at sign-in may replace
+    # `customer.name`. On a new Google row that name arrived from the Google
+    # profile seconds ago and should lose to what the customer typed; on an
+    # existing row it may be one they deliberately set, and must win. The two
+    # are indistinguishable from the response body alone.
+    #
+    # Defaults False so any caller that does not set it keeps the old,
+    # conservative "never overwrite" behaviour.
+    is_new_account: bool = False
 
 
 # --------------------------- Discovery --------------------------------------

@@ -63,11 +63,12 @@ async def verify_firebase(payload: s.FirebaseAuthIn, db: AsyncSession = Depends(
     public deploys and is the intended replacement for the stub. Gated instead by
     FIREBASE_ENABLED + FIREBASE_PROJECT_ID.
     """
-    customer = await CarevoService.verify_firebase_token(db, payload.id_token)
+    customer, created = await CarevoService.verify_firebase_token(db, payload.id_token)
     token = create_customer_token(str(customer.id))
     return {
         "access_token": token,
         "token_type": "bearer",
+        "is_new_account": created,
         "customer": {
             "id": customer.id,
             "name": customer.name,
@@ -87,11 +88,12 @@ async def verify_google(payload: s.GoogleAuthIn, db: AsyncSession = Depends(get_
     token is verified against Google's public keys. Gated by FIREBASE_ENABLED +
     FIREBASE_PROJECT_ID.
     """
-    customer = await CarevoService.verify_google_token(db, payload.id_token)
+    customer, created = await CarevoService.verify_google_token(db, payload.id_token)
     token = create_customer_token(str(customer.id))
     return {
         "access_token": token,
         "token_type": "bearer",
+        "is_new_account": created,
         "customer": {
             "id": customer.id,
             "name": customer.name,
