@@ -9,7 +9,7 @@ import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/widgets/neo_button.dart';
 import '../theme/widgets/neo_icon_button.dart';
-import 'location_screen.dart';
+import 'post_auth_router.dart';
 
 /// Step 2b: OTP entry. Dev code is `000000` (see AppConfig.devOtpCode).
 ///
@@ -62,10 +62,9 @@ class _OtpScreenState extends State<OtpScreen> {
     final ok = await auth.verifyOtp(_controller.text.trim());
     if (!mounted) return;
     if (ok) {
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const LocationScreen()),
-        (route) => false,
-      );
+      // One decision point for "where does a verified customer land" — a
+      // signup goes to the name screen, a returning sign-in to Home.
+      routeAfterAuth(context, isNewAccount: auth.lastSignInWasNewAccount);
     } else {
       // A rejected code is never worth keeping. Retyping six digits over a
       // wrong six is six deletions first, and the field auto-submits at six

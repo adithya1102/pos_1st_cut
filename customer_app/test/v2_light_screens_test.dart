@@ -95,6 +95,8 @@ void main() {
       expect(find.text('CareVo Skip'), findsOneWidget);
       expect(find.text('Skip the queue.'), findsOneWidget);
       expect(find.text('Welcome back'), findsOneWidget);
+      // Phone-only since 2026-08-25; `login_identifier_field` was the
+      // combined phone-or-email box that replaced.
       expect(find.byKey(const Key('login_phone_field')), findsOneWidget);
       expect(find.text('Continue with Google'), findsOneWidget);
     });

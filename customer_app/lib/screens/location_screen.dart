@@ -11,8 +11,18 @@ import '../theme/widgets/neo_button.dart';
 import 'outlets_screen.dart';
 import '../widgets/account_button.dart';
 import '../widgets/area_picker.dart';
+import '../widgets/location_permission_dialog.dart';
 
-/// Step 3: location permission request WITH a manual city/area fallback.
+/// Discover: choose WHERE to look for restaurants, by GPS or by city.
+///
+/// No longer the post-login landing screen — [HomeScreen] is. This is reached
+/// only by tapping "Find restaurants near you", which is what makes the
+/// location question answerable: it is now asked at a moment the customer has
+/// just said they want restaurants near them, rather than as the first thing
+/// the app says after sign-in.
+///
+/// The class name is unchanged deliberately; renaming it would churn every
+/// import and every test reference for a title string.
 class LocationScreen extends StatefulWidget {
   const LocationScreen({super.key});
 
@@ -28,7 +38,16 @@ class _LocationScreenState extends State<LocationScreen> {
   String? _areasError;
 
   bool _locating = false;
-  String? _selectedArea;
+
+  /// Ticked cities. Multi-select — see [AreaPicker].
+  ///
+  /// EMPTY DISABLES the CTA rather than meaning "all". Chosen over
+  /// defaulting-to-all because with a default the checkboxes would look
+  /// decorative: ticking none and ticking every box would do the same thing,
+  /// so nothing on screen would explain what the boxes were for. A disabled
+  /// button that says "Pick at least one city" states the requirement instead
+  /// of hiding it. "Near me" already covers the "just show me things" case.
+  final Set<String> _selectedAreas = <String>{};
 
   @override
   void initState() {
@@ -43,11 +62,11 @@ class _LocationScreenState extends State<LocationScreen> {
       if (!mounted) return;
       setState(() {
         _areas = areas;
-        // Drop a stale selection if that city no longer has outlets.
-        if (_selectedArea != null &&
-            !areas.any((a) => a.city == _selectedArea)) {
-          _selectedArea = null;
-        }
+        // Drop stale selections — cities that no longer have outlets. Done as
+        // a set difference so a refresh that removes one city does not clear
+        // the others alongside it.
+        final live = areas.map((a) => a.city).toSet();
+        _selectedAreas.removeWhere((city) => !live.contains(city));
       });
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -58,33 +77,74 @@ class _LocationScreenState extends State<LocationScreen> {
     }
   }
 
+  /// "Near me". Re-checks permission from the OS on EVERY tap, and re-prompts
+  /// on every tap while the answer is a plain `denied`.
+  ///
+  /// `userInitiated: true` is what makes the second tap behave like the first.
+  /// Without it the service's one-prompt latch stayed set for as long as the
+  /// status did not change, so tapping again after a denial did nothing
+  /// visible at all — no dialog, no message that explained why.
   Future<void> _useMyLocation() async {
     setState(() => _locating = true);
-    final result = await context.read<LocationService>().getCurrentLocation();
+    final service = context.read<LocationService>();
+    final result = await service.getCurrentLocation(userInitiated: true);
     if (!mounted) return;
     setState(() => _locating = false);
 
     if (result.outcome == LocationOutcome.granted && result.hasCoordinates) {
       _goToOutlets(lat: result.latitude, lng: result.longitude);
-    } else {
-      final reason = switch (result.outcome) {
-        LocationOutcome.serviceDisabled => 'Location services are off. Pick your area below.',
-        LocationOutcome.denied => 'Permission denied. Pick your area below.',
-        _ => 'Could not get your location. Pick your area below.',
-      };
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(reason)));
+      return;
     }
+
+    // Permanently blocked is the one outcome the app cannot re-ask its way out
+    // of, so it gets a dialog that says so and offers Settings, rather than a
+    // SnackBar that times out. See showLocationBlockedDialog.
+    if (result.outcome == LocationOutcome.deniedForever) {
+      await showLocationBlockedDialog(
+        context,
+        service: service,
+        purpose: 'find restaurants near you',
+      );
+      return;
+    }
+
+    // Everything else is momentary and self-explanatory. A refusal is
+    // respected: the flow does NOT continue to a location-based list, and
+    // nothing retries in the background. The city picker below is a complete
+    // alternative, so this is a dead end only for GPS.
+    final reason = switch (result.outcome) {
+      LocationOutcome.serviceDisabled =>
+        'Location services are off. Pick your city below.',
+      LocationOutcome.denied => 'No problem — pick your city below.',
+      _ => 'Could not get your location. Pick your city below.',
+    };
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(reason)));
   }
 
-  void _goToOutlets({double? lat, double? lng, String? areaLabel}) {
+  void _goToOutlets({double? lat, double? lng, Set<String> cities = const {}}) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        // areaLabel doubles as the `city` filter: OutletsScreen forwards it to
-        // GET /customer/outlets?city=..., so the choice actually narrows the
-        // list rather than only relabelling it.
-        builder: (_) => OutletsScreen(lat: lat, lng: lng, areaLabel: areaLabel),
+        // `cities` doubles as the filter: OutletsScreen forwards it to
+        // GET /customer/outlets?city=A&city=B, so the choice actually narrows
+        // the list rather than only relabelling it.
+        builder: (_) => OutletsScreen(
+          lat: lat,
+          lng: lng,
+          cities: Set<String>.of(cities),
+        ),
       ),
     );
+  }
+
+  /// CTA label. Names the cities while there are few enough to read, then
+  /// falls back to a count — "Show outlets in Bengaluru, Chennai" is useful,
+  /// the same line with nine cities in it is not.
+  String get _ctaLabel {
+    final picked = _selectedAreas.toList()..sort();
+    if (picked.isEmpty) return 'Pick at least one city';
+    if (picked.length <= 2) return 'Show outlets in ${picked.join(' & ')}';
+    return 'Show outlets in ${picked.length} cities';
   }
 
   @override
@@ -94,7 +154,7 @@ class _LocationScreenState extends State<LocationScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Location'),
+        title: const Text('Discover'),
         actions: careVoActions(),
       ),
       body: SafeArea(
@@ -133,31 +193,36 @@ class _LocationScreenState extends State<LocationScreen> {
               ),
               const SizedBox(height: 12),
               Text(
-                'Pick your city below, or use "Near me" to find the closest '
-                'outlets.',
+                'Pick one or more cities below, or use "Near me" to find the '
+                'closest outlets.',
                 style: textTheme.bodyLarge?.copyWith(color: c.inkSoft),
               ),
               const SizedBox(height: 22),
               AreaPicker(
                 areas: _areas,
                 error: _areasError,
-                selected: _selectedArea,
-                onSelect: (city) => setState(() => _selectedArea = city),
+                selected: _selectedAreas,
+                onToggle: (city) => setState(() {
+                  // The set is owned here, not in the picker, so the CTA label
+                  // and the enabled state read the same source the rows do.
+                  if (!_selectedAreas.remove(city)) _selectedAreas.add(city);
+                }),
                 onRetry: _loadAreas,
               ),
               const SizedBox(height: 24),
-              // The ONLY thing that navigates. Tapping a city row selects it and
+              // The ONLY thing that navigates. Tapping a city row toggles it and
               // nothing more — so a mis-tap while scanning the list costs a
               // second tap to correct, not a screen transition to back out of.
+              //
+              // Disabled on an empty selection. See _selectedAreas for why that
+              // beats defaulting to all.
               NeoButton(
                 key: const Key('show_outlets_cta'),
-                label: _selectedArea == null
-                    ? 'Pick a city to continue'
-                    : 'Show outlets in $_selectedArea',
+                label: _ctaLabel,
                 icon: Icons.arrow_forward,
-                onPressed: _selectedArea == null
+                onPressed: _selectedAreas.isEmpty
                     ? null
-                    : () => _goToOutlets(areaLabel: _selectedArea),
+                    : () => _goToOutlets(cities: _selectedAreas),
               ),
               const SizedBox(height: 16),
               Container(

@@ -385,8 +385,15 @@ void main() {
       await tester.pumpWidget(host([far, unknown, near]));
       await tester.pump(const Duration(milliseconds: 600));
 
-      await tester.tap(find.byKey(const Key('chip_nearest')));
-      await tester.pump(const Duration(milliseconds: 300));
+      // `chip_nearest` became `sort_nearest` when the boolean "Nearest first"
+      // toggle was replaced by the sort bar (2026-08-24), and that bar was then
+      // collapsed behind a filter button (2026-08-25) — so reaching it is now
+      // open-sheet-then-select. Same behaviour, different control; the
+      // assertions below are unchanged.
+      await tester.tap(find.byKey(const Key('filter_button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('sort_nearest')));
+      await tester.pumpAndSettle();
 
       final cards = tester
           .widgetList(find.byType(NeoCard))

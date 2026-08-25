@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/catalog_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
+import 'focus_release.dart';
 
 /// City selector for the Location screen, backed by `GET /customer/areas`.
 ///
@@ -10,11 +11,15 @@ import '../theme/app_theme.dart';
 /// cities, or search + list. A city only reaches here if it has at least one
 /// orderable outlet, so a selection can never lead to an empty list.
 ///
-/// ## Selection is NOT navigation
-/// Tapping a row only highlights it. Nothing moves until the caller's explicit
-/// "Show outlets in {city}" action fires. Those were always two separate
-/// things here; this component has no navigation capability at all — it takes
-/// an [onSelect] callback and that is the entirety of what a tap can do.
+/// ## Selection is MULTI and is NOT navigation
+/// Cities are checkboxes, not radio buttons: a customer near a city boundary,
+/// or choosing between somewhere they live and somewhere they commute to,
+/// wants both lists at once rather than having to pick one and come back.
+///
+/// Tapping a row only toggles it. Nothing moves until the caller's explicit
+/// "Show outlets" action fires. Those were always two separate things here;
+/// this component has no navigation capability at all — it takes an [onToggle]
+/// callback and that is the entirety of what a tap can do.
 ///
 /// ## Always a search field, always a list
 /// An earlier version showed chips, and only grew a search field past 8 cities.
@@ -35,15 +40,21 @@ class AreaPicker extends StatefulWidget {
     required this.areas,
     required this.error,
     required this.selected,
-    required this.onSelect,
+    required this.onToggle,
     required this.onRetry,
   });
 
   /// Null while loading; empty when no city has an orderable outlet.
   final List<AreaOption>? areas;
   final String? error;
-  final String? selected;
-  final ValueChanged<String> onSelect;
+
+  /// Every currently-ticked city. Empty is a legitimate state — the caller
+  /// disables its CTA rather than treating it as "all".
+  final Set<String> selected;
+
+  /// Fired with the city whose checkbox was hit. The caller owns the set and
+  /// decides add-vs-remove, so this widget holds no selection state of its own.
+  final ValueChanged<String> onToggle;
   final VoidCallback onRetry;
 
   /// Alphabetical ascending, case-insensitive so "bengaluru" and "Bengaluru"
@@ -141,8 +152,8 @@ class _AreaPickerState extends State<AreaPicker> {
               padding: const EdgeInsets.only(bottom: 10),
               child: _CityRow(
                 area: a,
-                selected: widget.selected == a.city,
-                onTap: () => widget.onSelect(a.city),
+                selected: widget.selected.contains(a.city),
+                onTap: () => widget.onToggle(a.city),
               ),
             ),
       ],
@@ -181,6 +192,16 @@ class _SearchField extends StatelessWidget {
         key: const Key('city_search_field'),
         controller: controller,
         onChanged: onChanged,
+        // The SAME focus-release fix every other input already had, not a
+        // second mechanism. This one is a raw TextField rather than a
+        // NeoTextField (it needs the clear-button suffix), so it never picked
+        // up the onTapOutside default that was added to NeoTextField — this
+        // was the one input in the app still holding focus on a tap-away.
+        //
+        // The route-transition half was already covered: FocusReleasingObserver
+        // is registered on the app's Navigator, so leaving this screen already
+        // dropped focus. Only the tap-outside half was missing here.
+        onTapOutside: (_) => releaseFocus(),
         style: Theme.of(context).textTheme.bodyLarge,
         decoration: InputDecoration(
           hintText: hint,
@@ -227,9 +248,14 @@ class _CityRow extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
 
     return Semantics(
-      selected: selected,
+      // checked + inMutuallyExclusiveGroup:false is what tells a screen reader
+      // this is a checkbox rather than a radio — the selection model changed,
+      // so the announced role has to change with it.
+      checked: selected,
+      inMutuallyExclusiveGroup: false,
       button: true,
       child: GestureDetector(
+        key: Key('city_row_${area.city}'),
         onTap: onTap,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
@@ -254,8 +280,10 @@ class _CityRow extends StatelessWidget {
           ),
           child: Row(
             children: [
+              // A square box, not a circle: the shape is the affordance that
+              // says "several of these can be on at once".
               Icon(
-                selected ? Icons.check_circle : Icons.place_outlined,
+                selected ? Icons.check_box : Icons.check_box_outline_blank,
                 size: 20,
                 color: selected ? c.onAccent : c.inkSoft,
               ),

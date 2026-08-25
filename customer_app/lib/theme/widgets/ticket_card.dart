@@ -259,6 +259,59 @@ class _GhostStamp extends StatelessWidget {
 
 /// A label/value row in ticket typography — monospaced value, so codes and
 /// amounts line up down the ticket the way printed ones do.
+/// Minimum width of a ticket's right-hand value column.
+///
+/// Wide enough for the values that actually appear there — a price, a status
+/// phrase, a pickup code — so all of them start at the same x in the common
+/// case. See [TicketValue].
+const double kTicketValueMinWidth = 116;
+
+/// The right-hand value cell on a ticket, with ONE definition of its geometry.
+///
+/// ## Why a shared slot instead of per-row layout
+///
+/// The price at the top of a ticket and the STATUS / PICKUP CODE rows below it
+/// were laid out by different code — the price took its intrinsic width in a
+/// plain Row, the rows used `Spacer()` + `Flexible`. Both ended flush right, so
+/// the misalignment was in the other direction: each value began at whatever x
+/// its own character count implied, so the column read as ragged and the status
+/// did not sit under the price.
+///
+/// This is the same rule the menu rows already follow (`PriceSlot` in
+/// price_text.dart, from the bug-group-A alignment fix): a fixed-geometry
+/// column with the content right-aligned inside it, rather than a position
+/// derived from how long the text happens to be. Reused rather than
+/// reinvented — a second alignment mechanism is how the two drift apart again.
+///
+/// `minWidth`, not a hard width: the instruction is that the value column may
+/// extend LEFTWARD for something long ("Payment confirmed"), while short values
+/// still line up. The label opposite it is [Flexible], so it yields the space
+/// rather than forcing an overflow.
+class TicketValue extends StatelessWidget {
+  const TicketValue({
+    super.key,
+    required this.value,
+    required this.style,
+    this.minWidth = kTicketValueMinWidth,
+  });
+
+  final String value;
+  final TextStyle style;
+  final double minWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(minWidth: minWidth),
+      child: Text(
+        value,
+        textAlign: TextAlign.right,
+        style: style,
+      ),
+    );
+  }
+}
+
 class TicketRow extends StatelessWidget {
   const TicketRow({
     super.key,
@@ -282,29 +335,37 @@ class TicketRow extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          label,
-          style: TextStyle(
-            color: t.inkSoft,
-            fontSize: emphasize ? 14 : 13,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 1.2,
+        // Expanded, not Flexible: it must absorb ALL the slack so the value
+        // slot is pushed flush right. With a loose Flexible the row packs to
+        // the left and the value floats in the middle — which is exactly the
+        // misalignment this is fixing, just in the other direction.
+        //
+        // It also yields space when the value outgrows its min width, so a
+        // long status still gets room and the label ellipsizes instead.
+        Expanded(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: t.inkSoft,
+              fontSize: emphasize ? 14 : 13,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1.2,
+            ),
           ),
         ),
-        const Spacer(),
-        Flexible(
-          child: Text(
-            value,
-            textAlign: TextAlign.right,
-            style: TextStyle(
-              color: t.ink,
-              fontSize: emphasize ? 18 : 14,
-              fontWeight: emphasize ? FontWeight.w900 : FontWeight.w700,
-              decoration:
-                  strikethrough ? TextDecoration.lineThrough : TextDecoration.none,
-              decorationColor: t.ink,
-              decorationThickness: 2,
-            ),
+        const SizedBox(width: 12),
+        TicketValue(
+          value: value,
+          style: TextStyle(
+            color: t.ink,
+            fontSize: emphasize ? 18 : 14,
+            fontWeight: emphasize ? FontWeight.w900 : FontWeight.w700,
+            decoration:
+                strikethrough ? TextDecoration.lineThrough : TextDecoration.none,
+            decorationColor: t.ink,
+            decorationThickness: 2,
           ),
         ),
       ],

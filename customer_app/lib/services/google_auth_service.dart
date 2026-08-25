@@ -99,6 +99,7 @@ class GoogleAuthService {
     return AuthResult(
       accessToken: token,
       customer: Customer.fromJson(customerJson),
+      isNewAccount: map['is_new_account'] == true,
     );
   }
 

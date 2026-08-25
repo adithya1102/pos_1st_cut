@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -16,6 +18,8 @@ import 'services/payment_service.dart';
 import 'services/places_service.dart';
 import 'services/push_service.dart';
 import 'state/auth_state.dart';
+import 'widgets/focus_release.dart';
+import 'state/cart_identity_sync.dart';
 import 'state/cart_state.dart';
 import 'screens/login_screen.dart';
 import 'screens/splash_screen.dart';
@@ -36,7 +40,10 @@ Future<void> main() async {
   await api.loadToken();
 
   // Restore the persisted cart before the first frame, so a relaunch shows the
-  // basket immediately rather than flashing an empty one.
+  // basket immediately rather than flashing an empty one. `restore()` adopts
+  // the scope the last session left behind, so this is that customer's basket
+  // and not a global one — see CartState's docs on why the key carries an
+  // identity.
   final cartState = CartState();
   await cartState.restore();
 
@@ -66,7 +73,11 @@ Future<void> main() async {
         // overwrite the callbacks of an in-flight one.
         Provider<CashfreeService>(create: (_) => CashfreeService()),
         Provider<CustomerService>(create: (_) => CustomerService(api)),
-        Provider<LocationService>(create: (_) => LocationService()),
+        // ChangeNotifier, not a plain Provider: the app-resume re-check can
+        // change the permission answer with no screen having asked for it, and
+        // a screen showing "location is off" has to stop showing that once it
+        // isn't true any more.
+        ChangeNotifierProvider<LocationService>(create: (_) => LocationService()),
         Provider<PlacesService>(create: (_) => PlacesService()),
         Provider<GoogleAuthService>.value(value: googleAuth),
         Provider<PushService>.value(value: push),
@@ -94,20 +105,72 @@ class CareVoApp extends StatefulWidget {
   State<CareVoApp> createState() => _CareVoAppState();
 }
 
-class _CareVoAppState extends State<CareVoApp> {
+class _CareVoAppState extends State<CareVoApp> with WidgetsBindingObserver {
   late final ApiClient _api;
+  late final CartState _cart;
+  late final LocationService _location;
+  late final CartIdentitySync _cartIdentity;
 
   @override
   void initState() {
     super.initState();
     _api = context.read<ApiClient>();
+    _cart = context.read<CartState>();
+    _location = context.read<LocationService>();
     _api.authFailures.addListener(_onAuthFailure);
+    // Re-scopes the cart whenever the signed-in customer changes, by whatever
+    // route — sign-in, logout, a second sign-in over a live session, account
+    // deletion, or a 401. Started here rather than per screen: the identity can
+    // change from a background request with no screen mounted to notice.
+    _cartIdentity = CartIdentitySync(context.read<AuthState>(), _cart)..start();
+    // The app's ONLY lifecycle observer. Both things it drives are state that
+    // the OS can change while the app is not looking, and neither belongs to
+    // any one screen — see didChangeAppLifecycleState.
+    WidgetsBinding.instance.addObserver(this);
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _api.authFailures.removeListener(_onAuthFailure);
+    _cartIdentity.dispose();
     super.dispose();
+  }
+
+  /// Re-sync everything the OS may have changed behind our back.
+  ///
+  /// Two separate bug families share this one hook, because both were the same
+  /// underlying gap — the app read a piece of external state exactly once at
+  /// launch and then trusted it forever:
+  ///
+  ///  * **Cart** — reading it only in `main()` meant a write that had not yet
+  ///    landed was lost, and nothing ever re-read afterwards. Flushing on the
+  ///    way out and re-reading on the way in closes both halves. Doing this
+  ///    here rather than in a screen's `initState` is the point: a per-screen
+  ///    re-read fixes that screen and leaves every other one stale.
+  ///  * **Location permission** — a grant or revocation made in system settings
+  ///    used to need an app restart to be noticed, because the cached status
+  ///    was never re-read. It is refreshed here instead.
+  ///
+  /// Nothing here can raise a permission dialog: [LocationService.refreshPermission]
+  /// only reads. An app returning to the foreground must never be the reason a
+  /// system prompt appears.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    switch (state) {
+      case AppLifecycleState.resumed:
+        unawaited(_cart.syncFromDisk());
+        unawaited(_location.refreshPermission());
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.detached:
+        // Last chance before the process may be killed. `paused` is the latest
+        // callback Android reliably delivers, so the flush has to happen no
+        // later than here.
+        unawaited(_cart.flush());
+    }
   }
 
   /// Session died -> drop the whole stack and show login.
@@ -152,6 +215,7 @@ class _CareVoAppState extends State<CareVoApp> {
       themeMode: ThemeMode.light,
       navigatorObservers: [
         _RouteNameObserver((name) => _currentRouteName = name),
+        FocusReleasingObserver(),
       ],
       home: const SplashScreen(),
     );

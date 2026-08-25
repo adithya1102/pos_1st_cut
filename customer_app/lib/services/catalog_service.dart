@@ -19,7 +19,14 @@ class CatalogService {
         .toList();
   }
 
-  Future<List<Outlet>> fetchOutlets({double? lat, double? lng, String? city}) async {
+  /// [cities] is a SET, not a single value: the city picker is multi-select, so
+  /// this sends `?city=A&city=B` and the API returns the union. A one-element
+  /// set behaves exactly as the old single-city call did.
+  Future<List<Outlet>> fetchOutlets({
+    double? lat,
+    double? lng,
+    Set<String> cities = const {},
+  }) async {
     final query = <String, dynamic>{};
     if (lat != null && lng != null) {
       query['lat'] = lat;
@@ -27,8 +34,15 @@ class CatalogService {
     }
     // Actually filters server-side. Previously the chosen area only changed a
     // subtitle string and every city returned the identical outlet list.
-    if (city != null && city.trim().isNotEmpty) {
-      query['city'] = city.trim();
+    //
+    // A List value here becomes a repeated query parameter — see ApiClient._uri.
+    // An EMPTY set sends nothing at all, which the API reads as "no city
+    // filter"; the Discover CTA is disabled in that state so it is not
+    // normally reachable.
+    final cleaned =
+        cities.map((c) => c.trim()).where((c) => c.isNotEmpty).toList();
+    if (cleaned.isNotEmpty) {
+      query['city'] = cleaned;
     }
     final res = await _api.get('/customer/outlets', query: query);
     final list = (res as List<dynamic>? ?? []);

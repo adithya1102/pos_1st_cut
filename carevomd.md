@@ -1744,3 +1744,821 @@ thing those attempts justified but did not themselves test. Internal track and a
 real sign-in before Alpha.
 
 ---
+
+## 2026-08-24 02:37 IST — Home/Discover split + 8 bug groups; sideload APK (UNCOMMITTED)
+
+customer_app only. Backend and owner_app untouched. **Nothing committed** —
+held at the user's instruction for a diff review before it lands.
+
+### Task 2 first: where location is actually consumed
+
+Ordered before any routing change, and it changed the answer. Consumers:
+`location_screen.dart:63` ("Near me" button), `checkout_screen.dart:133`
+("Use my location"), `pickup_screen.dart:112/:143` (departure ping; the 60s
+en-route timer passes `allowPrompt:false`). `outlets_screen.dart` reads NO
+location — it takes `lat`/`lng` as ctor params and forwards them.
+
+Two facts decided Task 3. **Distance is server-computed**
+(`carevo_customer/service.py:234 _haversine_km`, populated `:275`, sorted
+`:305`); with no lat/lng every outlet returns `distance_km: null`. And there
+are **no radius checks or restricted-building rules anywhere** —
+`outlets.geofence_radius_meters` exists in the schema but no customer_app code
+reads it.
+
+So location stays DEFERRED; Home never touches `LocationService`. The binding
+constraint is that the service raises at most one dialog per grant state, so
+whichever caller asks first spends it — Home would spend it on a screen with
+nothing to render from coordinates.
+
+### One root cause served two bug groups
+
+There was **no `WidgetsBindingObserver` anywhere in the app** and
+`CartState.restored` was never read. Both group E (cart) and half of group F
+(permissions) were the same gap: external state read once at launch, trusted
+forever. Added a single observer in `CareVoApp` — `flush()` the cart on pause,
+`syncFromDisk()` + `refreshPermission()` on resume. Cart writes are now a
+serialized queue with the payload encoded synchronously at mutation time, so a
+force-close cannot lose the last write and a queued write cannot clobber a
+later one.
+
+Group D was likewise one cause, not three: focus was never released. The IME
+staying up, surviving a back-navigation, and the caret still blinking are all
+the same focused node. `lib/widgets/focus_release.dart` holds both callers —
+`NeoTextField.onTapOutside` and a `FocusReleasingObserver` on the navigator.
+`onTapOutside` rather than a catch-all `GestureDetector` because it is
+delivered outside the gesture arena and cannot swallow taps meant for buttons.
+
+### Latent defect found and fixed en route
+
+`MenuScreen.initState` called `bindOutletIfSafe` synchronously, which
+`notifyListeners()` on `CartState` — whose provider sits above `MaterialApp`
+and has already built that frame. That is "setState() called during build", and
+it fired on **every menu open in debug**, pre-existing. Surfaced only because
+the new tests mount MenuScreen; existing tests never did. Deferred to a
+post-frame callback.
+
+### Reported as blocked, not faked
+
+`outlets` has **no hours columns** (checked every migration 001–021) and **no
+rush/busy/temporarily-closed signal**. `is_open` is a hardcoded `True` literal
+at `service.py:289`, so the OPEN pill and "Open now" chip currently assert
+nothing. `Outlet.opensAt/closesAt/hoursLabel` and the display are wired up
+against nullable fields and hide while null — they light up when a migration
+adds the columns. No hours were invented. The rush indicator was not built.
+
+Map + distance ADDED to the discovery list (`_DirectionsButton`); the checkout
+copy was KEPT rather than moved — it does a different job there (last
+wrong-branch check before money moves).
+
+### Build
+
+Sideload only, outside the Play versionCode lineage.
+`--dart-define=FORCE_RECAPTCHA_FLOW=true` overrides the committed default for
+this build ONLY; `app_config.dart` still reads `defaultValue: false` and
+`pubspec.yaml` is still `1.0.0+3` — both verified by an empty `git diff`.
+Play Integrity cannot vouch for a sideloaded install, so without the override
+phone auth dies at `17028` and no SMS is sent.
+
+```
+app-release.apk   57,890,940 bytes   2026-08-24 02:35:05 IST
+sha256 ea614131911d0017a12d6ee591963caf074df133c5e9f1cd4ab29df11c49f96c
+```
+
+Tests: customer_app **132** (87 unchanged + 45 new in
+`bugfix_batch_2026_08_24_test.dart`), backend **141**, owner_app **1**. All
+pass; `flutter analyze` clean. Backend suite hard-binds to local
+`carevo_test` — prod was never touched.
+
+---
+
+## 2026-08-24 11:59 IST — Mandatory name capture + hide fake OPEN badge (UNCOMMITTED)
+
+customer_app only. Folds into the SAME pending review as the 02:37 checkpoint
+today — that batch is also still uncommitted, so this is one diff, not two.
+
+### Task 2 — name on signup
+
+`AuthState` gained `pendingName`/`setPendingName()`, held from the login
+screen and applied via `PATCH /customer/me` right after `verifyOtp()` or
+`signInWithGoogle()` succeeds — awaited before `notifyListeners()`, so Home's
+first build already has it. **Only applied when the account is still
+nameless** (`_applyPendingName` no-ops if `customer.name` is non-empty): a
+returning customer types into the same required field every sign-in, and
+without that guard it would silently rename an account on every login rather
+than being a one-time collection.
+
+The auth endpoints (`VerifyOtpIn`/`FirebaseAuthIn`/`GoogleAuthIn`) don't and
+shouldn't take a name — everything they record comes from verified token
+claims. `PATCH /customer/me` already existed as the one self-editable-field
+route, so no backend change was needed.
+
+`LoginScreen` gained a required "How can we call you?" field, opened above
+the identifier field (friendliest question first). Both the identifier-driven
+CTA and the standalone Google button are gated on it — the Google button
+needed its own gate since it bypasses the identifier field entirely and would
+otherwise have been a hole straight past the requirement.
+
+### Task 3 — blocking prompt, one condition, no flag
+
+`NameCaptureScreen`, gated inside `HomeScreen.build()` on
+`AuthState.customer?.name` being empty — checked BEFORE the orders spinner,
+so a slow `/customer/orders` response can't delay it. Rendered IN PLACE OF
+Home (not pushed), with `PopScope(canPop: false)` and no AppBar/account
+action, so there's no way out except a name. Deliberately no local
+"already shown" flag: the absence of a name IS the condition, so it can't get
+stuck showing or stuck hidden — it stops being true, permanently server-side,
+the moment `NameCaptureScreen` saves.
+
+`customer == null` (not yet fetched) does NOT block — fails open rather than
+stalling an unrelated network hiccup into a false positive.
+
+### Task 4 — hide the fake OPEN badge
+
+Removed from `outlets_screen.dart`: the OPEN/CLOSED `_Pill`, the "Open now"
+filter chip (`_openOnly`), the `isOpen`-gated tap block, and the "Unavailable"
+trailing text — all four were downstream of the same hardcoded
+`is_open: True` at `carevo_customer/service.py:289`. The tap gate went too,
+deliberately beyond the literal "badge": leaving it would mean a customer
+sees no CLOSED indicator yet taps and nothing happens, for a reason the UI no
+longer explains. `Outlet.isOpen` stays in the model (round-trips through cart
+persistence) but nothing reads it for display or logic now.
+
+**Confirmed untouched**: `Outlet.hoursLabel`/`opensAt`/`closesAt` and the
+hours line on the outlet card — separate, still-nullable fields from the
+2026-08-24 02:37 batch, already hiding themselves until real data exists.
+Nothing here needed to change for them.
+
+### Tests
+
+64 tests in `bugfix_batch_2026_08_24_test.dart` (appended to the same file as
+the 02:37 batch, which had 45): empty-name rejection (identifier valid + no
+name, name-only, whitespace-only, Google
+button gated too), `AuthState`-level PATCH application (fresh nameless
+account gets it, existing name is never overwritten, logout clears a pending
+name), the blocking gate (appears once, un-dismissable via `PopScope`, a
+failed save keeps it up with a visible reason, submitting clears it and a
+pull-to-refresh does not resurrect it, a named account never sees it), and
+the OPEN badge (no OPEN/CLOSED text anywhere, no `chip_open`, card stays
+tappable with `is_open: false` fed in on purpose).
+
+Two of my own test-harness bugs found and fixed en route, not app bugs: a
+mock `PATCH /customer/me` that echoed the ORIGINAL name instead of the
+submitted one (made the "once, not repeatedly" test fail for the wrong
+reason); and a `MenuScreen` navigation assertion needing `pumpAndSettle()`
+instead of a fixed-duration `pump()` to clear the post-frame-callback +
+Future-completion chain.
+
+customer_app **151** passing (132 + 19 net new against the prior 132 baseline
+— the file grew from 45 to 64 tests, +19). Backend **141**, owner_app **1**,
+both re-run and unaffected — zero backend/owner_app files touched this pass.
+`flutter analyze` clean.
+
+**Session-hygiene note**: the dormant session file from the 2026-08-21 sign-in
+work (`5c63032e…`) showed a filesystem mtime bump to today during this run,
+but its byte size was unchanged (4,039,024 bytes, same as the prior
+checkpoint) and its content still ends mid-2026-08-21 — a metadata touch
+(indexing/AV/sync), not new writes. Single-agent confirmed by content, not
+just by the initial check.
+
+---
+
+## 2026-08-24 13:40 IST — Multi-city, sort bar, cart resume, item placeholders (UNCOMMITTED)
+
+Third batch today. Folds into the SAME pending review as the 02:37 and 11:59
+batches — none has landed.
+
+### First backend changes of the day
+
+The previous two batches were customer_app-only. This one needed three
+additive query changes, all in `carevo_customer`:
+
+1. **`list_outlets` takes a city LIST.** Was `lower(city) = lower(:city)`, a
+   single equality match; now `lower(city) = ANY(CAST(:cities AS varchar[]))`.
+   One bound parameter, no interpolation, works for one city or ten. The
+   controller's `city` param became `Optional[list[str]] = Query(None)`, so
+   `?city=A&city=B` is the union and a single `?city=X` still behaves exactly
+   as before.
+2. **`created_at` added to the outlet payload.** Real column, always existed,
+   simply was not being sent. Backs the Newest sort.
+3. **`get_menu` stopped filtering `is_available = true`.** `is_active` still
+   filters (deletion is not sold-out). Sold-out items now arrive flagged so
+   the app can render them as placeholders.
+
+**Deploy dependency, flagged:** the app points at the deployed Render backend
+(`AppConfig.baseUrl`). Until these are deployed, multi-city returns only the
+LAST city, Newest has no data to sort on, and no unavailable items arrive.
+None of it fails loudly — it just under-delivers — so this needs to be said
+rather than discovered.
+
+### A latent client bug found on the way
+
+`ApiClient._uri` did `qp[k] = v.toString()`, which would have sent
+`city=[Bengaluru, Chennai]` — one literal, nonexistent city — and returned
+the wrong outlets silently. Now `Iterable` values become repeated params.
+
+### Sort bar: three real, seven declared
+
+`lib/models/outlet_sort.dart` holds the options AND their ordering rules, so
+"what does this sort do" and "does this sort work" cannot drift. Nearest
+(distance), Newest (`created_at`), Best Offers (`offer_count`) work. The other
+seven each carry a `blockedBy` string naming the missing signal — ratings
+table, order-volume aggregates, outlet-level price index, reviews table,
+per-customer personalisation. None exists.
+
+They are rendered greyed with a **"Coming soon"** caption and are inert three
+independent ways: no `onTap` passed, wrapped in `IgnorePointer`, and
+`_selectSort` refuses them even if called directly. Greying alone reads as
+"temporarily broken"; the words are what distinguish "not built yet".
+
+### Task 3 — verified, and it HAD been missed
+
+`AreaPicker`'s search box is a raw `TextField` (it needs the clear-button
+suffix), so it never picked up the `onTapOutside` default added to
+`NeoTextField` last batch — the one input in the app still holding focus on a
+tap-away. Applied the SAME shared `releaseFocus()`, not a second mechanism.
+The route-transition half was already covered by `FocusReleasingObserver`.
+
+### Zero cities selected → CTA disabled
+
+Chosen over defaulting-to-all: with a default, ticking none and ticking every
+box do the same thing, so nothing on screen explains what the boxes are for.
+"Near me" already covers "just show me things".
+
+### Blocked, and NOT faked
+
+**Restaurant-closed state** — not built, per instruction. Still needs real
+hours/open-status data; `outlets` has no hours columns and `is_open` remains
+hardcoded `true`. Same reason the OPEN badge was removed last batch. The
+ITEM-level placeholder that WAS built is a different thing: `is_available` is
+real data the owner app already toggles.
+
+### Order-history alignment
+
+Reused the group-A pattern rather than inventing one: a shared `TicketValue`
+slot (`minWidth: 116`, right-aligned) used by the price row AND by
+`TicketRow`, which previously used different geometry. Caught mid-fix that
+swapping `Spacer()` for a fixed gap left the row packing LEFT — the label
+needed `Expanded`, not `Flexible`, to push the slot flush right.
+
+### Tests
+
+customer_app **186** (153 + 33 new in `ui_batch_2026_08_24b_test.dart`),
+backend **147** (+6: multi-city union, single-city still narrows,
+case-insensitivity, no-param, `created_at` present). owner_app **1**. All
+pass; `flutter analyze` clean.
+
+One pre-existing backend test was rewritten rather than deleted:
+`test_menu_hides_unavailable_items` -> `..._returns_unavailable_items_flagged_not_hidden`,
+plus a new `test_menu_still_hides_INACTIVE_items` pinning that `is_active` did
+NOT come along for the ride.
+
+Three customer_app tests were updated for deliberate behaviour changes
+(`chip_nearest` -> `sort_nearest`; Home's active-order ticket -> compact link;
+AreaPicker `onSelect`/`selected:String?` -> `onToggle`/`selected:Set<String>`
+with `Semantics.checked` replacing `.selected`).
+
+### Session-hygiene note
+
+The other session file (`5c63032e…`) GREW today — 4,039,024 -> 4,047,179
+bytes. Inspected rather than assumed: the new entries are 3 `user` records (a
+`/model` command echo) and 1 auto-generated `away_summary`, with **zero
+assistant turns and zero tool calls**, and no working-tree file was modified
+in the preceding 30 minutes. A second terminal is open on this project but has
+done no work.
+
+---
+
+## 2026-08-24 16:20 IST — Backend changes COMMITTED and pushed (520794cd)
+
+First commit of the day. Backend only — the customer_app changes from all
+three of today's batches remain uncommitted, held for a dedicated review.
+
+### Committed: 520794cd on 21_7
+
+Five files, 181 insertions / 21 deletions:
+
+```
+app/modules/carevo_customer/controller.py   (city param -> list)
+app/modules/carevo_customer/schema.py       (OutletOut.created_at)
+app/modules/carevo_customer/service.py      (the three query changes)
+tests/test_api_orders.py                    (rewritten + new is_active test)
+tests/test_api_outlet_locality.py           (5 new city-filter tests)
+```
+
+Pushed 37bbf4d0..520794cd after a fast-forward check
+(`git merge-base --is-ancestor origin/21_7 HEAD`), then re-fetched and
+confirmed local HEAD == origin/21_7.
+
+### No Checkpoint A — VERIFIED, not assumed
+
+Checked three ways before staging:
+
+* `git status -- migrations/` empty — no migration added or modified.
+* No ORM model file touched.
+* Grepping ADDED lines under `app/` for DDL and writes
+  (CREATE/ALTER/DROP/ADD COLUMN/INSERT/UPDATE/DELETE/TRUNCATE) returns
+  nothing; the only SQL verbs the diff adds under `app/` are SELECT, FROM,
+  WHERE and JOIN.
+
+The UPDATE/INSERT hits in the raw diff are all in `tests/`, which conftest
+hard-binds to the local `carevo_test` database. Pure read-query logic, so no
+schema approval gate applied.
+
+### Staging hygiene
+
+Staged the five paths explicitly rather than `git add -A`. Verified afterwards
+that `.env`, `.claude/settings.local.json` and every `customer_app/` file were
+still unstaged.
+
+### Session check
+
+Automated: the other session file was byte-identical (4,047,179) to the
+previous check, last real content entry 12:53:37 IST, and its only 2026-08-24
+entries remain 3 `user` + 1 `system` with zero assistant turns. File evidence
+only proves nothing was WRITTEN, so Adi was asked to eyeball the other
+terminal directly before the push; he confirmed all other Claude CLI sessions
+are closed.
+
+### Deploy verification in progress
+
+Render auto-deploys 21_7. Push acceptance is NOT deploy proof, so the live
+backend is being polled on two unauthenticated signals visible in
+`/openapi.json`: the `city` parameter turning into an array, and
+`OutletOut.created_at` appearing. Immediately after the push both were still
+OLD (`city` a plain string, no `created_at`) — recorded here because it is the
+baseline that makes the flip meaningful.
+
+---
+
+### Deploy CONFIRMED live — 16:23:53 IST
+
+Baseline immediately after the push was OLD; polled `/openapi.json` every 20s
+and it flipped on attempt 6, ~4 minutes after the push:
+
+```
+16:22:05 OLD ... 16:23:29 OLD    16:23:53 NEW
+```
+
+Live schema now reads, straight from the running process:
+
+```
+city              anyOf[ array<string>, null ]   (was: anyOf[ string, null ])
+OutletOut.created_at  anyOf[ date-time, null ]   (was: absent)
+```
+
+FastAPI generates that from the deployed function signature at import time, so
+`type: array` cannot appear unless `Optional[list[str]] = Query(None)` is what
+is actually running. This is the deployed code describing itself, not an
+inference from the push succeeding.
+
+**What could NOT be proven, and why.** An authenticated end-to-end multi-city
+request against prod is not possible: `/customer/outlets` requires a customer
+token, and `CUSTOMER_AUTH_ENABLED` is false on prod —
+`POST /customer/auth/request-otp` answers `503 Customer login is disabled on
+this deployment`. Getting a token would need both a prod env change and a prod
+customer row, neither of which is in scope here. The union/narrowing/
+case-insensitivity BEHAVIOUR is proven instead by the five new tests in
+`test_api_outlet_locality.py`, which run against a real Postgres on this exact
+commit. Recorded so nobody later reads "deploy confirmed" as "multi-city
+exercised end-to-end on prod".
+
+There is also no version/SHA endpoint on the service (root returns only
+`{"status":"active"}`), so the schema flip is the available deploy signal.
+
+### APK rebuilt against the live backend
+
+```
+app-release.apk   57,923,568 bytes   2026-08-24 16:24:55 IST
+sha256 33f40a9c2688cd357d346d947675c3757857360df9662d9b33659a25d3998791
+```
+
+`--dart-define=FORCE_RECAPTCHA_FLOW=true` as every sideload build (Play
+Integrity cannot vouch for a sideloaded install). `pubspec.yaml` still
+`1.0.0+3` and `app_config.dart` still `defaultValue: false` — both confirmed by
+an empty `git diff`. Replaces the 12:06 APK (`1569f7f4…`), which predated the
+name-field, OPEN-badge and this batch's work.
+
+Built in parallel with the deploy poll rather than after it: the APK's only tie
+to the backend is the base-URL constant, which did not change, so the binary is
+identical either way.
+
+Backend tree is now clean. All customer_app changes from today's three batches
+remain uncommitted and held for a dedicated review pass.
+
+---
+
+## 2026-08-25 11:41 IST — is_new_account backend fix DEPLOYED (b984bd69)
+
+Second backend commit. Client half stays uncommitted with the other pending
+batches, by instruction.
+
+### The bug this unblocks
+
+A name typed on the sign-in screen is applied afterwards via
+`PATCH /customer/me`, guarded by "only if the stored name is empty" — which
+existed to stop that field acting as a rename control for returning customers.
+
+That guard silently broke Google SIGNUP. `verify_google_token` creates the row
+with `name` already set from the Firebase `name` claim (the Google profile
+name), so the app saw a non-empty name and discarded what had just been typed.
+The greeting then showed the Google profile name — and because the sign-in
+field is mandatory, the customer was made to type a name that was thrown away.
+
+"Name is empty" cannot separate that from a name deliberately set in Profile;
+both are just a non-empty string in the response. Hence a real signal rather
+than loosening the guard.
+
+### Committed: b984bd69 on 21_7
+
+Three files, 39 insertions / 7 deletions:
+
+```
+app/modules/carevo_customer/controller.py  (both auth routes pass it through)
+app/modules/carevo_customer/schema.py      (VerifyOtpOut.is_new_account)
+app/modules/carevo_customer/service.py     (verify_*_token -> (customer, created))
+```
+
+Pushed 520794cd..b984bd69 after `git merge-base --is-ancestor`, then re-fetched
+and confirmed local HEAD == origin/21_7.
+
+### No Checkpoint A — verified literally, not assumed
+
+* `git status -- migrations/` — empty.
+* No ORM model file touched.
+* Added lines under `app/` grepped for DDL, writes, `Column(` and
+  `mapped_column` — nothing.
+* Added lines grepped for SQL keywords — 5 hits on `from`, ALL of them prose
+  inside comments and docstrings, verified by printing them. Zero actual SQL.
+
+Computed-field-only: two return signatures became `tuple[Customer, bool]`, one
+local flag, one Pydantic field with a default, two controllers passing it on.
+
+### Deploy CONFIRMED live — 11:41:16 IST
+
+Baseline captured BEFORE the push (`is_new_account` absent), then polled every
+20s; flipped on attempt 8, ~4 minutes after the push.
+
+```
+VerifyOtpOut properties
+  BEFORE: ['access_token', 'token_type', 'customer']
+  AFTER : ['access_token', 'token_type', 'customer', 'is_new_account']
+  ADDED : ['is_new_account']   REMOVED: none
+
+  is_new_account: {"type":"boolean","default":false}
+  required BEFORE == required AFTER == ['access_token','customer']
+```
+
+`required` is unchanged and the field carries `default: false`, so this is
+purely additive — an older client that ignores it is unaffected, and one that
+reads it from an older deploy gets the previous conservative behaviour rather
+than starting to overwrite names.
+
+### Still not exercised end to end
+
+Same limit as the multi-city deploy: `/auth/google` needs a real Firebase
+token and prod `CUSTOMER_AUTH_ENABLED` is false, so the flag's runtime value
+cannot be observed on prod. What IS proven is the deployed contract (the
+schema is generated from the running signatures) plus the client-side
+behaviour, pinned by 4 tests in `bugfix_batch_2026_08_24_test.dart` — one of
+which goes red if the guard is reverted, while the three that protect the
+returning-customer case stay green.
+
+Backend tests: **147**, unchanged — none of them cover `/auth/google` or
+`/auth/firebase`, which require Firebase. Recorded as a fact about coverage,
+not a proposal.
+
+---
+
+## 2026-08-25 12:22 IST — Google displayName seeding removed (6df95351)
+
+Third backend commit. Client login redesign stays uncommitted, by instruction.
+
+### Committed: 6df95351 on 21_7
+
+One file, 17 insertions / 7 deletions, all inside `verify_google_token`:
+
+```
+app/modules/carevo_customer/service.py
+```
+
+Pushed b984bd69..6df95351 after `git merge-base --is-ancestor`, re-fetched,
+local HEAD == origin/21_7 confirmed. Backend tree clean afterwards.
+
+`customers.name` now has exactly ONE writer: `PATCH /customer/me`. The Firebase
+`name` claim is unpacked as `_google_display_name` and discarded; the
+`Customer(...)` constructor no longer takes `name=`, and the
+`if name and not customer.name` backfill is deleted.
+
+This supersedes the ARBITRATION added in b984bd69 rather than replacing it:
+`is_new_account` is still used, but now only to decide whether to SHOW the name
+screen, not to referee between two writers. Removing the second writer is the
+smaller system.
+
+Existing rows are untouched — this stops future writes, it does not rewrite
+history. A Google account already carrying a display name keeps it until its
+owner changes it in Account -> Your name.
+
+### No Checkpoint A — verified literally
+
+* `git status -- migrations/` — empty.
+* No ORM model and no Pydantic schema file modified.
+* Diff grepped in BOTH directions for DDL, `Column(`, `mapped_column` — nothing.
+* Scope: the three hunks sit at lines 208-260; `verify_google_token` spans
+  182-261 (next def at 262), so every hunk is inside it.
+  `verify_firebase_token` (133-181) is untouched.
+
+### Deploy NOT confirmed — and openapi cannot confirm it
+
+Unlike the previous two deploys, there is no observable signal available:
+
+* `/openapi.json` is byte-identical before and after (sha256 `2c5a151b…`), which
+  is EXPECTED — no signature or model changed — and therefore carries zero
+  information about whether the deploy landed.
+* There is no version/commit/health endpoint (root returns `{"status":"active"}`).
+
+What WOULD confirm it: a fresh Google signup, then reading `customers.name` for
+that new row BEFORE the app issues `PATCH /customer/me`. Empty = live.
+
+### CORRECTION to earlier entries in this log
+
+Previous entries said the Google path could not be exercised on prod because
+`CUSTOMER_AUTH_ENABLED=false`. **That is wrong for `/auth/google`.** Probed
+directly:
+
+```
+POST /customer/auth/google  -> 401 {"detail":"Malformed Firebase token"}
+POST /customer/auth/request-otp -> 503 {"detail":"Customer login is disabled..."}
+```
+
+`/auth/google` and `/auth/firebase` deliberately SKIP the
+`_require_customer_auth_enabled()` gate — the controller docstrings say so —
+because they verify against Google's public keys rather than trusting the
+client. The real blocker is only that a valid Firebase ID token cannot be
+minted from a shell.
+
+Practical consequence: this IS exercisable on a device today. The installed
+11:46 APK reaches `/auth/google` on prod, so a real Google signup with a fresh
+account would confirm the behaviour — no config change needed.
+
+---
+
+## 2026-08-25 — Cart storage scoped to the customer (UNCOMMITTED, batch 6)
+
+customer_app only. Backend, owner_app and admin_app untouched — zero files
+modified in any of them. Folds into the SAME pending review as the five batches
+already queued.
+
+### The bug
+
+`carevo_cart_v1` was ONE global `SharedPreferences` key
+(`cart_state.dart:40`, pre-change). Logout cleared the session token
+(`auth_state.dart:166`) and nothing else, so the next account to sign in on the
+device inherited the previous customer's basket, the outlet it was bound to, and
+the "Continue where you left off" banner naming that restaurant. Reproduced
+before fixing: a brand-new account with zero orders landed on the FIRST-RUN home
+screen carrying `2 items from Meenakshi Bhavan`.
+
+It leaked through memory AND disk: the `CartState` instance is built in `main()`
+above `MaterialApp`, so it outlives a logout that only swaps the navigator
+stack, and the blob outlives the process.
+
+### Scoping the store, not patching the call sites
+
+The key is now `carevo_cart_v1_<customer id>`, with `carevo_cart_v1_guest` for
+logged-out. `customers.id` (`Customer.id`, `models/customer.dart:18`) is the
+scope — the same identifier the API authorises against.
+
+Clearing the cart inside `logout()` was rejected: it fixes the paths that go
+through logout and misses the ones that do not, and the diagnostic found two
+that do not — a **Google sign-in over a live session**
+(`auth_state.dart:139-160`) and **401 session loss**
+(`_onSessionLost`, `auth_state.dart:21-25`), which fires from a background
+request with no screen mounted. All five identity-change paths do share one
+thing: they assign `AuthState._customer` and notify. New
+`state/cart_identity_sync.dart` binds there — a single listener, so a future
+auth flow is covered the day it is written.
+
+`CartState.setIdentity` flushes queued writes BEFORE switching scope, and
+`_persist()` now captures its KEY synchronously alongside the payload.
+Without that, a write queued moments before a switch lands under the incoming
+customer's identity — the same leak by a slower route. Pinned by its own test.
+
+`CartIdentitySync` serialises re-scopes rather than firing them in parallel: one
+auth call notifies several times (`AuthState` toggles `busy` around assigning the
+customer), and two concurrent `setIdentity` calls can both pass its
+already-on-this-scope guard, since it awaits a flush before assigning.
+
+**A null customer is not "guest".** On a cold start with a restored token the
+customer is null until `/customer/me` returns — the session exists, its identity
+is merely unresolved. Treating that as a sign-out would blank a basket that is
+about to be restored, so an authenticated-but-unresolved session is left alone.
+
+### Guest cart: DISCARDED at sign-in, never merged
+
+Stated because it must not be left undefined. A merge is the same
+identity-boundary crossing this fix exists to stop: on a shared device it hands
+whoever signs in next the previous person's items — the reported bug in a new
+costume. A prompt was rejected too: it puts a question to the customer that the
+app is in a better position to answer, at the worst possible moment. Nothing
+durable is lost (a cart is one outlet's items, re-validated at checkout anyway),
+and the guest state is currently unreachable in practice — the splash routes an
+unauthenticated launch straight to login and every catalog endpoint requires a
+customer token. The guest blob is deleted when a real identity takes over, so it
+cannot linger for the next logged-out person.
+
+### The legacy blob is deleted, not migrated
+
+A device upgrading from a pre-scoping build has a `carevo_cart_v1` that records
+no owner. It is removed at `restore()`. Adopting an unattributable basket into
+whoever opens the app next IS the bug. Cost: a customer upgrading mid-basket
+loses those items once.
+
+### Tests
+
+New `test/cart_identity_scope_test.dart`, 14 tests: the key scheme (3), the five
+identity paths as five isolated tests, the two-account reproduction from the
+diagnostic (including a widget test asserting B's Home has no resume banner and
+no trace of A's outlet), A getting A's own cart back, the guest policy (2), and
+the in-flight-write boundary.
+
+customer_app **228** (was 214), owner_app **1**, backend **147** untouched and
+not re-run — no backend file was modified. `flutter analyze` clean.
+
+**Revert proof, both halves independently:**
+
+* un-scope the key (`storageKeyFor` returns one shared key) → **10 of 14 fail**
+* disable the sync (`CartIdentitySync.start()` returns early) → **12 of 14 fail**,
+  including all five identity paths and the Home widget test
+
+13 of the 14 fail under one revert or the other. The one that fails under
+neither is the legacy-blob test, which pins a third behaviour neither revert
+touched.
+
+Files: `lib/state/cart_state.dart`, `lib/main.dart`,
+new `lib/state/cart_identity_sync.dart`, new `test/cart_identity_scope_test.dart`.
+
+---
+
+## 2026-08-25 16:59 IST — Sideload APK built from the six pending batches
+
+Build only — no source change, nothing committed. Built from the working tree
+carrying all six uncommitted customer_app batches (filter/card-size, location
+permission ×3, login redesign, name-capture gating, guard removal, and the
+cart-identity scoping above).
+
+```
+app-release.apk   57,923,608 bytes   2026-08-25 16:59:39 IST
+sha256 4EC201A2993F401851FD15B9D3CBF6935BF938AFDD27115BDE4956D5DCD32F96
+sha1   45DE9C0A3AF081C3041093B653DE8210EB966DB0  (matches the .sha1 sidecar)
+```
+
+`--dart-define=FORCE_RECAPTCHA_FLOW=true`, as every sideload build: Play
+Integrity cannot vouch for a sideloaded install, so without the override phone
+auth dies at `17028` and no SMS is sent. **The committed default is untouched** —
+`app_config.dart` still reads `defaultValue: false` and `pubspec.yaml` is still
+`1.0.0+3`, both confirmed by an empty `git diff` before AND after the build. Only
+this artifact carries the flag.
+
+Replaces the 12:30:32 APK (`F57837FE…`, 57,890,840 bytes), which predated the
+cart-identity work. Gradle `assembleRelease` 70.1s, exit 0.
+
+**The override cannot be verified statically** — a `--dart-define` compiles into
+the AOT Dart snapshot. The only proof it took effect is behavioural: sign-in
+raises the reCAPTCHA webview and an SMS arrives.
+
+Build warnings, none fatal and all pre-existing: `flutter_google_places_sdk_android`
+still applies the Kotlin Gradle Plugin, 32 packages held back by constraints,
+MaterialIcons tree-shaken 1,645,184 → 9,360 bytes.
+
+Outside the Play versionCode lineage — this is a sideload artifact, not an
+upload candidate.
+
+---
+
+## 2026-08-25 — BACKFILL: three backend commits landed without their log entries
+
+**Flagged as backfilled, not contemporaneous.** Recorded here so the gap is
+visible rather than silently closed.
+
+The standing rule (2026-08-11) is that every commit carries its own `carevomd.md`
+entry *inside that commit*. Three backend commits broke it:
+
+| Commit | Pushed | What it did |
+|---|---|---|
+| `520794cd` | 08-24 16:20 | Multi-city outlet filter (`lower(city) = ANY(...)`, one bound param), `OutletOut.created_at` added to back the Newest sort, and `get_menu` stopped filtering `is_available` so sold-out items arrive flagged instead of vanishing. 5 files, 181+/21−. Deploy confirmed 16:23:53 by the `/openapi.json` schema flip. |
+| `b984bd69` | 08-25 11:41 | `is_new_account` returned from both auth routes, so a name typed at signup could win over a Google profile name. 3 files, 39+/7−. Deploy confirmed 11:41:16, purely additive (`default: false`, `required` unchanged). |
+| `6df95351` | 08-25 12:22 | Stopped seeding `customers.name` from the Google `name` claim — `PATCH /customer/me` is now the ONLY writer. 1 file, 17+/7−. Deploy NOT confirmable: `/openapi.json` is byte-identical because no signature changed, and there is no version endpoint. |
+
+The fuller entries for all three DO exist above in this file — they were written
+after each push rather than included in it, and have been sitting uncommitted
+ever since. They land with the commit this entry belongs to. So the record is
+complete from here on; it simply was not complete *at the time*, and no future
+reader should infer from the file's contents that it was.
+
+Root cause worth keeping: the entries were written at the end of each deploy
+verification, by which point the commit had already been made and pushed. The
+rule only works if the entry is written BEFORE staging, not after pushing.
+
+---
+
+## 2026-08-25 — customer_app: six batches land
+
+One commit, six batches of work built across 2026-08-24 and 08-25 and held at
+the user's instruction for a single diff review. Backend, owner_app and
+admin_app are untouched — zero files modified in any of them.
+
+The per-batch entries above stay as the detailed record; this entry is what the
+commit itself carries.
+
+### What is in it
+
+1. **Filter button + card size** — the outlet list's sort/filter affordance and
+   card geometry. `outlet_sort.dart` holds the options AND their ordering rules
+   so "what does this sort do" and "does it work" cannot drift; three sorts are
+   real (Nearest, Newest, Best Offers) and seven carry a `blockedBy` string
+   naming the missing signal, rendered greyed with "Coming soon" and inert three
+   independent ways. No rating or review data exists to fake them from.
+2. **Location permission ×3** — a dedicated permission dialog, an on-resume
+   re-check so a grant made in system Settings is noticed without a restart, and
+   the checkout "Use my location" path. `LocationService` still raises at most
+   one prompt per grant state, and no automatic caller may spend it.
+3. **Login redesign** — the identifier field and OTP entry reworked; the
+   email/phone auto-detect was removed rather than reshaped.
+4. **Name-capture gating** — `post_auth_router.dart` is now THE single post-auth
+   decision point: a signup goes to `NameCaptureScreen`, a returning sign-in
+   goes to Home. This replaced a second gate inside `HomeScreen.build` that
+   fired on "name is empty" — two gates on two conditions is how someone gets
+   asked twice. A legacy account with no name deliberately is NOT trapped.
+5. **Guard removal** — the client half of `6df95351`. `is_new_account` now
+   decides only whether to SHOW the name screen; it no longer referees between
+   two writers of `customers.name`, because the second writer is gone.
+6. **Cart identity scoping** — `carevo_cart_v1` was ONE global key, so a logout
+   that cleared only the session token left the next account to sign in holding
+   the previous customer's basket, outlet, and "Continue where you left off"
+   banner. The key is now `carevo_cart_v1_<customer id>`, with a separate
+   `guest` scope; `CartIdentitySync` re-scopes on every identity change from a
+   single listener on `AuthState`, because two of the five paths
+   (Google-over-a-live-session, 401 session loss) never reach `logout()` at all.
+
+### Verified against
+
+```
+app-release.apk   57,923,608 bytes   2026-08-25 16:59:39 IST
+sha256 4EC201A2993F401851FD15B9D3CBF6935BF938AFDD27115BDE4956D5DCD32F96
+```
+
+Built with `--dart-define=FORCE_RECAPTCHA_FLOW=true` (sideload; Play Integrity
+cannot vouch for a sideloaded install). `pubspec.yaml` stays `1.0.0+3` and
+`app_config.dart` stays `defaultValue: false` — both confirmed by an empty
+`git diff` before and after the build, so only that artifact carries the flag.
+It is outside the Play versionCode lineage and is not an upload candidate.
+
+### Device testing — Adi, first-hand, 2026-08-25
+
+**Adi installed the `4EC201A2…` APK on his own phone and ran the cart-isolation
+checks himself. This section is his first-hand observation, recorded as his, and
+is deliberately kept separate from the machine-verified evidence below** — the
+agent writing this file had no device attached at any point (`adb devices` empty
+on every check) and watched none of it happen.
+
+What he confirmed working:
+
+* **Fresh-account isolation.** Account A adds to cart at an outlet, logs out,
+  signs up as a brand-new account B. B shows **no resume banner, no leftover
+  cart items, and no reference to A's outlet.**
+* **Google account switch with NO logout step.** Switched from account A
+  straight to a different Google account without logging out first. Same result
+  — the cart re-scoped correctly, nothing leaked.
+
+That second one is the important one, and it is why the fix binds to
+`AuthState`'s customer rather than to `logout()`: it is the path a
+clear-the-cart-on-logout repair would have missed entirely, and it has now been
+exercised on a real device rather than only in a test harness.
+
+### Machine-verified, separately
+
+Batch 6 carries 14 tests: all five identity-change paths in isolation, the
+two-account reproduction (including a widget test asserting B's Home carries no
+resume banner and no trace of A's outlet), the guest-cart policy, and the
+in-flight-write boundary — plus two independent reverts, one un-scoping the key
+(10 of 14 fail) and one disabling the sync (12 of 14 fail).
+
+### Tests at time of commit
+
+customer_app **228 passed, 0 failed** (was 186 before these batches began).
+owner_app **1**. Backend **147**, not re-run — no backend file is in this commit.
+`flutter analyze` clean.
+
+### Deliberately NOT in this commit
+
+`owner_app/pubspec.yaml` (`+1` → `+2`), held back since the 08-21 decision:
+owner_app is sideloaded, not distributed through Play, so its versionCode has no
+Play constraint to reconcile against and the bump is its own decision.
+`.claude/settings.local.json` (local tool permissions), `.env` (untracked and
+gitignored), `UI_REDESIGN_HANDOFF.md`, `design/`, `pdf/`, the loose gif/mp4/jpeg
+files at the repo root, and the ~16,631 deleted MAUI `bin`/`obj` artifacts.
+
+Per the standing rule, this entry cannot cite its own commit hash — amending the
+entry in changes it. Take the live hash from the push.
+
+---

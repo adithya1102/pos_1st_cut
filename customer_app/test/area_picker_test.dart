@@ -25,15 +25,15 @@ Widget _host(Widget child) => MaterialApp(
 
 Widget _picker(
   List<AreaOption>? areas, {
-  String? selected,
+  Set<String> selected = const {},
   String? error,
-  ValueChanged<String>? onSelect,
+  ValueChanged<String>? onToggle,
 }) =>
     _host(AreaPicker(
       areas: areas,
       error: error,
       selected: selected,
-      onSelect: onSelect ?? (_) {},
+      onToggle: onToggle ?? (_) {},
       onRetry: () {},
     ));
 
@@ -117,7 +117,7 @@ void main() {
           AreaOption(city: 'Bengaluru', outletCount: 2),
           AreaOption(city: 'Chennai', outletCount: 2),
         ],
-        onSelect: picked.add,
+        onToggle: picked.add,
       ));
 
       await tester.tap(find.text('Chennai'));
@@ -130,19 +130,24 @@ void main() {
       expect(find.byType(Navigator), findsOneWidget);
     });
 
-    testWidgets('exactly one row reports itself selected', (tester) async {
+    testWidgets('a ticked row reports itself CHECKED, not selected',
+        (tester) async {
       await tester.pumpWidget(_picker(
         const [
           AreaOption(city: 'Bengaluru', outletCount: 2),
           AreaOption(city: 'Chennai', outletCount: 2),
         ],
-        selected: 'Chennai',
+        selected: const {'Chennai'},
       ));
 
       // Selection is announced, not merely coloured — colour alone would leave
       // a screen-reader user with no way to tell which city is armed.
+      //
+      // `checked`, not `selected`, since the picker went multi-select: the
+      // announced role has to match the behaviour, or a screen reader tells
+      // the user only one city can be on at a time.
       final selectedRows = find.byWidgetPredicate(
-        (w) => w is Semantics && w.properties.selected == true,
+        (w) => w is Semantics && w.properties.checked == true,
       );
       expect(selectedRows, findsOneWidget);
 
@@ -151,6 +156,48 @@ void main() {
         find.descendant(of: selectedRows, matching: find.text('Chennai')),
         findsOneWidget,
       );
+    });
+
+    testWidgets('SEVERAL rows can be ticked at once', (tester) async {
+      // The point of the multi-select change: a customer near a city boundary
+      // wants both lists, not a choice between them.
+      await tester.pumpWidget(_picker(
+        const [
+          AreaOption(city: 'Bengaluru', outletCount: 2),
+          AreaOption(city: 'Chennai', outletCount: 2),
+          AreaOption(city: 'Mumbai', outletCount: 2),
+        ],
+        selected: const {'Chennai', 'Mumbai'},
+      ));
+
+      final ticked = find.byWidgetPredicate(
+        (w) => w is Semantics && w.properties.checked == true,
+      );
+      expect(ticked, findsNWidgets(2));
+      // And the untouched one stays untouched — "everything is ticked" would
+      // also satisfy a count of 2 on a 2-city list, so this uses three.
+      expect(
+        find.descendant(of: ticked, matching: find.text('Bengaluru')),
+        findsNothing,
+      );
+    });
+
+    testWidgets('tapping an already-ticked row reports it for untick',
+        (tester) async {
+      // The widget holds no state of its own — it reports the tap and the
+      // caller owns add-vs-remove. This pins that a second tap is reported at
+      // all, which is what makes unticking possible.
+      final taps = <String>[];
+      await tester.pumpWidget(_picker(
+        const [AreaOption(city: 'Chennai', outletCount: 2)],
+        selected: const {'Chennai'},
+        onToggle: taps.add,
+      ));
+
+      await tester.tap(find.text('Chennai'));
+      await tester.pump();
+
+      expect(taps, ['Chennai']);
     });
   });
 

@@ -77,10 +77,23 @@ class ApiClient {
         ? AppConfig.baseUrl.substring(0, AppConfig.baseUrl.length - 1)
         : AppConfig.baseUrl;
     final normalized = path.startsWith('/') ? path : '/$path';
-    final qp = <String, String>{};
+    // dynamic values, not String: Uri.replace accepts either a String or an
+    // Iterable<String> per key, and an Iterable becomes a REPEATED parameter
+    // (`?city=A&city=B`) — which is what the multi-select city filter sends.
+    //
+    // A plain `v.toString()` on a List would have produced the single literal
+    // param `city=[A, B]`, i.e. one nonexistent city, silently returning the
+    // wrong outlets rather than failing.
+    final qp = <String, dynamic>{};
     if (query != null) {
       query.forEach((k, v) {
-        if (v != null) qp[k] = v.toString();
+        if (v == null) return;
+        if (v is Iterable) {
+          final values = v.map((e) => e.toString()).toList();
+          if (values.isNotEmpty) qp[k] = values;
+        } else {
+          qp[k] = v.toString();
+        }
       });
     }
     return Uri.parse('$base$normalized').replace(

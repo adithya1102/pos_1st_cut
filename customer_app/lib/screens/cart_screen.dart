@@ -150,6 +150,42 @@ class _CartLineCard extends StatelessWidget {
   const _CartLineCard({required this.line});
   final CartItem line;
 
+  /// Confirm before a line leaves the cart.
+  ///
+  /// Removal is the one cart action with no undo — quantity changes can be
+  /// reversed with the opposite button, but a removed line takes its
+  /// customisations and its note with it, and rebuilding those means going back
+  /// into the dish screen and re-picking every option.
+  ///
+  /// Named rather than described ("Remove Paneer Tikka?") so a mis-tap on the
+  /// wrong card is obvious from the dialog itself, which is the likeliest way
+  /// to reach this by accident.
+  Future<bool> _confirmRemove(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        key: const Key('confirm_remove_line'),
+        title: Text('Remove ${line.item.name}?'),
+        content: const Text('It will be taken out of your cart.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text('Keep it'),
+          ),
+          TextButton(
+            key: const Key('confirm_remove_line_ok'),
+            onPressed: () => Navigator.pop(c, true),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(c).colorScheme.error,
+            ),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
+  }
+
   @override
   Widget build(BuildContext context) {
     final cart = context.read<CartState>();
@@ -165,8 +201,19 @@ class _CartLineCard extends StatelessWidget {
             children: [
               VegBadge(isVeg: line.item.isVeg),
               const SizedBox(width: 8),
-              Expanded(child: Text(line.item.name, style: textTheme.titleMedium)),
-              PriceText(line.lineTotal),
+              Expanded(
+                child: Text(
+                  line.item.name,
+                  style: textTheme.titleMedium,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Fixed-width cell: a line total of ₹90 and one of ₹1,290 leave
+              // the name exactly the same room, so the name's wrap point does
+              // not move as quantities change.
+              PriceSlot(line.lineTotal),
             ],
           ),
           if (line.selectedOptions.isNotEmpty) ...[
@@ -184,7 +231,19 @@ class _CartLineCard extends StatelessWidget {
           const SizedBox(height: 12),
           Row(
             children: [
-              _MiniButton(icon: Icons.remove, onTap: () => cart.decrement(line.lineId)),
+              _MiniButton(
+                icon: Icons.remove,
+                // Decrementing the last one IS a removal, so it asks too.
+                // Confirming only the Remove button would leave the identical
+                // outcome reachable, silently, one tap away — and "minus" on a
+                // quantity of 1 is an easier mis-tap than the labelled button.
+                onTap: () async {
+                  if (line.quantity <= 1) {
+                    if (!await _confirmRemove(context)) return;
+                  }
+                  cart.decrement(line.lineId);
+                },
+              ),
               SizedBox(
                 width: 44,
                 child: Center(
@@ -194,7 +253,10 @@ class _CartLineCard extends StatelessWidget {
               _MiniButton(icon: Icons.add, onTap: () => cart.increment(line.lineId)),
               const Spacer(),
               TextButton.icon(
-                onPressed: () => cart.removeLine(line.lineId),
+                key: Key('remove_line_${line.lineId}'),
+                onPressed: () async {
+                  if (await _confirmRemove(context)) cart.removeLine(line.lineId);
+                },
                 icon: Icon(Icons.delete_outline, size: 18, color: c.inkSoft),
                 label: Text('Remove',
                     style: textTheme.bodyMedium?.copyWith(color: c.inkSoft)),

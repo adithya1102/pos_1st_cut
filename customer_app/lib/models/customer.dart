@@ -41,6 +41,38 @@ class Customer {
   String get emailDisplay =>
       (email != null && email!.isNotEmpty) ? email! : '—';
 
+  bool get _hasPhone => phoneNumber != null && phoneNumber!.trim().isNotEmpty;
+  bool get _hasEmail => email != null && email!.trim().isNotEmpty;
+
+  /// THE identifier to show on the account screen — one line, not two.
+  ///
+  /// An account has exactly one of these in practice: phone-OTP sign-in
+  /// produces a row with a phone and no email, Google sign-in produces one with
+  /// an email and no phone. Two labelled rows meant every customer stared at a
+  /// permanent "—" against a field they had never been offered, which reads as
+  /// missing data rather than as not-applicable.
+  ///
+  /// **If somehow BOTH are set, phone wins.** Nothing populates both today —
+  /// verified against `verify_phone_token`/`verify_google_token`, which each
+  /// touch only their own column — but no constraint forbids it either, and
+  /// the backend's own comment anticipates a phone being added to a Google row
+  /// later. So the tie is broken deliberately rather than left to whichever
+  /// branch happened to run first: phone is the identifier tied to collecting
+  /// an order, which is what this app is for.
+  String get identifierDisplay {
+    if (_hasPhone) return phoneNumber!.trim();
+    if (_hasEmail) return email!.trim();
+    return '—';
+  }
+
+  /// Label matching [identifierDisplay], so the row never says "Phone" over an
+  /// email address.
+  String get identifierLabel {
+    if (_hasPhone) return 'Phone';
+    if (_hasEmail) return 'Email';
+    return 'Phone/Email';
+  }
+
   Customer copyWith({String? name, double? pointsBalance}) => Customer(
         id: id,
         name: name ?? this.name,

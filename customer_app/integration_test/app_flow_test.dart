@@ -62,11 +62,11 @@ void main() {
     await tester.pump(const Duration(seconds: 3));
 
     // ---------------------------------------------------------------- login
-    final phoneField = find.byKey(const Key('login_phone_field'));
+    final phoneField = find.byKey(const Key('login_identifier_field'));
     if (await waitFor(tester, phoneField)) {
       await tester.enterText(phoneField, _phone);
       await tester.pump(const Duration(milliseconds: 400));
-      await tester.tap(find.byKey(const Key('login_send_otp')));
+      await tester.tap(find.byKey(const Key('login_submit')));
       await tester.pump(const Duration(seconds: 2));
 
       final otpField = find.byKey(const Key('otp_code_field'));

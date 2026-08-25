@@ -17,7 +17,7 @@ import '../theme/widgets/neo_button.dart';
 import '../theme/widgets/ticket_card.dart';
 import '../theme/widgets/neo_card.dart';
 import '../widgets/price_text.dart';
-import 'location_screen.dart';
+import 'home_screen.dart';
 import '../widgets/account_button.dart';
 
 /// Step 10: pickup screen — large pickup code + Received→Preparing→Ready
@@ -421,7 +421,7 @@ class _PickupScreenState extends State<PickupScreen> {
                         ? () => Navigator.of(context).pop()
                         : () => Navigator.of(context).pushAndRemoveUntil(
                               MaterialPageRoute(
-                                  builder: (_) => const LocationScreen()),
+                                  builder: (_) => const HomeScreen()),
                               (route) => false,
                             ),
                   ),

@@ -63,6 +63,28 @@ class AuthState extends ChangeNotifier {
   String _pendingPhone = '';
   String get pendingPhone => _pendingPhone;
 
+  /// Whether the most recent successful sign-in CREATED the account.
+  ///
+  /// Read straight after [verifyOtp] / [signInWithGoogle] by `routeAfterAuth`,
+  /// which sends a signup to the name screen and a returning sign-in to Home.
+  ///
+  /// ## What this replaced
+  ///
+  /// There used to be a `_pendingName` held from the login screen and applied
+  /// afterwards by `_applyPendingName`, guarded by "apply only if the account
+  /// is new or has no name". All of it is gone, because the login screen no
+  /// longer collects a name — nothing can populate that field, so the guard had
+  /// nothing left to guard.
+  ///
+  /// That guard existed only to decide whether a typed name should beat a name
+  /// the identity provider supplied. Asking for the name AFTER signup removes
+  /// the contest entirely: the only account that is ever asked is one that has
+  /// just been created, and the answer goes straight to
+  /// `PATCH /customer/me`. There is no second writer to arbitrate against, so
+  /// there is no arbitration.
+  bool _lastSignInWasNewAccount = false;
+  bool get lastSignInWasNewAccount => _lastSignInWasNewAccount;
+
   String? _requestId;
   String? get requestId => _requestId;
 
@@ -97,6 +119,7 @@ class AuthState extends ChangeNotifier {
     try {
       final result = await _otp.verifyOtp(_pendingPhone, otp);
       _customer = result.customer;
+      _lastSignInWasNewAccount = result.isNewAccount;
       _registerPush();
       notifyListeners();
       return true;
@@ -121,6 +144,7 @@ class AuthState extends ChangeNotifier {
       // null == the user dismissed the picker: no error to show.
       if (result == null) return false;
       _customer = result.customer;
+      _lastSignInWasNewAccount = result.isNewAccount;
       _registerPush();
       notifyListeners();
       return true;
@@ -145,6 +169,9 @@ class AuthState extends ChangeNotifier {
     await _google.signOut();
     _customer = null;
     _pendingPhone = '';
+    // Cleared so a stale "was a signup" cannot route the NEXT sign-in on this
+    // device into the name screen.
+    _lastSignInWasNewAccount = false;
     _requestId = null;
     notifyListeners();
   }

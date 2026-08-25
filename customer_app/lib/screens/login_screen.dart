@@ -8,15 +8,52 @@ import '../theme/app_theme.dart';
 import '../theme/widgets/neo_button.dart';
 import '../theme/widgets/neo_card.dart';
 import '../theme/widgets/neo_text_field.dart';
-import 'location_screen.dart';
 import 'otp_screen.dart';
+import 'post_auth_router.dart';
 
-/// Step 2 of the flow: mobile number entry to request an OTP.
+/// `98765 43210`, `+91 98765 43210`, `09876543210` -> `+919876543210`.
+/// Returns null when [raw] is not a usable Indian mobile number.
+///
+/// Still accepts the prefixed forms even though the field carries a fixed `+91`
+/// tag again: people paste numbers in whatever shape they already have them,
+/// and silently rejecting a pasted `+91…` would look like the field is broken.
+String? normalisePhone(String raw) {
+  // Formatting characters people actually paste.
+  var digits = raw.replaceAll(RegExp(r'[\s\-().]'), '');
+  if (digits.startsWith('+91')) {
+    digits = digits.substring(3);
+  } else if (digits.length == 12 && digits.startsWith('91')) {
+    digits = digits.substring(2);
+  } else if (digits.length == 11 && digits.startsWith('0')) {
+    digits = digits.substring(1);
+  }
+  if (!RegExp(r'^\d{10}$').hasMatch(digits)) return null;
+  return '+91$digits';
+}
+
+/// Step 1 of the flow: sign in with a phone number, or with Google.
 ///
 /// v2 layout (prototype screen 01): no app bar — the auth screens are the only
-/// ones without the app chrome — a centred wordmark, then one card holding both
+/// ones without the app chrome — a centred wordmark, then one card holding the
 /// sign-in routes. The card is vertically centred so the whole screen reads as a
 /// single object rather than a form pinned under a header.
+///
+/// ## Two options, and no name field
+///
+/// The screen previously carried an identifier box that accepted a phone number
+/// OR an email, plus a mandatory name field. Both are gone:
+///
+///  * **Email entry removed.** Typing an email only ever routed into the Google
+///    picker, which then decides the account itself — so the typed address was
+///    a hint that Google was free to ignore. Two ways to reach one flow, one of
+///    which could disagree with the outcome. "Continue with Google" is the
+///    honest single door, and the field is now unambiguously a phone number.
+///  * **Name entry moved OFF this screen.** It is asked once, after signup, by
+///    [NameCaptureScreen] — see [routeAfterAuth]. Collecting it here meant
+///    every returning customer retyped a name they had already set, and it
+///    forced a guess about whether that value should overwrite the stored one.
+///    Asking after signup removes the guess: the only account that is asked is
+///    one that does not have a name yet.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -26,7 +63,9 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _controller = TextEditingController();
-  bool get _valid => _controller.text.trim().length == 10;
+
+  /// Valid when the typed digits normalise to an Indian mobile number.
+  bool get _valid => normalisePhone(_controller.text) != null;
 
   @override
   void dispose() {
@@ -34,9 +73,10 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  Future<void> _submit() async {
+  Future<void> _submitPhone() async {
     FocusScope.of(context).unfocus();
-    final phone = '+91${_controller.text.trim()}';
+    final phone = normalisePhone(_controller.text);
+    if (phone == null) return;
     final auth = context.read<AuthState>();
     final ok = await auth.requestOtp(phone);
     if (!mounted) return;
@@ -52,17 +92,15 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   /// Google is a standalone identity: it skips the OTP step entirely and lands
-  /// straight on the location screen, exactly where a verified OTP lands.
+  /// wherever [routeAfterAuth] decides — the name screen on a signup, Home on a
+  /// returning sign-in.
   Future<void> _google() async {
     FocusScope.of(context).unfocus();
     final auth = context.read<AuthState>();
     final ok = await auth.signInWithGoogle();
     if (!mounted) return;
     if (ok) {
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const LocationScreen()),
-        (route) => false,
-      );
+      routeAfterAuth(context, isNewAccount: auth.lastSignInWasNewAccount);
     } else if (auth.error != null) {
       // A plain cancel leaves error null and should stay silent.
       ScaffoldMessenger.of(context).showSnackBar(
@@ -119,6 +157,8 @@ class _LoginScreenState extends State<LoginScreen> {
                         const SizedBox(height: 6),
                         Row(
                           children: [
+                            // Permanent again now the field is phone-only. It
+                            // was conditional while the box also took emails.
                             const _CountryTag(),
                             const SizedBox(width: 10),
                             Expanded(
@@ -126,19 +166,19 @@ class _LoginScreenState extends State<LoginScreen> {
                                 // Stable driver target — see integration_test/.
                                 key: const Key('login_phone_field'),
                                 controller: _controller,
-                                // Instructional, not a specimen number. A
-                                // realistic-looking placeholder reads as a
-                                // pre-filled value at a glance — people tap
-                                // "continue" on it, or try to delete digits
-                                // that were never there.
-                                hintText: 'Enter mobile number',
+                                // Instructional, not a specimen. A realistic
+                                // placeholder reads as a pre-filled value at a
+                                // glance — people tap "continue" on it, or try
+                                // to delete digits that were never there.
+                                hintText: 'Phone number',
                                 keyboardType: TextInputType.phone,
                                 maxLength: 10,
                                 inputFormatters: [
                                   FilteringTextInputFormatter.digitsOnly,
                                 ],
                                 onChanged: (_) => setState(() {}),
-                                onSubmitted: (_) => _valid ? _submit() : null,
+                                onSubmitted: (_) =>
+                                    _valid ? _submitPhone() : null,
                               ),
                             ),
                           ],
@@ -149,7 +189,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           label: 'Send OTP',
                           icon: Icons.send,
                           loading: auth.busy,
-                          onPressed: _valid ? _submit : null,
+                          onPressed: _valid ? _submitPhone : null,
                         ),
                         const SizedBox(height: 20),
                         Row(
@@ -168,6 +208,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         const SizedBox(height: 20),
                         NeoButton(
+                          key: const Key('login_google'),
                           label: 'Continue with Google',
                           icon: Icons.account_circle_outlined,
                           // Mint, not the purple primary: the prototype gives

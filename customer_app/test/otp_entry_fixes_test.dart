@@ -152,7 +152,10 @@ void main() {
       await tester.pumpWidget(_host(const LoginScreen()));
       await tester.pump();
 
-      expect(find.text('Enter mobile number'), findsOneWidget);
+      // Hint text changed with the phone-only redesign; the POINT of the test
+      // — that the hint instructs rather than showing a specimen number — is
+      // unchanged and still enforced by the digit-run sweep below.
+      expect(find.text('Phone number'), findsNWidgets(2));
 
       // The specific old value, and any digit-run that would read as a
       // pre-filled number.

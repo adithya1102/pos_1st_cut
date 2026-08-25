@@ -6,7 +6,7 @@ import '../config/app_config.dart';
 import '../state/auth_state.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
-import 'location_screen.dart';
+import 'home_screen.dart';
 import 'login_screen.dart';
 
 /// Splash / theme-init gate. Decides the entry screen based on session.
@@ -31,7 +31,7 @@ class _SplashScreenState extends State<SplashScreen> {
     final authed = context.read<AuthState>().isAuthenticated;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
-        builder: (_) => authed ? const LocationScreen() : const LoginScreen(),
+        builder: (_) => authed ? const HomeScreen() : const LoginScreen(),
       ),
     );
   }

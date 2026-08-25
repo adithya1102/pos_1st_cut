@@ -171,8 +171,13 @@ class _OrderCard extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              Text(
-                '₹${order.totalAmount.toStringAsFixed(2)}',
+              const SizedBox(width: 12),
+              // The SAME value slot the STATUS and PICKUP CODE rows below use,
+              // which is the whole point: the price used to take its intrinsic
+              // width here while those rows sized themselves differently, so
+              // the three values below/above each other never formed a column.
+              TicketValue(
+                value: '₹${order.totalAmount.toStringAsFixed(2)}',
                 style: TextStyle(
                     color: t.ink, fontSize: 16, fontWeight: FontWeight.w800),
               ),

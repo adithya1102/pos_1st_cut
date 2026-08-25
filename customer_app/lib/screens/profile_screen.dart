@@ -213,30 +213,55 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   // -------------------------------- Logout ---------------------------------
-  /// Irreversible account deletion (Play Store requires an in-app route).
+  /// Irreversible account closure (Play Store requires an in-app route).
   ///
   /// Two-step on purpose: a plain "are you sure" is too easy to tap through for
-  /// something with no undo, so the second step requires typing DELETE. The
-  /// copy is honest that order records survive as the restaurants' tax records
-  /// rather than implying a total erasure that the schema cannot deliver.
+  /// something with no undo, so the second step requires typing DELETE.
+  ///
+  /// ## The copy describes anonymisation, because that is what happens
+  ///
+  /// `CarevoService.delete_account` does NOT delete the customer row, and that
+  /// is forced by the schema rather than chosen: `customer_orders.customer_id`
+  /// is RESTRICT, so a row DELETE fails outright for anyone who has ever
+  /// ordered, and cascading it would take the restaurants' revenue records with
+  /// it. What the server actually does is null out name / email / phone /
+  /// fcm_token, zero the points balance, replace `google_uid` with a
+  /// `deleted:<id>` tombstone, and hard-delete coupons and push notifications.
+  /// The row survives, unusable, holding the orders together.
+  ///
+  /// So the dialog must not promise erasure. "We will permanently erase" was
+  /// wrong in the direction that matters — it is the claim someone would rely
+  /// on when deciding, and the one they would be right to complain about after
+  /// finding their orders still on a restaurant's books. It says "removed from
+  /// your account" and "kept, with your name detached", both of which are
+  /// literally what the UPDATE above does.
   Future<void> _deleteAccount() async {
     final warned = await showDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
+        key: const Key('confirm_delete_account'),
         title: const Text('Delete your account?'),
         content: const Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('This cannot be undone. We will permanently erase:'),
+            Text('Your account will be closed and you will not be able to '
+                'sign in again. Removed from it:'),
             SizedBox(height: 8),
             Text('•  your name, phone number and email\n'
                 '•  your saved sign-in\n'
                 '•  your points balance and any unused coupons'),
             SizedBox(height: 12),
             Text(
-              'Past order records are kept for the restaurants\' tax and '
-              'accounting obligations, but are no longer linked to you.',
+              'Your past orders are NOT deleted. They stay on record for the '
+              'restaurants\' tax and accounting obligations, with your name '
+              'and contact details detached so the orders can no longer be '
+              'traced back to you.',
+              style: TextStyle(fontSize: 12),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'This cannot be undone, and the account cannot be reopened.',
               style: TextStyle(fontSize: 12),
             ),
           ],
@@ -259,6 +284,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
+        key: const Key('confirm_delete_account_typed'),
         title: const Text('Type DELETE to confirm'),
         content: TextField(
           controller: typed,
@@ -392,17 +418,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ),
                           ),
                           const Divider(height: 1),
-                          // Phone and email are read-only: they come from a
-                          // verified sign-in, so the app must not let the
-                          // client assert them.
+                          // ONE identifier row, not a Phone row and an Email
+                          // row. An account has one or the other, so the second
+                          // row was always a permanent "—" — which reads as
+                          // missing data rather than as not-applicable. The
+                          // label follows the value; see
+                          // Customer.identifierDisplay for the both-populated
+                          // tie-break.
+                          //
+                          // Read-only: it comes from a verified sign-in, so the
+                          // app must not let the client assert it.
                           ListTile(
-                            title: const Text('Phone'),
-                            subtitle: Text(c?.phoneDisplay ?? '—'),
-                          ),
-                          const Divider(height: 1),
-                          ListTile(
-                            title: const Text('Email'),
-                            subtitle: Text(c?.emailDisplay ?? '—'),
+                            key: const Key('account_identifier'),
+                            title: Text(c?.identifierLabel ?? 'Phone/Email'),
+                            subtitle: Text(c?.identifierDisplay ?? '—'),
                           ),
                           const Divider(height: 1),
                           ListTile(
@@ -505,6 +534,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           // should never sit next to Log out looking like a
                           // peer of it.
                           TextButton(
+                            key: const Key('delete_account_entry'),
                             onPressed: _busy ? null : _deleteAccount,
                             style: TextButton.styleFrom(
                               foregroundColor: theme.colorScheme.outline,

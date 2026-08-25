@@ -17,6 +17,7 @@ import '../theme/widgets/neo_button.dart';
 import '../theme/widgets/neo_card.dart';
 import '../theme/widgets/ticket_card.dart';
 import '../widgets/arrival_time_picker.dart';
+import '../widgets/location_permission_dialog.dart';
 import '../widgets/offer_sheet.dart';
 import '../widgets/price_text.dart';
 import 'payment_processing_screen.dart';
@@ -126,35 +127,68 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     });
   }
 
+  /// "Use my location". Third entry point onto the shared recheck path, after
+  /// Discover's "Near me" and the outlet list's Nearest sort.
+  ///
+  /// `userInitiated: true` is the whole change: this call previously took the
+  /// default, so the service's one-prompt latch suppressed the OS dialog on
+  /// every tap after the first denial, and the button did nothing visible.
+  /// A deliberate tap asks again — see LocationService.getCurrentLocation.
+  ///
+  /// FR-C6 is unchanged: any refusal still degrades gracefully. The origin is
+  /// cleared to `none` exactly as before and checkout continues with a wider,
+  /// approximate wait. Nothing below decides whether the order can be placed.
   Future<void> _useMyLocation() async {
     setState(() => _locating = true);
     final messenger = ScaffoldMessenger.of(context);
+    final service = context.read<LocationService>();
+
+    late final LocationResult res;
     try {
-      final res = await context.read<LocationService>().getCurrentLocation();
-      if (!mounted) return;
-      if (res.hasCoordinates) {
-        setState(() {
-          _originLat = res.latitude;
-          _originLng = res.longitude;
-          _originSource = 'gps';
-          _originLabel = 'Current location';
-        });
-      } else {
-        // FR-C6: denial degrades gracefully — the order still goes through,
-        // the estimate is just wider/approximate.
-        setState(() {
-          _originLat = null;
-          _originLng = null;
-          _originSource = 'none';
-          _originLabel = null;
-        });
-        messenger.showSnackBar(const SnackBar(
-          content: Text('Location off — we\'ll show an approximate wait.'),
-        ));
-      }
+      res = await service.getCurrentLocation(userInitiated: true);
     } finally {
+      // Cleared BEFORE any dialog below, so the button is not left spinning
+      // behind a modal the customer has to read.
       if (mounted) setState(() => _locating = false);
     }
+    if (!mounted) return;
+
+    if (res.hasCoordinates) {
+      setState(() {
+        _originLat = res.latitude;
+        _originLng = res.longitude;
+        _originSource = 'gps';
+        _originLabel = 'Current location';
+      });
+      return;
+    }
+
+    // FR-C6: denial degrades gracefully — the order still goes through,
+    // the estimate is just wider/approximate.
+    setState(() {
+      _originLat = null;
+      _originLng = null;
+      _originSource = 'none';
+      _originLabel = null;
+    });
+
+    // A permanent denial cannot be re-asked, so it gets the SAME explanation
+    // dialog the other two entry points use rather than a SnackBar that times
+    // out. This branch is new here: the old code read only `hasCoordinates`,
+    // so deniedForever, denied, serviceDisabled and error all produced the one
+    // generic message and no route to Settings.
+    if (res.outcome == LocationOutcome.deniedForever) {
+      await showLocationBlockedDialog(
+        context,
+        service: service,
+        purpose: 'estimate your travel time to the restaurant',
+      );
+      return;
+    }
+
+    messenger.showSnackBar(const SnackBar(
+      content: Text('Location off — we\'ll show an approximate wait.'),
+    ));
   }
 
   Future<void> _searchLocation() async {
@@ -871,6 +905,9 @@ class _OriginCard extends StatelessWidget {
                 )
               else
                 _OriginAction(
+                  // Stable target for the permission tests — the label alternates
+                  // between "Use GPS" and "Update GPS" once an origin is set.
+                  key: const Key('checkout_use_gps'),
                   icon: Icons.gps_fixed,
                   label: hasOrigin ? 'Update GPS' : 'Use GPS',
                   onTap: onUseLocation,
@@ -895,6 +932,7 @@ class _OriginCard extends StatelessWidget {
 
 class _OriginAction extends StatelessWidget {
   const _OriginAction({
+    super.key,
     required this.icon,
     required this.label,
     required this.onTap,

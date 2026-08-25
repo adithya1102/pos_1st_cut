@@ -3,9 +3,23 @@ import 'api_client.dart';
 
 /// Result of a successful OTP verification.
 class AuthResult {
-  const AuthResult({required this.accessToken, required this.customer});
+  const AuthResult({
+    required this.accessToken,
+    required this.customer,
+    this.isNewAccount = false,
+  });
+
   final String accessToken;
   final Customer customer;
+
+  /// True when this exchange CREATED the account — a signup, not a sign-in.
+  ///
+  /// Straight from the API's `is_new_account`. It is what lets a name typed at
+  /// sign-in override [customer]'s name on a Google signup, where that name
+  /// arrived from the Google profile seconds ago, without also overriding a
+  /// name a returning customer deliberately chose. Defaults false so an older
+  /// backend that omits the field keeps the safe "never overwrite" behaviour.
+  final bool isNewAccount;
 }
 
 /// Abstraction over the OTP flow so a real Firebase implementation can be
@@ -50,6 +64,7 @@ class StubOtpService implements OtpAuthService {
     return AuthResult(
       accessToken: token,
       customer: Customer.fromJson(customerJson),
+      isNewAccount: map['is_new_account'] == true,
     );
   }
 }

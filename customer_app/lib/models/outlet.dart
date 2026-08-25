@@ -14,11 +14,20 @@ class Outlet {
     this.phoneNumber,
     this.latitude,
     this.longitude,
+    this.opensAt,
+    this.closesAt,
+    this.createdAt,
   });
 
   final String id;
   final String name;
   final String address;
+
+  /// Parsed and kept for API round-tripping (cart persistence serialises an
+  /// outlet snapshot through this model), but NOT used to render or gate
+  /// anything in the UI. `CarevoService.list_outlets` hardcodes this to `true`
+  /// for every outlet, so it carries no real information — see the OPEN-pill
+  /// removal in `outlets_screen.dart` for the client-side half of this.
   final bool isOpen;
   final double? distanceKm;
   final String? upiId;
@@ -50,6 +59,60 @@ class Outlet {
 
   /// True only when Maps can actually be opened for this outlet.
   bool get hasCoordinates => latitude != null && longitude != null;
+
+  /// Serving hours, as the API reports them ("09:00", "22:30").
+  ///
+  /// ## Currently ALWAYS null, and that is a backend gap, not a bug here
+  ///
+  /// The `outlets` table has no hours columns — checked against every migration
+  /// 001-021, none of which adds one — so `/customer/outlets` has nothing to
+  /// send. The fields, the parsing and [hoursLabel] are wired up so the display
+  /// lights up the moment a migration adds them, and every consumer HIDES the
+  /// line while they are null rather than inventing plausible hours. A guessed
+  /// "10am - 10pm" is the one failure mode worth avoiding completely: it sends
+  /// someone to a shut restaurant with the app's word for it.
+  ///
+  /// Note that `is_open` is not a substitute — the backend hardcodes it to
+  /// `true` for every outlet (`carevo_customer/service.py`), so the OPEN pill
+  /// and the "Open now" filter currently assert nothing.
+  final String? opensAt;
+  final String? closesAt;
+
+  bool get hasHours =>
+      (opensAt?.isNotEmpty ?? false) && (closesAt?.isNotEmpty ?? false);
+
+  /// When this outlet joined the platform. Backs the "Newest" sort.
+  ///
+  /// Unlike [opensAt], this is REAL data — `outlets.created_at` has always
+  /// existed; it simply was not being sent to the app until the sort needed
+  /// it. Null only for a row whose column is null, which sorts last rather
+  /// than being guessed at.
+  final DateTime? createdAt;
+
+  /// "9:00 am - 10:30 pm", or null when the hours are unknown.
+  String? get hoursLabel {
+    if (!hasHours) return null;
+    final open = _friendlyTime(opensAt!);
+    final close = _friendlyTime(closesAt!);
+    if (open == null || close == null) return null;
+    return '$open - $close';
+  }
+
+  /// "22:30" -> "10:30 pm". Returns null for anything it cannot parse, so a
+  /// surprising format degrades to hiding the line rather than to rendering
+  /// something wrong.
+  static String? _friendlyTime(String raw) {
+    final parts = raw.trim().split(':');
+    if (parts.length < 2) return null;
+    final h = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1]);
+    if (h == null || m == null || h < 0 || h > 23 || m < 0 || m > 59) {
+      return null;
+    }
+    final suffix = h < 12 ? 'am' : 'pm';
+    final hour12 = h % 12 == 0 ? 12 : h % 12;
+    return '$hour12:${m.toString().padLeft(2, '0')} $suffix';
+  }
 
   /// Storefront photo (migration 011). Null for outlets that never set one —
   /// the card falls back to the generic restaurant glyph.
@@ -90,6 +153,12 @@ class Outlet {
       // cast would throw.
       latitude: (lat as num?)?.toDouble(),
       longitude: (lng as num?)?.toDouble(),
+      // Absent from every response today — see [opensAt].
+      opensAt: (json['opening_time'] as String?)?.trim(),
+      closesAt: (json['closing_time'] as String?)?.trim(),
+      // tryParse, not parse: a malformed timestamp leaves this null (sorts
+      // last under "Newest") rather than throwing and blanking the whole list.
+      createdAt: DateTime.tryParse(json['created_at']?.toString() ?? ''),
     );
   }
 
@@ -109,5 +178,8 @@ class Outlet {
         'phone_number': phoneNumber,
         'latitude': latitude,
         'longitude': longitude,
+        'opening_time': opensAt,
+        'closing_time': closesAt,
+        'created_at': createdAt?.toIso8601String(),
       };
 }
