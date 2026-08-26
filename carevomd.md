@@ -2562,3 +2562,141 @@ Per the standing rule, this entry cannot cite its own commit hash — amending t
 entry in changes it. Take the live hash from the push.
 
 ---
+
+## 2026-08-26 15:25 IST — PRE-RESTART SNAPSHOT (known-good baseline)
+
+Recorded deliberately before a planned machine restart, so the next session's
+re-orientation check has something exact to diff against rather than
+reconstructing the tree from memory. **Nothing was committed, built or changed
+to produce this entry** — it is a reading of the tree, not a change to it.
+
+### Git position
+
+```
+branch          21_7
+HEAD            70871cf6  feat(customer_app): six UI/UX batches + per-customer cart scoping
+origin/21_7     70871cf6      (0 ahead, 0 behind — fully pushed)
+index           EMPTY — nothing staged
+tracked files   17,639
+```
+
+No merge/rebase/cherry-pick in progress; no `index.lock`.
+
+### Uncommitted tree — what SHOULD be there on next boot
+
+**The walking-footer batch (5 files) — the only real work in flight:**
+
+```
+ M customer_app/lib/screens/home_screen.dart      (footer at the bottom of both Home variants)
+ M customer_app/pubspec.yaml                      (assets: block ONLY; version untouched at 1.0.0+3)
+?? customer_app/assets/animation/final_walk.gif   (3,356,566 bytes)
+?? customer_app/lib/widgets/walking_footer.dart
+?? customer_app/test/walking_footer_test.dart
+```
+
+**Two long-standing modified files, both deliberately held back:**
+
+```
+ M .claude/settings.local.json   local tool permissions, never staged
+ M owner_app/pubspec.yaml        +1 -> +2, held since the 2026-08-21 decision:
+                                 owner_app is sideloaded, not on Play, so its
+                                 versionCode has no Play constraint to reconcile
+```
+
+**Long-standing untracked docs and assets (18):** `UI_REDESIGN_HANDOFF.md`;
+`design/` (4: `.thumbnail`, two `.dc.html` prototypes, `support.js`); `pdf/` (3);
+`customer_app/assets/icon/play_store_icon_512.png`;
+`customer_app/assets/marketing/` (7: feature graphic + 6 store screenshots);
+and at the repo root `final_walk.gif`, `walk.gif`, `guy_walking.jpeg`,
+`generate_a_gif_and_video_of_th.mp4`.
+
+**Plus 16,631 deleted MAUI `bin`/`obj` artifacts** under `gusto_pos/GustoPOS` and
+`gusto_pos/GustoWaiter`, from the 2026-08-12 disk cleanup. Long-standing;
+restorable with `git checkout` or by rebuilding.
+
+**`gusto_pos/backend` and `admin_app` are COMPLETELY clean — 0 entries each.**
+
+### Open item carried into the next session
+
+Phone OTP sign-in fails on the `D64B37E0…` sideload. Root cause was captured in
+logcat at 00:06:27 on 2026-08-26 and is NOT what earlier entries assumed: the Keystore
+cannot load Firebase Auth's Tink master key
+(`FirebearCryptoHelper: Keystore cannot load the key with ID: firebear_master_key_id.…`),
+so `RecaptchaActivity` cancels before rendering, the SDK explicitly "calls
+backend without app verification", and the backend refuses with 17093 — which
+surfaces as the user-visible "missing a valid app identifier". The dart-define
+worked: `RecaptchaActivity` only runs on the forced path, and the app's own
+`Could not force reCAPTCHA flow` never fired. So the fault is device-local
+crypto, not SHA fingerprints, Firebase console config, or the backend.
+
+Capture: `scratchpad/logcat_auth_20260826-0003.log`, failure chain at lines
+3735-3747. **Scratchpad is session-temporary and will not survive the restart** —
+the chain is quoted above precisely because that file is about to disappear.
+
+Device: Nothing A142P, Android 16, stock (`user` / `release-keys`), Play Services
+26.32.34, `remote_provisioning.strongbox.rkp_only=1`. Wireless ADB was at
+`192.168.1.4:45311`; that port is reassigned every time Wireless debugging is
+toggled, so it will need re-reading off the phone next time.
+
+### Note on this entry itself
+
+Appending it makes `carevomd.md` show as ` M` — so on next boot the expected
+count is **6 modified files, not 5**. That is this entry, and nothing else.
+
+---
+
+## 2026-08-26 16:47 IST — CORRECTION to the 15:25 snapshot's counts (labels only)
+
+The entry directly above is **correct in every file it names and wrong in two of
+the numbers it labels them with**. Read on restart, its file-level enumeration
+matched the tree exactly — path for path, plus HEAD `70871cf6`, 17,639 tracked,
+16,631 MAUI deletions, empty index, backend and `admin_app` clean, and
+`final_walk.gif` byte-exact at 3,356,566. Nothing was lost or altered across the
+restart. **Only the arithmetic in the prose was wrong.** Per the append-only rule
+the original text is left untouched; this entry supersedes its two counts.
+
+### What was mislabeled
+
+```
+"6 modified files, not 5"          ->  5 modified          (entry, closing note)
+"untracked docs and assets (18)"   ->  20 long-standing    (entry, body)
+"22 untracked"                     ->  23 untracked        (carried into the
+                                                            re-orientation brief)
+```
+
+The `(18)` is contradicted by the entry's own list on the same lines, which
+enumerates 20: `UI_REDESIGN_HANDOFF.md` (1) + `design/` (4) + `pdf/` (3) +
+`play_store_icon_512.png` (1) + `assets/marketing/` (7) + 4 repo-root media
+files. Trust that list, not its label.
+
+### Correct decomposition
+
+```
+MODIFIED = 5
+  2   walking-footer batch    home_screen.dart, customer_app/pubspec.yaml
+  1   carevomd.md             the snapshot entry itself
+  2   held back               .claude/settings.local.json, owner_app/pubspec.yaml
+
+UNTRACKED = 23
+  3   walking-footer batch    assets/animation/final_walk.gif,
+                              lib/widgets/walking_footer.dart,
+                              test/walking_footer_test.dart
+ 20   long-standing           as enumerated above
+
+TOTAL porcelain -uall = 16,659  =  16,631 deleted + 5 modified + 23 untracked
+```
+
+### Root cause of both bad numbers
+
+A double-count of the same three files. The walking-footer batch is **5 files,
+but only 2 of them are modified** — the other 3 are new and therefore untracked.
+Counting all 5 as modified inflates the modified total (5 + carevomd + 2 held
+back = 8 by that reading; the entry's own "6" is a partial version of the same
+slip) and drops those 3 out of the untracked total. Whenever this log quotes a
+batch size, check whether the files are `M` or `??` before adding it to either
+column.
+
+Nothing was committed, built, or changed to produce this entry — like the one
+above it, it is a correction to the record, not to the tree.
+
+---
