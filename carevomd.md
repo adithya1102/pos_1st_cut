@@ -3368,3 +3368,95 @@ Revert-proved: restoring the old parser fails **11 of the 15**; the 4 that
 survive are the ones that do not depend on field names. `flutter analyze` clean.
 
 ---
+
+## 2026-08-27 01:44 IST — A collected order came back on screen (89b04d6c)
+
+Reported from the counter: entering a pickup code for a NEW order showed the
+**previous, already-collected order's** panel and status text. Fixed in
+`89b04d6c`, owner_app only.
+
+### The backend was never involved
+
+Worth stating first, because "wrong order shown" reads like a server bug.
+`/pos/orders/lookup-pickup` filters by code **and** `status = ANY(live)`
+(`service.py:1401`, `_LIVE_STATUSES` at `:53`), with no "most recent order"
+fallback of any kind. A COMPLETED order is unreachable by any code. And since
+`_generate_pickup_code` (`:789-805`) only guarantees uniqueness among an
+outlet's LIVE orders, a new order can legitimately be issued the exact code a
+finished one had — even then the lookup resolves unambiguously to the new one,
+because the old is excluded by status.
+
+### Root cause: hidden by a phase, not actually gone
+
+`_confirm()` succeeded, set `_phase = done`, cleared the text field, and **left
+`_match` holding the finished order**. Nothing displayed it, but only because
+the build guard reads:
+
+```dart
+if (_match != null && _phase != _Phase.done) ... // the order panel
+```
+
+The order was hidden by the PHASE. The value was still there. `_find()`'s
+empty-code early return then set `_phase = failed` without touching `_match` —
+which re-opened that guard on the completed order.
+
+Two conditions had to coincide, which is why it looked intermittent: a
+confirmation first, then `Find` pressed **before typing**. That second one is
+not an odd thing to do — confirming clears the box, so it looks ready for the
+next code.
+
+The general shape is worth carrying: **a value kept alive and suppressed by a
+condition is not the same as a value cleared.** Any new phase added to that
+enum would have inherited the trap.
+
+### The fix, and why BOTH halves are kept
+
+* `_confirm()` success clears the match — the source. The done screen renders
+  only the success banner and never `_match`, so nothing on screen changes.
+* The empty-code branch of `_find()` clears it too — the reachable path.
+
+New `_clearMatch()` helper, now used at all four sites. `_match`, `_locked` and
+`_matchedCode` describe ONE order; clearing `_match` alone would leave the
+other two stale, which is the same class of bug one size smaller.
+
+### Revert-proof — and the prediction going in was wrong
+
+The brief expected reverting the empty-code line to turn the repro red. It does
+not. All three combinations were run:
+
+```
+revert confirm-success clear only  ->  16/16 PASS
+revert empty-code clear only       ->  16/16 PASS
+revert BOTH                        ->  2 FAIL (the repro + repeated-press)
+```
+
+**Either fix alone closes the defect** — they are independently sufficient and
+mutually redundant here. Once the source-clear is in place, no UI path reaches
+the empty-code branch with a populated `_match` at all (any edit that empties
+the field fires `onChanged` -> `_reset()` first), so the second is genuinely
+defence-in-depth rather than the fix.
+
+Both were kept on an explicit decision, not by omission. Recorded plainly so
+nobody later reads one of them as load-bearing, measures it, and deletes the
+other on the strength of a green suite.
+
+The important half of that matrix is the last line: with both out, the tests
+fail on exactly the reported symptom. They are not vacuous.
+
+### Tests
+
+owner_app **12 -> 17**. A new two-order fixture — A "Masala Dosa" on `234567`,
+B "Idli Sambar" on `876543` — with **deliberately different items**, because
+with a single-order fixture "showed order B" and "never cleared order A" render
+identically and no assertion can separate them.
+
+Covers: an empty Find after confirming shows no panel; it holds across three
+repeated presses; the next code shows its own order; the previous order is
+already gone while the next lookup is in flight; and a second submission cannot
+start while one is in flight (button and field both disabled, exactly one
+request sent).
+
+`flutter analyze` unchanged at 21 pre-existing info lints, **none** in either
+file touched here.
+
+---
