@@ -3562,3 +3562,125 @@ which is which, and a `(no name)` account with 10 orders is exactly the kind of
 row that looks like noise and might not be.
 
 ---
+
+## 2026-08-27 03:24 IST — Tried to DELETE 61 test orders; the DB said no (eeb8f076)
+
+One connected episode: a hard delete was planned, approved, attempted, and
+**refused by the database itself**. The result is a hide, not a delete — and
+that is the correct outcome, not a fallback.
+
+### What was planned and approved
+
+Three development accounts held 61 leftover orders, mostly abandoned checkouts:
+
+```
+3ecd3a0c-…fd5fc4  Adithya    phone +919499956612   29 orders
+8a1f7d2f-…1613c2  Adithya C  narayanadithya462@…   17 orders
+ce91fb40-…787e39  Adi        phone +916374304790   15 orders
+```
+
+Only the middle one is verifiably Adi's (it is the session's own email); the
+two phone accounts could not be confirmed as his from the data, and that was
+flagged before approval. A `(no name)` account with 10 orders and 24 days of
+activity was deliberately EXCLUDED as probably a real person.
+
+Checkpoint A presented DELETE statements in FK dependency order, with a
+983KB pre-delete export written to `C:\Users\Adithya\carevo_backups\`
+(outside git, durable — not the scratchpad, which a restart has already
+destroyed once this session). Approved.
+
+### The database refused, and rolled back cleanly
+
+```
+DELETE FROM prediction_log …
+  -> asyncpg RaiseError: "append-only table prediction_log: DELETE is not permitted"
+  -> ROLLED BACK, zero rows touched
+```
+
+Every count identical afterwards: 105 orders, 61 for the three accounts, 362
+order_events, 785 prediction_log. The transaction was atomic, so there was no
+partial state to repair.
+
+The guards:
+
+```
+order_events     order_events_immutable      BEFORE DELETE, BEFORE UPDATE
+prediction_log   prediction_log_immutable    BEFORE DELETE, BEFORE UPDATE
+```
+
+`order_twin` and `order_outcome` carry no such trigger and would have deleted
+had they been reached. They weren't — the first statement aborted the batch.
+
+### LESSON: check triggers, not just foreign keys
+
+**The Checkpoint A analysis mapped `information_schema` foreign keys and
+delete rules but never queried `information_schema.triggers`.** SQL was
+presented as ready to run when two of its five statements were guaranteed to
+fail. The blast-radius numbers were right; the executability was not. Nothing
+was harmed because Postgres refused, not because the prep caught it.
+
+**Before any future delete-scoped Checkpoint A, query
+`information_schema.triggers` for every table in the plan** — a `BEFORE DELETE`
+trigger is invisible to FK analysis and will abort the whole transaction on
+the first statement it guards. FK rules tell you what CASCADES; triggers tell
+you what is *permitted at all*.
+
+Also worth knowing for any future migration runner: **asyncpg prepares each
+statement, so a multi-statement SQL string fails at prepare time.** Migration
+022 failed on its first apply for exactly this and landed nothing; splitting
+on `;` and executing individually worked. `bootstrap_test_db.py` already knew
+this; an ad-hoc runner did not.
+
+### The pivot: hide, don't delete
+
+`order_events` and `prediction_log` are append-only *by design* — the
+prediction engine is event-sourced and those rows ARE the record. So hiding is
+not a soft-delete compromise here; it is the only thing the schema permits.
+
+**Migration 022 — `customers.history_cutoff_at`, nullable timestamptz.** Orders
+created before it are omitted from `GET /customer/orders`. NULL — every other
+account — means no cutoff, so the column is inert until set.
+
+Chosen over a flag on `customer_orders` because it writes **3 rows instead of
+61** and stays 3 however many orders exist, and because **these accounts are
+still in use for testing** — a per-order flag would need re-applying after
+every new test order or the history refills. It also mirrors
+`CarevoService.RENAME_CUTOFF`, which already does this shape for owner_app's
+queue. Trade-off recorded in the migration file: strictly chronological, so it
+cannot hide one order while showing an older one.
+
+### What actually changed, and what did not
+
+```
+migration 022 applied to prod, UPDATE customers rowcount=3
+orders total            105 -> 105   UNCHANGED
+the 3 accounts' orders   61 ->  61   UNCHANGED
+hidden per account       29 / 17 / 15 = 61, still-visible 0
+customers with a cutoff    3    without (untouched)  30
+```
+
+**Scope is ONE read.** owner_app's queue, the admin order log, the prediction
+engine and every row are untouched — pinned by a test rather than asserted: an
+order hidden from its customer is still in the staff queue, because staff must
+be able to hand over an order whose customer cut their own history.
+
+**`GET /customer/orders/{order_id}` is deliberately NOT filtered.** A direct
+link still resolves a hidden order. That was the agreed scope — the list, not
+the detail route — and is recorded here so it reads as a decision rather than
+an oversight.
+
+### Tests
+
+Backend **164 -> 171**. The 7 new tests in `test_api_history_cutoff.py` pin
+both halves — the hiding AND the not-deleting — because a future "cleanup"
+that turned this into a DELETE would satisfy the first alone. That is the same
+reasoning `test_api_rename_cutoff.py` records for the owner-side cutoff.
+
+Revert-proved: removing the SQL clause fails 4 of 7; the 3 that survive are
+the ones asserting the filter must NOT fire.
+
+The local `carevo_test` DB needed rebuilding to pick up 022 (`migrations
+applied: 22`). It is a throwaway local database, which exists precisely
+because these same append-only triggers make prod teardown impossible.
+
+---
