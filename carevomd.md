@@ -3460,3 +3460,105 @@ request sent).
 file touched here.
 
 ---
+
+## 2026-08-27 02:23 IST — DIAGNOSTIC: order-history scoping + the stale-order backlog
+
+Two questions asked together: is owner_app's order history outlet-scoped, and
+how much of the order data is stale test noise. Read-only throughout — nothing
+was written, changed or deleted.
+
+### There is no order-history tab in owner_app
+
+owner_app has exactly three tabs (`home_screen.dart:66`): `_DishesTab`,
+`OrdersScreen`, `OffersScreen`. A grep for `history` across `owner_app/lib/`
+returns nothing.
+
+All three of its order-reading paths are outlet-scoped by the same mechanism:
+
+```
+/pos/orders                 list_active_orders(db, _require_outlet(staff))
+                            -> WHERE outlet_id = :oid          service.py:1813
+/pos/orders/lookup-pickup   WHERE outlet_id = :oid in the SQL
+/pos/orders/verify-pickup   outlet check at service.py:1314    (since f2d786c0)
+```
+
+**Cross-outlet data cannot appear in owner_app.** There is no second code path.
+
+What looks like "history" there is the Orders tab itself: `list_active_orders`
+deliberately keeps COMPLETED orders for `COMPLETED_GRACE` (30 min) after
+`pickup_verified_at`, so collected orders linger marked "collected Nm ago".
+Still outlet-scoped.
+
+**A genuinely cross-outlet order log DOES exist — in admin_app, not owner_app.**
+`carevo_admin.list_orders` (`carevo_admin/service.py:729`) is documented as "One
+row per order, across every outlet" and has no outlet predicate at all. It is
+reachable only via `/admin/orders`, gated by `get_current_super_admin`
+(`carevo_admin/controller.py:134`) — staff JWT plus the SUPER_ADMIN role. That
+is deliberate for an admin tool. **If cross-outlet orders are ever reported as
+visible, that is the surface to check; owner_app cannot produce it.**
+
+### Nothing is stuck in a live status
+
+```
+status      total  last24h  older24h  older5d   oldest       newest
+CREATED        60        0        60       57   2026-07-29   2026-08-24
+ABANDONED      25        0        25       22   2026-07-29   2026-08-23
+COMPLETED      17        3        14       14   2026-07-29   2026-08-26
+CANCELLED       3        0         3        3   2026-08-10   2026-08-10
+                                                              total 105
+```
+
+A direct check returns `active_total 0` — **zero orders in PAID/RECEIVED/
+PREPARING/READY at any age.** The 45-minute TTL sweep is doing its job; the
+earlier worry about orders lingering live is not visible in the data.
+
+### The backlog is 60 UNPAID orders, and nothing sweeps them
+
+All 60 CREATED rows are `payment_status = PENDING`, all 60 have a
+`payment_transactions` row — so checkout was started and never completed. No
+payment means no pickup code was ever issued. Oldest 2026-07-29; 57 older than
+five days; 10 from July, 50 from August.
+
+**`_expire_stale_pickups` filters `status = ANY(:live)` and CREATED is NOT in
+`_LIVE_STATUSES`**, so unpaid checkouts accumulate indefinitely while paid ones
+auto-abandon after 45 minutes. That asymmetry is the whole reason the backlog
+exists, and it is worth knowing before anyone reads 60 rows as a bug.
+
+### They do NOT read as "pending" on the customer side
+
+`OrderHistoryEntry.isActive` (`customer_service.dart:36-38`) is
+`{PAID, RECEIVED, PREPARING, READY}` — CREATED is excluded, so
+`home_screen.dart:250` counts **zero** active orders for every account. The 60
+appear in history as PAST entries, because `list_my_orders` applies no status
+filter at all (LIMIT 50, newest first).
+
+```
+who          orders  active  created_unpaid  completed  abandoned   span
+Adithya          29       0              18          4          7   Jul29–Aug11
+Adithya C        17       0              10          3          3   Aug5 –Aug17
+Adi              15       0               9          5          1   Aug5 –Aug26
+(no name)        10       0               6          1          3   Jul29–Aug21
+```
+
+Three similarly-named accounts hold 61 of the 105 orders between them.
+
+### Two visibility gates keep almost all of it off owner_app
+
+```
+105 orders  |  80 hidden by RENAME_CUTOFF (pre 2026-08-20 15:40Z)  |  25 after
+```
+
+Simulating the live queue's exact predicate, owner_app currently returns **11
+rows across five outlets** — Chettinad Spice Corner 5, Annapoorna Tiffin Room 2,
+Bengal Rasoi 2, Meenakshi Bhavan 1, Malabar Spice Kitchen 1. So the backlog is
+largely invisible to staff already.
+
+### Deliberately NOT concluded
+
+Nothing here is classified as safe to delete. The age spread alone does not
+separate genuine abandoned checkouts from test noise — the three same-named
+accounts and the 2026-07-29 start hint at it, but nothing in the data proves
+which is which, and a `(no name)` account with 10 orders is exactly the kind of
+row that looks like noise and might not be.
+
+---
