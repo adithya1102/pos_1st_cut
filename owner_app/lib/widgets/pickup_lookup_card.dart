@@ -57,13 +57,26 @@ class _PickupLookupCardState extends State<PickupLookupCard> {
     super.dispose();
   }
 
+  /// Forget the currently-matched order.
+  ///
+  /// [_match], [_locked] and [_matchedCode] all describe ONE order, so they
+  /// must always move together — a stale `_locked` or `_matchedCode` beside a
+  /// fresh match is the same class of bug as the stale panel this exists to
+  /// prevent. Call this from every path that stops showing an order, rather
+  /// than leaving one populated and relying on a render guard to hide it.
+  ///
+  /// Caller-scoped: assumes it is already inside a setState.
+  void _clearMatch() {
+    _match = null;
+    _locked = false;
+    _matchedCode = '';
+  }
+
   void _reset() {
     setState(() {
       _phase = _Phase.idle;
-      _match = null;
-      _locked = false;
       _message = null;
-      _matchedCode = '';
+      _clearMatch();
     });
   }
 
@@ -73,6 +86,10 @@ class _PickupLookupCardState extends State<PickupLookupCard> {
       setState(() {
         _phase = _Phase.failed;
         _message = 'Enter the pickup code.';
+        // Leaving a previous match here put a COMPLETED order back on screen:
+        // this branch moves the phase off `done` without going through the
+        // clear below, which re-opened the build guard on the old order.
+        _clearMatch();
       });
       return;
     }
@@ -80,7 +97,9 @@ class _PickupLookupCardState extends State<PickupLookupCard> {
     setState(() {
       _phase = _Phase.searching;
       _message = null;
-      _match = null;
+      // The previous order goes the moment a new search starts, so it is never
+      // on screen while a different code is in flight.
+      _clearMatch();
     });
 
     try {
@@ -124,6 +143,13 @@ class _PickupLookupCardState extends State<PickupLookupCard> {
           _phase = _Phase.done;
           _message = 'Pickup confirmed.';
           _controller.clear();
+          // The handover is over, so the order is no longer this card's
+          // subject. Relying on `_phase == done` to HIDE a still-populated
+          // _match left it one phase change away from reappearing — which is
+          // exactly how a completed order came back. The done screen renders
+          // only the success banner above, never _match, so dropping it here
+          // changes nothing on screen and removes the trap.
+          _clearMatch();
         } else if (result.locked) {
           _phase = _Phase.failed;
           _message = _lockoutText;
