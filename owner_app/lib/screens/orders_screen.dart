@@ -3,10 +3,27 @@ import 'package:provider/provider.dart';
 
 import '../state/orders_state.dart';
 import '../widgets/order_card.dart';
+import '../widgets/pickup_lookup_card.dart';
 
 class OrdersScreen extends StatelessWidget {
   const OrdersScreen({super.key});
 
+  @override
+  Widget build(BuildContext context) {
+    // The code lookup sits above the queue and outside its loading/error
+    // branches: staff at the counter with a customer in front of them need it
+    // even when the feed is mid-refresh or failed to load, and it does not
+    // read the queue to do its job.
+    return Column(
+      children: [
+        const PickupLookupCard(),
+        Expanded(child: _Queue()),
+      ],
+    );
+  }
+}
+
+class _Queue extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<OrdersState>();

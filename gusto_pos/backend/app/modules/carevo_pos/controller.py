@@ -24,13 +24,50 @@ def _require_outlet(staff: User) -> uuid.UUID:
     return staff.outlet_id
 
 
+@router.post("/orders/lookup-pickup", response_model=s.LookupPickupOut)
+async def lookup_pickup(
+    payload: s.LookupPickupIn,
+    staff: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Find a live order at the caller's own outlet by its pickup code.
+
+    Read-only: it shows staff what to hand over. Closing the order is a
+    separate, explicit call to /orders/verify-pickup.
+
+    There is no outlet_id parameter — the outlet comes from the caller's own
+    account, so a code belonging to another outlet cannot be looked up here.
+
+    Consecutive misses are capped per outlet (PICKUP_MISS_LIMIT over
+    PICKUP_MISS_WINDOW_SECONDS) and answered with 429 + Retry-After. A found
+    code clears the run.
+    """
+    return await CarevoService.lookup_pickup(
+        db, _require_outlet(staff), payload.pickup_code
+    )
+
+
 @router.post("/orders/verify-pickup", response_model=s.VerifyPickupOut)
 async def verify_pickup(
     payload: s.VerifyPickupIn,
-    _staff=Depends(get_current_staff),
+    staff: User = Depends(get_current_staff),
     db: AsyncSession = Depends(get_db),
 ):
-    return await CarevoService.verify_pickup(db, payload.order_id, payload.pickup_code)
+    """Confirm the code and close the order.
+
+    Scoped to the caller's own outlet. It previously was not: the staff
+    dependency was bound but never used, so the order_id in the body was
+    resolved unscoped and any authenticated staff account could complete any
+    outlet's order.
+
+    An order_id that resolves to nothing at this outlet is a 404 AND counts
+    toward the same per-outlet miss cap as lookup-pickup (429 + Retry-After).
+    The per-order 3-strike lockout is unchanged and still owns the case where
+    the order IS found and the code is wrong.
+    """
+    return await CarevoService.verify_pickup(
+        db, payload.order_id, payload.pickup_code, _require_outlet(staff)
+    )
 
 
 # ------------------------------ Owner App ----------------------------------

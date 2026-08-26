@@ -2758,3 +2758,307 @@ the table, never existed in the repo — it lived in a scratchpad that a restart
 destroyed. That reference is gone with the table.
 
 ---
+
+## 2026-08-26 19:30 IST — Owner-side pickup by code + a cross-outlet auth hole
+
+Staff can now type the customer's pickup code at the counter, see the order,
+and confirm the handover. **UNCOMMITTED — holding at Checkpoint B.**
+
+### The security finding (fixed here, not deferred)
+
+`POST /pos/orders/verify-pickup` was **not outlet-scoped**. The controller bound
+the staff dependency as `_staff` and never used it; the service resolved the
+`order_id` straight from the request body:
+
+```python
+res = await db.execute(select(CustomerOrder).where(CustomerOrder.id == order_id))
+if not order: raise HTTPException(404)      # no outlet check at all
+```
+
+So any authenticated staff account, at any outlet, could complete any order in
+the system given its id and code — including another restaurant's. Now
+`verify_pickup` takes the caller's `outlet_id` and 404s on a mismatch, the same
+way `mark_order_paid_by_staff` always has. The 404 is deliberately identical to
+"no such order" so it cannot be used to probe which ids exist elsewhere.
+Regression test: `test_verify_pickup_rejects_another_outlets_order`.
+
+By contrast the order FEED was already correct — `list_active_orders` has always
+been `WHERE outlet_id = :oid` via `_require_outlet(staff)`.
+
+### The pickup code, as it already exists (unchanged)
+
+Six characters from the alphabet `23456789` — digits only, no `0/O` or `1/I/l`,
+so it is unambiguous read aloud and typable on a numeric keypad. Generated in
+`_generate_pickup_code` at the PAID transition, stored on
+`customer_orders.pickup_code` (`String(8)`, nullable — null until payment).
+Unique among an outlet's LIVE orders only (`status NOT IN
+('COMPLETED','CANCELLED','ABANDONED')`), never globally: 8^6 = 262k, retried 30
+times. Codes free up on expiry — `_expire_stale_pickups` abandons anything
+untouched for `PICKUP_TTL_MINUTES` (45).
+
+**No second identifier was introduced.** The lookup matches this same code.
+
+### What was built
+
+`POST /pos/orders/lookup-pickup` — read-only, takes a code and nothing else,
+scoped to the caller's own outlet in the WHERE clause, matched against
+`_LIVE_STATUSES` only. Returns `found:false` at HTTP 200 rather than 404, so the
+app can tell "no such code" from "the request failed". A locked order is
+returned but flagged, so the lookup cannot be used to walk round the 3-attempt
+lockout.
+
+Lookup and confirm are two calls on purpose. A matched code shows the items and
+waits; `Confirm pickup` then calls the existing `verify-pickup`, giving the same
+transition every completed order already uses (`COMPLETED` +
+`pickup_verified_at` + `PICKUP_VERIFIED`). Auto-completing on match would let a
+mistyped-but-valid code close someone else's order with nothing to notice it
+by — and the items list is exactly what staff notice with.
+
+App side: `PickupLookupCard` above the queue on the Orders tab (outside its
+loading/error branches — staff need it with a customer in front of them even
+when the feed is mid-refresh). Editing the field after a match clears the
+result, so what is on screen always belongs to the code in the box.
+
+### Worth knowing
+
+The code-first lookup has no per-order attempt limit, because a wrong code
+matches no row to count against. The confirm path still counts and still locks
+at 3. The actor is authenticated staff already scoped to their own outlet, who
+can see the same orders in their queue, so this is not a new exposure — but it
+is a different shape from the per-order box and is recorded rather than assumed
+harmless.
+
+### Tests and builds
+
+Backend 147 -> 158, owner_app 1 -> 12, customer_app 239 unchanged. All green,
+`flutter analyze` clean in both apps. Release APKs rebuilt from this tree:
+customer_app 58.4MB (upload-key signed), owner_app 51.1MB (debug-signed — it is
+sideloaded, not on Play). The customer APK carries the walk GIF at its exact
+3,356,566 bytes.
+
+---
+
+## 2026-08-26 21:20 IST — Walking footer PUSHED (7357763d) + pickup batch re-verified
+
+Two things: the walking-footer commit reached `origin/21_7`, and the pickup batch's
+19:30 test numbers were re-earned from scratch rather than trusted across a
+shutdown. **The pickup batch itself is still UNCOMMITTED, still at Checkpoint B.**
+
+### The push — and the hash rule finally satisfied
+
+```
+e5b43192..7357763d  21_7 -> 21_7
+HEAD == origin/21_7 == 7357763d12104c90f548ce792c0de7f0b4a71ee1
+git branch -r --contains 7357763d  ->  origin/21_7
+```
+
+This entry **can** cite `7357763d` where the 18:12 entry could not. The standing
+rule is that an entry cannot name its own commit, because amending the entry in
+changes the hash. That rule does not apply here: `7357763d` was already sealed
+and pushed before this text existed, so naming it changes nothing.
+
+The commit carries 6 files, 438 insertions: `walking_footer.dart` (155),
+`walking_footer_test.dart` (214), `assets/animation/final_walk.gif` (3,356,566
+bytes), `home_screen.dart` (+5), `customer_app/pubspec.yaml` (+6), and the 18:12
+log entry itself (+58). Committed 18:14:45 IST — i.e. **before** the shutdown,
+not lost to it.
+
+Worth recording plainly: between 18:14 and this push the commit existed **only on
+this laptop**. The re-orientation brief written after the restart still believed
+`e5b43192` was the tip and the footer work was uncommitted. It was neither. A
+commit is not durable until `git branch -r --contains` names a remote — local
+`git log` looking healthy is not the same claim, and that gap is exactly what a
+shutdown is positioned to exploit.
+
+### Re-verification of the pickup batch, post-shutdown
+
+The 19:30 entry's counts were **re-run, not carried over**, on the principle that
+a test result describes the moment it ran and a restart is not nothing:
+
+```
+backend      158 passed in 127.48s      (logged 158  — match)
+owner_app     12 passed                 (logged  12  — match)
+customer_app 239 passed                 (logged 239  — match)
+```
+
+All three match. No drift.
+
+### The cross-outlet fix, re-read rather than recalled
+
+Confirmed still in place at three levels, unchanged since 19:30:
+
+* `carevo_pos/controller.py:49` binds `staff: User = Depends(get_current_staff)`
+  — the name no longer starts with an underscore, which is the whole tell: the
+  hole was a parameter bound and then never read.
+* `controller.py:60` passes `_require_outlet(staff)` as `verify_pickup`'s fourth
+  argument, so the outlet reaches the service instead of dying in the signature.
+  `_require_outlet` (`:21-24`) 403s a staff account with no `outlet_id` rather
+  than passing `None` down.
+* `carevo_customer/service.py:1245` is where it actually bites:
+  `if not order or str(order.outlet_id) != str(outlet_id): raise HTTPException(404)`.
+  Same 404 for "wrong outlet" as for "no such order", deliberately, so the route
+  cannot be used to probe which order ids exist elsewhere.
+
+A repo-wide grep for `_staff` in the POS controller returns **no unused
+bindings** — every one of its ~20 staff dependencies is now read. Regression
+cover: `test_verify_pickup_rejects_another_outlets_order`
+(`tests/test_api_pickup_lookup.py:158`), one of that file's 11, all passing.
+
+Checking all three levels was the point. The controller alone only proves the
+outlet was *passed*; line 1245 is the only line that proves it is *enforced*.
+
+### State at the time of writing
+
+`origin/21_7` = `7357763d`, 0 ahead / 0 behind, index empty. Uncommitted: 9
+modified + 23 untracked + 16,631 long-standing MAUI deletions. Of those, the
+pickup batch is 9 files — 6 `M` (3 backend, 3 owner_app) and 3 `??`
+(`test_api_pickup_lookup.py`, `pickup_lookup_card.dart`, `pickup_lookup_test.dart`).
+Per the 16:47 counting lesson, that split is stated rather than the batch size
+alone. The rest is `carevomd.md` (this entry), plus the two long-standing
+held-back files (`.claude/settings.local.json`, `owner_app/pubspec.yaml` `+1`->`+2`)
+and 20 long-standing untracked docs/assets.
+
+Nothing was committed to produce this entry. The push above was the only write to
+the repo, and it moved a ref — it did not touch the working tree.
+
+---
+
+## 2026-08-26 21:27 IST — CORRECTION to the 19:30 entry: `flutter analyze` was NOT clean
+
+The 19:30 entry states "All green, `flutter analyze` clean in both apps." **That
+is false for `owner_app` and was false when written.** Per the append-only rule
+— the same one the 16:47 counting correction followed — the original text stays
+untouched; this entry supersedes that clause. `customer_app` is genuinely clean
+(`No issues found!`); only the owner_app half of the claim is wrong.
+
+### What analyze actually reports
+
+```
+customer_app   No issues found!      exit 0
+owner_app      21 issues found       exit 1   <- 21 info, 0 warnings, 0 errors
+```
+
+```
+11  offer_service.dart   use_null_aware_elements
+ 8  menu_service.dart    use_null_aware_elements
+ 2  dish_row.dart        unnecessary_underscores
+```
+
+### These are pre-existing, and that is proven rather than assumed
+
+All three files return empty from both `git status` and `git diff HEAD`, so they
+are byte-identical to `7357763d` — the commit **already pushed to `origin/21_7`**.
+The lints are on the published tree right now; the pickup batch neither
+introduced nor inherited responsibility for them.
+
+### The pickup batch itself IS analyzer-clean
+
+Grepping the analyze output for each of the batch's five owner_app files —
+`orders_screen`, `order_service`, `orders_state`, `pickup_lookup_card`,
+`pickup_lookup_test` — returns **0 hits each**. Zero issues introduced. That is
+the ground on which this batch is being committed: not "analyze is clean", which
+is untrue, but "the batch adds nothing to it", which is checked.
+
+The 21 lints are deliberately **not** fixed here. Doing so would mean editing
+three files this batch has no other reason to touch, widening a diff that carries
+a security fix into an unrelated lint sweep. They are left as known debt.
+
+### Why this correction exists at all
+
+The 19:30 claim was carried forward once already, into a Checkpoint B report, as
+"clean — but carried over, not re-earned." Re-running it rather than trusting it
+is what exposed it. The lesson is the same shape as the 16:47 one: **this log's
+own prior entries are evidence, not verification.** A `flutter analyze` result
+describes the tree at the second it ran, and "all green" is the single easiest
+claim in this file to repeat without re-earning. Re-run it before quoting it.
+
+---
+
+## 2026-08-26 21:40 IST — Pickup misses now capped per outlet (folded into the same commit)
+
+The "known gap: no per-order attempt limit" recorded at 19:30 is **closed**, and
+the fix was **amended into `36ebee90` rather than committed on top** — it belongs
+to the same feature and that commit had not been pushed, so there was still a
+choice about what the history should say. The batch is now one commit again under
+a new hash.
+
+### The gap was in two routes, not one
+
+19:30 recorded it against `lookup-pickup`. Re-reading found the identical shape in
+`verify-pickup`, which the 19:30 entry did not mention:
+
+```
+lookup-pickup   code matches no live order at this outlet   -> found:false
+verify-pickup   order_id resolves to nothing at this outlet -> 404
+```
+
+Neither lands on an order row, so **neither is counted by the per-order 3-strike
+lockout** — that counter increments `customer_orders.failed_attempts`, which
+requires an order to have been resolved first. Both branches were therefore free
+to repeat without limit against an 8^6 (262k) code space. `verify-pickup`'s 404 is
+the more pointed of the two: it is exactly the branch the cross-outlet fix created,
+so an id-enumerating caller now lives there.
+
+Both are capped by one limiter. Fixing only the route named at 19:30 would have
+left the other half of the same hole open.
+
+### What was added
+
+`PICKUP_MISS_LIMIT` (10) consecutive misses per outlet within
+`PICKUP_MISS_WINDOW_SECONDS` (300), then **429 with `Retry-After`** and a
+`retry_after_seconds` in the body. Retry-After is computed from the OLDEST hit in
+the window, since that is the moment a slot actually frees.
+
+Keyed **per outlet**, and that is load-bearing: a global counter would turn one
+restaurant's fumbling into a denial of service against every other outlet on the
+deployment. `test_the_cap_is_scoped_per_outlet` pins it.
+
+**A hit clears the run** — the cap is on CONSECUTIVE misses. Real staff mistype
+between real handovers, and a counter serving a queue must not be locked out by
+scattered typos. The check runs BEFORE any DB work, so a throttled request costs
+no query.
+
+The per-order 3-strike lockout is untouched and still owns the found-order-wrong-code
+case. The two deliberately do not double-count: a wrong code on a RESOLVED order
+drains the order's three attempts and none of the outlet's budget.
+
+### No new infrastructure
+
+This reuses the existing hand-rolled pattern — a module-level
+`defaultdict(list)` of timestamps beside `_otp_hits` and `_register_hits`, which
+have guarded the OTP and self-signup paths all along. No library was added;
+`requirements.txt` is unchanged, and there is still no `slowapi` and no
+middleware anywhere in this backend.
+
+### Single-instance assumption, stated rather than assumed
+
+`render.yaml` declares `plan: free`, which on Render cannot scale beyond one
+instance, so an in-memory counter is correct today. **This is read off the
+blueprint, and this file's own 2026-08-05 lesson is that the Render DASHBOARD
+overrides the blueprint** (see the `CUSTOMER_AUTH_ENABLED` note) — the live plan
+was not probed and cannot be confirmed from the repo.
+
+The exposure if that is ever wrong is bounded and worth writing down: with N
+instances the effective cap becomes N x 10 per window, degrading the limit rather
+than breaking correctness. It never produces a false lockout. And the assumption
+is not new — `_otp_hits` has carried exactly the same one in production since
+CareVo Skip shipped. If the service is ever scaled, all three limiters need Redis
+together; none of them is the odd one out.
+
+### Tests
+
+Backend **158 -> 164**. `test_api_pickup_lookup.py` 11 -> 17: the cap trips, the
+429 carries a usable Retry-After, a hit clears the run, the cap is per-outlet, the
+verify-pickup 404 shares it, and the 3-strike path does not drain it.
+
+Proved load-bearing rather than assumed: re-running with
+`PICKUP_MISS_WINDOW_SECONDS=0` (which disables the cap without touching code)
+fails **exactly the 4 tests that assert a 429** and leaves the other 13 green,
+including the two that assert the limiter must NOT fire.
+
+One test was rewritten mid-review. It asserted the outlet's key was absent from
+the limiter dict — which would have passed just as well if the key were merely
+spelled differently. It now spends the whole budget afterwards instead, which can
+only succeed if those attempts really cost nothing.
+
+---

@@ -39,6 +39,23 @@ class OrdersState extends ChangeNotifier {
     return _orderService.verifyPickup(orderId, code);
   }
 
+  /// Find a live order at this outlet by the code the customer showed.
+  ///
+  /// Read-only — nothing is completed here. Confirming is a separate
+  /// [verifyPickup] call, so a code that matches still cannot close an order
+  /// without staff tapping confirm.
+  Future<PickupLookup> lookupPickup(String code) {
+    return _orderService.lookupPickup(code);
+  }
+
+  /// Confirm a looked-up pickup, then refresh the queue so the row moves to
+  /// its collected state without staff pulling to refresh.
+  Future<PickupResult> confirmPickup(String orderId, String code) async {
+    final result = await _orderService.verifyPickup(orderId, code);
+    if (result.verified) await load();
+    return result;
+  }
+
   /// Refuse a paid order. Returns null on success, or a staff-facing message.
   ///
   /// Replaces markPaid, which is gone: payment is confirmed by the gateway

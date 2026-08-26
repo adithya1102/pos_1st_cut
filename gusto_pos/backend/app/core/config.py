@@ -18,6 +18,16 @@ class Settings(BaseSettings):
     # auto-abandoned (check-on-read), freeing its pickup_code for reuse.
     PICKUP_TTL_MINUTES: int = 45
 
+    # Cap on CONSECUTIVE pickup-code misses per outlet, over a short sliding
+    # window. A miss is a code (or order id) that resolves to no order of the
+    # caller's own outlet — i.e. lookup-pickup returning found:false and
+    # verify-pickup returning 404. Neither lands on an order row, so neither is
+    # counted by the per-order 3-strike lockout: that one guards a KNOWN order,
+    # this one guards the space of codes around it. A hit resets the counter,
+    # so a busy counter with the occasional typo never trips it.
+    PICKUP_MISS_LIMIT: int = 10
+    PICKUP_MISS_WINDOW_SECONDS: int = 300
+
     # Master switch for the customer OTP login path. Set false on any publicly
     # reachable deploy while OTP_STUB_MODE is still on, otherwise anyone can mint
     # a customer token for an arbitrary phone number with the stub code.

@@ -359,6 +359,18 @@ class VerifyPickupOut(BaseModel):
     attempts_remaining: Optional[int] = None
 
 
+class LookupPickupIn(BaseModel):
+    """The code the customer shows at the counter. No order id: staff have the
+    code and nothing else, which is the whole point of the lookup.
+
+    The bound is loose rather than the code's own 6 characters because the
+    service strips and upper-cases before matching. A tight limit rejects a
+    trailing space as a 422 the app cannot explain, instead of the clean
+    "not found" (or match) that the same input deserves.
+    """
+    pickup_code: str = Field(..., min_length=1, max_length=16)
+
+
 # --------------------- Owner App (staff-authed POS) -------------------------
 class OwnerOutletOut(BaseModel):
     id: uuid.UUID
@@ -453,6 +465,21 @@ class OwnerOrderOut(BaseModel):
     #: COMPLETED_GRACE), so the app never has to time the removal itself.
     pickup_verified_at: Optional[datetime] = None
     items: list[OwnerOrderLineOut] = []
+
+
+class LookupPickupOut(BaseModel):
+    """Result of a pickup-code lookup.
+
+    A miss is `found: false` with HTTP 200, not a 404 — the app has to tell
+    "no live order has that code" apart from "the request failed", and a
+    status code that also means network/route trouble cannot carry that.
+    """
+    found: bool
+    #: True when the order exists but is locked out after 3 failed attempts.
+    #: The app shows the lockout rather than a confirm button the server
+    #: would only refuse with a 423.
+    locked: bool = False
+    order: Optional[OwnerOrderOut] = None
 
 
 class MarkPaidOut(BaseModel):

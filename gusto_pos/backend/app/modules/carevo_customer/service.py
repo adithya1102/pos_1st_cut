@@ -38,6 +38,11 @@ from app.modules.promotions.service import PromotionService
 _otp_hits: dict[str, list[float]] = defaultdict(list)
 # Per-IP limiter for public owner self-signup (POST /register), same pattern.
 _register_hits: dict[str, list[float]] = defaultdict(list)
+# Per-OUTLET limiter for pickup-code misses, same pattern and same caveat.
+# Keyed by outlet rather than by IP or order: the thing being guarded is the
+# guessing of codes at one counter, and every request already arrives with an
+# authenticated staff account whose outlet_id is the natural bucket.
+_pickup_miss_hits: dict[str, list[float]] = defaultdict(list)
 
 # Default categories seeded for every self-registered outlet, so the owner has
 # real options in the dish form's category picker immediately. Order = display.
@@ -1219,16 +1224,89 @@ class CarevoService:
                 pass
 
     # ------------------------------ POS ------------------------------------
+    # --------------------------- pickup miss limit -------------------------
+    # The per-order 3-strike lockout only counts attempts against an order the
+    # caller already resolved. A miss resolves nothing, so before this it cost
+    # the caller nothing at all and could be repeated without limit — the code
+    # space is 8^6, small enough that unmetered guessing is worth denying.
     @staticmethod
-    async def verify_pickup(db: AsyncSession, order_id: uuid.UUID, pickup_code: str) -> dict:
+    def check_pickup_miss_limit(outlet_id) -> None:
+        """Refuse further pickup-code attempts for an outlet that keeps missing.
+
+        Raises 429 with a Retry-After hint rather than failing quietly, so the
+        app can tell staff to wait instead of showing "not found" for a code
+        that was never actually looked up.
+        """
+        now = time.time()
+        window = float(settings.PICKUP_MISS_WINDOW_SECONDS)
+        key = str(outlet_id)
+        hits = [t for t in _pickup_miss_hits[key] if now - t < window]
+        _pickup_miss_hits[key] = hits
+        if len(hits) >= settings.PICKUP_MISS_LIMIT:
+            # Until the OLDEST hit falls out of the window — that is the moment
+            # a slot frees up, so it is what the client should wait for.
+            retry_after = max(1, int(window - (now - hits[0])) + 1)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={
+                    "error": "too_many_pickup_attempts",
+                    "message": (
+                        "Too many incorrect pickup codes. "
+                        f"Try again in about {retry_after} seconds."
+                    ),
+                    "retry_after_seconds": retry_after,
+                },
+                headers={"Retry-After": str(retry_after)},
+            )
+
+    @staticmethod
+    def record_pickup_miss(outlet_id) -> None:
+        """Count one miss. Called only where nothing resolved."""
+        key = str(outlet_id)
+        _pickup_miss_hits[key].append(time.time())
+
+    @staticmethod
+    def clear_pickup_misses(outlet_id) -> None:
+        """A hit clears the outlet's misses — the limit is on CONSECUTIVE ones.
+
+        Real staff mistype, and a counter serving a queue should not be locked
+        out by scattered typos spread across successful handovers.
+        """
+        _pickup_miss_hits.pop(str(outlet_id), None)
+
+    @staticmethod
+    async def verify_pickup(
+        db: AsyncSession,
+        order_id: uuid.UUID,
+        pickup_code: str,
+        outlet_id: uuid.UUID,
+    ) -> dict:
+        """Confirm a pickup code and close the order.
+
+        `outlet_id` is the CALLER's outlet and is required. Without it this
+        route took an order_id from the request body and looked it up
+        unscoped, so any authenticated staff account could complete any
+        order in the system — including another restaurant's. It now 404s
+        exactly like mark_order_paid_by_staff does, and the 404 is
+        deliberately indistinguishable from "no such order": a caller must
+        not be able to probe which ids exist outside their own outlet.
+        """
+        # Checked BEFORE any work: once an outlet is over its miss budget the
+        # request must not touch the database at all.
+        CarevoService.check_pickup_miss_limit(outlet_id)
+
         # Expire this order first if its pickup window lapsed, so a stale code
         # can't be verified (and doesn't cost the staff a failed attempt).
         await CarevoService._expire_stale_pickups(db, order_id=order_id)
 
         res = await db.execute(select(CustomerOrder).where(CustomerOrder.id == order_id))
         order = res.scalars().first()
-        if not order:
-            raise HTTPException(status_code=404, detail="Order not found")
+        if not order or str(order.outlet_id) != str(outlet_id):
+            # Nothing resolved, so the per-order counter cannot see this. Count
+            # it here instead — this is the branch that used to be free, and
+            # the one an id-enumerating caller lives in.
+            CarevoService.record_pickup_miss(outlet_id)
+            raise HTTPException(status_code=404, detail="Order not found for this outlet")
 
         if order.is_locked:
             raise HTTPException(status_code=423, detail={"verified": False, "locked": True})
@@ -1244,6 +1322,8 @@ class CarevoService:
         status_ok = order.status.upper() in _LIVE_STATUSES
 
         if code_ok and status_ok:
+            # Resolved and confirmed — this outlet is plainly not guessing.
+            CarevoService.clear_pickup_misses(outlet_id)
             order.status = "COMPLETED"
             order.pickup_verified_at = datetime.now(timezone.utc)
             order.updated_at = datetime.now(timezone.utc)
@@ -1274,6 +1354,91 @@ class CarevoService:
         await db.refresh(order)
         attempts_remaining = max(0, 3 - order.failed_attempts)
         return {"verified": False, "attempts_remaining": attempts_remaining, "locked": locked}
+
+    @staticmethod
+    async def lookup_pickup(
+        db: AsyncSession, outlet_id: uuid.UUID, pickup_code: str
+    ) -> dict:
+        """Find a live order at THIS outlet by its pickup code. Read-only.
+
+        Staff type the code the customer shows them and get back the order to
+        check against the bag. It deliberately does not close anything: the
+        confirm tap goes on to verify_pickup, which owns the state change. A
+        lookup that completed the order would mean a mistyped-but-valid code
+        closed someone else's order with no chance to notice.
+
+        No new identifier is introduced — this matches the SAME pickup_code
+        already issued at payment and shown in the customer app.
+
+        Scoping is by the caller's own outlet in the WHERE clause, so another
+        outlet's code cannot match even in principle. That is also why the
+        code alone is enough to find the order: it is unique among an outlet's
+        live orders by construction (_generate_pickup_code), though not
+        globally, so the outlet filter is what makes the lookup unambiguous
+        rather than merely private.
+        """
+        code = (pickup_code or "").strip().upper()
+        if not code:
+            # Not an attempt at a code, so it is not counted as a miss — the
+            # app refuses an empty box before it ever gets here.
+            return {"found": False}
+
+        # Checked BEFORE any work: once an outlet is over its miss budget the
+        # request must not touch the database at all.
+        CarevoService.check_pickup_miss_limit(outlet_id)
+
+        # Same check-on-read sweep the queue does, so a code whose pickup
+        # window has lapsed stops matching at the same moment the order
+        # leaves the queue rather than some later request.
+        await CarevoService._expire_stale_pickups(db, outlet_id=outlet_id)
+
+        row = (await db.execute(text("""
+            SELECT id, status, payment_status, is_locked, total_amount,
+                   created_at, pickup_verified_at
+            FROM customer_orders
+            WHERE outlet_id = :oid
+              AND upper(pickup_code) = :code
+              AND status = ANY(:live)
+            LIMIT 1
+        """), {
+            "oid": str(outlet_id),
+            "code": code,
+            "live": list(_LIVE_STATUSES),
+        })).first()
+
+        if not row:
+            CarevoService.record_pickup_miss(outlet_id)
+            return {"found": False}
+
+        # A real code at this outlet — clear the run of misses before it.
+        CarevoService.clear_pickup_misses(outlet_id)
+
+        items = (await db.execute(text("""
+            SELECT id, name_snap, quantity
+            FROM customer_order_items
+            WHERE customer_order_id = :id
+            ORDER BY created_at
+        """), {"id": str(row.id)})).fetchall()
+
+        return {
+            "found": True,
+            # Surfaced so the app can show the lockout instead of a confirm
+            # button it already knows the server will refuse with a 423.
+            "locked": bool(row.is_locked),
+            "order": {
+                "order_id": row.id,
+                "status": row.status,
+                "payment_status": row.payment_status,
+                "is_locked": bool(row.is_locked),
+                "total_amount": float(row.total_amount) if row.total_amount is not None else 0.0,
+                "created_at": row.created_at,
+                "pickup_verified_at": row.pickup_verified_at,
+                "items": [
+                    {"id": it.id, "name": it.name_snap, "quantity": it.quantity}
+                    for it in items
+                ],
+            },
+        }
 
     # ------------------------- Owner App (staff) ---------------------------
     @staticmethod

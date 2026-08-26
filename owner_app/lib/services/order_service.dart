@@ -24,6 +24,25 @@ class PickupResult {
   });
 }
 
+/// Outcome of a pickup-code lookup.
+///
+/// A miss is a normal result ([found] false), not an exception — "no live
+/// order has that code" is something staff need told plainly, and it must not
+/// look like the request failed.
+class PickupLookup {
+  final bool found;
+
+  /// Set when [found]; the order to check against the bag.
+  final Order? order;
+
+  /// The order exists but is locked out after 3 failed attempts.
+  final bool locked;
+
+  const PickupLookup({required this.found, this.order, this.locked = false});
+
+  const PickupLookup.miss() : found = false, order = null, locked = false;
+}
+
 /// Allowed notification kinds.
 enum NotifyType { readyNow, delayed10, itemUnavailable }
 
@@ -50,6 +69,29 @@ class OrderService {
     final data = await _client.get('/pos/orders');
     final list = (data as List<dynamic>?) ?? const [];
     return list.map((e) => Order.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  /// `POST /pos/orders/lookup-pickup` — find a live order by its pickup code.
+  ///
+  /// Read-only. The order is NOT completed by looking it up; that needs an
+  /// explicit [verifyPickup] call behind the staff's confirm tap.
+  ///
+  /// The backend scopes the search to the caller's own outlet, so this cannot
+  /// return another outlet's order whatever code is typed.
+  Future<PickupLookup> lookupPickup(String pickupCode) async {
+    final data = await _client.post(
+      '/pos/orders/lookup-pickup',
+      body: {'pickup_code': pickupCode.trim()},
+    );
+    final map = (data as Map<String, dynamic>?) ?? const {};
+    if ((map['found'] as bool?) != true) return const PickupLookup.miss();
+    final raw = map['order'] as Map<String, dynamic>?;
+    if (raw == null) return const PickupLookup.miss();
+    return PickupLookup(
+      found: true,
+      order: Order.fromJson(raw),
+      locked: (map['locked'] as bool?) ?? false,
+    );
   }
 
   /// `POST /pos/orders/verify-pickup`
