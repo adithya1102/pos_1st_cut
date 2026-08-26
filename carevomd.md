@@ -3062,3 +3062,58 @@ spelled differently. It now spends the whole budget afterwards instead, which ca
 only succeed if those attempts really cost nothing.
 
 ---
+
+## 2026-08-27 00:02 IST — owner_app versionCode: the 08-21 hold is RESOLVED
+
+`owner_app/pubspec.yaml` `1.0.0+1 -> 1.0.0+2`, committed alone as **`4540c34b`**.
+The build-name stays `1.0.0`; only the build-number moves. This closes the item
+that has been listed as "held back" in every tree snapshot since 2026-08-21.
+
+### It was not an orphaned bump
+
+Worth recording, because the working-tree entry looked for weeks like a stray
+edit nobody could account for. `+1` was the **`flutter create` default**, set in
+`9a7cea79` (2026-07-22) when owner_app was scaffolded, and never touched since —
+so every owner_app change in the five weeks after it shipped under versionCode 1.
+
+```
+19  commits touching owner_app/lib/**   since 9a7cea79
+21  commits touching owner_app/**       since 9a7cea79
+85  files, +4531/-220                   cumulative owner_app diff
+```
+
+The most recent is `f2d786c0`, this session's pickup-by-code batch.
+
+One trap for anyone re-deriving this: `2971e8c2` is the last commit that touched
+`owner_app/pubspec.yaml`, so a `git log -- owner_app/pubspec.yaml` makes it look
+like the baseline. It is not — `2971e8c2` only added the `firebase_*`
+dependencies and left the version line alone. Ask when the VERSION LINE last
+changed (`git log -S`), not when the file last changed; here the two differ by 14
+commits.
+
+`android/app/build.gradle.kts:42` reads `versionCode = flutter.versionCode`, so
+the bump moves the real APK versionCode rather than being cosmetic.
+
+### The APK has NOT been rebuilt
+
+**The owner_app APK currently installed anywhere still reports versionCode 1.**
+A pubspec edit only reaches an artifact through the next `flutter build`; the
+51.1MB debug-signed APK from the 19:30 session predates this commit and is
+unchanged by it. Anyone checking the bump by reading it off a device will see 1
+and be right to.
+
+### Why it was held so long, and why that ends here
+
+The 2026-08-21 decision kept it out of feature commits: owner_app is sideloaded,
+not distributed through Play, so its versionCode has **no Play upload constraint
+to reconcile against** — nothing forces it up, which is exactly why it never went
+up on its own. That makes it a deliberate call rather than bookkeeping a feature
+commit should make silently, and it is why this is its own one-line commit with
+the reasoning attached instead of a line buried in `f2d786c0`.
+
+The flip side, now visible: an unconstrained versionCode does not drift upward by
+itself. Nineteen commits of real change accumulated under a single number. If
+owner_app APKs are ever to be told apart in the field, the bump has to be someone's
+explicit habit at build time — there is no Play upload to fail and remind anyone.
+
+---
