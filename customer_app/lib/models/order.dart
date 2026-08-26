@@ -90,20 +90,48 @@ class OrderItemLine {
   const OrderItemLine({
     required this.name,
     required this.quantity,
-    required this.lineTotal,
+    required this.unitPrice,
   });
 
   final String name;
   final int quantity;
-  final double lineTotal;
+
+  /// Price for ONE of this item, as snapshotted when the order was placed.
+  ///
+  /// The API's `price_snap` is per-unit — the server multiplies by quantity
+  /// itself when it sums the order total (carevo_customer/service.py:476-477),
+  /// so it is emitted unmultiplied. Storing the unit price and deriving the
+  /// line below keeps that distinction visible instead of leaving a field
+  /// named "total" holding a per-unit number.
+  final double unitPrice;
+
+  /// What this line costs — derived, never parsed.
+  ///
+  /// A getter rather than a field so it cannot disagree with [unitPrice] and
+  /// [quantity]. Same shape [CartItem] already uses for the pre-order side.
+  double get lineTotal => unitPrice * quantity;
 
   factory OrderItemLine.fromJson(Map<String, dynamic> json) {
     return OrderItemLine(
-      name: (json['name'] ?? json['menu_item_name'] ?? 'Item') as String,
+      // `name_snap` / `price_snap` are the names OrderItemOut actually
+      // serialises (carevo_customer/schema.py:232-239). This used to try
+      // `name`/`menu_item_name` and `line_total`/`total` — none of which the
+      // backend has ever emitted, so every line rendered as "Item ₹0" while
+      // the order total, read from the correct key, stayed right.
+      //
+      // The alternative-name chains are gone deliberately: they are what made
+      // a field-name mismatch look like real data worth zero rupees instead of
+      // failing loudly. A wrong key should now surface as 0/'Item' from ONE
+      // named source, not be silently papered over by a second guess.
+      //
+      // `name_snap` is genuinely nullable (schema Optional[str], column
+      // nullable=True), so its fallback covers a real server state, not a
+      // spelling. `price_snap` is non-null in both schema and column; its
+      // `?? 0` is defensive against a malformed response only — this app has
+      // form for a single bad parse taking out a whole screen.
+      name: (json['name_snap'] as String?) ?? 'Item',
       quantity: (json['quantity'] as num?)?.toInt() ?? 1,
-      lineTotal: (json['line_total'] as num?)?.toDouble() ??
-          (json['total'] as num?)?.toDouble() ??
-          0,
+      unitPrice: (json['price_snap'] as num?)?.toDouble() ?? 0,
     );
   }
 }
