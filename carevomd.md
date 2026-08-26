@@ -3117,3 +3117,66 @@ owner_app APKs are ever to be told apart in the field, the bump has to be someon
 explicit habit at build time — there is no Play upload to fail and remind anyone.
 
 ---
+
+## 2026-08-27 00:08 IST — owner_app APK rebuilt; versionCode 2 now in an artifact
+
+Follow-up to the entry directly above, which says "The APK has NOT been rebuilt."
+**That is now stale** — a build exists. Per the append-only rule the original text
+stands; this supersedes that section only.
+
+```
+path        owner_app/build/app/outputs/flutter-apk/app-release.apk
+size        53,546,875 bytes  (51.1 MB)
+timestamp   2026-08-27 00:06:56 IST
+sha256      ec62fbae14494cdf5222d6218c6ac1461aefc11ea970184326d983ea010b81fb
+```
+
+### versionCode 2 read out of the APK, not off the source
+
+```
+aapt dump badging ->
+package: name='com.carevo.owner_app' versionCode='2' versionName='1.0.0'
+sdkVersion:'24'  targetSdkVersion:'36'  application-label:'CareVo Owner'
+```
+
+This is the point of the whole exercise: `pubspec.yaml` saying `+2` proves only
+that the source says `+2`. The chain from there to the artifact runs through
+`android/app/build.gradle.kts:42` (`versionCode = flutter.versionCode`), and the
+only way to know it held is to ask the built file. It did.
+
+### Identical size to the 19:30 APK, different artifact
+
+Both read 51.1 MB. They are **not the same build**, and size is not what
+separates them:
+
+```
+19:30 build   versionCode 1   predates f2d786c0 — no pickup-by-code at all
+this build    versionCode 2   ec62fbae14494cdf5222d6218c6ac1461aefc11ea970184326d983ea010b81fb
+```
+
+The earlier one was cut before the pickup batch was committed, so it lacks
+`PickupLookupCard` and the Orders-tab wiring entirely — a difference of hundreds
+of lines that rounds away completely at MB precision. **Compare the SHA-256, or
+read the versionCode; never the size.** The 19:30 entry quotes "owner_app 51.1MB"
+with no hash, which is exactly the citation that cannot distinguish these two.
+
+### Build inputs, recorded so this is reproducible
+
+Plain `flutter build apk --release`, no dart-defines. `FORCE_RECAPTCHA_FLOW` was
+checked and deliberately **not** passed: it exists only in
+`customer_app/lib/config/app_config.dart` and gates Firebase phone-OTP reCAPTCHA.
+owner_app authenticates staff by username/password and has no phone-OTP path, so
+the flag would set a key nothing reads. owner_app's own dart-defines
+(`CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_UPLOAD_PRESET`) both have working defaults.
+`maps.properties` and `google-services.json` were present, so the Maps key and FCM
+config were injected normally.
+
+Signed `C=US, O=Android, CN=Android Debug` — debug-signed by design, not an
+oversight: `build.gradle.kts:52` sets the release type to the debug signing config
+with a standing TODO. Same reason the versionCode was unconstrained in the first
+place — owner_app is sideloaded, never uploaded to Play.
+
+Built from a clean tree at `68f87edb` (0 ahead, 0 behind), and the build left it
+clean — outputs are gitignored, so nothing here changes the repo.
+
+---
