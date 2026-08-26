@@ -17,6 +17,7 @@ nothing here is coupled to the three real account ids or to a production date.
 """
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -149,6 +150,85 @@ async def test_one_customers_cutoff_does_not_hide_anothers_orders(
         )
     finally:
         await _set_cutoff(db, str(other), None)
+
+
+async def _get_order(client, seed, order_id: str):
+    return await client.get(
+        f"{API}/customer/orders/{order_id}", headers=seed["customer_auth"]
+    )
+
+
+async def test_a_hidden_order_404s_via_its_direct_id(client, seed, paid_order, db):
+    """The list filter alone left a hole: a direct link still returned the
+    order in full. Same shape as the cross-outlet verify-pickup gap — the
+    filter existed, but only on the path someone happened to look at."""
+    order_id = str(paid_order["id"])
+    assert (await _get_order(client, seed, order_id)).status_code == 200
+
+    now = datetime.now(timezone.utc)
+    await _set_created_at(db, order_id, now - timedelta(days=7))
+    await _set_cutoff(db, seed["customer_id"], now - timedelta(days=1))
+
+    r = await _get_order(client, seed, order_id)
+    assert r.status_code == 404, (
+        f"a hidden order must not resolve by direct id — got {r.status_code}"
+    )
+
+
+async def test_the_404_is_indistinguishable_from_no_such_order(
+    client, seed, paid_order, db
+):
+    """403 would confirm the id exists. 404 tells the caller nothing."""
+    order_id = str(paid_order["id"])
+    now = datetime.now(timezone.utc)
+    await _set_created_at(db, order_id, now - timedelta(days=7))
+    await _set_cutoff(db, seed["customer_id"], now)
+
+    hidden = await _get_order(client, seed, order_id)
+    nonexistent = await _get_order(client, seed, str(uuid.uuid4()))
+
+    assert hidden.status_code == nonexistent.status_code == 404
+    assert hidden.json() == nonexistent.json(), (
+        "a hidden order must be indistinguishable from one that never existed"
+    )
+
+
+async def test_an_order_after_the_cutoff_still_resolves_by_id(
+    client, seed, paid_order, db
+):
+    order_id = str(paid_order["id"])
+    now = datetime.now(timezone.utc)
+    await _set_created_at(db, order_id, now - timedelta(minutes=5))
+    await _set_cutoff(db, seed["customer_id"], now - timedelta(days=1))
+
+    r = await _get_order(client, seed, order_id)
+    assert r.status_code == 200, r.text
+    assert str(r.json()["id"]) == order_id
+
+
+async def test_no_cutoff_means_direct_id_is_unaffected(client, seed, paid_order, db):
+    order_id = str(paid_order["id"])
+    await _set_created_at(db, order_id, datetime(2020, 1, 1, tzinfo=timezone.utc))
+    await _set_cutoff(db, seed["customer_id"], None)
+
+    r = await _get_order(client, seed, order_id)
+    assert r.status_code == 200, "a NULL cutoff must hide nothing, however old"
+
+
+async def test_clearing_the_cutoff_restores_direct_access(
+    client, seed, paid_order, db
+):
+    order_id = str(paid_order["id"])
+    now = datetime.now(timezone.utc)
+    await _set_created_at(db, order_id, now - timedelta(days=7))
+
+    await _set_cutoff(db, seed["customer_id"], now)
+    assert (await _get_order(client, seed, order_id)).status_code == 404
+
+    await _set_cutoff(db, seed["customer_id"], None)
+    assert (await _get_order(client, seed, order_id)).status_code == 200, (
+        "hiding is not deleting — the row is still there and comes straight back"
+    )
 
 
 async def test_the_owner_queue_is_unaffected_by_a_customer_cutoff(

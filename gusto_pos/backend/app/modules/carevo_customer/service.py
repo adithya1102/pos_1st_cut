@@ -606,12 +606,27 @@ class CarevoService:
 
     @staticmethod
     async def get_order(db: AsyncSession, order_id: uuid.UUID, customer: Customer) -> CustomerOrder:
+        """One of the customer's own orders, by id.
+
+        Honours `customers.history_cutoff_at` (migration 022) exactly as
+        list_my_orders does. Without it the cutoff hid an order from the LIST
+        while a direct link still returned it in full — a hole the shape of the
+        cross-outlet verify-pickup one fixed earlier: the filter existed, but
+        only on the path someone happened to look at.
+
+        The refusal is a 404, deliberately identical to "no such order", rather
+        than a 403 that would confirm the id exists. Nothing is deleted; the row
+        is still there and clearing the cutoff restores access instantly.
+        """
         res = await db.execute(select(CustomerOrder).where(CustomerOrder.id == order_id))
         order = res.scalars().first()
         if not order:
             raise HTTPException(status_code=404, detail="Order not found")
         if str(order.customer_id) != str(customer.id):
             raise HTTPException(status_code=403, detail="Not your order")
+        cutoff = getattr(customer, "history_cutoff_at", None)
+        if cutoff is not None and order.created_at is not None and order.created_at < cutoff:
+            raise HTTPException(status_code=404, detail="Order not found")
         return order
 
     @staticmethod
