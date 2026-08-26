@@ -3684,3 +3684,93 @@ applied: 22`). It is a throwaway local database, which exists precisely
 because these same append-only triggers make prod teardown impossible.
 
 ---
+
+## 2026-08-27 03:51 IST — CORRECTION: the direct-id hole is closed (6ffcf950)
+
+The entry directly above states that `GET /customer/orders/{order_id}`
+"is deliberately NOT filtered" and that "a direct link still resolves a hidden
+order". **That is no longer true.** Per the append-only rule the original text
+stands; this supersedes that clause only. Everything else in it still holds.
+
+### The hole
+
+Migration 022's cutoff was applied in `list_my_orders` and nowhere else, so the
+three retired accounts' orders vanished from the history LIST while a direct
+link returned them in full — items, totals, pickup code, everything.
+
+It was scoped that way on purpose and recorded as a decision rather than an
+oversight, which was the right call at the time. It was still a hole.
+
+**This is the same shape as the cross-outlet `verify-pickup` bug from earlier
+tonight**, and worth naming as a recurring pattern rather than two incidents:
+in both cases the filter existed and was correct — it was simply applied to one
+of the paths that reach the data. Not a missing feature; a feature applied
+where someone happened to look. When a rule is added to a query, the question
+to ask is "what else reads this row", not "does this query now behave".
+
+### The fix
+
+`get_order` performs the same cutoff check and refuses with **404**, using a
+`detail` string byte-identical to "no such order". A 403 would confirm the id
+exists; 404 tells the caller nothing. Same reasoning as verify-pickup's
+cross-outlet refusal.
+
+Placed in the shared service, not the one controller — which deliberately also
+covers its second caller, **`POST /customer/payment/simulate`**. An order
+retired from view should not be payable either, and filtering in the controller
+would have recreated the exact "one path guarded, one not" problem this commit
+exists to close. `PAYMENT_GATEWAY=stub` is set on prod, so that route is live
+rather than dev-only.
+
+**Noted, NOT fixed:** the ownership check above still returns **403** for
+another customer's order, which does confirm that id exists. Pre-existing, and
+outside this scope — but it is the same information-leak shape the 404 avoids,
+so it is written down rather than left to be rediscovered.
+
+### Verified on prod, and the mid-deploy catch made it conclusive
+
+The first probe landed BETWEEN the two deploys, which is a better proof than a
+single check:
+
+```
+list endpoint, cutoff account   HTTP 200  orders=0   <- eeb8f076 already live
+target order by direct id       HTTP 200             <- 6ffcf950 not yet
+```
+
+That rules out "404 for some unrelated reason" — the probe demonstrably
+returned 200 for the very order it later refused. It flipped 45s later:
+
+```
+[03:50:02] +  0s  HTTP 200
+[03:50:47] + 45s  HTTP 404
+```
+
+Final state on prod:
+
+```
+hidden order by direct id      404  {'detail': 'Order not found'}
+nonexistent uuid               404  {'detail': 'Order not found'}
+identical response?            True
+CONTROL order (no cutoff)      200
+list: cutoff account           200  orders=0
+list: control account          200  orders=10
+```
+
+The control matters as much as the target: an account with
+`history_cutoff_at IS NULL` still resolves its own order by direct id and still
+lists 10. This is a selective filter, not a broken endpoint — a distinction
+three zeroes on their own could not make.
+
+### Tests
+
+Backend **171 -> 176**. Five new, including one that compares the hidden-order
+response byte-for-byte against a random nonexistent uuid, so a future refactor
+back to 403 fails here rather than silently reintroducing the leak.
+
+Revert-proved: removing the three-line check fails exactly those 3 tests, the
+other 9 stay green.
+
+Still no data deleted. All 61 orders remain exactly where they were; clearing
+`history_cutoff_at` restores both read paths instantly.
+
+---
