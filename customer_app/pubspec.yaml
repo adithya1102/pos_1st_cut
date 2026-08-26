@@ -57,6 +57,12 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
+  assets:
+    # Walk-cycle art for the Home footer (WalkingFooter). Declared as a single
+    # file rather than the whole directory: assets/icon and assets/marketing
+    # are build-time and store-listing inputs and must NOT ship in the APK.
+    - assets/animation/final_walk.gif
+
 # Launcher icon generation: `dart run flutter_launcher_icons`.
 #
 # `app_icon.png` is the brand square: 1920x1920, no alpha, logo on a white

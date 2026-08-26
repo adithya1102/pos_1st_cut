@@ -2700,3 +2700,61 @@ Nothing was committed, built, or changed to produce this entry — like the one
 above it, it is a correction to the record, not to the tree.
 
 ---
+
+## 2026-08-26 18:12 IST — Walking footer: letter overlay dropped, plain loop kept
+
+The initial-on-the-shirt overlay is **abandoned**. `WalkingFooter` now draws the
+walk cycle and nothing else — no text, no `Stack`, no per-frame position table,
+and no read of `customer.name` or `AuthState` at all. 336 lines down to 155.
+
+### Why — a design decision, not a bug fix
+
+On-device the letter sat wrong. The code was then checked and **found correct**:
+
+* frame 0's table entry `Offset(0.43616, 0.45343)` is 34.3% of figure height,
+  inside the 22%-44% chest band, and all 70 entries land in-band (32.9%-34.7%);
+* frame 0 is not an outlier — its wrap-neighbour steps are 3.49px (56th pct)
+  and 5.24px (94th pct, only the 4th largest of 70), on the same smooth trace;
+* re-measuring the GIF from scratch reproduced the shipped table (y correlation
+  0.836, vertical travel 16.25px measured vs 16.2px documented);
+* the widget's index default before decode is 0, which is genuinely the first
+  decoded frame's index — the assumed value and the real one agree;
+* rendering frame 0 with the letter position marked puts it mid-torso.
+
+So the reported misposition was never reproduced off-device and **its root cause
+was never found**. The overlay was dropped rather than chased: it is decoration,
+and it was not worth more time than it had already taken. Recording this plainly
+because the deleted table was correct work — if the letter is ever wanted back,
+start from the fact that the measurements were sound and the fault lay somewhere
+downstream of them, not in the table.
+
+One real defect was found on the way and is now moot: the letter was drawn
+whenever a name existed but the figure only once `_image` was non-null, so
+during the pre-decode window the letter floated with no man behind it.
+
+### Also changed
+
+The inter-frame `Future.delayed` is now a cancellable `Timer` + `Completer`,
+released in `dispose()`. It previously kept ticking up to 70ms after the widget
+was gone — harmless in the app, fatal to a widget test ("a Timer is still
+pending after the widget tree was disposed"). Pre-existing, not introduced here.
+
+### Tests
+
+15 letter/table tests deleted, 11 written: first frame renders, the box holds
+its size before decode so Home does not jump, the animation advances, it loops
+(stepped 75 frames past the 70-frame clip), dispose mid-playback is clean, it
+renders with no provider in the tree, it draws no `Text`, and the sizing rules
+hold at 320/400/800/90. Suite 243 -> 239, all passing, `flutter analyze` clean.
+
+These decode the **real GIF** — with the letter gone the frame index is no
+longer observable from outside, so the old test seam went with it. Note for
+whoever touches them: playback starts in `initState`, so its timer lives in the
+test's fake-async zone and only moves when the clock is pumped. Waiting in real
+time will not advance it.
+
+`shirt_stability.py`, which `walking_footer.dart` used to cite for regenerating
+the table, never existed in the repo — it lived in a scratchpad that a restart
+destroyed. That reference is gone with the table.
+
+---

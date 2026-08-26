@@ -15,6 +15,7 @@ import '../theme/widgets/neo_card.dart';
 import '../theme/widgets/page_header.dart';
 import '../widgets/account_button.dart';
 import '../widgets/active_order_card.dart';
+import '../widgets/walking_footer.dart';
 import 'cart_screen.dart';
 import 'location_screen.dart';
 import 'name_capture_screen.dart';
@@ -347,6 +348,8 @@ class _ReturningHome extends StatelessWidget {
             ),
           ],
         ),
+        const SizedBox(height: 8),
+        const WalkingFooter(),
       ],
     );
   }
@@ -574,6 +577,8 @@ class _FirstRunHome extends StatelessWidget {
           textAlign: TextAlign.center,
           style: textTheme.bodySmall?.copyWith(color: c.inkSoft),
         ),
+        const SizedBox(height: 8),
+        const WalkingFooter(),
       ],
     );
   }
