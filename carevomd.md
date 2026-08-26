@@ -3259,3 +3259,112 @@ in advance so that if it does fail again, that is confirmation rather than a
 fresh mystery.
 
 ---
+
+## 2026-08-27 00:53 IST — "Item ₹0" on the pickup screen: a field-name mismatch (7783c43f)
+
+Every line item on the customer pickup screen rendered as **"Item ₹0"** while
+the order total directly above it stayed correct. Committed as `7783c43f`.
+
+### The data was never wrong — checked before touching any code
+
+Read-only queries against **prod** (`ep-morning-meadow-ao6m0otk`, confirmed
+against AGENT_GUARDRAILS §1 before connecting; SELECTs only):
+
+```
+customer_order_items   123 lines   zero_price 0   null_price 0   ₹1–₹350
+customer_orders        103 orders  zero_total 0   null_total 0   ₹1–₹3020
+menu_items              61 items   zero_base  0   null_base  0
+```
+
+There is also a structural proof that made the query a confirmation rather than
+a discovery: `price_snap` and `total_amount` are computed from the **same
+`price` variable in the same loop** (`carevo_customer/service.py:476-486`). A
+correct total sitting above ₹0 lines is arithmetically impossible from the data
+side. It could only ever have been a read error.
+
+### The bug
+
+`OrderItemLine.fromJson` asked for `line_total`/`total` and `name`/
+`menu_item_name`. **The API emits none of those four.**
+`GET /customer/orders/{id}` is `response_model=OrderOut`, whose items are
+`OrderItemOut` (`schema.py:232-239`): `name_snap`, `price_snap`, `quantity`.
+No pydantic aliases anywhere in that file, so those are the literal wire names
+— and `grep name_snap|price_snap customer_app/lib/` returned **zero hits**.
+
+The price half was the reported symptom; the name half was the same two lines
+and had not been reported. Both were fixed together.
+
+### The fix
+
+`unitPrice` is the parsed field and `lineTotal` is a **derived getter**
+(`unitPrice * quantity`), so the two cannot disagree. `price_snap` is per-unit
+— the server multiplies by quantity itself when summing — so a straight rename
+to `lineTotal` would have under-charged every line with quantity > 1. This is
+also the shape `CartItem` already uses on the pre-order side, so both halves of
+the app now model price identically.
+
+**The alternative-name chains were removed deliberately, and that is the real
+lesson.** A chain like `line_total ?? total ?? 0` converts a wrong key into a
+plausible ₹0 instead of a loud failure — which is exactly how a field name that
+never existed survived to a release. Two single-key defaults remain, each for a
+reason that was checked rather than assumed: `name_snap` is nullable in both
+schema and column, so `?? 'Item'` covers a genuine server state; `price_snap`
+is non-null in both, so its `?? 0` is defensive against a malformed response
+only. **Do not add a second candidate key to either.** If a key is wrong, the
+correct outcome is that it is obvious.
+
+`total_amount` was untouched: no line of the diff mentions it and
+`pickup_screen.dart` is unmodified.
+
+### The discount, found by a test that failed for the right reason
+
+The end-to-end test was first written asserting the prod order's lines would
+sum to its total. **It failed, and the test was right.**
+
+```
+order 316d3097-…-cbc7b4   sum_of_lines 300.00   total_amount 285.00
+                          discount_amount 15.00   coupon_id NULL
+9 of 103 prod orders have lines != total
+```
+
+The ₹15 gap is a real `discount_amount`. The arithmetic assumption was wrong,
+not the parser — so the number was corrected from prod rather than adjusted to
+make the test pass. It now pins the gap deliberately, and a second test covers
+the undiscounted majority (94 of 103) where the two do agree. Any future change
+that starts deriving the order total from line items will fail there.
+
+**This is the same order behind both original bug reports, and it is the source
+of the "CBC7B4" hash** investigated in the earlier mission — its UUID tail is
+literally `cbc7b4`. The two symptoms and the mystery identifier were one row all
+along, which is worth remembering next time three separate-looking reports
+arrive together.
+
+### Incidental, recorded but NOT acted on
+
+`customer_orders` has **no `original_amount` column** in prod — a query
+selecting it fails with `UndefinedColumnError`. The value is derived
+server-side, despite schema comments citing "migration 016". Nothing is broken
+by this; it is noted because the next person to write a query against that
+table will hit it.
+
+### owner_app is not affected
+
+Its `OwnerOrderLineOut` (`schema.py:449-452`) and `OrderLineItem`
+(`owner_app/lib/models/order.dart:2-22`) carry `id`, `name`, `quantity` and no
+price field at all. A sweep of every `₹` in owner_app found the only
+order-surface currency to be `order_card.dart:74`, the order total, which
+parses correctly and is never zero in prod. **owner_app shows no per-item price
+rather than showing ₹0** — there was nothing there to fix.
+
+### Tests
+
+customer_app **239 -> 254**. The 15 new tests in
+`test/order_item_price_mapping_test.dart` cover `price_snap × quantity` across
+quantities 1/2/3/5/10/99 and decimals, names reading `name_snap`, the total
+still reading `total_amount`, and guards that payloads carrying contradictory
+`line_total: 999` / `name: 'WRONG'` are ignored.
+
+Revert-proved: restoring the old parser fails **11 of the 15**; the 4 that
+survive are the ones that do not depend on field names. `flutter analyze` clean.
+
+---
