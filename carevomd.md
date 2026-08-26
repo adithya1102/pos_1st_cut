@@ -3180,3 +3180,82 @@ Built from a clean tree at `68f87edb` (0 ahead, 0 behind), and the build left it
 clean — outputs are gitignored, so nothing here changes the repo.
 
 ---
+
+## 2026-08-27 00:16 IST — customer_app APK rebuilt: plain walking footer, no letter
+
+First customer_app build since the letter overlay was dropped at 18:12. The
+footer in this artifact is the walk cycle and nothing else.
+
+```
+path        customer_app/build/app/outputs/flutter-apk/app-release.apk
+size        61,280,387 bytes  (58.4 MB)
+timestamp   2026-08-27 00:16:02 IST
+sha256      2b28a1f74e97997379c09ec9870b33426c76187fc91a677925fa194479987ee2
+```
+
+Read out of the artifact, not asserted from source:
+
+```
+package: name='com.carevo.customer_app' versionCode='3' versionName='1.0.0'
+sdkVersion:'24'  targetSdkVersion:'36'
+V2 Signer DN: CN=CareVo, OU=CareVo, O=CareVo, L=Bengaluru, ST=Karnataka, C=IN
+assets/flutter_assets/assets/animation/final_walk.gif   3,356,566 bytes
+```
+
+Upload-key signed, unlike owner_app's debug-signed build. The walk GIF is
+bundled at its exact documented byte count.
+
+### THREE artifacts now share versionCode 3
+
+This is the trap from the owner_app entry, worse. `pubspec.yaml` has been
+`1.0.0+3` since before 08-25 and nothing forces it up, so:
+
+```
+4EC201A2…  2026-08-25 16:59  vC 3  letter overlay still present
+2b28a1f7…  2026-08-27 00:16  vC 3  letter GONE, plain loop
+```
+
+Both are sideloads outside the Play versionCode lineage, both carry
+`FORCE_RECAPTCHA_FLOW=true`, both report versionCode 3, and they differ by the
+entire 18:12 change. **A device cannot tell these apart, and neither can this
+log except by SHA-256.** If a customer_app APK is ever handed to anyone,
+record its hash in the same breath as its size — "58.4MB, vC 3" identifies
+nothing.
+
+### The flag is in the artifact only
+
+Built `--dart-define=FORCE_RECAPTCHA_FLOW=true`, the same sideload override as
+the 08-25 build: Play Integrity cannot vouch for a non-Play install. `git diff`
+on `pubspec.yaml` and `app_config.dart` is empty after the build — pubspec stays
+`1.0.0+3`, `app_config.dart` stays `defaultValue: false` — so only this file
+carries the forced path, exactly as on 08-25.
+
+Correcting a premise that came in with the request: **no earlier build in this
+session used this flag.** Tonight's only other build was owner_app, which does
+not have it at all (customer_app-only; owner_app authenticates staff by
+username/password and has no phone-OTP path). The flag's precedent is the 08-25
+session, not this one.
+
+### Reproducibility
+
+Built from a clean tree at `cc2ae7ac`. `walking_footer.dart` is 155 lines and
+greps clean of `letter|initial|shirt|Offset(|Stack|Text(|customer.name|
+AuthState|table`, with an empty `git diff HEAD` — so what built is exactly what
+`7357763d` committed, not a working-copy variant.
+
+The 8 untracked files under `customer_app/` are NOT build inputs:
+`pubspec.yaml:60-64` declares exactly one asset, `assets/animation/final_walk.gif`,
+with a comment that `assets/icon` and `assets/marketing` are store-listing inputs
+which must not ship. So this APK is reproducible from a clean clone despite
+those files being absent from git.
+
+### Expect the OTP failure to persist
+
+This build is unlikely to fix phone sign-in. The 08-26 logcat traced that to a
+device-local Keystore/Tink fault (`firebear_master_key_id` will not load), which
+sits DOWNSTREAM of this flag — on 08-25 the flag demonstrably worked and
+`RecaptchaActivity` still cancelled before rendering. Recording the expectation
+in advance so that if it does fail again, that is confirmation rather than a
+fresh mystery.
+
+---
