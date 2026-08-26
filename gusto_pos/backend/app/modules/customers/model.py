@@ -33,6 +33,23 @@ class Customer(Base):
         DateTime(timezone=True), nullable=True
     )
 
+    # History cutoff (migration 022). Orders created BEFORE this instant are
+    # hidden from this customer's own history (GET /customer/orders). NULL —
+    # every row today — means show everything, so the column is inert until set.
+    #
+    # Added to retire three development accounts' 61 leftover orders without
+    # deleting them: `order_events` and `prediction_log` carry BEFORE DELETE
+    # immutability triggers, so the rows genuinely cannot be removed. Same shape
+    # as CarevoService.RENAME_CUTOFF, which already hides pre-rename orders from
+    # owner_app's queue.
+    #
+    # Scope is deliberately narrow: this affects ONE read, the customer's own
+    # history list. owner_app's queue, the admin order log, the prediction
+    # engine and the rows themselves are all untouched.
+    history_cutoff_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     # Multi-tenancy: customers belong to an organization
     organization_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("organizations.id"), nullable=True

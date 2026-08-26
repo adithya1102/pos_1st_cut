@@ -2230,6 +2230,18 @@ class CarevoService:
 
         Scoped by customer_id taken from the bearer token - never from a
         client-supplied id - so one customer can never read another's orders.
+
+        Also honours `customers.history_cutoff_at` (migration 022): orders
+        created before it are omitted. NULL - every account but the three
+        retired development ones - means no cutoff and changes nothing.
+
+        This is a VIEW filter on one endpoint, not a delete. The rows stay
+        exactly where they are and remain visible to owner_app's queue, the
+        admin order log and the prediction engine. Clearing the column restores
+        them here instantly. That distinction matters: `order_events` and
+        `prediction_log` carry BEFORE DELETE immutability triggers, so those
+        orders cannot be removed even deliberately, and pretending otherwise by
+        hiding them everywhere would misrepresent what actually happened.
         """
         orders = (await db.execute(text("""
             SELECT co.id, co.outlet_id, o.location_name AS outlet_name,
@@ -2243,9 +2255,17 @@ class CarevoService:
             FROM customer_orders co
             LEFT JOIN outlets o ON o.id = co.outlet_id
             WHERE co.customer_id = :cid
+              -- Read off the Customer already resolved from the token, so no
+              -- join is needed. NULL cutoff short-circuits to "show all".
+              AND (CAST(:cutoff AS timestamptz) IS NULL
+                   OR co.created_at >= CAST(:cutoff AS timestamptz))
             ORDER BY co.created_at DESC
             LIMIT :limit
-        """), {"cid": str(customer.id), "limit": limit})).fetchall()
+        """), {
+            "cid": str(customer.id),
+            "cutoff": getattr(customer, "history_cutoff_at", None),
+            "limit": limit,
+        })).fetchall()
         if not orders:
             return []
 
