@@ -3917,3 +3917,133 @@ Also noted in passing: **`is_open` is hardcoded `true`** for every outlet
 meant to sit next to an "open now" one.
 
 ---
+
+## 2026-08-28 19:27 IST — Train is offered only where there is rail (f15cc825)
+
+The transport-mode chip row on checkout was static: six modes, identical for
+every outlet in every city. Train is now conditional on the outlet's city
+having rail. The other five — walk, bike, car, auto, bus — stay unconditional,
+because walking, cycling and road transport exist everywhere.
+
+### Why Train specifically
+
+It is the only mode that carries **no GPS origin and no speed**. The customer
+STATES an arrival time and the server takes it as given (`usesDeclaredArrival`,
+migration 020's addendum). Offering it where there is no rail collects a
+declared arrival for a journey that cannot happen — and that number goes
+straight into the timing engine. **The failure would surface as food cooked for
+a train that was never coming, not as an error anyone could see.**
+
+### `city` became a real field
+
+`outlets.city` was already SELECTed in `list_outlets` and then **dropped before
+serialising**, so a client's only route to the city was splitting `address`
+("{locality}, {city}") on the last comma. That breaks for outlets predating
+migration 012, where `address` IS the bare city and there is nothing to split.
+Keying behaviour off a display string is precisely how that kind of thing
+silently breaks later.
+
+Additive, and **checked rather than assumed**: `Outlet` has no `==`, no
+`hashCode`, no `copyWith`; every test fixture builds via `fromJson` with named
+keys; `OutletOut` is consumed by one route; no schema in that file sets
+`extra='forbid'`.
+
+**One catch worth remembering: `city` also had to go into `Outlet.toJson`.**
+`CartState` persists an outlet snapshot through that round trip, so omitting it
+would have silently lost Train whenever a restored cart reopened — invisible in
+any test that only exercised a fresh fetch. There is now a test for exactly
+that round trip.
+
+### The config, and its safe default
+
+`customer_app/lib/config/city_transport.dart`, keyed **lower()-cased and
+trimmed** to match the `lower(city)` comparison `list_outlets` already uses —
+`outlets.city` is free text with no constraint, so nothing in the schema keeps
+capitalisation consistent.
+
+Seeded with the four live cities, all genuinely rail-served: Chennai (suburban
++ metro), Bengaluru (Namma Metro), Kolkata (metro + suburban), Kochi (metro
+since 2017).
+
+**A city NOT in the config shows no Train. That is the deliberate safe default,
+not an oversight** — a new city can enter `outlets` through a signup with no
+code change, and must not silently start offering a mode nobody has checked.
+Two caveats are written into the file rather than left to be discovered: it is
+a CITY-level answer (Kakkanad itself is not metro-served yet, though Kochi has
+rail), and it ships in the app, so enabling a new city needs a release. If that
+becomes a real constraint the honest fix is a server-supplied flag, not a
+longer list.
+
+### The guard
+
+`_modesFor()` filters the chip row. `_effectiveMode()` additionally guards the
+payload and the arrival picker. A stale Train selection is **not reachable
+through the UI today** — Train can only be picked from a list that already
+excluded it — but it is guarded anyway because the failure would be silent and
+would land in the prediction engine as a train order from a city with no
+trains. Invisible until someone read the data months later.
+
+The prediction engine needed no change: `MODE_SPEED_MPS` and `_GMAPS_MODE` both
+hold five modes and have never held `train`, which runs through the separate
+declared-arrival path.
+
+### Deploy BEFORE build — the sequencing mattered here
+
+This is the first change tonight where building the app first would have been
+actively wrong. Until the backend ships, `city` is absent from responses,
+`hasTrainAccess` returns false, and an app build would hide Train **everywhere,
+including Chennai**.
+
+So the backend deploy was confirmed first, and the poll caught the transition
+rather than just observing the end state:
+
+```
+[14:27:06] + 44s  attempt 1  city field: absent
+[14:27:46] + 84s  attempt 2  city field: absent
+[14:28:26] +124s  attempt 3  city field: absent
+[14:29:07] +165s  attempt 4  city field: PRESENT
+```
+
+Three consecutive `absent` readings before the flip is what makes it
+conclusive — the probe demonstrably reported the pre-deploy state before
+reporting the post-deploy one, so a PRESENT reading cannot be an artefact of
+the probe itself.
+
+All 7 outlets returned a discrete `city`, and **every value matches a lookup
+key exactly**, so no outlet is excluded by a spelling mismatch:
+
+```
+Annapoorna Tiffin Room  Bengaluru     Golden Wok             Chennai
+The Brew House Cafe     Bengaluru     Malabar Spice Kitchen  Kochi
+Meenakshi Bhavan        Chennai       Bengal Rasoi           Kolkata
+Chettinad Spice Corner  Chennai
+```
+
+### Tests
+
+customer_app **254 -> 266**, backend **176 unchanged** (`city` is serialisation
+only). All five unconditional modes are asserted present in EVERY widget case,
+so a filter that over-reached would fail rather than pass quietly.
+
+Revert-proved: restoring `TransportMode.values` at the render site fails
+exactly the 2 tests asserting Train is absent. `flutter analyze` clean.
+
+### The APK — built, NOT installed
+
+```
+sha256      cdda8277a3c592b476e70a8d65fb2f0cc3112981d53fee67b33492c56b9a6a27
+size        61,280,387 bytes (58.4 MB)
+timestamp   2026-08-28 14:30:48 IST
+versionCode 3, upload-key signed (CN=CareVo)
+```
+
+Verified as a real rebuild rather than trusted: 95.4s build time (against 9.3s
+for the no-op rebuild on 08-27), and `bengaluru`/`chennai`/`kolkata`/`kochi` all
+present as string literals in the compiled `libapp.so`.
+
+**The phone still has `adcb62d5…`, the pre-Train build.** Four customer_app
+artifacts now share size 61,280,387 and versionCode 3 — the SHA-256 is the only
+thing that tells them apart, so check the hash rather than the version before
+concluding anything about what a device is running.
+
+---
