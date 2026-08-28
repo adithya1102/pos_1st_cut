@@ -230,6 +230,11 @@ async def list_outlets(
     lat: Optional[float] = None,
     lng: Optional[float] = None,
     city: Optional[list[str]] = Query(None),
+    # Kilometres. Needs lat/lng — a radius with no origin has nothing to
+    # measure from and is ignored rather than guessed at. Bounded above at
+    # 20,000km, which is past the antipode: anything larger is not a wider
+    # search, it is a malformed one.
+    radius_km: Optional[float] = Query(None, gt=0, le=20000),
     _: Customer = Depends(get_current_customer),
     db: AsyncSession = Depends(get_db),
 ):
@@ -243,7 +248,7 @@ async def list_outlets(
     into a one-element list and behaves exactly as before, and omitting it
     entirely still means "no city filter".
     """
-    return await CarevoService.list_outlets(db, lat, lng, city=city)
+    return await CarevoService.list_outlets(db, lat, lng, city=city, radius_km=radius_km)
 
 
 @router.get("/menu/{outlet_id}", response_model=s.MenuOut)

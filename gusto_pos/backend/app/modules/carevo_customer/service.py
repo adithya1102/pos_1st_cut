@@ -272,12 +272,31 @@ class CarevoService:
         a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
         return round(2 * r * math.asin(math.sqrt(a)), 3)
 
+    #: Haversine, as a SQL expression, mirroring _haversine_km above term for
+    #: term — same earth radius, same asin(sqrt(...)) form. Written out rather
+    #: than delegated to PostGIS because PostGIS is NOT installed on this
+    #: database (only pgcrypto and plpgsql are; ST_Distance raises
+    #: UndefinedObject). Installing it would be a schema change on prod for one
+    #: predicate over seven rows.
+    #:
+    #: The duplication is the point of the comment: the WHERE clause and the
+    #: Python annotation MUST agree, or the list would show a distance the
+    #: filter disagreed with. If either formula changes, change both.
+    _HAVERSINE_SQL = """
+        (2 * 6371.0 * asin(sqrt(
+             power(sin(radians(CAST(:lat AS double precision) - latitude) / 2), 2)
+           + cos(radians(latitude)) * cos(radians(CAST(:lat AS double precision)))
+           * power(sin(radians(CAST(:lng AS double precision) - longitude) / 2), 2)
+        )))
+    """
+
     @staticmethod
     async def list_outlets(
         db: AsyncSession,
         lat: Optional[float],
         lng: Optional[float],
         city: Optional[list[str]] = None,
+        radius_km: Optional[float] = None,
     ) -> list[dict]:
         """Visible outlets, optionally narrowed to one or more cities.
 
@@ -285,6 +304,17 @@ class CarevoService:
         went multi-select. An empty/None list means "no city filter" — the
         caller decides whether that is reachable; the app disables its CTA
         rather than sending an empty selection.
+
+        `radius_km` filters IN THE QUERY, not after it. It needs lat/lng — a
+        radius with no origin has no meaning, so it is ignored without one
+        rather than guessing an origin or returning nothing.
+
+        City and radius are INDEPENDENT and AND together when both are given.
+        The app sends only one at a time (radius in Near Me / Travel, cities
+        when the customer picks them), but that is the app's product decision
+        and is deliberately NOT enforced here — a server that rejected the
+        combination would be inventing a rule the data does not have, and
+        "outlets in Chennai within 20km" is a perfectly coherent question.
         """
         # Normalised here rather than at the edge so every caller gets the same
         # treatment: blanks dropped, lowercased once for the comparison below.
@@ -306,7 +336,26 @@ class CarevoService:
             "  AND (CAST(:cities AS varchar[]) IS NULL "
             "       OR cardinality(CAST(:cities AS varchar[])) = 0 "
             "       OR lower(city) = ANY(CAST(:cities AS varchar[])))"
-        ), {"cities": cities or None})).fetchall()
+            # Radius, applied HERE rather than to the annotated list below.
+            # Filtering after the fetch would still pull every row and only
+            # hide some — fine at seven outlets, wrong as a shape.
+            #
+            # An outlet with no pin (latitude/longitude NULL) is excluded when
+            # a radius is asked for: its distance is unknowable, and silently
+            # including it would put an outlet of unknown distance inside a
+            # circle the customer explicitly drew.
+            "  AND (CAST(:radius_km AS double precision) IS NULL "
+            "       OR (latitude IS NOT NULL AND longitude IS NOT NULL "
+            "           AND " + CarevoService._HAVERSINE_SQL +
+            "               <= CAST(:radius_km AS double precision)))"
+        ), {
+            "cities": cities or None,
+            # Only a radius WITH an origin is a filter. Without lat/lng the
+            # expression has nothing to measure from, so it is dropped.
+            "radius_km": radius_km if (lat is not None and lng is not None) else None,
+            "lat": lat,
+            "lng": lng,
+        })).fetchall()
 
         # Offer summary for the inline chip (migration 016). ONE query for the
         # whole list — a per-card lookup would be N round trips on the first

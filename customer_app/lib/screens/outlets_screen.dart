@@ -21,6 +21,25 @@ import '../widgets/active_order_card.dart';
 import '../widgets/location_permission_dialog.dart';
 import '../widgets/offer_sheet.dart';
 
+/// How far out the list reaches, when the customer is browsing by distance.
+///
+/// Both send a real server-side radius — the query filters in its WHERE
+/// clause, so an outlet outside the circle is not returned at all rather than
+/// returned and sorted to the bottom. Before this there was no distance cap
+/// anywhere: a Bengaluru origin returned a Kolkata outlet 1566km away.
+enum RadiusMode {
+  /// Everyday use: the city and what is realistically reachable around it.
+  nearMe('Near Me', 65),
+
+  /// Planning a trip — wide enough to reach neighbouring cities without
+  /// becoming "everywhere", which is the state this feature exists to end.
+  travel('Travel', 300);
+
+  const RadiusMode(this.label, this.radiusKm);
+  final String label;
+  final double radiusKm;
+}
+
 /// Step 4: nearby restaurant discovery.
 class OutletsScreen extends StatefulWidget {
   const OutletsScreen({
@@ -43,6 +62,88 @@ class OutletsScreen extends StatefulWidget {
 
 class _OutletsScreenState extends State<OutletsScreen> {
   late Future<List<Outlet>> _future;
+
+  /// Cities actually applied to the query. Seeded from the caller (the picker
+  /// on [LocationScreen]) but MUTABLE, because choosing a radius mode clears
+  /// them — the two are mutually exclusive by product decision.
+  late Set<String> _cities;
+
+  /// Active radius mode, or null when browsing by city instead.
+  ///
+  /// Near Me is the default, but ONLY when the customer did not arrive having
+  /// picked cities. Overriding an explicit choice with a default would throw
+  /// away the thing they just told us.
+  RadiusMode? _radiusMode;
+
+  /// Switch to browsing by distance. Clears any city filter.
+  ///
+  /// Exclusivity is enforced HERE, in the app, not by the server: the API
+  /// accepts city and radius together and answers coherently ("in Chennai,
+  /// within 20km"). This is a UI decision about what the two controls mean to
+  /// each other, so it belongs on this side.
+  ///
+  /// A radius needs an ORIGIN, so this owns the same permission dance the
+  /// Nearest sort does — and for the same reason. Without it, tapping a chip
+  /// with no location silently sent no radius while the chip lit up and the
+  /// label read "within 65 km": the control would have been claiming a filter
+  /// that was not applied, over a list that was still the whole country.
+  ///
+  /// The selected state moves ONLY once the radius is really in effect.
+  Future<void> _setRadiusMode(RadiusMode mode) async {
+    // Already have an origin — no permission is needed, so none is asked for.
+    // Checking the coordinates rather than how we got them means re-tapping a
+    // chip never re-prompts for something already granted.
+    if (_lat != null && _lng != null) {
+      setState(() {
+        _radiusMode = mode;
+        _cities = const {};
+        _future = _load();
+      });
+      return;
+    }
+
+    setState(() => _locating = true);
+    final service = context.read<LocationService>();
+    // userInitiated: tapping the chip IS the request, so it re-checks the OS
+    // status and re-prompts on every tap — the same reasoning as the Nearest
+    // sort, and the same shared one-prompt latch it exists to defeat.
+    final result = await service.getCurrentLocation(userInitiated: true);
+    if (!mounted) return;
+    setState(() => _locating = false);
+
+    if (result.hasCoordinates) {
+      setState(() {
+        _lat = result.latitude;
+        _lng = result.longitude;
+        _radiusMode = mode;
+        _cities = const {};
+        _future = _load();
+      });
+      return;
+    }
+
+    // Refused or unavailable: the chip does NOT become selected, rather than
+    // showing a radius as active over a list it was never applied to.
+
+    if (result.outcome == LocationOutcome.deniedForever) {
+      await showLocationBlockedDialog(
+        context,
+        service: service,
+        purpose: 'show restaurants within a distance of you',
+      );
+      return;
+    }
+
+    final message = switch (result.outcome) {
+      LocationOutcome.serviceDisabled =>
+        'Turn on location services to search by distance.',
+      LocationOutcome.denied =>
+        'Searching by distance needs your location. Showing everywhere for now.',
+      _ => 'Could not get your location, so distance search is unavailable.',
+    };
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
 
   // v2 §1 screen 5 — search + filter chips over the already-fetched list.
   //
@@ -76,6 +177,19 @@ class _OutletsScreenState extends State<OutletsScreen> {
     super.initState();
     _lat = widget.lat;
     _lng = widget.lng;
+    _cities = Set<String>.of(widget.cities);
+    // Near Me is the default, but only when it can actually be APPLIED.
+    //
+    // Two things disqualify it, for the same underlying reason — the control
+    // must never show a filter the list is not under:
+    //   * cities picked upstream: defaulting over an explicit choice would
+    //     discard what the customer just told us on the previous screen;
+    //   * no origin: a radius needs coordinates, so with none the chip would
+    //     light up and read "within 65 km" over an unfiltered list.
+    // In either case the chips start unselected and a tap resolves it.
+    _radiusMode = (_cities.isEmpty && _lat != null && _lng != null)
+        ? RadiusMode.nearMe
+        : null;
     _future = _load();
   }
 
@@ -212,7 +326,11 @@ class _OutletsScreenState extends State<OutletsScreen> {
           lng: _lng,
           // The chosen cities ARE the filter. They previously only fed the
           // subtitle, so every area showed the identical full outlet list.
-          cities: widget.cities,
+          cities: _cities,
+          // Only with an origin. Without coordinates a radius has nothing to
+          // measure from, so the mode stays selected in the UI but sends
+          // nothing — the list is then simply unfiltered rather than empty.
+          radiusKm: (_lat != null && _lng != null) ? _radiusMode?.radiusKm : null,
         );
   }
 
@@ -224,7 +342,7 @@ class _OutletsScreenState extends State<OutletsScreen> {
     final textTheme = Theme.of(context).textTheme;
     // Names the cities while there are few enough to read, then falls back to
     // a count — the same rule the Discover CTA uses.
-    final picked = widget.cities.toList()..sort();
+    final picked = _cities.toList()..sort();
     final subtitle = picked.isEmpty
         ? (_lat != null ? 'Closest to you' : 'All restaurants')
         : (picked.length <= 2
@@ -267,6 +385,14 @@ class _OutletsScreenState extends State<OutletsScreen> {
                               style: textTheme.titleSmall
                                   ?.copyWith(color: c.inkSoft)),
                         ],
+                      ),
+                      const SizedBox(height: 10),
+                      // How far the list reaches. Sits under the location line
+                      // because it qualifies it: "closest to you" is only
+                      // meaningful once "how close" has an answer.
+                      _RadiusToggle(
+                        selected: _radiusMode,
+                        onSelect: _setRadiusMode,
                       ),
                     ],
                   ),
@@ -414,6 +540,95 @@ const double _kOutletThumb = 76;
 
 /// Card padding. NeoCard's default is EdgeInsets.all(16); 20 here.
 const double _kOutletPadding = 20;
+
+/// Near Me / Travel, as a two-option segmented control.
+///
+/// [selected] is nullable: when the customer arrived having picked cities,
+/// NEITHER option is on, because neither is what the list is showing. A control
+/// that always claims a selection would be lying about the current filter.
+class _RadiusToggle extends StatelessWidget {
+  const _RadiusToggle({required this.selected, required this.onSelect});
+
+  final RadiusMode? selected;
+  final ValueChanged<RadiusMode> onSelect;
+
+  static const Key nearMeKey = Key('radius_near_me');
+  static const Key travelKey = Key('radius_travel');
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return Row(
+      children: [
+        for (final mode in RadiusMode.values) ...[
+          _RadiusChip(
+            key: mode == RadiusMode.nearMe ? nearMeKey : travelKey,
+            label: mode.label,
+            selected: selected == mode,
+            onTap: () => onSelect(mode),
+          ),
+          if (mode != RadiusMode.values.last) const SizedBox(width: 8),
+        ],
+        // The radius is stated rather than left to be inferred from the
+        // results — "Near Me" alone does not tell anyone what was excluded.
+        //
+        // Expanded, not Spacer + bare Text: on a narrow surface the label has
+        // nowhere to go and the Row overflows. Constraining it lets the text
+        // ellipsise instead of the layout breaking.
+        if (selected != null) ...[
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'within ${selected!.radiusKm.round()} km',
+              textAlign: TextAlign.right,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(color: c.inkSoft),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _RadiusChip extends StatelessWidget {
+  const _RadiusChip({
+    super.key,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        decoration: BoxDecoration(
+          color: selected ? c.primary : c.surface,
+          borderRadius: BorderRadius.circular(AppTheme.radius - 4),
+          border: Border.all(color: c.border, width: 2),
+        ),
+        child: Text(
+          label,
+          style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                color: selected ? c.onPrimary : c.ink,
+                fontWeight: FontWeight.w700,
+              ),
+        ),
+      ),
+    );
+  }
+}
 
 class _OutletCard extends StatelessWidget {
   const _OutletCard({required this.outlet});

@@ -26,11 +26,19 @@ class CatalogService {
     double? lat,
     double? lng,
     Set<String> cities = const {},
+    double? radiusKm,
   }) async {
     final query = <String, dynamic>{};
     if (lat != null && lng != null) {
       query['lat'] = lat;
       query['lng'] = lng;
+    }
+    // Filters in the server's WHERE clause, not after it. Only sent WITH an
+    // origin: a radius has nothing to measure from otherwise, and the server
+    // ignores it in that case rather than returning an empty list — but there
+    // is no reason to make it discard something we could simply not send.
+    if (radiusKm != null && lat != null && lng != null) {
+      query['radius_km'] = radiusKm;
     }
     // Actually filters server-side. Previously the chosen area only changed a
     // subtitle string and every city returned the identical outlet list.

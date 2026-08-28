@@ -8,7 +8,10 @@
 // suppressed by the app, not by the OS. Both "Near me" (Discover) and the
 // "Nearest" sort chip went through that same shared app-wide service.
 //
-// Covered here, for BOTH entry points, in all three permission states:
+// Covered here, for all THREE entry points, in all three permission states:
+// (the radius toggle joined them when Near Me / Travel began needing an origin
+// of their own — without this it silently sent no radius while the chip lit up
+// and the label claimed "within 65 km" over an unfiltered list)
 //   granted           -> proceed, no dialog
 //   denied (askable)  -> raise the OS dialog, EVERY time
 //   deniedForever     -> never raise the OS dialog; show the in-app
@@ -412,6 +415,90 @@ void main() {
 
       expect(fake.openAppSettingsCount, 1);
     });
+  });
+
+  // =========================================================================
+  // Near Me / Travel radius chips on the outlet list
+  //
+  // A radius needs an ORIGIN, so these go through the same dance. The extra
+  // thing pinned here, which the other entry points cannot express: the
+  // chip must not LOOK selected unless the radius was actually applied.
+  // =========================================================================
+  group('radius toggle: all three states', () {
+    Widget outlets() => _host(const OutletsScreen(), service);
+
+    Future<void> tapNearMe(WidgetTester tester) async {
+      final target = find.byKey(const Key('radius_near_me'));
+      await tester.ensureVisible(target);
+      await tester.pump();
+      await tester.tap(target);
+      await tester.pump(const Duration(milliseconds: 600));
+    }
+
+    testWidgets('with no origin the chips start UNSELECTED', (tester) async {
+      // The honesty case. Defaulting to Near Me here would light the chip and
+      // render "within 65 km" over a list no radius was ever applied to.
+      _sizeSurface(tester);
+      fake.permission = LocationPermission.denied;
+      await tester.pumpWidget(outlets());
+      await tester.pump(const Duration(milliseconds: 600));
+
+      expect(find.textContaining('within'), findsNothing,
+          reason: 'no origin means no radius, so nothing may claim one');
+    });
+
+    testWidgets('granted -> acquires the origin and applies the radius',
+        (tester) async {
+      _sizeSurface(tester);
+      fake.permission = LocationPermission.whileInUse;
+      await tester.pumpWidget(outlets());
+      await tester.pump(const Duration(milliseconds: 600));
+
+      await tapNearMe(tester);
+      await tester.pump(const Duration(milliseconds: 600));
+
+      expect(fake.positionCount, greaterThan(0));
+      expect(find.byKey(const Key('location_blocked_dialog')), findsNothing);
+      expect(find.text('within 65 km'), findsOneWidget,
+          reason: 'once the origin lands the chip may claim its radius');
+    });
+
+    testWidgets('denied -> prompts, RE-PROMPTS, and stays unselected',
+        (tester) async {
+      _sizeSurface(tester);
+      fake.permission = LocationPermission.denied;
+      fake.grantOnRequest = LocationPermission.denied;
+      await tester.pumpWidget(outlets());
+      await tester.pump(const Duration(milliseconds: 600));
+
+      await tapNearMe(tester);
+      expect(fake.requestCount, 1);
+
+      await tapNearMe(tester);
+      expect(fake.requestCount, 2,
+          reason: 'a radius chip must ask again on a second press');
+
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.textContaining('within'), findsNothing,
+          reason: 'a refused radius must not show as applied');
+    });
+
+    testWidgets('deniedForever -> no OS dialog, shows the explanation instead',
+        (tester) async {
+      _sizeSurface(tester);
+      fake.permission = LocationPermission.deniedForever;
+      await tester.pumpWidget(outlets());
+      await tester.pump(const Duration(milliseconds: 600));
+
+      await tapNearMe(tester);
+      await tester.pumpAndSettle();
+
+      expect(fake.requestCount, 0);
+      expect(find.byKey(const Key('location_blocked_dialog')), findsOneWidget);
+      expect(find.textContaining('within a distance of you'), findsOneWidget,
+          reason: 'the dialog should name THIS purpose, not the sort one');
+    });
+
   });
 
   // =========================================================================
