@@ -3774,3 +3774,146 @@ Still no data deleted. All 61 orders remain exactly where they were; clearing
 `history_cutoff_at` restores both read paths instantly.
 
 ---
+
+## 2026-08-28 14:02 IST — DIAGNOSTIC: Google-login "network error", and there is no radius
+
+Two investigations, no code changed. **No device was reachable** (`adb devices`
+empty over USB and wireless), so there is no logcat here — this is static
+reading plus live probing of the API, and the places that leaves genuine
+uncertainty are marked.
+
+---
+
+### 1. The Google-login "network error" is almost certainly the 20s timeout
+
+**There are TWO different "network error" strings, and the last word tells them
+apart.** That distinction is the whole diagnosis, so it is worth keeping:
+
+```
+google_auth_service.dart:142  "Network error: unable to reach FIREBASE."
+                              <- FirebaseAuthException('network-request-failed')
+api_client.dart:131           "Network error: unable to reach SERVER. ($e)"
+                              <- ANY exception from the HTTP call
+```
+
+The reported wording is "unable to reach **server**", which is step 4 of the
+flow — `_api.post('/customer/auth/google')` at `google_auth_service.dart:87-90`,
+the CareVo backend, reached only AFTER Google and Firebase have both already
+succeeded.
+
+**The mechanism, from this project's own measurements:**
+
+```
+AppConfig.requestTimeout      20 seconds     app_config.dart:93
+Render free-plan cold start   42.36 seconds  measured 2026-08-27 03:30 (GET /docs)
+retry / backoff               NONE           single attempt, api_client.dart:126-132
+```
+
+The first request after the backend spins down **cannot** succeed: the timeout
+fires at 20s against a service that needs 42s to wake. `_send`'s `catch (e)`
+then rewrites the `TimeoutException` into "unable to reach server."
+
+The backend itself is healthy — probed live: HTTP 422 in 0.17s for a short
+token, HTTP 401 "Malformed Firebase token" in 0.12s for a length-valid one.
+Fast, warm, correctly rejecting. **Nothing is wrong with the endpoint; the
+client gives up before a cold one can answer.**
+
+#### Ruled out: this is NOT the Nothing-phone Keystore fault
+
+That fault lives at steps 2-3 (`signInWithCredential` / `getIdToken`) and can
+only ever produce the "...reach **Firebase**" string or a raw
+`FirebaseAuthException` message. It can never produce "...reach **server**". It
+was also traced to a Nothing A142P, whereas the handset attached on 08-27 was an
+LGE LM-K610IM on Android 10 — a different device entirely.
+
+**On the wording alone these are distinct faults.** Caveat kept honest: this
+rests on the exact on-screen text, which was reported rather than captured. A
+logcat or a screenshot would settle it; neither exists.
+
+#### A second, separable problem: the catch is unconditional
+
+`api_client.dart:130` is a bare `catch (e)`. A `TimeoutException`, a
+`SocketException`, a TLS failure, a `FormatException` on a malformed body, or a
+plain client-side bug **all** surface as "Network error: unable to reach
+server." The message asserts a diagnosis the code has not actually made, and it
+is why a cold start and a genuine outage are indistinguishable to whoever is
+holding the phone.
+
+#### FIREBASE_ENABLED: the blueprint is wrong about prod, again
+
+The live 401 proves `FIREBASE_ENABLED` is **true** on prod — a false value would
+have returned 501 "Firebase authentication is not enabled on this deployment"
+(`service.py:210-214`). **`render.yaml:56` declares `"false"`.**
+
+This is the same trap as `CUSTOMER_AUTH_ENABLED`, documented at
+`render.yaml:33-40`: Render applies blueprint `envVars` at creation/sync, a
+dashboard value wins for an existing key, and ordinary git auto-deploys do not
+re-apply them. (The `NEXT_PUBLIC_*` build-cache problem in AGENT_GUARDRAILS §6
+is a THIRD variant of "the repo does not describe the running service", though
+its mechanism is build-time baking rather than dashboard precedence — worth not
+conflating the two.)
+
+**One thing is different and worse this time: the direction is inverted.**
+Previously the blueprint said `true` while the dashboard safely held `false`.
+Here the blueprint says `false` while prod actually runs `true` — the file
+UNDERSTATES what is enabled on a publicly reachable deploy. Not a hole in
+itself (both Firebase routes verify tokens against Google's public keys and take
+nothing on the client's word), but anyone reading `render.yaml` to answer "is
+Firebase auth live?" gets the wrong answer.
+
+**Rule, for the third time: probe the endpoint. Never read posture off the
+blueprint.**
+
+---
+
+### 2. There is no radius. Anywhere.
+
+**Server-side (`service.py:293-309`) the entire WHERE clause is:**
+
+```sql
+WHERE is_visible = true AND deactivated_at IS NULL
+  AND (cities IS NULL OR cardinality(cities) = 0 OR lower(city) = ANY(cities))
+```
+
+No distance predicate. No LIMIT. The only geographic narrowing is the **city
+filter, which is a string match, not a radius.**
+
+**Distance is computed AFTER the query**, in Python — `_haversine_km` per row
+(`service.py:324`), then `out.sort(...)` nulls-last (`service.py:357`). It is a
+post-hoc annotation used purely for ordering and **can never exclude a row**.
+
+**Client-side there is no cap either.** Grepping
+`radius|withinKm|maxDistance|distanceKm` across `customer_app/lib/` returns only
+`borderRadius` styling plus display/sort use of `distanceKm`.
+`OutletSort.nearest` (`outlet_sort.dart:113`) sorts; it does not filter.
+
+**Confirmed empirically against prod — every outlet is returned from any origin
+on Earth:**
+
+```
+origin = Bengaluru   7 outlets   5.0 km  -> 1566.2 km   (Indiranagar -> Kolkata)
+origin = New Delhi   7 outlets   1308.2  -> 2069.9 km
+origin = London      7 outlets   7965.1  -> 8216.5 km
+origin = none        7 outlets   all distance_km = null
+```
+
+From Bengaluru the list runs Indiranagar 5.0 km, Koramangala 5.1, Chennai
+283-289, Kochi 355.8, **Kolkata 1566.2** — all seven, every time. Outlets in
+entirely different cities are returned today and merely sink to the bottom.
+
+#### Two things that matter before building a toggle
+
+* **Nothing needs unbuilding.** There is no existing cap to reconcile with. A
+  radius would be a NEW predicate, and it belongs in the SQL WHERE — filtering
+  in the Python post-pass would still fetch every row and only hide them.
+* **City filter and radius overlap, and can disagree.** With
+  `?city=Bengaluru` plus a 5 km radius, the Koramangala outlet at 5.1 km is in
+  the right city and outside the radius. Which wins is **a product decision, not
+  a technical one**, and it should be decided before either is implemented
+  rather than discovered from whichever clause happens to run last.
+
+Also noted in passing: **`is_open` is hardcoded `true`** for every outlet
+(`service.py:328`). It is not real data, which matters if a distance control is
+meant to sit next to an "open now" one.
+
+---
