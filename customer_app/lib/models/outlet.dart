@@ -11,6 +11,7 @@ class Outlet {
     this.offerCount = 0,
     this.offerText,
     this.locality,
+    this.city,
     this.phoneNumber,
     this.latitude,
     this.longitude,
@@ -35,6 +36,18 @@ class Outlet {
   /// Area within the city (migration 012). Null for outlets that predate it —
   /// [displayName] then falls back to the bare name.
   final String? locality;
+
+  /// The outlet's city, as its own value rather than the tail of [address].
+  ///
+  /// [address] is "{locality}, {city}", so reading the city used to mean
+  /// splitting that string — which breaks for outlets predating migration 012,
+  /// where [address] IS the bare city and there is no comma. Behaviour is keyed
+  /// off this (checkout offers Train only where the city has rail), and keying
+  /// behaviour off a display string is how that kind of thing silently breaks.
+  ///
+  /// Null for any response predating this field, which the transport lookup
+  /// treats as "no rail" — the safe direction.
+  final String? city;
 
   /// Outlet contact number (migration 009). Null for MOST outlets — 5 of the 6
   /// customer-visible ones in prod have none — so the call action is hidden
@@ -133,6 +146,7 @@ class Outlet {
     final img = json['image_url'] as String?;
     final offer = json['offer_text'] as String?;
     final loc = json['locality'] as String?;
+    final cty = json['city'] as String?;
     final phone = json['phone_number'] as String?;
     final lat = json['latitude'];
     final lng = json['longitude'];
@@ -147,6 +161,7 @@ class Outlet {
       offerCount: (json['offer_count'] as num?)?.toInt() ?? 0,
       offerText: (offer != null && offer.isNotEmpty) ? offer : null,
       locality: (loc != null && loc.isNotEmpty) ? loc : null,
+      city: (cty != null && cty.trim().isNotEmpty) ? cty.trim() : null,
       phoneNumber: (phone != null && phone.trim().isNotEmpty) ? phone.trim() : null,
       // `num?` then toDouble(): the column is Postgres `numeric`, so a value
       // that happens to be whole arrives as an int and a bare `as double`
@@ -175,6 +190,7 @@ class Outlet {
         'offer_count': offerCount,
         'offer_text': offerText,
         'locality': locality,
+        'city': city,
         'phone_number': phoneNumber,
         'latitude': latitude,
         'longitude': longitude,

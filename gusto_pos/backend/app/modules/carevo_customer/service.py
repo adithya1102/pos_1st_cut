@@ -340,6 +340,11 @@ class CarevoService:
                 "upi_id": upi_id,
                 "image_url": image_url,
                 "locality": locality,
+                # Also emitted on its own, not only folded into `address`
+                # above — behaviour (which transport modes to offer) is keyed
+                # off this, and keying it off a display string would break on
+                # pre-012 outlets whose `address` has no comma to split.
+                "city": city,
                 # Normalised to None so an empty string never renders a call
                 # button that dials nothing.
                 "phone_number": (phone_number or "").strip() or None,

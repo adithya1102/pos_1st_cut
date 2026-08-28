@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models/cart_item.dart';
 import '../models/offer.dart';
+import '../config/city_transport.dart';
 import '../models/outlet.dart';
 import '../services/api_client.dart';
 import '../services/cashfree_service.dart';
@@ -86,6 +87,33 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   // FR-C1/C2: travel context captured before the order is placed.
   TransportMode _transport = TransportMode.bike;
+
+  /// The modes offered for [outlet]'s city.
+  ///
+  /// Train is the only conditional one: it is satisfied by a DECLARED arrival
+  /// time rather than an origin, so offering it where there is no rail would
+  /// collect a stated arrival for a journey that cannot happen — and that value
+  /// goes straight into the timing engine. The other five are unconditional;
+  /// walking, cycling and road transport exist everywhere.
+  List<TransportMode> _modesFor(Outlet? outlet) {
+    final rail = CityTransport.hasTrainAccess(outlet?.city);
+    return [
+      for (final m in TransportMode.values)
+        if (rail || !m.usesDeclaredArrival) m,
+    ];
+  }
+
+  /// [_transport], but never a mode this outlet does not offer.
+  ///
+  /// Belt and braces: Train can only be SELECTED from a list that already
+  /// excluded it, so a stale selection is not reachable through the UI today.
+  /// It is guarded anyway because the failure would be silent and would land in
+  /// the prediction engine as a train order from a city with no trains — the
+  /// kind of thing that is invisible until someone reads the data months later.
+  TransportMode _effectiveMode(Outlet? outlet) {
+    final allowed = _modesFor(outlet);
+    return allowed.contains(_transport) ? _transport : TransportMode.bike;
+  }
   double? _originLat;
   double? _originLng;
   String _originSource = 'none'; // none | gps | places_autocomplete
@@ -293,7 +321,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     // Surfaced as an inline message on the field, not a silently disabled Pay
     // button: a button that does nothing when tapped teaches the customer that
     // the app is broken, and gives them nothing to act on.
-    if (_transport.usesDeclaredArrival && _declaredArrival == null) {
+    final mode = _effectiveMode(cart.outlet);
+    if (mode.usesDeclaredArrival && _declaredArrival == null) {
       setState(() => _arrivalMissing = true);
       return;
     }
@@ -305,7 +334,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       final order = await context.read<OrderService>().createOrder(
             cart.toOrderPayload(
               customerNotes: widget.customerNotes,
-              transportMode: _transport.wire,
+              transportMode: mode.wire,
               originLat: _originLat,
               originLng: _originLng,
               originSource: _originSource,
@@ -314,7 +343,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               couponCode: _offer == null ? _coupon.text : null,
               promotionId: _offer?.id,
               declaredArrivalAt:
-                  _transport.usesDeclaredArrival ? _declaredArrival : null,
+                  mode.usesDeclaredArrival ? _declaredArrival : null,
             ),
           );
       if (!mounted) return;
@@ -442,7 +471,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               spacing: 10,
               runSpacing: 10,
               children: [
-                for (final mode in TransportMode.values)
+                for (final mode in _modesFor(cart.outlet))
                   _TransportChip(
                     mode: mode,
                     selected: _transport == mode,
@@ -458,7 +487,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             const SizedBox(height: 24),
             // Train replaces the origin picker entirely: Leg A is a stated
             // time, so a GPS origin would be collected and then ignored.
-            if (_transport.usesDeclaredArrival) ...[
+            // Effective, not raw: the arrival picker must never appear for a
+            // mode the chip row did not offer.
+            if (_effectiveMode(cart.outlet).usesDeclaredArrival) ...[
               Text('When does your train arrive?',
                   style: textTheme.headlineSmall),
               const SizedBox(height: 6),

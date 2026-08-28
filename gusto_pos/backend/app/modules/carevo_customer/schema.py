@@ -83,6 +83,18 @@ class OutletOut(BaseModel):
     # Area within the city (migration 012). Null for outlets that predate it —
     # the app then renders the name alone rather than a dangling separator.
     locality: Optional[str] = None
+    # The city as its own field, not just the tail of `address`.
+    #
+    # `address` is built here as ", ".join(locality, city), so until now the
+    # only way for a client to know the city was to split that string on the
+    # last comma — which breaks for outlets predating migration 012, where
+    # `address` IS the bare city and there is nothing to split.
+    #
+    # Surfaced because the checkout screen needs the city to decide which
+    # transport modes to offer, and a display string is the wrong thing to key
+    # behaviour off. The column was already SELECTed in list_outlets; this only
+    # stops it being dropped before serialising. Purely additive.
+    city: Optional[str] = None
     # Outlet contact number (migration 009), so the app can offer a direct call.
     # NULL for most outlets today — 5 of the 6 customer-visible ones in prod
     # have none — so the app HIDES the call action rather than rendering a
