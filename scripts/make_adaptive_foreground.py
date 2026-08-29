@@ -35,9 +35,21 @@ WHITE_FLOOR = 240
 # Ramp steeply past the floor so solid strokes land at full opacity and only
 # genuinely antialiased edge pixels keep partial alpha.
 ALPHA_GAIN = 3.5
-# Artwork fills this much of the square foreground canvas; the remainder plus
-# the 12% inset in pubspec.yaml keeps it inside Android's 66dp-of-108dp safe zone.
-FILL = 0.92
+# Artwork fills this much of the square foreground canvas.
+#
+# This used to be 0.92, on the stated assumption that `adaptive_icon_foreground_
+# inset: 12` in pubspec.yaml would bring the result inside Android's safe zone.
+# It does not — flutter_launcher_icons 0.14.4 ignores the option, and the
+# generated density assets measure out at whatever fill this constant sets. The
+# icon that shipped under 0.92 landed at 99dp of the 108dp canvas and lost 5.2%
+# of its ink to the circular launcher mask.
+#
+# 0.60 puts the mark at 64.8dp, inside the published 66dp-of-108dp safe zone
+# (and well inside the 76.4dp at which a centred square would start to clip a
+# circle, S*sqrt(2) <= 108). It matters more now than it did: the icon mark is
+# the near-square stopwatch, which unlike the old wide lockup has corners for a
+# round mask to cut.
+FILL = 0.60
 OUT_SIZE = 1024
 
 

@@ -61,7 +61,15 @@ flutter:
     # Walk-cycle art for the Home footer (WalkingFooter). Declared as a single
     # file rather than the whole directory: assets/icon and assets/marketing
     # are build-time and store-listing inputs and must NOT ship in the APK.
+    #
+    # Still declared while WalkingFooter is unmounted from Home: the widget and
+    # its tests remain in the tree, and the tests load this asset through
+    # rootBundle. Dropping it here would fail them.
     - assets/animation/final_walk.gif
+    # Brand lockup on transparency, for the splash. Keyed off the source photo
+    # by scripts/make_app_icon.py — the splash field is cream, not white, so an
+    # opaque asset would show as a white slab.
+    - assets/brand/gusto_logo.png
 
 # Launcher icon generation: `dart run flutter_launcher_icons`.
 #
