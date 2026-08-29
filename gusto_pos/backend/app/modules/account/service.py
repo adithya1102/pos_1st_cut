@@ -196,7 +196,7 @@ class AccountService:
             if settings.EMAIL_LINK_BASE_URL else f"(token: {raw})"
         await AccountService._deliver(
             row.email,
-            "Reset your CareVo password",
+            "Reset your Gusto password",
             f"Use this link within {RESET_TOKEN_TTL_MINUTES} minutes: {link}",
         )
         await db.commit()
@@ -258,7 +258,7 @@ class AccountService:
         link = f"{settings.EMAIL_LINK_BASE_URL.rstrip('/')}/verify?token={raw}" \
             if settings.EMAIL_LINK_BASE_URL else f"(token: {raw})"
         status = await AccountService._deliver(
-            cleaned, "Verify your CareVo email",
+            cleaned, "Verify your Gusto email",
             f"Confirm this address within {VERIFY_TOKEN_TTL_HOURS} hours: {link}",
         )
         await db.commit()

@@ -92,7 +92,7 @@ void main() {
       await tester.pumpWidget(_host(const LoginScreen()));
       await tester.pump();
 
-      expect(find.text('CareVo Skip'), findsOneWidget);
+      expect(find.text('Gusto Skip'), findsOneWidget);
       expect(find.text('Skip the queue.'), findsOneWidget);
       expect(find.text('Welcome back'), findsOneWidget);
       // Phone-only since 2026-08-25; `login_identifier_field` was the

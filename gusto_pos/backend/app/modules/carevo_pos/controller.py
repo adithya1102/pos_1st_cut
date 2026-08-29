@@ -15,7 +15,7 @@ from app.modules.carevo_customer.deps import get_current_staff
 from app.modules.carevo_customer.service import CarevoService
 from app.modules.users.model import User
 
-router = APIRouter(prefix="/pos", tags=["CareVo Skip — POS"])
+router = APIRouter(prefix="/pos", tags=["Gusto Skip — POS"])
 
 
 def _require_outlet(staff: User) -> uuid.UUID:

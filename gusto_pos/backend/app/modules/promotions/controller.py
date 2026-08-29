@@ -27,9 +27,9 @@ from app.modules.promotions import schema as s
 from app.modules.promotions.service import CAMPAIGN, OFFER, PromotionService
 from app.modules.users.model import User
 
-admin_router = APIRouter(prefix="/admin/promotions", tags=["CareVo Admin — Campaigns"])
-pos_router = APIRouter(prefix="/pos/offers", tags=["CareVo Skip — Restaurant Offers"])
-customer_router = APIRouter(prefix="/customer", tags=["CareVo Skip — Customer"])
+admin_router = APIRouter(prefix="/admin/promotions", tags=["Gusto Admin — Campaigns"])
+pos_router = APIRouter(prefix="/pos/offers", tags=["Gusto Skip — Restaurant Offers"])
+customer_router = APIRouter(prefix="/customer", tags=["Gusto Skip — Customer"])
 
 
 def _require_outlet(staff: User) -> uuid.UUID:

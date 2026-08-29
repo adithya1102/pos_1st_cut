@@ -73,7 +73,7 @@ class _EmptyState extends StatelessWidget {
           Text('No offers yet', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 6),
           Text(
-            'An offer shows on your restaurant card in the CareVo app, so '
+            'An offer shows on your restaurant card in the Gusto app, so '
             'customers see it before they pick where to order.',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodySmall,

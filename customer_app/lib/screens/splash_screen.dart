@@ -61,7 +61,7 @@ class _SplashScreenState extends State<SplashScreen> {
                 ],
               ),
               child: Text(
-                'CareVo',
+                'Gusto',
                 style: GoogleFonts.bevan(color: c.onAccent, fontSize: 44),
               ),
             ),

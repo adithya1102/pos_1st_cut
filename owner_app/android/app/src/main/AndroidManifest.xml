@@ -15,7 +15,7 @@
          Accept gate, is the only signal staff get in time to reject one. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
-        android:label="CareVo Owner"
+        android:label="Gusto Owner"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <!-- Google Maps / Places SDK key, injected from local.properties via

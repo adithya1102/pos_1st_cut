@@ -75,7 +75,7 @@ _ORDER_STATUS_COPY: dict[str, tuple[str, str]] = {
     "RECEIVED": ("Order confirmed", "The restaurant has your order."),
     "PREPARING": ("Being prepared", "Your food is being made right now."),
     "READY": ("Ready for pickup", "Your order is ready — come collect it."),
-    "COMPLETED": ("Picked up", "Enjoy! Thanks for using CareVo Skip."),
+    "COMPLETED": ("Picked up", "Enjoy! Thanks for using Gusto Skip."),
     # Honest and plain: says what happened, and does not promise a refund
     # timeline the app cannot keep (refunds are handled manually, off-app).
     "CANCELLED": (

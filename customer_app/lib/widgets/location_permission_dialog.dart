@@ -45,12 +45,12 @@ Future<void> showLocationBlockedDialog(
     context: context,
     builder: (c) => AlertDialog(
       key: const Key('location_blocked_dialog'),
-      title: const Text('Location is turned off for CareVo'),
+      title: const Text('Location is turned off for Gusto'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('CareVo needs your location to $purpose.'),
+          Text('Gusto needs your location to $purpose.'),
           const SizedBox(height: 12),
           // States plainly that re-asking is not on the table, so the missing
           // "try again" button does not read as an oversight.

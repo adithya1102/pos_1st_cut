@@ -93,5 +93,5 @@ class AppConfig {
   static const Duration requestTimeout = Duration(seconds: 20);
 
   /// App display name.
-  static const String appName = 'CareVo Skip';
+  static const String appName = 'Gusto Skip';
 }

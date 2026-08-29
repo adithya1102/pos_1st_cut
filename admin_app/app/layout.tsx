@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "CareVo Admin",
+  title: "Gusto Admin",
   description: "Internal platform admin dashboard",
 };
 

@@ -156,7 +156,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('CareVo Skip'),
+        title: const Text('Gusto Skip'),
         actions: careVoActions(),
       ),
       body: SafeArea(
@@ -518,7 +518,7 @@ class _FirstRunHome extends StatelessWidget {
               ],
             ),
             child: Text(
-              'CareVo',
+              'Gusto',
               style: GoogleFonts.bevan(color: c.onAccent, fontSize: 34),
             ),
           ),

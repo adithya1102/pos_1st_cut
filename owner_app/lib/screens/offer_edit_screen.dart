@@ -252,7 +252,7 @@ class _OfferEditScreenState extends State<OfferEditScreen> {
             Text('Share it (optional)', style: theme.textTheme.titleMedium),
             const SizedBox(height: 6),
             Text(
-              'Your offer already shows on your restaurant card in the CareVo '
+              'Your offer already shows on your restaurant card in the Gusto '
               'app. Add a code only if you also want to post or print it.',
               style: theme.textTheme.bodySmall,
             ),

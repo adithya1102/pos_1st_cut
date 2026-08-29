@@ -19,7 +19,7 @@ from app.modules.carevo_customer.deps import (
 )
 from app.modules.carevo_customer.service import CarevoService
 
-router = APIRouter(prefix="/customer", tags=["CareVo Skip — Customer"])
+router = APIRouter(prefix="/customer", tags=["Gusto Skip — Customer"])
 
 
 # ------------------------------- Auth --------------------------------------

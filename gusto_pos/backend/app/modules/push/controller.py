@@ -24,8 +24,8 @@ from app.modules.push import schema as s
 from app.modules.push.service import PushService
 from app.modules.users.model import User
 
-customer_router = APIRouter(prefix="/customer", tags=["CareVo Skip — Customer"])
-admin_router = APIRouter(prefix="/admin", tags=["CareVo Admin"])
+customer_router = APIRouter(prefix="/customer", tags=["Gusto Skip — Customer"])
+admin_router = APIRouter(prefix="/admin", tags=["Gusto Admin"])
 
 
 @customer_router.post("/push/register", response_model=s.RegisterTokenOut)

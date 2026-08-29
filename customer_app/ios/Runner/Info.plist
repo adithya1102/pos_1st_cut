@@ -7,9 +7,9 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>CareVo Skip</string>
+	<string>Gusto Skip</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>CareVo Skip uses your location to find nearby restaurants for self pickup.</string>
+	<string>Gusto Skip uses your location to find nearby restaurants for self pickup.</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>

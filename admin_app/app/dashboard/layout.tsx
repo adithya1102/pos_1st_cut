@@ -60,7 +60,7 @@ export default function DashboardLayout({
     <div className="min-h-screen">
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
-          <span className="font-semibold">CareVo Admin</span>
+          <span className="font-semibold">Gusto Admin</span>
           <div className="flex items-center gap-3 text-sm text-slate-500">
             <span>{me.username}</span>
             <Button onClick={signOut}>Sign out</Button>

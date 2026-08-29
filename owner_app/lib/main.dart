@@ -67,7 +67,7 @@ class GustoOwnerApp extends StatelessWidget {
         ),
       ],
       child: MaterialApp(
-        title: 'CareVo Owner',
+        title: 'Gusto Owner',
         debugShowCheckedModeBanner: false,
         theme: _buildTheme(),
         home: const _Root(),

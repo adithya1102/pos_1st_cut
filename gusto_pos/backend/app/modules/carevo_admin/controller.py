@@ -16,7 +16,7 @@ from app.modules.carevo_admin.deps import get_current_super_admin
 from app.modules.carevo_admin.service import AdminService, PENDING
 from app.modules.users.model import User
 
-router = APIRouter(prefix="/admin", tags=["CareVo Admin — Platform"])
+router = APIRouter(prefix="/admin", tags=["Gusto Admin — Platform"])
 
 
 @router.get("/me", response_model=s.AdminMeOut)
