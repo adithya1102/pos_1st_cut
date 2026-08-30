@@ -1,4 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="ic_launcher_background">#FFFFFF</color>
+    <!-- The app shell's background. Pinned as a literal so the launch window
+         matches the first Flutter frame exactly, in BOTH Android light and dark
+         mode — the app itself is light-only.
+
+         NOT customer_app's cream (#F6EFE2): that value belongs to its warm
+         neobrutalist shell. owner_app is Material 3 on a cool near-white
+         (scaffoldBackgroundColor 0xFFF7F6F9 in main.dart), so borrowing the
+         cream would hand a warm launch window over to a cool first frame and
+         reintroduce exactly the colour step this literal exists to remove. -->
+    <color name="gusto_splash">#F7F6F9</color>
 </resources>

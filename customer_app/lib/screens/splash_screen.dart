@@ -58,16 +58,18 @@ class _SplashScreenState extends State<SplashScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             // The brand lockup, not a typeset wordmark. It already reads
-            // "Gusto Skip" and carries the spork, so the neobrutalist accent
-            // card that used to hold the word is gone with it — boxing a logo
-            // that has its own whitespace only crops it visually.
+            // "Gusto Skip", so the neobrutalist accent card that used to hold
+            // the word is gone with it — boxing a logo that has its own
+            // whitespace only crops it visually.
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 40),
               child: Image.asset(
                 SplashScreen.logoAsset,
                 key: SplashScreen.logoKey,
-                // The mark is 2.32:1; width-bound so it scales with the device
-                // rather than a fixed height that overflows narrow screens.
+                // The stacked mark is 1.49:1, so it stands roughly twice as
+                // tall here as the horizontal lockup it replaced. Width-bound
+                // rather than a fixed height, so it scales with the device
+                // instead of overflowing narrow screens.
                 fit: BoxFit.contain,
                 semanticLabel: AppConfig.appName,
               ),

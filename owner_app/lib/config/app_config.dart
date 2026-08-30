@@ -10,6 +10,11 @@ class AppConfig {
   /// Single source of truth for the backend base URL.
   static const String baseUrl = 'https://gusto-pos-backend.onrender.com/api/v1';
 
+  /// App display name. Mirrors customer_app's AppConfig.appName. Used for the
+  /// MaterialApp title and as the splash logo's semantic label — the lockup is
+  /// artwork, so this is the only thing announcing the app to a screen reader.
+  static const String appName = 'Gusto Owner';
+
   /// Brand palette (used lightly for accents only).
   static const int brandPurple = 0xFF6B2FB3;
   static const int brandMint = 0xFF8FD6B0;

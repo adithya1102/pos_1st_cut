@@ -13,6 +13,7 @@ import 'services/outlet_service.dart';
 import 'services/staff_push_service.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
+import 'screens/splash_screen.dart';
 import 'state/auth_state.dart';
 import 'state/home_state.dart';
 import 'state/offers_state.dart';
@@ -67,10 +68,13 @@ class GustoOwnerApp extends StatelessWidget {
         ),
       ],
       child: MaterialApp(
-        title: 'Gusto Owner',
+        title: AppConfig.appName,
         debugShowCheckedModeBanner: false,
         theme: _buildTheme(),
-        home: const _Root(),
+        // The splash only delays _Root, it does not replace it. _Root stays the
+        // single auth gate and stays reactive after the handoff, so logout
+        // still flips it back to LoginScreen on its own.
+        home: SplashScreen(next: (_) => const _Root()),
       ),
     );
   }

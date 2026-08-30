@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Modify this file to customize your launch splash screen -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="@android:color/white" />
+    <!-- Pre-API-21 fallback. Kept in step with drawable-v21 so the two cannot
+         disagree about the brand colour. -->
+    <item android:drawable="@color/gusto_splash" />
 
     <!-- You can insert your own image assets here -->
     <!-- <item>

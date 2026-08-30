@@ -1,53 +1,54 @@
-"""Build the brand assets from the raw Gusto Skip logo.
+"""Build the brand assets from the final Gusto Skip app-icon artwork.
 
     python scripts/make_app_icon.py
 
-Reads  gusto_skip_logo.jpeg                       (repo root, raw source)
-Writes customer_app/assets/brand/gusto_logo.png   (full lockup, transparent — splash)
-       customer_app/assets/icon/app_icon.png      (SYMBOL only, opaque white square)
-       owner_app/assets/icon/app_icon.png         (same file, copied)
-       admin_app/app/icon.png                     (same mark, 512px favicon)
+Reads  gusto_skip_app_icon_final.jpeg               (repo root, source)
+Writes customer_app/assets/brand/gusto_logo.png     (mark on transparency — splash)
+       owner_app/assets/brand/gusto_logo.png        (same file, copied — splash)
+       customer_app/assets/icon/app_icon.png        (opaque white square, 1024)
+       owner_app/assets/icon/app_icon.png           (same file, copied)
+       admin_app/app/icon.png                       (same mark, 512px favicon)
 
-Two different marks, on purpose
-------------------------------
-The splash gets the FULL LOCKUP — wordmark plus spork — because it has the room
-and the app should say its own name on launch.
+Both splash screens take the SAME asset, written from here rather than copied by
+hand, so the two apps cannot drift apart the next time the artwork changes.
 
-The launcher icon gets the STOPWATCH ONLY. The lockup is a 2.32:1 horizontal
-band; dropped into a square icon it fills 82% of the width but 35% of the
-height, so at the 48dp most launchers actually draw, "Gusto Skip" is an
-unreadable smudge. The spork is no rescue — on its own it is 4.56:1, WIDER than
-the lockup, and its hairline stroke vanishes entirely at 48dp. The stopwatch
-that serves as the 'o' in "Gusto" is the only element of this lockup that is
-near-square (0.81:1) and heavy enough to survive being drawn 48 pixels across.
+One mark everywhere
+-------------------
+This artwork is the stacked lockup: "Gusto" over "Skip", with the stopwatch
+serving as the 'o'. It supersedes both earlier attempts — the horizontal
+wordmark-and-spork lockup, which was unusable as an icon, and the stopwatch
+cropped out of it, which was used as a stand-in while no square artwork existed.
 
-Why the photograph needs pre-processing
----------------------------------------
-The source is a PHOTOGRAPH of the logo, not flat vector art. Its "white" field
-runs 207-255 with a strong left-to-right gradient (left edge ~216, right ~245)
-plus corner vignetting. That breaks the downstream keying step:
-`make_adaptive_foreground.py` treats anything under WHITE_FLOOR=240 as artwork,
-and 59.6% of the raw photo falls under 240 — it would key the background itself
-in and yield a grey blob instead of a logo.
+Stacking is what makes it work. The horizontal lockup was a 2.32:1 band that
+left the type tiny inside a square; stacked, the mark is 1.49:1 and measures
+73.6 RMS contrast at 48dp against the horizontal version's 35.1. The
+purpose-drawn stopwatch still scores higher in isolation (90.7), but it is a
+detail lifted out of a word rather than the brand's own icon, and this artwork
+is what the brand actually ships.
 
-The saving grace is a clean separation: the darkest background pixel anywhere is
-207, while every pixel of actual ink is under 200. So a ramp anchored just below
-207 isolates the mark exactly, with antialiased edges preserved, and writes a
-genuinely pure-white square — after which the WHITE_FLOOR=240 pipeline works
-unmodified.
+Why this source needs so little work
+------------------------------------
+Unlike the previous photographed logo — whose field ran 207-255 with a
+left-to-right gradient and whose thin strokes carried JPEG chroma tint — this is
+a clean vector-style render:
 
-Ink is forced to pure black rather than kept as-is, because JPEG chroma noise
-tints the thin strokes a muddy blue-grey that shows at large icon sizes.
+  * 1600x1600, square, background uniform at 253.9-254.0 across all six sampled
+    patches (previously a 28-level gradient)
+  * ink measures R=1.8 G=1.8 B=1.7, channel spread 0.1 — already neutral black
+  * the histogram is a plateau: 12.09% of pixels under 200, 11.99% under 150,
+    so only ~0.1% sits in the transition band
 
-Known limitation
-----------------
-The stopwatch is only 73x90 pixels in the source photo, so the 1920px icon
-master is an ~11x upscale. It downsamples cleanly to real launcher sizes
-(48-96dp), which is what ships, but it is visibly soft at the 1024px App Store
-size. Replace SRC with vector art or a high-resolution original when one exists
-and rerun; nothing else needs to change.
+So the keying here is a light touch, not a rescue. BG_FLOOR is re-derived for
+THIS image rather than inherited: the darkest background pixel outside the
+artwork is 236, so the ramp anchors just under that. The previous source needed
+205, and reusing that number here would have cut into the antialiasing.
 
-Rerun this if gusto_skip_logo.jpeg changes, then
+The source's own margins are preserved rather than re-cropped and re-fitted.
+This file is the designed app icon, padding included; the only change made is
+flattening its near-white field to a true 255 so the downstream
+make_adaptive_foreground.py (which keys at WHITE_FLOOR=240) sees clean input.
+
+Rerun this if the source changes, then
 `python scripts/make_adaptive_foreground.py`, then
 `dart run flutter_launcher_icons` in customer_app and owner_app.
 """
@@ -59,92 +60,74 @@ import numpy as np
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
-SRC = ROOT / "gusto_skip_logo.jpeg"
+SRC = ROOT / "gusto_skip_app_icon_final.jpeg"
 
-# Darkest background pixel measured at 207; ink is all below 200. Anchor the
-# ramp just under the background floor so no field pixel survives keying.
-BG_FLOOR = 205
+# Darkest background pixel outside the artwork measured 236 on this source, so
+# anchor just below it. Re-derive rather than reuse if the artwork is replaced.
+BG_FLOOR = 232
 # Ramp steeply past the floor so solid strokes reach full opacity and only
 # genuinely antialiased edge pixels keep partial alpha.
 ALPHA_GAIN = 3.0
 
-# The stopwatch's box within the keyed lockup, in lockup pixel coordinates.
-# Derived by connected-component analysis: the lockup splits into a wordmark
-# band (rows 0-110) and the spork (rows 138-280); within the wordmark the
-# components are G / u / s / t / STOPWATCH / S / k / i / p, and the stopwatch is
-# the one spanning x[286..358]. Hardcoded rather than re-derived at runtime
-# because every "pick the round glyph" heuristic also matches the capital G
-# (0.94:1, nearly as square). SYMBOL_SHAPE below turns a stale box into a loud
-# failure instead of a silently wrong icon.
-SYMBOL_BOX = (286, 0, 359, 111)  # left, upper, right, lower
-SYMBOL_SHAPE = (73, 90)
-
-# Artwork fills this much of the opaque square. The mark is near-square, so
-# unlike the old wide lockup it has corners that a circular launcher mask can
-# actually cut — 0.72 keeps it clear of that while still reading as an icon
-# rather than a stamp floating in white.
-FILL = 0.72
-OUT_SIZE = 1920
+OUT_SIZE = 1024
 FAVICON_SIZE = 512
 
+# Sanity check: this artwork's mark is the 1.49:1 stacked lockup. A wildly
+# different aspect means the source was swapped for something else, and the
+# splash layout and icon fills both assume roughly this shape.
+EXPECTED_ASPECT = (1.30, 1.70)
 
-def keyed_lockup() -> Image.Image:
-    """The full logo lifted off its photographed background, cropped to bounds."""
+
+def keyed_mark() -> Image.Image:
+    """The lockup lifted off its background, cropped to its own bounds."""
     rgb = np.asarray(Image.open(SRC).convert("RGB")).astype(np.int16)
     alpha = np.clip((BG_FLOOR - rgb.min(axis=2)) * ALPHA_GAIN, 0, 255).astype(np.uint8)
     ink = np.zeros_like(rgb, dtype=np.uint8)
     keyed = Image.fromarray(np.dstack([ink, alpha]), "RGBA")
-    return keyed.crop(keyed.getbbox())
-
-
-def symbol_of(lockup: Image.Image) -> Image.Image:
-    """The stopwatch alone — the only near-square element of the lockup."""
-    mark = lockup.crop(SYMBOL_BOX)
-    mark = mark.crop(mark.getbbox())
-    if mark.size != SYMBOL_SHAPE:
+    mark = keyed.crop(keyed.getbbox())
+    aspect = mark.size[0] / mark.size[1]
+    if not EXPECTED_ASPECT[0] <= aspect <= EXPECTED_ASPECT[1]:
         raise SystemExit(
-            f"SYMBOL_BOX no longer isolates the stopwatch: got {mark.size}, "
-            f"expected {SYMBOL_SHAPE}. The source art changed — re-derive the "
-            f"box before trusting the generated icons."
+            f"source aspect {aspect:.2f} is outside the expected "
+            f"{EXPECTED_ASPECT} for the stacked lockup — check the artwork "
+            f"before trusting the generated assets."
         )
     return mark
 
 
-def square_icon(mark: Image.Image, size: int) -> Image.Image:
-    """Centre `mark` on an opaque white square, scaled to FILL of the canvas."""
-    mw, mh = mark.size
-    if mw >= mh:
-        width = int(size * FILL)
-        height = int(mh * width / mw)
-    else:
-        height = int(size * FILL)
-        width = int(mw * height / mh)
-    canvas = Image.new("RGBA", (size, size), (255, 255, 255, 255))
-    canvas.alpha_composite(
-        mark.resize((width, height), Image.LANCZOS),
-        ((size - width) // 2, (size - height) // 2),
-    )
-    return canvas
+def flattened_square() -> Image.Image:
+    """The source with its near-white field flattened to a true 255, at OUT_SIZE.
+
+    Keeps the artwork's own padding: this file is the designed icon, and
+    re-cropping it would second-guess the composition.
+    """
+    rgb = np.asarray(Image.open(SRC).convert("RGB")).astype(np.int16)
+    alpha = np.clip((BG_FLOOR - rgb.min(axis=2)) * ALPHA_GAIN, 0, 255).astype(np.uint8)
+    ink = np.zeros_like(rgb, dtype=np.uint8)
+    keyed = Image.fromarray(np.dstack([ink, alpha]), "RGBA")
+    canvas = Image.new("RGBA", keyed.size, (255, 255, 255, 255))
+    canvas.alpha_composite(keyed)
+    return canvas.resize((OUT_SIZE, OUT_SIZE), Image.LANCZOS)
 
 
 def main() -> None:
-    lockup = keyed_lockup()
+    mark = keyed_mark()
     brand = ROOT / "customer_app" / "assets" / "brand"
     brand.mkdir(parents=True, exist_ok=True)
-    lockup.save(brand / "gusto_logo.png")
+    mark.save(brand / "gusto_logo.png")
+    owner_brand = ROOT / "owner_app" / "assets" / "brand"
+    owner_brand.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(brand / "gusto_logo.png", owner_brand / "gusto_logo.png")
     print(
-        f"lockup {lockup.size[0]}x{lockup.size[1]} "
-        f"(aspect {lockup.size[0] / lockup.size[1]:.2f}) -> assets/brand/gusto_logo.png"
+        f"mark {mark.size[0]}x{mark.size[1]} (aspect {mark.size[0] / mark.size[1]:.2f}) "
+        f"-> assets/brand/gusto_logo.png (customer_app + owner_app)"
     )
 
-    mark = symbol_of(lockup)
-    print(f"symbol {mark.size[0]}x{mark.size[1]} (aspect {mark.size[0] / mark.size[1]:.2f}) — stopwatch")
-
-    icon = square_icon(mark, OUT_SIZE)
+    icon = flattened_square()
     primary = ROOT / "customer_app" / "assets" / "icon" / "app_icon.png"
     icon.save(primary)
     shutil.copyfile(primary, ROOT / "owner_app" / "assets" / "icon" / "app_icon.png")
-    print(f"icon {OUT_SIZE}x{OUT_SIZE}, mark at {FILL:.0%} -> customer_app + owner_app")
+    print(f"icon {OUT_SIZE}x{OUT_SIZE} (source padding preserved) -> customer_app + owner_app")
 
     favicon = ROOT / "admin_app" / "app" / "icon.png"
     icon.resize((FAVICON_SIZE, FAVICON_SIZE), Image.LANCZOS).save(favicon)
