@@ -8,6 +8,7 @@ Writes customer_app/assets/brand/gusto_logo.png     (mark on transparency — sp
        customer_app/assets/icon/app_icon.png        (opaque white square, 1024)
        owner_app/assets/icon/app_icon.png           (same file, copied)
        admin_app/app/icon.png                       (same mark, 512px favicon)
+       customer_app/assets/icon/play_store_icon_512.png  (Play listing icon)
 
 Both splash screens take the SAME asset, written from here rather than copied by
 hand, so the two apps cannot drift apart the next time the artwork changes.
@@ -129,9 +130,26 @@ def main() -> None:
     shutil.copyfile(primary, ROOT / "owner_app" / "assets" / "icon" / "app_icon.png")
     print(f"icon {OUT_SIZE}x{OUT_SIZE} (source padding preserved) -> customer_app + owner_app")
 
+    small = icon.resize((FAVICON_SIZE, FAVICON_SIZE), Image.LANCZOS)
+
     favicon = ROOT / "admin_app" / "app" / "icon.png"
-    icon.resize((FAVICON_SIZE, FAVICON_SIZE), Image.LANCZOS).save(favicon)
+    small.save(favicon)
     print(f"favicon {FAVICON_SIZE}x{FAVICON_SIZE} -> admin_app/app/icon.png")
+
+    # The Play Console listing icon. Generated from the same master rather than
+    # exported by hand, because it is the one brand asset with no test and no
+    # build step to catch it going stale — it sat on the superseded CareVo mark
+    # through three logo changes precisely because nothing referenced it.
+    #
+    # Left fully opaque. Play wants a 512px 32-bit PNG, and it composites the
+    # icon onto its own background and applies its own mask, so a transparent
+    # field reads as a hole rather than as breathing room.
+    play = ROOT / "customer_app" / "assets" / "icon" / "play_store_icon_512.png"
+    small.save(play)
+    alpha = small.getchannel("A").getextrema()
+    if alpha != (255, 255):
+        raise SystemExit(f"Play icon must be fully opaque; alpha range {alpha}")
+    print(f"play listing icon {FAVICON_SIZE}x{FAVICON_SIZE} (opaque) -> {play.name}")
 
 
 if __name__ == "__main__":
