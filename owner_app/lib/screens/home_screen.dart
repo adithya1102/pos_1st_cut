@@ -5,6 +5,7 @@ import '../models/menu_item.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../models/outlet.dart';
+import '../services/alert_feedback.dart';
 import '../services/cloudinary_service.dart';
 import '../services/staff_push_service.dart';
 import '../state/auth_state.dart';
@@ -18,44 +19,137 @@ import 'offers_screen.dart';
 import 'orders_screen.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  /// Injectable so a test can watch the chime/buzz without a real device.
+  const HomeScreen({super.key, this.feedback = const AlertFeedback()});
+
+  final AlertFeedback feedback;
+
+  /// The signed-in outlet's name in the app bar. Keyed because "which
+  /// restaurant is this phone?" is the whole point of it being there, and a
+  /// test asserting on loose text could pass on some other label.
+  static const outletNameKey = Key('home_outlet_name');
+
+  /// The in-app new-order alert.
+  static const newOrderBannerKey = Key('home_new_order_banner');
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _index = 0;
+
+  /// Held rather than read from `context` on demand, because both are torn down
+  /// in [dispose] and an ancestor lookup there is not safe — by then the element
+  /// tree is unmounting and the providers may already be gone.
+  late OrdersState _orders;
+  late StaffPushService _push;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _orders = context.read<OrdersState>();
+    _push = context.read<StaffPushService>();
+  }
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       context.read<HomeState>().load();
-      context.read<OrdersState>().load();
       context.read<OffersState>().load();
+
+      // The orders feed refreshes itself from here on: the first load takes the
+      // alert baseline (the queue already on the counter is not news) and the
+      // poll started after it is what makes an arrival audible.
+      _orders.newOrderAlert.addListener(_onNewOrder);
+      _orders.load();
+      _orders.startPolling();
 
       // A tapped staff push (new order, or a train order due to start) lands
       // on the EXISTING Orders tab rather than a new screen.
-      final push = context.read<StaffPushService>();
-      push.attachTapRouting();
-      push.openOrderId.addListener(_onPushTapped);
+      _push.attachTapRouting();
+      _push.openOrderId.addListener(_onPushTapped);
       // A cold start from a notification sets the value before this listener
       // exists, so check once on mount too.
-      if (push.openOrderId.value != null) _onPushTapped();
+      if (_push.openOrderId.value != null) _onPushTapped();
     });
+  }
+
+  /// Polling follows the foreground, because the alert does.
+  ///
+  /// This alert is in-app only by design. Once the app is backgrounded there is
+  /// no banner to show and no one watching, so continuing to poll would spend
+  /// battery and Render quota for nothing. Delivery to a backgrounded app is a
+  /// separate decision and is deliberately not made here.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!mounted) return;
+    if (state == AppLifecycleState.resumed) {
+      // Catch up first, then resume the cadence — an order that landed while
+      // the phone was in a pocket should be on screen immediately, though it
+      // stays silent: it is no longer "just arrived" by the time anyone looks.
+      _orders.load(silent: true);
+      _orders.startPolling();
+    } else {
+      _orders.stopPolling();
+    }
   }
 
   void _onPushTapped() {
     if (!mounted) return;
-    setState(() => _index = 1);          // Orders tab
-    context.read<OrdersState>().load();  // the pushed order may be brand new
-    context.read<StaffPushService>().openOrderId.value = null;  // consume once
+    setState(() => _index = 1);           // Orders tab
+    _orders.load();                       // the pushed order may be brand new
+    _push.openOrderId.value = null;       // consume once
+  }
+
+  /// A paid order just appeared in the feed: chime, buzz, and say which one.
+  void _onNewOrder() {
+    if (!mounted) return;
+    final alert = _orders.newOrderAlert.value;
+    if (alert == null) return;
+    _orders.consumeAlert();  // one-shot: a rebuild must not re-fire it
+
+    widget.feedback.newOrder();
+
+    final order = alert.order;
+    final count = order.items.fold<int>(0, (sum, i) => sum + i.quantity);
+    final extra = alert.alsoArrived;
+    final label = 'New order #${order.shortId} — $count '
+        'item${count == 1 ? '' : 's'}, ₹${order.totalAmount.toStringAsFixed(0)}'
+        '${extra > 0 ? '  (+$extra more just in)' : ''}';
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        key: HomeScreen.newOrderBannerKey,
+        content: Row(
+          children: [
+            const Icon(Icons.notifications_active, size: 20),
+            const SizedBox(width: 10),
+            Expanded(child: Text(label)),
+          ],
+        ),
+        // Long enough to survive a glance across a counter, short enough that
+        // a second arrival is not stuck behind it.
+        duration: const Duration(seconds: 8),
+        action: SnackBarAction(
+          label: 'View',
+          onPressed: () => setState(() => _index = 1),
+        ),
+      ));
   }
 
   @override
   void dispose() {
-    context.read<StaffPushService>().openOrderId.removeListener(_onPushTapped);
+    WidgetsBinding.instance.removeObserver(this);
+    _orders.newOrderAlert.removeListener(_onNewOrder);
+    // Leaving this running would keep hitting the server from a screen that no
+    // longer exists — and, on logout, for an outlet nobody is signed into.
+    _orders.stopPolling();
+    _push.openOrderId.removeListener(_onPushTapped);
     super.dispose();
   }
 
@@ -67,7 +161,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_titles[_index]),
+        title: _AppBarTitle(section: _titles[_index]),
         actions: [
           if (_index == 0) const _OutletVisibilityToggle(),
           IconButton(
@@ -84,7 +178,12 @@ class _HomeScreenState extends State<HomeScreen> {
               // Drop this device's push token first: once signed out it must
               // stop buzzing for an outlet whose staff member has left.
               await context.read<StaffPushService>().clear();
-              if (context.mounted) await context.read<AuthState>().logout();
+              if (!context.mounted) return;
+              // Same reasoning for the in-app alert: stop polling and drop the
+              // queue, so the next outlet on this phone starts from its own
+              // orders rather than inheriting these.
+              context.read<OrdersState>().reset();
+              await context.read<AuthState>().logout();
             },
           ),
         ],
@@ -126,6 +225,56 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// App bar title: WHICH restaurant, then which section of it.
+///
+/// The outlet name leads and the section label sits under it, because the
+/// question this answers is asked across several phones at once — "which
+/// account is this device signed into?" — and it has to be answerable at a
+/// glance, without opening a tab. Reads the outlet HomeState already fetched
+/// after login; no extra request exists for this.
+///
+/// Falls back to the section title alone until that load lands, rather than
+/// showing a placeholder name that could be mistaken for a real outlet.
+class _AppBarTitle extends StatelessWidget {
+  const _AppBarTitle({required this.section});
+
+  final String section;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final name = context.select<HomeState, String?>((s) {
+      final n = s.outlet?.locationName.trim();
+      return (n == null || n.isEmpty) ? null : n;
+    });
+
+    if (name == null) return Text(section);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          name,
+          key: HomeScreen.outletNameKey,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w700,
+            height: 1.1,
+          ),
+        ),
+        Text(
+          section,
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: theme.colorScheme.outline,
+            height: 1.2,
+          ),
+        ),
+      ],
     );
   }
 }

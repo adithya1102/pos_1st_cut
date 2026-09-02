@@ -4047,3 +4047,134 @@ thing that tells them apart, so check the hash rather than the version before
 concluding anything about what a device is running.
 
 ---
+
+## 2026-09-02 20:51 IST — Live in-app new-order alert + the outlet name in the app bar
+
+Two things asked for so that several test phones running owner_app at once can
+be told apart, and so that a paid order arriving is noticed without anyone
+staring at the Orders tab. Both landed client-side only: **no migration, no
+backend change, and nothing in the Firebase/PUSH_ENABLED path was touched.**
+
+### FINDING FIRST: `/ws/pos/{outlet_id}` is NOT wired into owner_app
+
+This was checked before anything was built, because the task's shape depended
+on the answer. It is **NOT BUILT**, on both sides of the wire:
+
+- **No client.** `owner_app/lib` contains zero WebSocket code — grep for
+  `WebSocket|web_socket|websocket|ws/pos` across the whole of `lib/` returns
+  nothing, and `owner_app/pubspec.yaml:30-57` has no `web_socket_channel`
+  dependency (deps are provider, http, shared_preferences, image_picker,
+  firebase_core, firebase_messaging). For contrast, customer_app DOES have a
+  real WS client at `customer_app/lib/services/order_notify_service.dart:22`
+  (`WebSocketChannel? _channel`), so this is an owner_app gap, not a
+  project-wide absence.
+- **Nor was owner_app polling on a timer.** Before this change `OrdersState`
+  had no `Timer` at all: the queue refreshed only on mount
+  (`home_screen.dart` initState) and on pull-to-refresh
+  (`orders_screen.dart:57`). An order landing while the app sat open was
+  invisible until someone pulled down.
+
+The endpoint itself does exist server-side —
+`gusto_pos/backend/app/modules/websocket/router.py:26` (`@router.websocket
+("/pos/{outlet_id}")`), mounted at `app/main.py:92`. But wiring a client to it
+would still not have delivered this feature, because **nothing broadcasts a new
+Skip order to it.** Every `manager.notify_pos(...)` call in the backend sends
+`{"type": "table_update"}` for the dine-in table flow
+(`orders/service.py:200,298,342`, `tables/service.py:92,117`). The CareVo Skip
+paid-order path is `carevo_customer/controller.py:466`, and it fires
+`PushService.notify_outlet_new_order` — FCM only, no WS broadcast.
+
+So the WS route would have required a backend change to carry anything. The
+task allowed "existing WebSocket connection **or** in-app polling"; polling is
+the branch that needs neither a new dependency nor a server edit, so that is
+what was built.
+
+### What was built
+
+**`lib/services/alert_feedback.dart`** (new). Chime + buzz via Flutter's own
+`SystemSound.play(alert)` and `HapticFeedback.heavyImpact()`. No new package,
+no asset, no per-platform setup; both no-op on hardware that cannot do them,
+which is the "if the device supports it" behaviour asked for. Nothing here
+touches Firebase.
+
+**`lib/state/orders_state.dart`.** Foreground polling every 15s
+(`defaultPollInterval`, overridable for tests), plus arrival detection:
+
+- `NewOrderAlert` carries the order itself, so the banner NAMES what arrived,
+  plus `alsoArrived` so a busy minute does not collapse into one alert.
+- A **baseline** is taken on the first successful load. The queue already on the
+  counter at sign-in is not news — without this, opening the app chimes once per
+  waiting order, which trains staff to ignore the sound that matters.
+- `_announced` remembers ids, so a 15s poll re-reading the same rows does not
+  re-fire. Only paid, not-yet-collected orders count.
+- `load(silent:)` — a background poll no longer flashes the spinner, and yields
+  if a request is already in flight (a cold Render call can outlive the
+  interval). A staff-initiated load is never skipped: several actions end in
+  `await load()` and rely on it running.
+- `reset()` for logout. OrdersState is a singleton that outlives a session, so
+  without it the next outlet on the same phone would inherit the previous one's
+  rows AND its announced-ids — alerted about the wrong orders, silent about its
+  own.
+
+**`lib/screens/home_screen.dart`.** Listens for the alert, plays the feedback,
+shows a snackbar naming the order (`#881111 — 3 items, ₹240`, "+N more just in"
+when several land together) with a `View` action that jumps to the Orders tab.
+Polling follows the app lifecycle via `WidgetsBindingObserver`: stopped when
+backgrounded, resumed with a silent catch-up load. On resume the catch-up is
+deliberately SILENT — an order that arrived while the phone was in a pocket is
+on screen immediately, but it is no longer "just arrived" by the time anyone
+looks at it.
+
+**Delivery to a backgrounded or closed app is explicitly NOT part of this.**
+That is the push path and it was left alone on purpose; the decision is still
+open.
+
+**App bar title** is now the outlet name (bold) over the section label. Read
+from `HomeState.outlet.locationName`, which `GET /pos/outlet` already returns
+(`OwnerOutletOut`, `carevo_customer/schema.py:387-391`) and HomeState already
+fetches on mount — **no new backend call was added.** When that load fails the
+title falls back to the section alone rather than a placeholder: a name that is
+not the account's is exactly the mistake this exists to prevent.
+
+### A latent dispose bug, fixed on the way
+
+`HomeScreen.dispose` was already doing `context.read<StaffPushService>()`, which
+is an ancestor lookup on a deactivated element. Adding a second one for
+OrdersState made it fire — "Looking up a deactivated widget's ancestor is
+unsafe" — in every new widget test. Both are now captured in
+`didChangeDependencies` and used from fields, so the pre-existing case is fixed
+too.
+
+### Tests
+
+owner_app **23 -> 41**, all passing. `flutter analyze` reports nothing on any
+touched file (the 21 remaining `info` lints are pre-existing, in
+menu_service/offer_service/dish_row).
+
+`test/new_order_alert_test.dart` (13) — seven drive OrdersState directly over a
+MockClient whose feed CHANGES between polls, so the arrival rule is asserted
+rather than the screen: sign-in queue silent, later arrival alerts, same order
+never twice across four polls, several-at-once counted not collapsed, unpaid
+does not alert until paid, `reset()` clears the baseline, and a failed poll does
+not re-announce the survivors on recovery. Six drive the real HomeScreen: banner
+names the order, `View` switches tab, "+1 more" for a double arrival, and — the
+one that matters most — sound and vibration asserted at the **platform channel**
+(`SystemSound.play` / `HapticFeedback.vibrate` on `SystemChannels.platform`),
+not through a fake, which would only have proved the app calls its own wrapper.
+
+`test/outlet_name_test.dart` (5) — name present and correct in the AppBar,
+survives a tab switch, two different accounts render differently (torn down
+between mounts, or the reused providers would test nothing), and a failed outlet
+load shows NO name rather than a fake one.
+
+Both files unmount at the end of every test. That is not tidiness: flutter_test
+fails on a live timer at teardown, so it doubles as the assertion that
+`dispose()` actually stops the poll.
+
+### Not verified
+
+Nothing was run on a device this session — no APK built, no phone installed.
+The chime and the buzz are asserted at the channel boundary, which proves the
+app makes the calls, not that a particular handset makes a noise.
+
+---
