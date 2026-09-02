@@ -4178,3 +4178,118 @@ The chime and the buzz are asserted at the channel boundary, which proves the
 app makes the calls, not that a particular handset makes a noise.
 
 ---
+
+## 2026-09-03 02:10 IST — Cancelled payments get "Try Payment Again" instead of a dead pickup ticket
+
+Checkout's post-payment navigation, customer_app. **Client-side only: no
+backend change, no migration, and the OTP screen was not touched.**
+
+### The reported symptom was not quite the bug
+
+Reported as "failed payments land on a broken OTP screen". There is no OTP
+screen in the payment flow at all — `OtpScreen` is phone-login only
+(`login_screen.dart:85` is its sole caller). What a failure landed on was
+`PickupScreen`, whose code card renders a lock and "Appears after payment"
+when unpaid (`pickup_screen.dart:721-730`). A big empty six-character box is
+what was being read as an OTP screen.
+
+Nor did the success path go anywhere else: `checkout_screen.dart:396` was ONE
+unconditional `pushReplacement` to PickupScreen for verified and failed alike,
+differing only in an advisory `paymentHint` string.
+
+### The actual defect: a navigation-stack dead end
+
+`pushReplacement` removed CheckoutScreen from the stack. PickupScreen has no
+back button straight from checkout (`automaticallyImplyLeading: fromHistory`,
+`:250`), and its only control is "Order more" → `pushAndRemoveUntil(HomeScreen,
+(route) => false)` (`:412-426`). So a customer who dismissed the sheet had an
+empty code box, no back, and one button that nuked the stack to Home.
+
+The cart was never the problem — it survives. `cart.clear()` exists in exactly
+two places (`payment_processing_screen.dart:61`, stub success; and
+`pickup_screen.dart:218-220`, only on an observed PAID). The items were still
+there; there was simply no route back to them short of outlet → menu → cart →
+checkout.
+
+### What made this non-trivial, and why the obvious fix was wrong
+
+The old behaviour was DELIBERATE, documented at `checkout_screen.dart:383-395`.
+Cashfree's `onVerify`/`onError` fire on the device and are not authoritative
+(`cashfree_service.dart:39-49`); only the webhook moves an order to PAID
+(`carevo_customer/controller.py:451-466`). `onError` fires when the customer
+cancels — but ALSO when a genuine payment's confirmation is lost coming back
+from a UPI app.
+
+So routing every failure straight to a retry button would have created a
+**double-charge path**: pay → confirmation lost → retry → first webhook lands →
+charged twice. That is worse than the bug being fixed.
+
+New `PaymentOutcomeScreen` therefore confirms before it accuses:
+
+1. Poll the order for a 12s grace window. Webhook lands → hand off to
+   PickupScreen, retry never shown.
+2. Only once the server has had its chance and still says unpaid → "Try
+   Payment Again".
+
+Retry reopens the SAME order on the SAME session id. `payment_session_id` is
+minted only inside `create_order` (`service.py:617`, returned `:650`) and there
+is no re-issue endpoint, so reusing it is both necessary and correct — and it
+is why this needed no backend work. Checkout is `push`ed under rather than
+replaced, so "Back to my order" is a plain pop onto the intact basket. An
+"I was charged — check status" hatch covers the rare case the grace window
+misses.
+
+Success path unchanged: verified still goes straight to PickupScreen.
+
+### Mode note: this bug is NOT reachable in the current deployment
+
+`PAYMENT_GATEWAY=stub` in both `gusto_pos/backend/.env:11` and
+`render.yaml:51-52`. The two modes diverge at `checkout_screen.dart:353`
+(`order.payment.isCashfree`) BEFORE the broken code — stub early-returns into
+`PaymentProcessingScreen`, which already had its own retry, and has no sheet to
+cancel. The fix only becomes live when the backend flips to `cashfree`. No app
+rebuild is needed for that: the app branches on the response, not a build flag.
+
+Caveat recorded honestly: `render.yaml` is the blueprint, and this project has
+already been bitten by the Render dashboard diverging from it (the
+CUSTOMER_AUTH_ENABLED lesson). No endpoint exposes the gateway, so the live
+value was not probed. The definitive check is `payment.gateway` in a real
+create-order response.
+
+### Tests
+
+customer_app **285 -> 300**, all passing, `flutter analyze` clean.
+
+13 of the 15 drive `PaymentOutcomeScreen` directly over a MockClient whose
+reported `payment_status` changes between polls — which is what a late webhook
+looks like from the app's side. Covered: no retry button before the server
+answers; a late webhook reaching pickup without ever showing retry; retry
+offered only after the window; a dead network still reaching retry rather than
+hanging; retry reopening the same order+session (asserted against a recorded
+call log, not a screenshot); a "verified" retry still deferring to the server;
+a second cancellation returning to retry; a missing session refusing rather
+than opening an empty sheet; and the cart never being cleared.
+
+The other 2 drive the real CheckoutScreen through both outcomes. Those exist
+because the first 13 would ALL still pass against the unfixed code —
+**revert-proved**: restoring the single-pushReplacement version fails exactly
+one test ("a DISMISSED sheet lands on the retry screen, not pickup") while the
+success-path test keeps passing, so the pair is neither blind nor
+over-constrained.
+
+### Not verified
+
+Nothing was run on a device. The Cashfree sheet is faked in tests, and the real
+path cannot be exercised end-to-end while `PAYMENT_GATEWAY=stub` — so real SDK
+cancel behaviour remains unconfirmed. Worth walking in sandbox before this
+reaches customers.
+
+### APK note from the same session
+
+Two customer_app debug APKs were built an hour apart and BOTH are named
+`app-debug.apk`; the second overwrote the first. `65fd4466…` (148,865,024 B)
+contains this fix; `af7aee2d…` (191,382,038 B) is true HEAD a8b2ab5e and does
+NOT — verified by string-searching `kernel_blob.bin`, not assumed. versionCode
+does not distinguish them; check the hash.
+
+---

@@ -21,6 +21,7 @@ import '../widgets/arrival_time_picker.dart';
 import '../widgets/location_permission_dialog.dart';
 import '../widgets/offer_sheet.dart';
 import '../widgets/price_text.dart';
+import 'payment_outcome_screen.dart';
 import 'payment_processing_screen.dart';
 import 'pickup_screen.dart';
 import 'place_search_screen.dart';
@@ -380,29 +381,49 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         return;
       }
 
-      // Everything else — verified OR failed — goes to the pickup screen.
+      // The SDK's answer decides WHICH screen, never whether the order is paid.
       //
-      // That is deliberate and is the whole point of the webhook being the
-      // authority. onVerify can fire for a payment the bank later reverses,
-      // and can fail to fire for one that genuinely succeeded (app killed,
-      // network dropped returning from a UPI app). Neither the SDK's yes nor
-      // its no is trustworthy enough to tell the customer their order is
-      // confirmed — so both defer to the polled order status, which only the
-      // webhook can move to PAID.
+      // Both branches still defer to the polled order status, because neither
+      // the SDK's yes nor its no is trustworthy: onVerify can fire for a
+      // payment the bank later reverses, and can fail to fire for one that
+      // genuinely succeeded (app killed, network dropped returning from a UPI
+      // app). Only the webhook moves an order to PAID.
       //
-      // The cart is NOT cleared here for the same reason: at this instant
+      // What changed is where a NO lands. Both outcomes used to pushReplacement
+      // to PickupScreen, which left a cancelled payment stranded on a pickup
+      // ticket with no code, no back button, and only "Order more" — a button
+      // that clears the whole stack to Home and makes the customer walk back
+      // through the menu to a cart they never lost. A sheet the customer
+      // dismissed now gets somewhere to retry from instead.
+      //
+      // The cart is NOT cleared on either branch: at this instant
       // payment_status is still whatever the server last knew. PickupScreen
       // clears it once the order is actually observed PAID.
-      Navigator.of(context).pushReplacement(
+      if (result.verified) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => PickupScreen(
+              orderId: order.id,
+              amount: order.finalAmount,
+            ),
+          ),
+        );
+        return;
+      }
+
+      // push, NOT pushReplacement: checkout stays underneath so backing out of
+      // the retry screen returns to this order — same cart, same offer, same
+      // travel details — rather than to Home.
+      //
+      // PaymentOutcomeScreen does NOT immediately declare failure. It polls
+      // first, and only offers a retry once the server has had its chance to
+      // say PAID. Skipping that would turn a lost confirmation into a second
+      // charge.
+      Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) => PickupScreen(
-            orderId: order.id,
-            amount: order.finalAmount,
-            // Show a gentle note only when the SDK reported a problem; the
-            // screen still polls, in case it was wrong.
-            paymentHint: result.verified
-                ? null
-                : (result.message ?? 'Payment was not completed.'),
+          builder: (_) => PaymentOutcomeScreen(
+            order: order,
+            reason: result.message,
           ),
         ),
       );
