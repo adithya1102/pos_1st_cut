@@ -4487,3 +4487,26 @@ server-sourced but a resumed screen waited up to a poll interval to refresh.
 - Full customer_app suite: 320 passing.
 
 ---
+
+## 2026-09-03 11:49 IST — Offers-filter "Show all restaurants" button + its test (and the greeting test)
+
+customer_app. Adds the offers-filter button code and the test that covers both
+it and the greeting banding.
+
+- outlets_screen.dart: the offers-only empty state matched zero restaurants
+  because the filter WORKED, not because anything failed — so the button now
+  reads "Show all restaurants" (clears the filters) instead of the misleading
+  "Try again". Scoped via a retryLabel param on _ErrorState defaulting to "Try
+  again", so the genuine load-failure case is unchanged.
+- greeting_and_offers_filter_test.dart (new): the greeting bands (midnight is
+  NOT "Good morning"; morning 05-11, afternoon 12-16, evening otherwise) and the
+  offers-filter button ("Show all restaurants" on a zero-match, still "Try
+  again" on a real load failure, tapping clears the filter).
+
+The GREETING source (greetingFor in home_screen.dart) landed earlier in
+810a12c4; this commit adds its test coverage. The BUTTON source
+(outlets_screen.dart) had NOT been committed yet, so it ships here WITH its test
+rather than orphaning the test — same code-and-tests-together discipline as the
+other commits. Full customer_app suite: 320 passing.
+
+---

@@ -494,6 +494,9 @@ class _OutletsScreenState extends State<OutletsScreen> {
                       // here", because the fix is different: clear a chip.
                       return _ErrorState(
                         message: 'No restaurants match those filters.',
+                        // Nothing failed — the filter worked and matched none —
+                        // so the button clears the filters rather than retrying.
+                        retryLabel: 'Show all restaurants',
                         onRetry: () => setState(() {
                           _search.clear();
                           _offersOnly = false;
@@ -1296,9 +1299,18 @@ class _Pill extends StatelessWidget {
 }
 
 class _ErrorState extends StatelessWidget {
-  const _ErrorState({required this.message, this.onRetry});
+  const _ErrorState({
+    required this.message,
+    this.onRetry,
+    this.retryLabel = 'Try again',
+  });
   final String message;
   final VoidCallback? onRetry;
+
+  /// The button caption. Defaults to "Try again" for the genuine-failure case,
+  /// but a filter that simply matched nothing did not fail — there the action
+  /// is "show all", not "retry", so callers override this.
+  final String retryLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -1319,7 +1331,7 @@ class _ErrorState extends StatelessWidget {
             if (onRetry != null) ...[
               const SizedBox(height: 18),
               NeoButton(
-                label: 'Try again',
+                label: retryLabel,
                 icon: Icons.refresh,
                 expand: false,
                 variant: NeoButtonVariant.neutral,
