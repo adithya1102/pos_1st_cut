@@ -14,6 +14,7 @@ import '../state/offers_state.dart';
 import '../state/orders_state.dart';
 import '../widgets/dish_row.dart';
 import 'change_password_screen.dart';
+import 'outlet_settings_screen.dart';
 import 'dish_edit_screen.dart';
 import 'offers_screen.dart';
 import 'orders_screen.dart';
@@ -164,6 +165,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         title: _AppBarTitle(section: _titles[_index]),
         actions: [
           if (_index == 0) const _OutletVisibilityToggle(),
+          IconButton(
+            key: const Key('open_outlet_settings'),
+            tooltip: 'Hours & availability',
+            icon: const Icon(Icons.schedule_outlined),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const OutletSettingsScreen()),
+            ),
+          ),
           IconButton(
             tooltip: 'Change password',
             icon: const Icon(Icons.password_outlined),

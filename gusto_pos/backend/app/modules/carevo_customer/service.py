@@ -9,8 +9,9 @@ import string
 import time
 import uuid
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time as dtime, timedelta, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, select, text
@@ -51,6 +52,23 @@ DEFAULT_CATEGORIES = ["Starters", "Mains", "Sides", "Desserts", "Beverages"]
 # Status progression for the pickup flow
 _PROGRESSION = ["RECEIVED", "PREPARING", "READY"]
 _LIVE_STATUSES = {"PAID", "RECEIVED", "PREPARING", "READY"}
+
+# Operating-hours gate (migration 024). Kept as named constants so they are easy
+# to tune later without hunting through query strings.
+#
+# New orders are refused within ORDER_CUTOFF_MINUTES of closing, so the kitchen
+# is never handed an order it cannot finish before the doors shut. All outlets
+# are in India, and `opens_at`/`closes_at` are stored as bare local time-of-day,
+# so the "what time is it now" comparison is done in IST — never the server's
+# UTC, which would gate orders against the wrong clock (the same class of bug as
+# the greeting that read UTC).
+ORDER_CUTOFF_MINUTES = 30
+_OUTLET_TZ = ZoneInfo("Asia/Kolkata")
+
+# Availability states, surfaced to the customer and used to gate order creation.
+AVAIL_OPEN = "open"
+AVAIL_CLOSING_SOON = "closing_soon"
+AVAIL_CLOSED = "closed"
 
 
 class CarevoService:
@@ -322,7 +340,7 @@ class CarevoService:
 
         rows = (await db.execute(text(
             "SELECT id, location_name, city, locality, latitude, longitude, upi_id, image_url, "
-            "       phone_number, created_at "
+            "       phone_number, created_at, opens_at, closes_at, is_manually_closed "
             "FROM outlets "
             "WHERE is_visible = true AND deactivated_at IS NULL "
             # `= ANY(array)` rather than an IN-list built by string
@@ -367,11 +385,17 @@ class CarevoService:
         out = []
         for r in rows:
             (oid, name, city, locality, o_lat, o_lng, upi_id, image_url,
-             phone_number, created_at) = r
+             phone_number, created_at, opens_at, closes_at,
+             is_manually_closed) = r
             distance = None
             if lat is not None and lng is not None and o_lat is not None and o_lng is not None:
                 distance = CarevoService._haversine_km(lat, lng, float(o_lat), float(o_lng))
             summary = offers.get(str(oid)) or platform
+            # Operating-hours status (migration 024), computed server-side from
+            # the SAME function that gates order creation, so the card's label
+            # and the order gate can never disagree.
+            avail = CarevoService.outlet_availability(
+                opens_at, closes_at, bool(is_manually_closed))
             out.append({
                 "id": oid,
                 "name": name,
@@ -384,7 +408,15 @@ class CarevoService:
                 # Falls back to whichever part exists: outlets predating 012
                 # have no locality and must still render their city.
                 "address": ", ".join(p for p in (locality, city) if p) or None,
-                "is_open": True,
+                # is_open kept for the existing client contract, but now REAL
+                # (was hardcoded True): true only when orders are accepted.
+                # order_status carries the three-state label the app shows;
+                # opening_time/closing_time back its "9:00 AM – 10:00 PM" line.
+                "is_open": avail["status"] == AVAIL_OPEN,
+                "order_status": avail["status"],
+                "closed_reason": avail["reason"],
+                "opening_time": opens_at.strftime("%H:%M") if opens_at else None,
+                "closing_time": closes_at.strftime("%H:%M") if closes_at else None,
                 "distance_km": distance,
                 "upi_id": upi_id,
                 "image_url": image_url,
@@ -482,9 +514,68 @@ class CarevoService:
             "categories": [cats[k] for k in order],
         }
 
+    @staticmethod
+    def outlet_availability(opens_at, closes_at, is_manually_closed, *, now=None) -> dict:
+        """Current order availability for an outlet.
+
+        Returns {"status": AVAIL_*, "reason": str|None}. Pure and
+        clock-injectable (`now` is a tz-aware datetime), so it is directly
+        testable without waiting for real time. This is the SINGLE source of
+        truth: the same function decides what the customer is shown AND whether
+        a new order is accepted, so display and gate can never disagree.
+
+        Rules:
+          - is_manually_closed                 -> closed (temporarily closed)
+          - no schedule (either time is NULL)  -> open (backward compatible:
+            every existing outlet has NULL hours and must keep accepting orders)
+          - before opens_at, or at/after closes_at -> closed
+          - within ORDER_CUTOFF_MINUTES of closes_at -> closing_soon
+          - otherwise                          -> open
+        Handles an overnight window (closes_at <= opens_at, e.g. 18:00->02:00).
+        """
+        if is_manually_closed:
+            return {"status": AVAIL_CLOSED, "reason":
+                    "This outlet is temporarily closed and is not taking "
+                    "orders right now."}
+        if opens_at is None or closes_at is None:
+            return {"status": AVAIL_OPEN, "reason": None}
+
+        now = now or datetime.now(_OUTLET_TZ)
+        n = now.hour * 60 + now.minute
+        o = opens_at.hour * 60 + opens_at.minute
+        c = closes_at.hour * 60 + closes_at.minute
+
+        # Is `n` inside [o, c)? c <= o means the window wraps past midnight.
+        is_open_now = (o <= n < c) if o < c else (n >= o or n < c)
+        if not is_open_now:
+            return {"status": AVAIL_CLOSED,
+                    "reason": "This outlet is closed right now."}
+
+        mins_to_close = (c - n) % (24 * 60)
+        if mins_to_close <= ORDER_CUTOFF_MINUTES:
+            return {"status": AVAIL_CLOSING_SOON, "reason":
+                    "This outlet is closing soon and is not accepting new "
+                    "orders."}
+        return {"status": AVAIL_OPEN, "reason": None}
+
     # ----------------------------- Orders ----------------------------------
     @staticmethod
     async def create_order(db: AsyncSession, customer: Customer, payload) -> dict:
+        # Operating-hours / manual-closure gate (migration 024). Checked FIRST,
+        # before any row is written, so a closed outlet never leaves an orphan
+        # CREATED order behind. Only NEW orders are gated here — nothing touches
+        # orders already in progress.
+        gate = (await db.execute(text(
+            "SELECT opens_at, closes_at, is_manually_closed "
+            "FROM outlets WHERE id = :oid"
+        ), {"oid": str(payload.outlet_id)})).first()
+        if gate is None:
+            raise HTTPException(status_code=404, detail="Outlet not found")
+        avail = CarevoService.outlet_availability(
+            gate.opens_at, gate.closes_at, bool(gate.is_manually_closed))
+        if avail["status"] != AVAIL_OPEN:
+            raise HTTPException(status_code=409, detail=avail["reason"])
+
         # Snapshot name + price from menu_items.
         item_ids = [str(i.menu_item_id) for i in payload.items]
         rows = (await db.execute(text("""
@@ -1555,16 +1646,82 @@ class CarevoService:
 
     # ------------------------- Owner App (staff) ---------------------------
     @staticmethod
-    async def get_owner_outlet(db: AsyncSession, outlet_id: uuid.UUID) -> dict:
+    async def _load_owner_outlet(db: AsyncSession, outlet_id: uuid.UUID) -> dict:
+        """Single source of the OwnerOutletOut shape, so GET and every setter
+        return the SAME fields — a setter that omitted the hours would make the
+        app clobber them to null when the owner merely toggled the photo."""
         row = (await db.execute(text(
-            "SELECT id, location_name, is_visible, image_url FROM outlets WHERE id = :oid"
+            "SELECT id, location_name, is_visible, image_url, "
+            "       opens_at, closes_at, is_manually_closed "
+            "FROM outlets WHERE id = :oid"
         ), {"oid": str(outlet_id)})).first()
         if not row:
             raise HTTPException(status_code=404, detail="Outlet not found")
+        avail = CarevoService.outlet_availability(
+            row.opens_at, row.closes_at, bool(row.is_manually_closed))
         return {
-            "id": row[0], "location_name": row[1],
-            "is_visible": bool(row[2]), "image_url": row[3],
+            "id": row.id, "location_name": row.location_name,
+            "is_visible": bool(row.is_visible), "image_url": row.image_url,
+            "opening_time": row.opens_at.strftime("%H:%M") if row.opens_at else None,
+            "closing_time": row.closes_at.strftime("%H:%M") if row.closes_at else None,
+            "is_manually_closed": bool(row.is_manually_closed),
+            # The owner sees the same live state a customer would (migration 024).
+            "order_status": avail["status"],
         }
+
+    @staticmethod
+    async def get_owner_outlet(db: AsyncSession, outlet_id: uuid.UUID) -> dict:
+        return await CarevoService._load_owner_outlet(db, outlet_id)
+
+    @staticmethod
+    def _parse_hhmm(value: Optional[str]) -> Optional[dtime]:
+        """'HH:MM' -> datetime.time, or None to clear. Validated at the schema
+        edge too, but re-checked here so the service can never write garbage."""
+        v = (value or "").strip()
+        if not v:
+            return None
+        try:
+            hh, mm = v.split(":")
+            return dtime(hour=int(hh), minute=int(mm))
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=422, detail=f"Invalid time: {value!r}")
+
+    @staticmethod
+    async def set_outlet_hours(
+        db: AsyncSession, outlet_id: uuid.UUID,
+        opening_time: Optional[str], closing_time: Optional[str]
+    ) -> dict:
+        """Set (or clear, with nulls) the daily opening/closing schedule.
+
+        Both-or-neither is NOT enforced — a half-set schedule (only one time)
+        reads as "no schedule" in outlet_availability and is harmless — but the
+        app sends both together.
+        """
+        o = CarevoService._parse_hhmm(opening_time)
+        c = CarevoService._parse_hhmm(closing_time)
+        row = (await db.execute(text(
+            "UPDATE outlets SET opens_at = :o, closes_at = :c WHERE id = :oid "
+            "RETURNING id"
+        ), {"o": o, "c": c, "oid": str(outlet_id)})).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Outlet not found")
+        await db.commit()
+        return await CarevoService._load_owner_outlet(db, outlet_id)
+
+    @staticmethod
+    async def set_outlet_manual_closed(
+        db: AsyncSession, outlet_id: uuid.UUID, is_manually_closed: bool
+    ) -> dict:
+        """The on-demand 'temporarily closed' toggle. Independent of the
+        schedule and of is_visible — see migration 024."""
+        row = (await db.execute(text(
+            "UPDATE outlets SET is_manually_closed = :m WHERE id = :oid "
+            "RETURNING id"
+        ), {"m": bool(is_manually_closed), "oid": str(outlet_id)})).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Outlet not found")
+        await db.commit()
+        return await CarevoService._load_owner_outlet(db, outlet_id)
 
     @staticmethod
     async def set_outlet_image(
@@ -1579,16 +1736,14 @@ class CarevoService:
         """
         url = (image_url or "").strip() or None
         row = (await db.execute(text(
-            "UPDATE outlets SET image_url = :u WHERE id = :oid "
-            "RETURNING id, location_name, is_visible, image_url"
+            "UPDATE outlets SET image_url = :u WHERE id = :oid RETURNING id"
         ), {"u": url, "oid": str(outlet_id)})).first()
         if not row:
             raise HTTPException(status_code=404, detail="Outlet not found")
         await db.commit()
-        return {
-            "id": row[0], "location_name": row[1],
-            "is_visible": bool(row[2]), "image_url": row[3],
-        }
+        # Full OwnerOutletOut shape (incl. hours), so the app does not lose the
+        # schedule when the owner only changed the photo.
+        return await CarevoService._load_owner_outlet(db, outlet_id)
 
     @staticmethod
     async def set_outlet_visibility(

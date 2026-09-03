@@ -95,6 +95,35 @@ async def set_outlet_image(
     )
 
 
+@router.patch("/outlet/hours", response_model=s.OwnerOutletOut)
+async def set_outlet_hours(
+    payload: s.SetHoursIn,
+    staff: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set/clear the daily opening & closing schedule (migration 024).
+
+    Scoped to the caller's own outlet via _require_outlet — no outlet_id
+    parameter — so one owner cannot set another's hours.
+    """
+    return await CarevoService.set_outlet_hours(
+        db, _require_outlet(staff), payload.opening_time, payload.closing_time
+    )
+
+
+@router.post("/outlet/closed", response_model=s.OwnerOutletOut)
+async def set_outlet_manual_closed(
+    payload: s.SetManualClosedIn,
+    staff: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Flip the on-demand 'temporarily closed' toggle (migration 024).
+    Independent of scheduled hours and of storefront visibility."""
+    return await CarevoService.set_outlet_manual_closed(
+        db, _require_outlet(staff), payload.is_manually_closed
+    )
+
+
 @router.post("/outlets/{outlet_id}/visibility", response_model=s.SetVisibilityOut)
 async def set_visibility(
     outlet_id: uuid.UUID,

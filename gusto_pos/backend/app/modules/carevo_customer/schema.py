@@ -74,7 +74,17 @@ class OutletOut(BaseModel):
     id: uuid.UUID
     name: str
     address: Optional[str] = None
+    # Operating hours (migration 024). is_open is now REAL (was hardcoded True):
+    # true only when new orders are accepted. order_status is the three-state
+    # label the app renders — "open" | "closing_soon" | "closed" — and
+    # closed_reason is the staff-/customer-facing sentence for the latter two.
+    # opening_time/closing_time (HH:MM, local) back the "9:00 AM – 10:00 PM" line
+    # and match the field names customer_app's Outlet model already parses.
     is_open: bool = True
+    order_status: str = "open"
+    closed_reason: Optional[str] = None
+    opening_time: Optional[str] = None
+    closing_time: Optional[str] = None
     distance_km: Optional[float] = None
     # When this outlet joined. Backs the app's "Newest" sort; Optional because
     # the column is nullable on rows that predate the current schema.
@@ -398,6 +408,25 @@ class OwnerOutletOut(BaseModel):
     location_name: str
     is_visible: bool
     image_url: Optional[str] = None
+    # Operating hours + manual closure (migration 024). Times are HH:MM local;
+    # order_status lets the owner see the same live state a customer would.
+    opening_time: Optional[str] = None
+    closing_time: Optional[str] = None
+    is_manually_closed: bool = False
+    order_status: str = "open"
+
+
+_HHMM = r"^([01]\d|2[0-3]):[0-5]\d$"
+
+
+class SetHoursIn(BaseModel):
+    """Daily opening/closing schedule, HH:MM (24h) local, or null to clear."""
+    opening_time: Optional[str] = Field(None, pattern=_HHMM)
+    closing_time: Optional[str] = Field(None, pattern=_HHMM)
+
+
+class SetManualClosedIn(BaseModel):
+    is_manually_closed: bool
 
 
 class SetOutletImageIn(BaseModel):

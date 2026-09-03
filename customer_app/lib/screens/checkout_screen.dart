@@ -436,6 +436,14 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final discount = _previewDiscount(subtotal);
     final payable = (subtotal - discount).clamp(0.0, subtotal);
 
+    // Operating-hours gate (migration 024). The server is the hard gate — it
+    // refuses the order at creation — but disabling Pay here, with the reason,
+    // means the customer is told before they tap rather than after. Null outlet
+    // (should not happen on this screen) is treated as "accepting" so the
+    // server stays the authority.
+    final outlet = cart.outlet;
+    final blocked = outlet != null && !outlet.isAcceptingOrders;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Checkout'),
@@ -445,12 +453,37 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         top: false,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-          child: NeoButton(
-            key: const Key('checkout_pay'),
-            label: 'Pay ${formatRupees(payable)}',
-            icon: Icons.lock,
-            loading: _placing,
-            onPressed: cart.isEmpty ? null : _payNow,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (blocked) ...[
+                Row(
+                  key: const Key('checkout_closed_reason'),
+                  children: [
+                    Icon(Icons.block, size: 18, color: AppColors.tomato),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        outlet.closedReason ??
+                            'This outlet is not accepting orders right now.',
+                        style: textTheme.bodyMedium
+                            ?.copyWith(color: AppColors.tomato),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+              ],
+              NeoButton(
+                key: const Key('checkout_pay'),
+                label: blocked
+                    ? outlet.statusLabel
+                    : 'Pay ${formatRupees(payable)}',
+                icon: blocked ? Icons.block : Icons.lock,
+                loading: _placing,
+                onPressed: (cart.isEmpty || blocked) ? null : _payNow,
+              ),
+            ],
           ),
         ),
       ),

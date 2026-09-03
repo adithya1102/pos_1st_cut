@@ -633,6 +633,42 @@ class _RadiusChip extends StatelessWidget {
   }
 }
 
+/// Open / Closing soon / Closed pill (migration 024). Colour carries the state
+/// too, not just the word: green open, amber closing-soon, red closed.
+class _OutletStatusBadge extends StatelessWidget {
+  const _OutletStatusBadge({required this.outlet});
+  final Outlet outlet;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final (Color bg, Color fg, IconData icon) = switch (outlet.orderStatus) {
+      'closed' => (AppColors.tomato, Colors.white, Icons.block),
+      'closing_soon' => (AppColors.sunny, AppColors.ink, Icons.schedule),
+      _ => (c.accent, c.onAccent, Icons.check_circle),
+    };
+    return Container(
+      key: Key('outlet_status_${outlet.id}'),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: c.border, width: 2),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: fg),
+          const SizedBox(width: 6),
+          Text(outlet.statusLabel,
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: fg, fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+}
+
 class _OutletCard extends StatelessWidget {
   const _OutletCard({required this.outlet});
   final Outlet outlet;
@@ -706,11 +742,15 @@ class _OutletCard extends StatelessWidget {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    // Serving hours, when the API supplies them. Hidden today
-                    // for every outlet: `outlets` has no hours columns, so
-                    // hoursLabel is always null. Wired up rather than omitted
-                    // so the display exists the moment the column does — and
-                    // deliberately never guessed. See Outlet.opensAt.
+                    // Operating status (migration 024): Open / Closing soon /
+                    // Closed, computed server-side. Real now — the old OPEN pill
+                    // was removed because is_open was hardcoded true; this one
+                    // carries genuine state, so browsing the menu of a closed
+                    // outlet warns before the customer reaches a disabled Pay.
+                    const SizedBox(height: 6),
+                    _OutletStatusBadge(outlet: outlet),
+                    // Serving hours, when the API supplies them. Shown once an
+                    // owner has set them (migration 024); still never guessed.
                     if (outlet.hoursLabel != null) ...[
                       const SizedBox(height: 4),
                       Row(

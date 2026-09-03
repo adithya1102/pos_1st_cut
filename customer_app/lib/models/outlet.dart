@@ -5,6 +5,8 @@ class Outlet {
     required this.name,
     required this.address,
     required this.isOpen,
+    this.orderStatus = 'open',
+    this.closedReason,
     this.distanceKm,
     this.upiId,
     this.imageUrl,
@@ -24,12 +26,32 @@ class Outlet {
   final String name;
   final String address;
 
-  /// Parsed and kept for API round-tripping (cart persistence serialises an
-  /// outlet snapshot through this model), but NOT used to render or gate
-  /// anything in the UI. `CarevoService.list_outlets` hardcodes this to `true`
-  /// for every outlet, so it carries no real information — see the OPEN-pill
-  /// removal in `outlets_screen.dart` for the client-side half of this.
+  /// True only when the outlet is accepting new orders right now. Real as of
+  /// migration 024 — the backend used to hardcode it `true`, and now computes
+  /// it from hours + the manual-closed toggle. Prefer [isAcceptingOrders] /
+  /// [orderStatus] in the UI: is_open collapses "closing soon" into false, and
+  /// the three-state [orderStatus] is what distinguishes the two closed reasons.
   final bool isOpen;
+
+  /// Three-state operating status the backend computes (migration 024):
+  /// 'open' | 'closing_soon' | 'closed'. Single source of truth — the same
+  /// function that gates order creation server-side produces this, so the
+  /// label and the block cannot disagree.
+  final String orderStatus;
+
+  /// Why the outlet is not taking orders, when [orderStatus] is not 'open'.
+  /// Null while open. Shown verbatim beside the disabled order action.
+  final String? closedReason;
+
+  /// True when a customer may place an order now.
+  bool get isAcceptingOrders => orderStatus == 'open';
+
+  /// Short label for the status badge.
+  String get statusLabel => switch (orderStatus) {
+        'closing_soon' => 'Closing soon',
+        'closed' => 'Closed',
+        _ => 'Open',
+      };
   final double? distanceKm;
   final String? upiId;
 
@@ -155,6 +177,14 @@ class Outlet {
       name: (json['name'] ?? '') as String,
       address: (json['address'] ?? '') as String,
       isOpen: (json['is_open'] ?? false) as bool,
+      // order_status is the authority; is_open is the coarse fallback for any
+      // response predating migration 024.
+      orderStatus: (json['order_status'] as String?)?.trim().isNotEmpty == true
+          ? (json['order_status'] as String).trim()
+          : ((json['is_open'] ?? true) == false ? 'closed' : 'open'),
+      closedReason: (json['closed_reason'] as String?)?.trim().isNotEmpty == true
+          ? (json['closed_reason'] as String).trim()
+          : null,
       distanceKm: dist == null ? null : (dist as num).toDouble(),
       upiId: (upi != null && upi.isNotEmpty) ? upi : null,
       imageUrl: (img != null && img.isNotEmpty) ? img : null,
@@ -184,6 +214,8 @@ class Outlet {
         'name': name,
         'address': address,
         'is_open': isOpen,
+        'order_status': orderStatus,
+        'closed_reason': closedReason,
         'distance_km': distanceKm,
         'upi_id': upiId,
         'image_url': imageUrl,

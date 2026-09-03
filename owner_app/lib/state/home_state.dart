@@ -65,6 +65,39 @@ class HomeState extends ChangeNotifier {
     }
   }
 
+  /// Set the daily opening/closing schedule (migration 024). Not optimistic —
+  /// the server recomputes order_status from the new times, so the returned
+  /// outlet is the source of truth. Returns null on success, or an error.
+  Future<String?> setHours(String? openingTime, String? closingTime) async {
+    if (_outlet == null) return 'No outlet loaded.';
+    try {
+      _outlet = await _outletService.setHours(openingTime, closingTime);
+      notifyListeners();
+      return null;
+    } catch (_) {
+      return 'Could not save the hours. Try again.';
+    }
+  }
+
+  /// Flip the "temporarily closed" toggle (migration 024). Optimistic on the
+  /// flag itself, then reconciled with the server's returned outlet (which also
+  /// carries the recomputed order_status).
+  Future<bool> setManuallyClosed(bool next) async {
+    final current = _outlet;
+    if (current == null) return false;
+    _outlet = current.copyWith(isManuallyClosed: next);
+    notifyListeners();
+    try {
+      _outlet = await _outletService.setManualClosed(next);
+      notifyListeners();
+      return true;
+    } catch (_) {
+      _outlet = current; // revert
+      notifyListeners();
+      return false;
+    }
+  }
+
   /// Optimistically flips outlet visibility; reverts if the call fails.
   Future<bool> toggleVisibility(bool next) async {
     final current = _outlet;
