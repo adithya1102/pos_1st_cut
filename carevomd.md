@@ -4293,3 +4293,69 @@ NOT — verified by string-searching `kernel_blob.bin`, not assumed. versionCode
 does not distinguish them; check the hash.
 
 ---
+
+## 2026-09-03 11:35 IST — "I've picked this up" gets a real server record + OrderOut exposes departed/arrived/picked_up (migration 023)
+
+Backend-only. Gives the customer's pickup acknowledgment a durable server
+record — it was an on-device flag with zero server trace — and exposes all
+three customer pickup-journey acks on the order-status response so the app can
+eventually be server-sourced instead of trusting local persistence alone.
+
+### The shape decision: event, not a column
+
+`CUSTOMER_PICKED_UP` is recorded as a row in the EXISTING append-only
+`order_events` log (migration 006), written by the new endpoint via the same
+`write_event` path `CUSTOMER_DEPARTED`/`CUSTOMER_ARRIVED` already use. Chosen
+over a boolean/timestamp column on `customer_orders` on the merits:
+
+- **Consistency** — DEPARTED, ARRIVED and staff PICKUP_VERIFIED are all events;
+  the customer ack is the same category of fact, so OrderOut now reads all
+  three through ONE mechanism.
+- **Correctness** — "the customer said they picked it up at time T" is an
+  immutable historical fact; `order_events` is append-only (006's BEFORE
+  UPDATE/DELETE trigger enforces it). A boolean could be flipped back — wrong.
+- **Richness** — the event carries occurred_at / actor_type=customer /
+  source=tap, feeding the event stream. A bare boolean would not.
+
+A column's one upside (no join) did not outweigh splitting the read path in two
+and making an immutable fact mutable. Consequence: the "picked up" record needs
+NO DDL — the event type is a new string, rows are written at runtime.
+
+### What changed
+
+- `events.py` — new `CUSTOMER_PICKED_UP` constant. NOT the same as
+  `PICKUP_VERIFIED` (staff confirming the code, the only real completion).
+- `service.py` — `record_picked_up` (mirrors record_departed/arrived: owned-
+  order check, idempotent via `_has_event`, one append-only event, commit;
+  moves NO order status) and `pickup_progress` (one query returning the three
+  booleans for OrderOut).
+- `controller.py` — new endpoint `POST /api/v1/customer/orders/{id}/picked-up`
+  → EventAck (no body, the tap is the whole signal); `get_order` now includes
+  the three flags.
+- `schema.py` — OrderOut gains `departed`/`arrived`/`picked_up` bool (default
+  False). Additive; unknown-field-tolerant clients are unaffected.
+- **Migration 023** — adds `ix_oe_order_type ON order_events(order_id,
+  event_type)`, supporting both the `_has_event` idempotency guard and the new
+  OrderOut existence checks. Additive, idempotent, reversible; changes no
+  existing column/index/trigger/endpoint. PROD NOTE in the file: on the large
+  append-only table, build it `CONCURRENTLY` (outside a transaction) to avoid
+  locking writes; the portable plain form is used so the test bootstrap can run
+  the file directly.
+
+### The client was deliberately NOT touched
+
+customer_app is unchanged by this. Consuming these fields (restoring travel/ack
+state from the server instead of local persistence) is a separate follow-up, so
+the two can be reviewed independently.
+
+### Tests
+
+New `tests/test_api_picked_up.py` (8): records one event + OrderOut shows
+picked_up; idempotent (one row, "already acknowledged"); moves no status;
+owner-only (403 for a second real customer, nothing recorded); 404 unknown
+order; OrderOut flags default False; reflect departed+arrived after those
+endpoints; all three true together. Backend suite **185 -> 193**, all passing.
+Migration applies cleanly to a fresh test DB (23 applied, 0 skipped; index
+verified present).
+
+---

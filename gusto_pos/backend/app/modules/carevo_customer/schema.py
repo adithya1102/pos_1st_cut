@@ -273,6 +273,15 @@ class OrderOut(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     wait_estimate: Optional[WaitEstimateOut] = None
+    # Customer's own pickup-journey acknowledgments, sourced from order_events
+    # (migration 023). Additive: every existing client ignores unknown fields,
+    # and these default False for any order with no such events yet. Exposed so
+    # the app can eventually restore travel/pickup state from the server instead
+    # of trusting only on-device persistence. None of these move order.status —
+    # staff PICKUP_VERIFIED is still the only real completion.
+    departed: bool = False
+    arrived: bool = False
+    picked_up: bool = False
 
 
 # ---------------------------- Payment ---------------------------------------

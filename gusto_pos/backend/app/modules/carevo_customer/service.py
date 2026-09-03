@@ -806,6 +806,50 @@ class CarevoService:
         await db.commit()
         return {"ok": True, "recorded": True}
 
+    @staticmethod
+    async def record_picked_up(db, order_id, customer) -> dict:
+        """The customer's own "I've picked this up" ack (migration 023).
+
+        Mirrors record_departed / record_arrived exactly: owned-order check,
+        idempotent via _has_event, one append-only CUSTOMER_PICKED_UP event,
+        commit. Deliberately does NOT move order.status — staff verifying the
+        pickup code (PICKUP_VERIFIED → COMPLETED) remains the only real
+        completion, unchanged by this. This event only gives the customer's
+        acknowledgment a durable server record instead of an on-device flag.
+        """
+        row = await CarevoService._owned_order_row(db, order_id, customer)
+        if await CarevoService._has_event(db, order_id, pe.CUSTOMER_PICKED_UP):
+            return {"ok": True, "recorded": False, "detail": "already acknowledged"}
+        await pe.write_event(
+            db, order_id, pe.CUSTOMER_PICKED_UP, actor_type="customer",
+            actor_id=customer.id, source="tap", outlet_id=row.outlet_id)
+        await db.commit()
+        return {"ok": True, "recorded": True}
+
+    @staticmethod
+    async def pickup_progress(db, order_id) -> dict:
+        """Which of the customer's own pickup-journey acknowledgments have been
+        recorded for this order: departed / arrived / picked_up.
+
+        One round trip rather than three: reads all three CUSTOMER_* event types
+        in a single query. Used by GET /customer/orders/{id} (OrderOut) so the
+        app can be server-sourced instead of trusting only local persistence.
+        Reads order_events, the same append-only log record_departed /
+        record_arrived / record_picked_up write to.
+        """
+        rows = (await db.execute(text("""
+            SELECT DISTINCT event_type FROM order_events
+             WHERE order_id = :o
+               AND event_type IN
+                   ('CUSTOMER_DEPARTED', 'CUSTOMER_ARRIVED', 'CUSTOMER_PICKED_UP')
+        """), {"o": str(order_id)})).scalars().all()
+        seen = set(rows)
+        return {
+            "departed": pe.CUSTOMER_DEPARTED in seen,
+            "arrived": pe.CUSTOMER_ARRIVED in seen,
+            "picked_up": pe.CUSTOMER_PICKED_UP in seen,
+        }
+
     # ---------------------------- Payment ----------------------------------
     @staticmethod
     async def _expire_stale_pickups(

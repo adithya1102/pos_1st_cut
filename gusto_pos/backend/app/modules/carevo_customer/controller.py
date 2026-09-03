@@ -313,6 +313,18 @@ async def wait_feedback(
     return await CarevoService.record_wait_feedback(db, order_id, customer, payload.bucket)
 
 
+@router.post("/orders/{order_id}/picked-up", response_model=s.EventAck)
+async def picked_up(
+    order_id: uuid.UUID,
+    customer: Customer = Depends(get_current_customer),
+    db: AsyncSession = Depends(get_db),
+):
+    """Customer's own "I've picked this up" ack (migration 023). Mirrors the
+    depart/arrived endpoints: idempotent, records one CUSTOMER_PICKED_UP event,
+    moves no order status. No request body — the tap is the whole signal."""
+    return await CarevoService.record_picked_up(db, order_id, customer)
+
+
 @router.get("/orders/{order_id}", response_model=s.OrderOut)
 async def get_order(
     order_id: uuid.UUID,
@@ -321,6 +333,8 @@ async def get_order(
 ):
     order = await CarevoService.get_order(db, order_id, customer)
     wait_estimate = await CarevoService.shadow_estimate(db, order_id)
+    # Customer's own pickup-journey acks (migration 023), read from order_events.
+    progress = await CarevoService.pickup_progress(db, order_id)
     # total_amount is what was charged; the discount is stored alongside it
     # (migration 010) precisely so the original can be reconstructed here rather
     # than being lost the moment the order is placed.
@@ -336,6 +350,9 @@ async def get_order(
         "discount_amount": discount,
         "final_amount": total,
         "wait_estimate": wait_estimate,
+        "departed": progress["departed"],
+        "arrived": progress["arrived"],
+        "picked_up": progress["picked_up"],
         "items": [
             {
                 "id": it.id,
