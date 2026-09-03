@@ -3,10 +3,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_config.dart';
 import '../models/order.dart';
 import '../models/order_notify.dart';
+import '../services/cashfree_service.dart';
 import '../services/location_service.dart';
 import '../services/order_notify_service.dart';
 import '../services/order_service.dart';
@@ -27,8 +29,12 @@ class PickupScreen extends StatefulWidget {
     super.key,
     required this.orderId,
     this.amount,
-    this.paymentHint,
+    this.awaitingPayment = false,
+    this.paymentOrder,
+    this.paymentReason,
     this.fromHistory = false,
+    this.graceWindow = defaultGraceWindow,
+    this.confirmPollInterval = defaultConfirmPollInterval,
   });
 
   final String orderId;
@@ -42,22 +48,61 @@ class PickupScreen extends StatefulWidget {
   /// to get back to it, and "Order more" must not detonate their nav stack.
   final bool fromHistory;
 
-  /// Set when Cashfree's sheet reported a problem. Advisory ONLY — this screen
-  /// keeps polling regardless, because the SDK callback is not authoritative:
-  /// the webhook is, and it can still arrive and flip the order to PAID after
-  /// the sheet claimed failure.
-  final String? paymentHint;
+  /// True when the screen was reached from a payment sheet that did NOT report
+  /// success (dismissed, cancelled, declined, or a lost confirmation).
+  ///
+  /// It does NOT mean "payment failed" — the webhook is the authority, not the
+  /// SDK. It means "the pickup code area must stay hidden and this screen must
+  /// spend a grace window confirming with the server before it dares show a
+  /// retry button." See [_startConfirming]. False on the verified path and from
+  /// history, where the screen behaves exactly as it always has.
+  final bool awaitingPayment;
+
+  /// The created order, carried through ONLY on the awaiting-payment path so
+  /// "Try Payment Again" can reopen its EXISTING payment session
+  /// ([PaymentIntent.paymentSessionId]). Retry never creates a new order — a
+  /// session is minted only by create_order server-side and there is no
+  /// re-issue endpoint, so reusing this is both necessary and correct.
+  final CreatedOrder? paymentOrder;
+
+  /// What the SDK said went wrong on the last attempt. Advisory only; shown in
+  /// the retry state if the grace window closes still-unpaid.
+  final String? paymentReason;
+
+  /// How long the webhook is given to land before the retry option appears, and
+  /// how often the order is polled during that window. Ported from
+  /// PaymentOutcomeScreen; injectable so tests need not wait 12s in real time.
+  final Duration graceWindow;
+  final Duration confirmPollInterval;
+
+  static const Duration defaultGraceWindow = Duration(seconds: 12);
+  static const Duration defaultConfirmPollInterval = Duration(seconds: 3);
+
+  /// Inline payment-state handles (ported from PaymentOutcomeScreen's keys).
+  static const confirmingKey = Key('pickup_confirming_payment');
+  static const retryStateKey = Key('pickup_payment_retry');
+  static const tryAgainKey = Key('payment_try_again');
+  static const checkStatusKey = Key('payment_check_status');
 
   @override
   State<PickupScreen> createState() => _PickupScreenState();
 }
 
-class _PickupScreenState extends State<PickupScreen> {
+/// The inline payment-confirmation sub-state, live only when the screen was
+/// entered [PickupScreen.awaitingPayment]. Once payment is observed PAID this
+/// returns to [inactive] and the screen is its ordinary self.
+enum _PayPhase { inactive, confirming, reopening, retry }
+
+class _PickupScreenState extends State<PickupScreen>
+    with WidgetsBindingObserver {
   /// v2 §3.3 — the customer's own "I've picked this up" acknowledgment.
   ///
-  /// Client-side ONLY and intentionally not persisted: it is a courtesy
-  /// affordance, not a record. The authoritative signal is the order reaching
-  /// COMPLETED via staff verification, which this never triggers.
+  /// Still client-side (it calls no endpoint and moves no status — staff
+  /// verification is the only real completion), but now DURABLE: persisted per
+  /// order via [_PickupUiStore] and restored on entry, so backgrounding or
+  /// killing the app no longer silently forgets that the customer already
+  /// acknowledged pickup. The server has no field for this, so local
+  /// persistence is the only source of truth it can have.
   bool _ackPickedUp = false;
 
   static const _steps = ['Received', 'Preparing', 'Ready'];
@@ -67,6 +112,18 @@ class _PickupScreenState extends State<PickupScreen> {
   String? _error;
   bool _loading = true;
 
+  // ------------------ inline payment confirmation (ported) -----------------
+  // From PaymentOutcomeScreen, relocated onto this screen so a dismissed sheet
+  // never lands on a dead pickup ticket. The order-status _timer above keeps
+  // running throughout; these drive only the payment sub-state.
+  _PayPhase _payPhase = _PayPhase.inactive;
+  Timer? _confirmTimer;
+  Timer? _graceTimer;
+
+  /// Last SDK failure message, so a second attempt's message can differ from
+  /// the first rather than silently repeating it.
+  String? _payMessage;
+
   // Staff → customer "notify" pushes (display-only), over a WebSocket that
   // lives alongside — and never replaces — the polling loop above.
   OrderNotifyClient? _notifyClient;
@@ -74,8 +131,11 @@ class _PickupScreenState extends State<PickupScreen> {
   OrderNotify? _banner;
   Timer? _bannerTimer;
 
-  // PE Step 3 travel events. Tracked locally for the session; the backend is
-  // idempotent so re-taps or a reopened screen never double-record.
+  // PE Step 3 travel events. Now persisted per order (see [_PickupUiStore]) and
+  // restored on entry: the backend records DEPARTED/ARRIVED as order_events but
+  // does NOT surface them in OrderOut, so without a local record these flags
+  // reset to false on every rebuild — the reverting "I'm leaving"/"I've arrived"
+  // bug. Re-taps stay safe: the endpoints are idempotent.
   bool _departed = false;
   bool _departing = false;
   bool _arrived = false;
@@ -85,19 +145,158 @@ class _PickupScreenState extends State<PickupScreen> {
   @override
   void initState() {
     super.initState();
-    _poll();
+    WidgetsBinding.instance.addObserver(this);
+    _payMessage = widget.paymentReason;
+    // Restore the durable client-side affordances (travel progress, pickup ack)
+    // for THIS order, so a background/kill does not forget them.
+    _restoreUiState();
+    // Exactly one immediate fetch, whichever path we are on. A sheet that did
+    // not report success opens the confirmation window (which does its own
+    // immediate poll); every other arrival takes the ordinary first poll.
+    if (widget.awaitingPayment) {
+      _startConfirming();
+    } else {
+      _poll();
+    }
     _timer = Timer.periodic(AppConfig.pickupPollInterval, (_) => _poll());
     _connectNotify();
   }
 
+  /// On return to the foreground, re-fetch the order immediately rather than
+  /// waiting up to one poll interval. The pickup code and payment/status live
+  /// in [_status], which is server-sourced — this closes the window where a
+  /// resumed screen briefly shows stale status (including, after a webhook that
+  /// landed while backgrounded, a missing pickup code).
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed && mounted) {
+      _poll();
+    }
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
+    _confirmTimer?.cancel();
+    _graceTimer?.cancel();
     _bannerTimer?.cancel();
     _locTimer?.cancel();
     _notifySub?.cancel();
     _notifyClient?.dispose();
     super.dispose();
+  }
+
+  // -------------- durable client-side pickup UI state ----------------------
+  //
+  // The pickup CODE, payment status and step come from the server via _poll and
+  // need no persistence. These three flags are the ones the server does not
+  // expose, so they are the ones that used to revert on a rebuild.
+
+  Future<void> _restoreUiState() async {
+    final flags = await _PickupUiStore.read(widget.orderId);
+    if (!mounted || flags.isEmpty) return;
+    setState(() {
+      if (flags.contains(_PickupUiStore.departed)) _departed = true;
+      if (flags.contains(_PickupUiStore.arrived)) _arrived = true;
+      if (flags.contains(_PickupUiStore.pickedUp)) _ackPickedUp = true;
+    });
+    // Deliberately does NOT restart location pings: restoring the UI must never
+    // silently reacquire GPS. The customer's "I've arrived" tap still works, and
+    // the server geofence needs no client timer.
+  }
+
+  Future<void> _persistUiState() => _PickupUiStore.write(widget.orderId, {
+        if (_departed) _PickupUiStore.departed,
+        if (_arrived) _PickupUiStore.arrived,
+        if (_ackPickedUp) _PickupUiStore.pickedUp,
+      });
+
+  // ----------------- inline payment confirmation (ported) ------------------
+  //
+  // Lifted from PaymentOutcomeScreen. The behaviour is unchanged: give the
+  // webhook a grace window to land before ever calling a payment failed, then
+  // offer a retry on the SAME order/session. What changed is only WHERE it
+  // lives — inline on this screen instead of a separate one — so a resolved
+  // payment simply reveals the pickup code already on the page.
+
+  /// Poll faster than the normal loop for [PickupScreen.graceWindow]; if the
+  /// order is still not PAID when that window closes, offer retry.
+  void _startConfirming() {
+    _confirmTimer?.cancel();
+    _graceTimer?.cancel();
+    setState(() => _payPhase = _PayPhase.confirming);
+
+    _confirmTimer =
+        Timer.periodic(widget.confirmPollInterval, (_) => _poll());
+    _graceTimer = Timer(widget.graceWindow, () {
+      // Guard against the poll tick and this deadline firing on the same
+      // instant: if a PAID poll already resolved us, do not flip to retry.
+      if (!mounted || _payPhase == _PayPhase.inactive) return;
+      _confirmTimer?.cancel();
+      setState(() => _payPhase = _PayPhase.retry);
+    });
+    // Ask immediately too — the webhook often beats the sheet closing.
+    _poll();
+  }
+
+  /// Called from [_poll] when the order is observed PAID: the confirmation is
+  /// over and the ordinary pickup UI takes the page back.
+  void _resolvePaid() {
+    if (_payPhase == _PayPhase.inactive) return;
+    _confirmTimer?.cancel();
+    _graceTimer?.cancel();
+    _payPhase = _PayPhase.inactive;
+  }
+
+  /// Reopen the SAME payment session for the SAME order. Never creates a new
+  /// order — see [PickupScreen.paymentOrder].
+  Future<void> _tryAgain() async {
+    final sessionId = widget.paymentOrder?.payment?.paymentSessionId;
+    if (sessionId == null || sessionId.isEmpty) {
+      // Unreachable in practice — this state is only entered from the Cashfree
+      // branch, which requires a session — but failing loudly beats opening an
+      // empty sheet.
+      setState(() {
+        _payPhase = _PayPhase.retry;
+        _payMessage =
+            'This order can no longer be paid for. Please start a new one.';
+      });
+      return;
+    }
+
+    setState(() => _payPhase = _PayPhase.reopening);
+    final result = await context.read<CashfreeService>().openCheckout(
+          orderId: widget.orderId,
+          paymentSessionId: sessionId,
+        );
+    if (!mounted) return;
+
+    if (result.outcome == CheckoutOutcome.notStarted) {
+      // The sheet never opened, so nothing was charged on this attempt.
+      setState(() {
+        _payPhase = _PayPhase.retry;
+        _payMessage = result.message ?? 'Could not open payment.';
+      });
+      return;
+    }
+
+    // Verified or failed, the same uncertainty applies as the first time, so
+    // the same rule does: ask the server, do not trust the sheet.
+    setState(() => _payMessage = result.verified ? null : result.message);
+    _startConfirming();
+  }
+
+  /// "I was charged — check status": stop the confirmation dance and hand the
+  /// page back to the normal waiting UI, which keeps polling. If the customer
+  /// really was charged, the webhook lands and the code appears; if not, they
+  /// sit on the ordinary "confirming your payment" state rather than a retry
+  /// button they will keep tapping.
+  void _onCheckStatus() {
+    _confirmTimer?.cancel();
+    _graceTimer?.cancel();
+    setState(() => _payPhase = _PayPhase.inactive);
   }
 
   // ------------------------ PE Step 3: travel events -----------------------
@@ -117,6 +316,7 @@ class _PickupScreenState extends State<PickupScreen> {
       );
       if (!mounted) return;
       setState(() => _departed = true);
+      _persistUiState();
       _startEnRoutePings();
     } catch (_) {
       // Non-fatal: the customer can retry; the button re-enables.
@@ -157,11 +357,15 @@ class _PickupScreenState extends State<PickupScreen> {
   Future<void> _onArrived() async {
     final orders = context.read<OrderService>();
     setState(() => _arrived = true);
+    _persistUiState();
     _locTimer?.cancel();
     try {
       await orders.arrived(widget.orderId);
     } catch (_) {
-      if (mounted) setState(() => _arrived = false);
+      if (mounted) {
+        setState(() => _arrived = false);
+        _persistUiState();
+      }
     }
   }
 
@@ -205,17 +409,24 @@ class _PickupScreenState extends State<PickupScreen> {
       final status =
           await context.read<OrderService>().fetchStatus(widget.orderId);
       if (!mounted) return;
+      final paid = status.paymentStatus.toUpperCase() == 'PAID';
       setState(() {
         _status = status;
         _error = null;
         _loading = false;
+        // A payment that lands — during the grace window OR late, even after
+        // the retry button appeared — ends the confirmation dance and reveals
+        // the pickup code. This is the "late webhook still resolves to pickup"
+        // guarantee, now inline. Cancels the confirm/grace timers as a side
+        // effect; harmless inside setState.
+        if (paid) _resolvePaid();
       });
 
       // Clear the cart ONLY on confirmed payment. The UPI flow reaches this
       // screen with the order still PENDING, so this is the first point at
       // which the basket is genuinely spent. Idempotent: clear() on an
       // already-empty cart is a no-op, and this poll repeats.
-      if (status.paymentStatus.toUpperCase() == 'PAID') {
+      if (paid) {
         context.read<CartState>().clear();
       }
       // Keep polling through Ready → Completed so the wait-feedback prompt
@@ -223,6 +434,9 @@ class _PickupScreenState extends State<PickupScreen> {
       if (status.isCompleted) {
         _timer?.cancel();
         _locTimer?.cancel();
+        // The order is done — its client-side flags can no longer surface, so
+        // drop the persisted record rather than leaking one string per order.
+        _PickupUiStore.clear(widget.orderId);
       }
     } catch (e) {
       if (!mounted) return;
@@ -242,6 +456,12 @@ class _PickupScreenState extends State<PickupScreen> {
     final isPaid = status?.paymentStatus.toUpperCase() == 'PAID';
     final completed = status?.isCompleted ?? false;
     final estimate = status?.waitEstimate;
+
+    // Inline payment-confirmation state. Only ever true while unpaid, so it
+    // cannot collide with the paid/ready/completed UI below.
+    final confirming = _payPhase == _PayPhase.confirming ||
+        _payPhase == _PayPhase.reopening;
+    final retrying = _payPhase == _PayPhase.retry;
 
     return Scaffold(
       appBar: AppBar(
@@ -280,46 +500,37 @@ class _PickupScreenState extends State<PickupScreen> {
                         ? 'Collected — that\'s everything. Thanks for skipping the line.'
                         : (isPaid
                             ? 'Show or say your pickup code at the counter.'
-                            : 'Confirming your payment — this is usually instant.'),
+                            : retrying
+                                ? 'The payment didn\'t go through — you can try '
+                                    'again below.'
+                                : 'Confirming your payment — this is usually '
+                                    'instant.'),
                     style: textTheme.bodyLarge?.copyWith(color: c.inkSoft),
                   ),
                   const SizedBox(height: 20),
-                  // Shown only while still unpaid AND the sheet reported a
-                  // problem. Kept deliberately soft: polling continues, and a
-                  // payment the SDK called failed can still be confirmed by the
-                  // webhook a moment later.
-                  if (!isPaid && widget.paymentHint != null) ...[
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: c.surfaceAlt,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: c.border, width: 2),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.info_outline, size: 18, color: c.inkSoft),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              '${widget.paymentHint!}\nIf you were charged, this '
-                              'will update by itself in a moment.',
-                              style: textTheme.bodySmall?.copyWith(color: c.inkSoft),
-                            ),
-                          ),
-                        ],
-                      ),
+                  // The pickup-code area is state-aware. While the payment is
+                  // being confirmed OR offered for retry it is REPLACED, in the
+                  // same spot, by the matching inline state — so a dismissed
+                  // sheet never lands on a dead "Appears after payment" card.
+                  // Once payment resolves it is the ordinary code card again.
+                  if (confirming)
+                    _ConfirmingSection(reopening: _payPhase == _PayPhase.reopening)
+                  else if (retrying)
+                    _RetrySection(
+                      amount: widget.amount ?? widget.paymentOrder?.finalAmount,
+                      message: _payMessage,
+                      onTryAgain: _tryAgain,
+                      onCheckStatus: _onCheckStatus,
+                    )
+                  else
+                    _PickupCodeCard(
+                      code: status?.pickupCode,
+                      // Stop highlighting once collected: the code has been used
+                      // and no longer needs to pull the eye.
+                      highlight: step >= 2 && !completed,
+                      paid: isPaid,
+                      completed: completed,
                     ),
-                    const SizedBox(height: 16),
-                  ],
-                  _PickupCodeCard(
-                    code: status?.pickupCode,
-                    // Stop highlighting once collected: the code has been used
-                    // and no longer needs to pull the eye.
-                    highlight: step >= 2 && !completed,
-                    paid: isPaid,
-                    completed: completed,
-                  ),
                   // v2 §3.3 — ACKNOWLEDGMENT ONLY.
                   //
                   // This changes nothing server-side. It calls no endpoint,
@@ -336,7 +547,10 @@ class _PickupScreenState extends State<PickupScreen> {
                       label: 'I\'ve picked this up',
                       icon: Icons.check_circle_outline,
                       variant: NeoButtonVariant.neutral,
-                      onPressed: () => setState(() => _ackPickedUp = true),
+                      onPressed: () {
+                        setState(() => _ackPickedUp = true);
+                        _persistUiState();
+                      },
                     ),
                   ],
                   if (isPaid && !completed && _ackPickedUp) ...[
@@ -925,4 +1139,184 @@ class _PaymentBadge extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Inline "we're confirming your payment" state, shown in the pickup-code slot
+/// while the grace window runs (ported from PaymentOutcomeScreen's confirming
+/// body). Deliberately reassuring: it must not read as failure, because most of
+/// the time the webhook is about to land.
+class _ConfirmingSection extends StatelessWidget {
+  const _ConfirmingSection({required this.reopening});
+
+  /// True while a retry sheet is being opened, so the copy points at the sheet
+  /// rather than the bank.
+  final bool reopening;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final textTheme = Theme.of(context).textTheme;
+    return NeoCard(
+      key: PickupScreen.confirmingKey,
+      color: c.surface,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Column(
+          children: [
+            const SizedBox(
+              width: 40,
+              height: 40,
+              child: CircularProgressIndicator(strokeWidth: 4),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              reopening ? 'Opening payment…' : 'Checking with your bank',
+              style: textTheme.titleLarge,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              reopening
+                  ? 'Complete the payment in the window that opens.'
+                  : 'If your payment did go through, this will confirm on its '
+                      'own in a moment. Please don\'t pay again yet.',
+              style: textTheme.bodyMedium?.copyWith(color: c.inkSoft),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Inline "payment not completed — try again" state, shown in the pickup-code
+/// slot once the grace window has closed still-unpaid (ported from
+/// PaymentOutcomeScreen's retry body). Retry reopens the SAME session; the
+/// escape hatch covers the rare charged-but-unconfirmed case.
+class _RetrySection extends StatelessWidget {
+  const _RetrySection({
+    required this.amount,
+    required this.message,
+    required this.onTryAgain,
+    required this.onCheckStatus,
+  });
+
+  final double? amount;
+  final String? message;
+  final VoidCallback onTryAgain;
+  final VoidCallback onCheckStatus;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final textTheme = Theme.of(context).textTheme;
+    return Column(
+      key: PickupScreen.retryStateKey,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        NeoCard(
+          color: c.surface,
+          child: Column(
+            children: [
+              Icon(Icons.error_outline, size: 48, color: AppColors.tomato),
+              const SizedBox(height: 12),
+              Text(
+                'Payment not completed',
+                style: textTheme.titleLarge,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                message ?? 'The payment was cancelled or didn\'t go through.',
+                style: textTheme.bodyMedium?.copyWith(color: c.inkSoft),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'You have not been charged. Your order is still here.',
+                style: textTheme.bodySmall?.copyWith(color: c.inkSoft),
+                textAlign: TextAlign.center,
+              ),
+              if (amount != null) ...[
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.receipt_long, size: 18, color: c.primary),
+                    const SizedBox(width: 8),
+                    Text('Amount due  ', style: textTheme.bodyMedium),
+                    PriceText(amount!, style: textTheme.titleMedium),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        NeoButton(
+          key: PickupScreen.tryAgainKey,
+          label: 'Try Payment Again',
+          icon: Icons.refresh,
+          onPressed: onTryAgain,
+        ),
+        const SizedBox(height: 12),
+        // The escape hatch for "but my bank DID debit me". Inline now, not a
+        // full screen: it just stops the retry prompt and hands the page back
+        // to the ordinary waiting state, which keeps polling.
+        NeoButton(
+          key: PickupScreen.checkStatusKey,
+          label: 'I was charged — check status',
+          icon: Icons.search,
+          variant: NeoButtonVariant.neutral,
+          onPressed: onCheckStatus,
+        ),
+      ],
+    );
+  }
+}
+
+/// Durable per-order store for the CLIENT-SIDE pickup affordances that the
+/// server's OrderOut does not carry: travel progress ("I'm leaving" / "I've
+/// arrived") and the pickup acknowledgment ("I've picked this up").
+///
+/// Without this, these flags lived only in widget State and reset to false
+/// every time PickupScreen was rebuilt — which is exactly what a background,
+/// a process kill, or reopening the order from the active-orders list does. The
+/// pickup code, payment status and step are NOT stored here; those come from
+/// the backend on every poll and are already durable.
+///
+/// Keyed by order id so several concurrent orders never share a flag. Best
+/// effort: a read failure just yields the pre-fix behaviour (flags start
+/// false), never an error the customer sees.
+class _PickupUiStore {
+  static const departed = 'departed';
+  static const arrived = 'arrived';
+  static const pickedUp = 'picked_up';
+
+  static String _key(String orderId) => 'pickup_ui_$orderId';
+
+  static Future<Set<String>> read(String orderId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_key(orderId));
+      if (raw == null || raw.isEmpty) return <String>{};
+      return raw.split(',').where((s) => s.isNotEmpty).toSet();
+    } catch (_) {
+      return <String>{};
+    }
+  }
+
+  static Future<void> write(String orderId, Set<String> flags) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (flags.isEmpty) {
+        await prefs.remove(_key(orderId));
+      } else {
+        await prefs.setString(_key(orderId), flags.join(','));
+      }
+    } catch (_) {/* best effort — a failed write just means no restore */}
+  }
+
+  static Future<void> clear(String orderId) => write(orderId, const {});
 }

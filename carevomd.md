@@ -4435,3 +4435,55 @@ files — clean.
 Not committed, not pushed, not run on a device.
 
 ---
+
+## 2026-09-03 11:47 IST — Inline payment-retry on the pickup screen + durable pickup-status (persistence/resume)
+
+customer_app. Two changes committed TOGETHER because they cannot be cleanly
+separated: both rewrite the same interleaved hunks of pickup_screen.dart
+(initState, dispose, the imports, the state-field block). Splitting them would
+mean carving individual hunks apart and would leave an intermediate
+pickup_screen.dart that does not compile — an artificial split, so they are one
+commit.
+
+### Change 1 — inline payment-retry (was a separate PaymentOutcomeScreen)
+
+A dismissed/cancelled Cashfree sheet used to pushReplacement to PickupScreen and
+strand the customer on a pickup ticket with no code and no way back. The earlier
+fix added a separate PaymentOutcomeScreen; this merges that logic INLINE onto
+PickupScreen so both checkout outcomes go to the one screen, which is now
+state-aware:
+- checkout_screen.dart routes verified AND dismissed to PickupScreen (state via
+  awaitingPayment / paymentOrder / paymentReason).
+- pickup_screen.dart gains the confirming → retry inline states (_PayPhase,
+  _startConfirming with the ported 12s grace / 3s poll, _tryAgain reusing the
+  SAME order + payment session, _ConfirmingSection / _RetrySection replacing the
+  code card in place). A dismissed sheet confirms with the server for a grace
+  window before ever offering "Try Payment Again" — so a lost confirmation is
+  not turned into a double charge.
+- payment_outcome_screen.dart DELETED; its keys/logic live on PickupScreen now.
+
+### Change 2 — durable pickup-status (persistence + resume re-poll)
+
+The travel flags ("I'm leaving"/"I've arrived") and the pickup ack ("I've picked
+this up") were in-memory only and reset on every rebuild; the pickup code was
+server-sourced but a resumed screen waited up to a poll interval to refresh.
+- _PickupUiStore persists departed/arrived/picked_up per order (SharedPreferences,
+  keyed by orderId), restored in initState, cleared on COMPLETED.
+- PickupScreen is now a WidgetsBindingObserver; on resume it re-polls
+  immediately, so a webhook that landed while backgrounded shows the code at once.
+- This is the local-persistence half; the server-sourced half (consuming the new
+  OrderOut departed/arrived/picked_up from migration 023) is a later follow-up.
+
+### Tests
+
+- payment_retry_test.dart REWRITTEN to drive PickupScreen's inline states (was
+  PaymentOutcomeScreen): grace window, late webhook resolves to code, retry
+  reuses the same session, second failure returns to retry, cart preserved, plus
+  two wiring tests that fail if checkout stops distinguishing the outcomes.
+- pickup_persistence_test.dart NEW: departed/ack restore, arrived round-trip
+  across a reopen, completion clears the record, resume forces an immediate
+  re-fetch, and a full walk (leaving → resume mid-flow → arrived → picked up →
+  kill + reopen).
+- Full customer_app suite: 320 passing.
+
+---
