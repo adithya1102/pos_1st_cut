@@ -125,14 +125,20 @@ class TestingService:
         what the customer-facing and owner-facing APIs never would.
         """
         rows = (await db.execute(text("""
-            SELECT co.id, co.status, co.payment_status, co.pickup_code,
-                   co.total_amount, co.created_at,
+            SELECT co.id, co.outlet_id, co.status, co.payment_status,
+                   co.pickup_code, co.total_amount, co.created_at,
                    o.location_name AS outlet_name,
                    c.phone_number  AS customer_phone,
-                   c.name          AS customer_name
+                   c.name          AS customer_name,
+                   -- The identifier the dashboard shows and labels key on:
+                   -- phone when the customer has one, else email.
+                   COALESCE(c.phone_number, c.email) AS identifier,
+                   cl.label        AS label
             FROM customer_orders co
             LEFT JOIN outlets   o ON o.id = co.outlet_id
             LEFT JOIN customers c ON c.id = co.customer_id
+            LEFT JOIN contact_labels cl
+                   ON cl.identifier = COALESCE(c.phone_number, c.email)
             WHERE co.status NOT IN ('COMPLETED','CANCELLED','ABANDONED')
             ORDER BY co.created_at DESC
         """))).fetchall()
@@ -150,6 +156,7 @@ class TestingService:
                 {"name": it.name_snap, "quantity": it.quantity})
         return [{
             "order_id": r.id,
+            "outlet_id": r.outlet_id,
             "outlet_name": r.outlet_name,
             "status": r.status,
             "payment_status": r.payment_status,
@@ -157,9 +164,38 @@ class TestingService:
             "total_amount": float(r.total_amount) if r.total_amount is not None else 0.0,
             "customer_phone": r.customer_phone,
             "customer_name": r.customer_name,
+            # Identifier the UI displays + labels key on, and its label (if any).
+            "identifier": r.identifier,
+            "label": r.label,
             "created_at": r.created_at,
             "items": by_order.get(str(r.id), []),
         } for r in rows]
+
+    # ------------------------------ labels --------------------------------
+    @staticmethod
+    async def set_label(db: AsyncSession, identifier: str, label: str) -> dict:
+        """Upsert a human-readable label for an identifier (phone or email).
+
+        An empty/blank label DELETES the tag rather than storing a blank — the
+        UI clears a label by sending an empty string.
+        """
+        ident = (identifier or "").strip()
+        if not ident:
+            raise HTTPException(status_code=422, detail="identifier required")
+        text_label = (label or "").strip()
+        if not text_label:
+            await db.execute(text(
+                "DELETE FROM contact_labels WHERE identifier = :i"), {"i": ident})
+            await db.commit()
+            return {"identifier": ident, "label": None}
+        await db.execute(text("""
+            INSERT INTO contact_labels (identifier, label, updated_at)
+            VALUES (:i, :l, now())
+            ON CONFLICT (identifier)
+            DO UPDATE SET label = EXCLUDED.label, updated_at = now()
+        """), {"i": ident, "l": text_label})
+        await db.commit()
+        return {"identifier": ident, "label": text_label}
 
     # ---------------------------- compliance ------------------------------
     @staticmethod
@@ -169,20 +205,23 @@ class TestingService:
         its payment/status."""
         start_utc, end_utc = current_window(now)
         rows = (await db.execute(text("""
-            SELECT t.phone_number, t.name,
+            SELECT t.phone_number, t.name, cl.label,
                    COUNT(co.id) AS order_count
             FROM testers t
+            LEFT JOIN contact_labels cl ON cl.identifier = t.phone_number
             LEFT JOIN customers c ON c.phone_number = t.phone_number
             LEFT JOIN customer_orders co
                    ON co.customer_id = c.id
                   AND co.created_at >= :start
                   AND co.created_at <  :end
-            GROUP BY t.phone_number, t.name
+            GROUP BY t.phone_number, t.name, cl.label
             ORDER BY t.name NULLS LAST, t.phone_number
         """), {"start": start_utc, "end": end_utc})).fetchall()
         testers = [{
             "phone_number": r.phone_number,
             "name": r.name,
+            # Label wins for display; falls back to the raw identifier in the UI.
+            "label": r.label,
             "order_count": int(r.order_count or 0),
             "ordered": (r.order_count or 0) > 0,
         } for r in rows]

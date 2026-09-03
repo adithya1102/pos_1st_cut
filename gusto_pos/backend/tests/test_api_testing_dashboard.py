@@ -198,3 +198,58 @@ class TestComplianceEndpoint:
         assert phone in ordered
         assert "+919111111111" in not_ordered
         assert phone not in not_ordered
+
+
+# ============================= contact labels =============================
+@pytest.mark.asyncio
+class TestContactLabels:
+    async def test_orders_include_identifier_and_null_label(
+            self, client, seed, paid_order, db):
+        r = await client.get(f"{API}/testing/orders", headers=HDR)
+        assert r.status_code == 200
+        row = next(o for o in r.json() if o["order_id"] == paid_order["id"])
+        phone = await _customer_phone(db, seed["customer_id"])
+        assert row["identifier"] == phone
+        assert row["label"] is None
+
+    async def test_patch_sets_label_and_orders_reflect_it(
+            self, client, seed, paid_order, db):
+        phone = await _customer_phone(db, seed["customer_id"])
+        p = await client.patch(f"{API}/testing/labels/{phone}", headers=HDR,
+                              json={"label": "Asha's phone"})
+        assert p.status_code == 200 and p.json()["label"] == "Asha's phone"
+
+        r = await client.get(f"{API}/testing/orders", headers=HDR)
+        row = next(o for o in r.json() if o["order_id"] == paid_order["id"])
+        assert row["label"] == "Asha's phone"
+
+    async def test_patch_updates_existing_label(self, client, seed, paid_order, db):
+        phone = await _customer_phone(db, seed["customer_id"])
+        await client.patch(f"{API}/testing/labels/{phone}", headers=HDR,
+                         json={"label": "first"})
+        await client.patch(f"{API}/testing/labels/{phone}", headers=HDR,
+                         json={"label": "second"})
+        r = await client.get(f"{API}/testing/orders", headers=HDR)
+        row = next(o for o in r.json() if o["order_id"] == paid_order["id"])
+        assert row["label"] == "second"
+        # Exactly one row for that identifier — an update, not a second insert.
+        n = await db.scalar(text(
+            "SELECT count(*) FROM contact_labels WHERE identifier=:i"), {"i": phone})
+        assert n == 1
+
+    async def test_empty_label_clears_it(self, client, seed, paid_order, db):
+        phone = await _customer_phone(db, seed["customer_id"])
+        await client.patch(f"{API}/testing/labels/{phone}", headers=HDR,
+                         json={"label": "temp"})
+        cleared = await client.patch(f"{API}/testing/labels/{phone}", headers=HDR,
+                                   json={"label": ""})
+        assert cleared.json()["label"] is None
+        n = await db.scalar(text(
+            "SELECT count(*) FROM contact_labels WHERE identifier=:i"), {"i": phone})
+        assert n == 0
+
+    async def test_label_patch_is_gated(self, client, seed):
+        # No X-Testing-Key -> rejected, like the rest of the module.
+        r = await client.patch(f"{API}/testing/labels/+919000000000",
+                             json={"label": "x"})
+        assert r.status_code == 401

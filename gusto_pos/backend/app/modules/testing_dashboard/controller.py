@@ -29,6 +29,10 @@ class AddTesterIn(BaseModel):
     name: Optional[str] = None
 
 
+class SetLabelIn(BaseModel):
+    label: Optional[str] = None  # empty/None clears the label
+
+
 @router.get("/outlets")
 async def outlets(db: AsyncSession = Depends(get_db)):
     return await TestingService.outlets_status(db)
@@ -53,6 +57,13 @@ async def add_tester(payload: AddTesterIn, db: AsyncSession = Depends(get_db)):
 async def remove_tester(phone_number: str, db: AsyncSession = Depends(get_db)):
     # :path so a '+' or URL-encoded phone survives routing.
     return await TestingService.remove_tester(db, phone_number)
+
+
+@router.patch("/labels/{identifier:path}")
+async def set_label(identifier: str, payload: SetLabelIn,
+                    db: AsyncSession = Depends(get_db)):
+    # :path so a phone '+91…' or an email survives routing intact.
+    return await TestingService.set_label(db, identifier, payload.label or "")
 
 
 @router.get("/compliance")
