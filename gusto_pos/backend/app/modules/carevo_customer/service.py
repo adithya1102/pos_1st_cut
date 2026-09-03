@@ -2081,7 +2081,13 @@ class CarevoService:
             WHERE outlet_id = :oid
               AND created_at >= :rename_cutoff
               AND (
-                    status NOT IN ('COMPLETED','CANCELLED','ABANDONED')
+                    -- Payment-confirmed and still live. Reuses _LIVE_STATUSES
+                    -- (the same set the expiry sweep uses) as the floor, which
+                    -- deliberately excludes CREATED: an unpaid order must not
+                    -- reach restaurant staff until payment succeeds. Every live
+                    -- status (RECEIVED -> PREPARING -> READY, plus PAID) is in
+                    -- the set; CREATED is the only one it drops.
+                    status = ANY(:live)
                  OR (
                       status = 'COMPLETED'
                       AND pickup_verified_at IS NOT NULL
@@ -2092,6 +2098,9 @@ class CarevoService:
         """), {
             "oid": str(outlet_id),
             "rename_cutoff": CarevoService.RENAME_CUTOFF,
+            # The paid/live floor — same definition the expiry sweep uses, not a
+            # duplicated literal. CREATED (unpaid) is absent from it by design.
+            "live": list(_LIVE_STATUSES),
             # A timedelta, not a string: the CAST tells asyncpg to expect an
             # interval, and it maps timedelta -> interval natively while
             # rejecting '1800 seconds' outright.
