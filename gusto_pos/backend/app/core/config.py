@@ -90,6 +90,13 @@ class Settings(BaseSettings):
     PUSH_ENABLED: bool = False
     FCM_SERVICE_ACCOUNT_FILE: Optional[str] = None
 
+    # Shared secret for the local testing dashboard (testing_dashboard module).
+    # Every dashboard endpoint requires the X-Testing-Key header to equal this.
+    # Empty by default = the dashboard is FAIL-CLOSED (all requests 401) until a
+    # real value is set in .env locally and in Render's environment. Never
+    # hardcode the real key in source.
+    TESTING_DASHBOARD_KEY: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()

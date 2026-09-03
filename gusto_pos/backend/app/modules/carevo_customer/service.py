@@ -1389,6 +1389,18 @@ class CarevoService:
         await db.commit()
         await db.refresh(order)
         await CarevoService._broadcast_status(order, db)
+
+        # Roster-scoped auto-pickup (testing_dashboard, migration 025). When a
+        # TESTER's order reaches READY, complete it automatically via the SAME
+        # verify_pickup path staff use — reused verbatim, not reimplemented.
+        # Orders from non-roster phones are untouched: the roster check inside
+        # maybe_auto_pickup gates everything, and it is best-effort so it can
+        # never break a real status transition. Lazy import breaks the cycle
+        # (testing_dashboard imports CarevoService).
+        if new_status == "READY":
+            from app.modules.testing_dashboard.service import TestingService
+            if await TestingService.maybe_auto_pickup(db, order):
+                await db.refresh(order)  # now COMPLETED
         return order
 
     @staticmethod

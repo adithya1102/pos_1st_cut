@@ -32,6 +32,9 @@ from app.modules.carevo_customer.controller import router as carevo_customer_rou
 from app.modules.carevo_pos.controller import router as carevo_pos_router
 from app.modules.onboarding.controller import router as onboarding_router
 
+# Local testing dashboard (additive; every route gated by X-Testing-Key)
+from app.modules.testing_dashboard.controller import router as testing_router
+
 # CareVo Admin Dashboard (additive; SUPER_ADMIN-gated platform ops)
 from app.modules.carevo_admin.controller import router as carevo_admin_router
 from app.modules.account.controller import (
@@ -98,6 +101,8 @@ app.include_router(analytics_router, prefix="/api/v1")
 # CareVo Skip routers → /api/v1/customer/... and /api/v1/pos/...
 app.include_router(carevo_customer_router, prefix="/api/v1")
 app.include_router(carevo_pos_router, prefix="/api/v1")
+# Local testing dashboard → /api/v1/testing/... (all routes X-Testing-Key gated)
+app.include_router(testing_router, prefix="/api/v1")
 # Public owner self-signup → /api/v1/register (unauthenticated, rate-limited).
 app.include_router(onboarding_router, prefix="/api/v1")
 # CareVo Admin router → /api/v1/admin/...  (inert until migration 003 + a

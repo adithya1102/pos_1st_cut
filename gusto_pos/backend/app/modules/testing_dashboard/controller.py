@@ -1,0 +1,60 @@
+"""Local testing dashboard — every route gated by the X-Testing-Key header.
+
+Mounted under /api/v1/testing. These endpoints are PUBLIC-REACHABLE (same host
+as the customer API) but secret-protected and fail-closed (see deps). They exist
+for tester operations only and touch no customer/owner behaviour.
+"""
+from datetime import datetime
+from typing import Optional
+
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import get_db
+from app.modules.testing_dashboard.deps import require_testing_key
+from app.modules.testing_dashboard.service import TestingService
+
+# The dependency is applied to the whole router, so no endpoint can be added
+# later that forgets the gate.
+router = APIRouter(
+    prefix="/testing",
+    tags=["Testing Dashboard (secret-gated)"],
+    dependencies=[Depends(require_testing_key)],
+)
+
+
+class AddTesterIn(BaseModel):
+    phone_number: str
+    name: Optional[str] = None
+
+
+@router.get("/outlets")
+async def outlets(db: AsyncSession = Depends(get_db)):
+    return await TestingService.outlets_status(db)
+
+
+@router.get("/orders")
+async def active_orders(db: AsyncSession = Depends(get_db)):
+    return await TestingService.active_orders(db)
+
+
+@router.get("/testers")
+async def list_testers(db: AsyncSession = Depends(get_db)):
+    return await TestingService.list_testers(db)
+
+
+@router.post("/testers")
+async def add_tester(payload: AddTesterIn, db: AsyncSession = Depends(get_db)):
+    return await TestingService.add_tester(db, payload.phone_number, payload.name)
+
+
+@router.delete("/testers/{phone_number:path}")
+async def remove_tester(phone_number: str, db: AsyncSession = Depends(get_db)):
+    # :path so a '+' or URL-encoded phone survives routing.
+    return await TestingService.remove_tester(db, phone_number)
+
+
+@router.get("/compliance")
+async def compliance(db: AsyncSession = Depends(get_db)):
+    return await TestingService.compliance(db)
