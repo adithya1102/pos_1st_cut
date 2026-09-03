@@ -19,6 +19,7 @@ import 'cart_screen.dart';
 import 'location_screen.dart';
 import 'name_capture_screen.dart';
 import 'order_history_screen.dart';
+import 'pickup_screen.dart';
 
 /// The authenticated app's front door.
 ///
@@ -127,6 +128,28 @@ class _HomeScreenState extends State<HomeScreen> {
         .then((_) => _load());
   }
 
+  /// Straight to the live pickup screen for one specific order.
+  ///
+  /// The same push [ActiveOrderCard] makes from the restaurant-list banner —
+  /// deliberately identical, down to `fromHistory: true`, so an order opened
+  /// from Home behaves exactly like the same order opened from anywhere else:
+  /// it gets a back button, and "Order more" does not detonate the nav stack.
+  void _openPickup(OrderHistoryEntry order) {
+    Navigator.of(context)
+        .push(MaterialPageRoute(
+          builder: (_) => PickupScreen(
+            orderId: order.orderId,
+            amount: order.totalAmount,
+            fromHistory: true,
+          ),
+        ))
+        // It may have been collected in there, which moves it out of the
+        // active section.
+        .then((_) {
+      if (mounted) _load();
+    });
+  }
+
   /// Straight to the cart — not via the restaurant's menu.
   ///
   /// The cart screen is self-contained (it reads CartState, which already
@@ -178,6 +201,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         error: _error,
                         onDiscover: _openDiscover,
                         onHistory: _openHistory,
+                        onTrackOrder: _openPickup,
                         onResumeCart: _openCart,
                         onRefresh: _load,
                       ),
@@ -191,11 +215,27 @@ class _HomeScreenState extends State<HomeScreen> {
 ///
 /// Time-of-day rather than a static "Hello": this app is used at meal times and
 /// the greeting is the one place the screen can acknowledge that cheaply.
-String _greeting(String? name) {
-  final hour = DateTime.now().hour;
-  final part = hour < 12
-      ? 'Good morning'
-      : (hour < 17 ? 'Good afternoon' : 'Good evening');
+String _greeting(String? name) => greetingFor(DateTime.now().hour, name);
+
+/// The greeting text for a given local hour (0–23) and optional name.
+///
+/// Split out and made pure so the banding is testable — `DateTime.now()` cannot
+/// be pinned to a specific hour in a widget test. The caller passes
+/// `DateTime.now().hour`, which is the DEVICE's local time in Dart: the time
+/// source was never the bug. The bug was the banding — `hour < 12` swept
+/// 00:00–04:59 into "Good morning", so opening the app at midnight was greeted
+/// as morning. Morning now starts at 05:00; the small hours fall through to
+/// "Good evening", the conventional late catch-all.
+@visibleForTesting
+String greetingFor(int hour, String? name) {
+  final String part;
+  if (hour >= 5 && hour < 12) {
+    part = 'Good morning';
+  } else if (hour >= 12 && hour < 17) {
+    part = 'Good afternoon';
+  } else {
+    part = 'Good evening';
+  }
   final trimmed = name?.trim() ?? '';
   return trimmed.isEmpty ? part : '$part, $trimmed';
 }
@@ -230,6 +270,7 @@ class _ReturningHome extends StatelessWidget {
     required this.error,
     required this.onDiscover,
     required this.onHistory,
+    required this.onTrackOrder,
     required this.onResumeCart,
     required this.onRefresh,
   });
@@ -238,6 +279,7 @@ class _ReturningHome extends StatelessWidget {
   final String? error;
   final VoidCallback onDiscover;
   final VoidCallback onHistory;
+  final void Function(OrderHistoryEntry) onTrackOrder;
   final VoidCallback onResumeCart;
   final Future<void> Function() onRefresh;
 
@@ -282,7 +324,24 @@ class _ReturningHome extends StatelessWidget {
 
         // ---- live orders: a LINK, not the full ticket cards ----
         if (active.isNotEmpty) ...[
-          _ActiveOrdersLink(count: active.length, onTap: onHistory),
+          _ActiveOrdersLink(
+            count: active.length,
+            // ONE active order has an unambiguous destination — its own live
+            // pickup screen — so it goes there directly. It used to be handed
+            // `onHistory`, the SAME callback as the "Order history" row below
+            // it, which made the two rows duplicates: a customer who tapped
+            // "1 order in progress" wanting their code got the history list
+            // and had to find and tap the order again.
+            //
+            // With SEVERAL live at once there is no single right order to
+            // open, and guessing (newest? nearest? the one with a code?) would
+            // be wrong often enough to be worse than the extra tap — so the
+            // multi-order case keeps going to history, which floats the active
+            // ones to the top and opens the same pickup screen per row.
+            onTap: active.length == 1
+                ? () => onTrackOrder(active.single)
+                : onHistory,
+          ),
           const SizedBox(height: 20),
         ],
 
@@ -430,6 +489,13 @@ class _ResumeCartBanner extends StatelessWidget {
 /// they consumed most of the first screen, pushing the actual purpose of the
 /// screen below the fold. Home says an order EXISTS; the pickup screen is
 /// where it is tracked.
+///
+/// The trailing text names the actual destination and therefore CHANGES with
+/// [count]: one order opens that order's live screen ("Track order"), several
+/// open the history list ("View order history"). It was hard-coded to the
+/// history wording while both cases went there; leaving it that way after the
+/// single-order case was rerouted would have made the row lie about where it
+/// goes.
 class _ActiveOrdersLink extends StatelessWidget {
   const _ActiveOrdersLink({required this.count, required this.onTap});
 
@@ -457,7 +523,7 @@ class _ActiveOrdersLink extends StatelessWidget {
               style: textTheme.titleSmall,
             ),
           ),
-          Text('View order history',
+          Text(count == 1 ? 'Track order' : 'View order history',
               style: textTheme.bodySmall?.copyWith(color: c.primary)),
           Icon(Icons.chevron_right, size: 18, color: c.primary),
         ],

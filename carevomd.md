@@ -4359,3 +4359,79 @@ Migration applies cleanly to a fresh test DB (23 applied, 0 skipped; index
 verified present).
 
 ---
+
+## 2026-09-03 — Home's "1 order in progress" opens the ORDER, not the list
+
+### The bug, verified rather than assumed
+
+`home_screen.dart` built two rows and handed them the SAME callback:
+
+```dart
+_ActiveOrdersLink(count: active.length, onTap: onHistory),   // "1 order in progress"
+NeoCard(key: Key('home_history_shortcut'), onTap: onHistory) // "Order history"
+```
+
+`_openHistory` pushes `OrderHistoryScreen`. So the two rows were literal
+duplicates — the top one advertised a live order and delivered a list. A
+customer at a counter tapping it for their pickup code had to find and tap the
+order again, which is the three-taps-deep problem the active-order surfaces
+were added to remove. The third button, "Find restaurants near you"
+(`home_find_restaurants`), pushes `LocationScreen` and was never in question.
+
+### MORE THAN ONE ORDER CAN BE IN PROGRESS
+
+Checked, not assumed. `OrderHistoryEntry.isActive` is
+`{PAID, RECEIVED, PREPARING, READY}` and the backend
+(`CarevoService.list_my_orders`) applies no concurrency cap — just
+`ORDER BY created_at DESC LIMIT :limit`. Both existing surfaces already handle
+plurals: Home's own greeting says "You have N orders in progress", and the
+outlets banner renders one `ActiveOrderCard` per order after an explicit fix
+for exactly this ("collapsing several codes behind a count made the common
+multi-order case the slowest").
+
+So "the active order" is not always singular, and the fix does not pretend it
+is:
+
+* **one active order** → straight to `PickupScreen` for that order
+* **several** → unchanged, still `OrderHistoryScreen`, which floats the active
+  ones to the top and opens the same pickup screen per row
+
+No newest/nearest heuristic was invented. If the multi-order case should stop
+costing the extra tap, the in-vocabulary fix is a sheet of `ActiveOrderCard`s —
+the same widget the outlets banner stacks — not a guess about which order the
+customer means. Left as a proposal, not built.
+
+### What changed
+
+`customer_app/lib/screens/home_screen.dart`
+
+* `_openPickup(OrderHistoryEntry)` — the same push `ActiveOrderCard` makes from
+  the outlets banner, down to `fromHistory: true` (back button; "Order more"
+  does not detonate the nav stack). Reloads on return, since the order may have
+  been collected in there.
+* `_ReturningHome` takes `onTrackOrder` and picks the destination by count.
+* `_ActiveOrdersLink` trailing text now follows the destination: "Track order"
+  for one, "View order history" for several. It was hard-coded to the history
+  wording while both cases went there; leaving it would have made the row lie.
+
+"Order history" and the Discover CTA are untouched.
+
+### Tests
+
+New `test/home_active_order_routing_test.dart` (5), asserting destinations
+rather than wiring: one active order lands on `PickupScreen` with the right
+`orderId`, its code visible and `fromHistory` true; the ACTIVE order is opened
+when a collected one also exists (a fixture where blindly taking `orders.first`
+would fail); "Order history" still reaches `OrderHistoryScreen` and NOT
+`PickupScreen`; two live orders still reach the list; and the label matches the
+route.
+
+One assertion updated in `bugfix_batch_2026_08_24_test.dart` — it expected
+"View order history" on the single-order row, which is now "Track order".
+
+`flutter test` — **320 passed, 0 failed**. `flutter analyze` on the touched
+files — clean.
+
+Not committed, not pushed, not run on a device.
+
+---

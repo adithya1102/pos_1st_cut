@@ -871,7 +871,10 @@ void main() {
 
       expect(find.byKey(const Key('home_active_orders_link')), findsOneWidget);
       expect(find.text('1 order in progress'), findsOneWidget);
-      expect(find.text('View order history'), findsOneWidget);
+      // Was 'View order history' — the single-order row now opens that order's
+      // live screen instead of the list, and says so. See the routing group
+      // below.
+      expect(find.text('Track order'), findsOneWidget);
 
       // The big ticket card and its code are deliberately NOT on Home.
       expect(find.byKey(const Key('active_order_code_o1')), findsNothing);
