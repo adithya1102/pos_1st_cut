@@ -137,8 +137,8 @@
 
     async function loadCompliance() {
       const c = await api('/api/compliance');
-      const li = t => `<li>${esc(t.label || t.phone_number)}
-        ${t.label ? '<span class="muted">· '+esc(t.phone_number)+'</span>' : ''}
+      const li = t => `<li>${esc(t.label || t.identifier)}
+        ${t.label ? '<span class="muted">· '+esc(t.identifier)+'</span>' : ''}
         ${t.order_count ? '<span class="muted">('+t.order_count+')</span>' : ''}</li>`;
       document.getElementById('ordered').innerHTML =
         c.ordered.map(li).join('') || '<li class="muted">nobody yet</li>';
