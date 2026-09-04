@@ -25,8 +25,15 @@ router = APIRouter(
 
 
 class AddTesterIn(BaseModel):
-    phone_number: str
+    # A tester is added by identifier — a phone (OTP) OR an email (Google-only).
+    # `phone_number` is still accepted as an alias so existing callers (and the
+    # phone case) keep working unchanged.
+    identifier: Optional[str] = None
+    phone_number: Optional[str] = None
     name: Optional[str] = None
+
+    def resolved_identifier(self) -> str:
+        return (self.identifier or self.phone_number or "").strip()
 
 
 class SetLabelIn(BaseModel):
@@ -50,13 +57,14 @@ async def list_testers(db: AsyncSession = Depends(get_db)):
 
 @router.post("/testers")
 async def add_tester(payload: AddTesterIn, db: AsyncSession = Depends(get_db)):
-    return await TestingService.add_tester(db, payload.phone_number, payload.name)
+    return await TestingService.add_tester(
+        db, payload.resolved_identifier(), payload.name)
 
 
-@router.delete("/testers/{phone_number:path}")
-async def remove_tester(phone_number: str, db: AsyncSession = Depends(get_db)):
-    # :path so a '+' or URL-encoded phone survives routing.
-    return await TestingService.remove_tester(db, phone_number)
+@router.delete("/testers/{identifier:path}")
+async def remove_tester(identifier: str, db: AsyncSession = Depends(get_db)):
+    # :path so a '+' (phone) or an email identifier survives routing intact.
+    return await TestingService.remove_tester(db, identifier)
 
 
 @router.patch("/labels/{identifier:path}")

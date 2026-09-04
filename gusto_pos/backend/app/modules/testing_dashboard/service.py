@@ -6,13 +6,17 @@ the X-Testing-Key gate.
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
+from app.core.database import AsyncSessionLocal
+from app.modules.carevo_customer.model import CustomerOrder
 from app.modules.carevo_customer.service import CarevoService
 
 # The compliance day runs 23:00 -> 23:00 in India. Every outlet, customer, and
@@ -21,6 +25,18 @@ from app.modules.carevo_customer.service import CarevoService
 # splitting an evening's testing across two "days".
 TESTING_TZ = ZoneInfo("Asia/Kolkata")
 WINDOW_BOUNDARY_HOUR = 23
+
+# --- Roster-scoped auto-progression (testing only) --------------------------
+# The stages driven after PAID, in order. READY is the last one we drive: it
+# triggers the EXISTING auto-pickup hook inside advance_status, which closes the
+# order — pickup is never reimplemented here, only allowed to chain.
+_AUTO_ADVANCE_STAGES = ("RECEIVED", "PREPARING", "READY")
+
+# Rank for a strictly-forward guard: the worker never moves an order backward
+# and never re-animates a finished one. Anything terminal stops the chain.
+_STAGE_RANK = {"CREATED": 0, "PAID": 1, "RECEIVED": 2, "PREPARING": 3,
+               "READY": 4, "COMPLETED": 5}
+_TERMINAL_STATUSES = {"COMPLETED", "CANCELLED", "ABANDONED", "PICKED_UP"}
 
 
 def current_window(now: datetime | None = None) -> tuple[datetime, datetime]:
@@ -42,53 +58,78 @@ def current_window(now: datetime | None = None) -> tuple[datetime, datetime]:
 
 class TestingService:
     # ------------------------------ roster --------------------------------
+    # The roster keys on `identifier` = COALESCE(phone_number, email) — the SAME
+    # convention as contact_labels (026) and the orders view. A phone (OTP)
+    # tester and a Google-only (email) tester are matched identically. The
+    # phone_number column is kept alongside for display/back-compat: a phone
+    # identifier fills it, an email identifier leaves it NULL.
     @staticmethod
-    def _norm(phone: str) -> str:
-        return (phone or "").strip()
+    def _norm(value: str) -> str:
+        return (value or "").strip()
 
     @staticmethod
-    async def is_roster_phone(db: AsyncSession, phone: str | None) -> bool:
-        if not phone:
+    def _phone_of(identifier: str) -> str | None:
+        """The phone_number column value for an identifier: the identifier itself
+        when it is a phone, NULL when it is an email (an '@' marks an email)."""
+        ident = TestingService._norm(identifier)
+        return ident if ident and "@" not in ident else None
+
+    @staticmethod
+    async def _customer_identifier(db: AsyncSession, customer_id) -> str | None:
+        """A customer's roster identifier: phone when present, else email — the
+        exact COALESCE the roster (and labels) key on."""
+        return await db.scalar(text(
+            "SELECT COALESCE(phone_number, email) FROM customers WHERE id = :cid"
+        ), {"cid": str(customer_id)})
+
+    @staticmethod
+    async def is_roster_identifier(db: AsyncSession, identifier: str | None) -> bool:
+        """True if this phone-or-email identifier is on the roster."""
+        if not identifier:
             return False
         return (await db.execute(text(
-            "SELECT 1 FROM testers WHERE phone_number = :p LIMIT 1"
-        ), {"p": TestingService._norm(phone)})).first() is not None
+            "SELECT 1 FROM testers WHERE identifier = :id LIMIT 1"
+        ), {"id": TestingService._norm(identifier)})).first() is not None
 
     @staticmethod
     async def list_testers(db: AsyncSession) -> list[dict]:
         rows = (await db.execute(text(
-            "SELECT phone_number, name, added_at FROM testers "
+            "SELECT identifier, phone_number, name, added_at FROM testers "
             "ORDER BY added_at DESC"
         ))).fetchall()
-        return [{"phone_number": r.phone_number, "name": r.name,
-                 "added_at": r.added_at} for r in rows]
+        return [{"identifier": r.identifier, "phone_number": r.phone_number,
+                 "name": r.name, "added_at": r.added_at} for r in rows]
 
     @staticmethod
-    async def add_tester(db: AsyncSession, phone: str, name: str | None) -> dict:
-        p = TestingService._norm(phone)
-        if not p:
-            raise HTTPException(status_code=422, detail="phone_number required")
-        # Idempotent: re-adding an existing number just updates the label.
+    async def add_tester(db: AsyncSession, identifier: str, name: str | None) -> dict:
+        ident = TestingService._norm(identifier)
+        if not ident:
+            raise HTTPException(status_code=422, detail="identifier required")
+        phone = TestingService._phone_of(ident)
+        # Idempotent: re-adding the same identifier just updates the label.
         await db.execute(text("""
-            INSERT INTO testers (phone_number, name)
-            VALUES (:p, :n)
-            ON CONFLICT (phone_number)
-            DO UPDATE SET name = COALESCE(EXCLUDED.name, testers.name)
-        """), {"p": p, "n": (name or "").strip() or None})
+            INSERT INTO testers (identifier, phone_number, name)
+            VALUES (:id, :ph, :n)
+            ON CONFLICT (identifier)
+            DO UPDATE SET name = COALESCE(EXCLUDED.name, testers.name),
+                          phone_number = EXCLUDED.phone_number
+        """), {"id": ident, "ph": phone, "n": (name or "").strip() or None})
         await db.commit()
         row = (await db.execute(text(
-            "SELECT phone_number, name, added_at FROM testers WHERE phone_number = :p"
-        ), {"p": p})).first()
-        return {"phone_number": row.phone_number, "name": row.name,
-                "added_at": row.added_at}
+            "SELECT identifier, phone_number, name, added_at "
+            "FROM testers WHERE identifier = :id"
+        ), {"id": ident})).first()
+        return {"identifier": row.identifier, "phone_number": row.phone_number,
+                "name": row.name, "added_at": row.added_at}
 
     @staticmethod
-    async def remove_tester(db: AsyncSession, phone: str) -> dict:
-        p = TestingService._norm(phone)
+    async def remove_tester(db: AsyncSession, identifier: str) -> dict:
+        ident = TestingService._norm(identifier)
         res = await db.execute(text(
-            "DELETE FROM testers WHERE phone_number = :p"), {"p": p})
+            "DELETE FROM testers WHERE identifier = :id"), {"id": ident})
         await db.commit()
-        return {"removed": res.rowcount or 0, "phone_number": p}
+        return {"removed": res.rowcount or 0, "identifier": ident,
+                "phone_number": TestingService._phone_of(ident)}
 
     # ------------------------------ outlets -------------------------------
     @staticmethod
@@ -204,20 +245,24 @@ class TestingService:
         rolling 23:00-IST window. 'Placed' = an order row was created, whatever
         its payment/status."""
         start_utc, end_utc = current_window(now)
+        # Join on identifier = COALESCE(phone_number, email) so an email-only
+        # tester's orders are counted exactly like a phone tester's.
         rows = (await db.execute(text("""
-            SELECT t.phone_number, t.name, cl.label,
+            SELECT t.identifier, t.phone_number, t.name, cl.label,
                    COUNT(co.id) AS order_count
             FROM testers t
-            LEFT JOIN contact_labels cl ON cl.identifier = t.phone_number
-            LEFT JOIN customers c ON c.phone_number = t.phone_number
+            LEFT JOIN contact_labels cl ON cl.identifier = t.identifier
+            LEFT JOIN customers c
+                   ON COALESCE(c.phone_number, c.email) = t.identifier
             LEFT JOIN customer_orders co
                    ON co.customer_id = c.id
                   AND co.created_at >= :start
                   AND co.created_at <  :end
-            GROUP BY t.phone_number, t.name, cl.label
-            ORDER BY t.name NULLS LAST, t.phone_number
+            GROUP BY t.identifier, t.phone_number, t.name, cl.label
+            ORDER BY t.name NULLS LAST, t.identifier
         """), {"start": start_utc, "end": end_utc})).fetchall()
         testers = [{
+            "identifier": r.identifier,
             "phone_number": r.phone_number,
             "name": r.name,
             # Label wins for display; falls back to the raw identifier in the UI.
@@ -235,8 +280,8 @@ class TestingService:
     # --------------------------- auto-pickup ------------------------------
     @staticmethod
     async def maybe_auto_pickup(db: AsyncSession, order) -> bool:
-        """If `order` is READY and its customer's phone is on the roster,
-        complete it by invoking the SAME internal verify_pickup the staff
+        """If `order` is READY and its customer is on the roster (by phone OR
+        email), complete it by invoking the SAME internal verify_pickup the staff
         endpoint uses — reused verbatim, never reimplemented. Returns True if
         auto-pickup fired. Best-effort: any failure is swallowed so it can never
         affect the status transition that triggered it.
@@ -248,10 +293,8 @@ class TestingService:
                 return False
             if not order.pickup_code:
                 return False
-            phone = (await db.execute(text(
-                "SELECT phone_number FROM customers WHERE id = :cid"
-            ), {"cid": str(order.customer_id)})).scalar()
-            if not await TestingService.is_roster_phone(db, phone):
+            ident = await TestingService._customer_identifier(db, order.customer_id)
+            if not await TestingService.is_roster_identifier(db, ident):
                 return False
             # The exact staff pickup logic, with the order's OWN code.
             await CarevoService.verify_pickup(
@@ -263,3 +306,131 @@ class TestingService:
             except Exception:
                 pass
             return False
+
+    # ---------------- auto-progression through the stages -----------------
+    # DURABLE by design: the next stage + its due time live in
+    # auto_advance_schedule (migration 028), and a background poller
+    # (auto_advance_poller_loop) advances due rows. Because the state is in the
+    # DB, a backend restart/redeploy resumes any past-due step automatically —
+    # nothing is lost the way in-memory asyncio tasks were.
+    @staticmethod
+    async def maybe_schedule_auto_advance(db: AsyncSession, order) -> bool:
+        """When an order reaches PAID, PERSIST the first pending stage (RECEIVED)
+        due AUTO_ADVANCE_DELAY_SECONDS from now — but ONLY for a tester's order,
+        and ONLY while the feature is switched on. Returns True iff a row was
+        written.
+
+        Two gates, both of which leave a REAL customer's order completely alone:
+          * the master switch AUTO_ADVANCE_ROSTER_ORDERS is OFF by default — with
+            it off nothing is ever scheduled and roster orders stay fully manual;
+          * the roster check (by phone OR email, same source of truth as
+            auto-pickup) means a non-tester is never scheduled, at any switch value.
+
+        Best-effort by contract: the caller wraps this so a scheduling failure
+        can never affect the payment that triggered it.
+        """
+        if not settings.AUTO_ADVANCE_ROSTER_ORDERS:
+            return False
+        ident = await TestingService._customer_identifier(db, order.customer_id)
+        if not await TestingService.is_roster_identifier(db, ident):
+            return False
+        due = datetime.now(timezone.utc) + timedelta(
+            seconds=settings.AUTO_ADVANCE_DELAY_SECONDS)
+        await db.execute(text("""
+            INSERT INTO auto_advance_schedule (order_id, next_stage, due_at, updated_at)
+            VALUES (:oid, :stage, :due, now())
+            ON CONFLICT (order_id)
+            DO UPDATE SET next_stage = EXCLUDED.next_stage,
+                          due_at = EXCLUDED.due_at, updated_at = now()
+        """), {"oid": str(order.id), "stage": _AUTO_ADVANCE_STAGES[0], "due": due})
+        await db.commit()
+        return True
+
+    @staticmethod
+    async def process_due_auto_advances(db: AsyncSession, *, now=None) -> int:
+        """Advance every order whose scheduled stage is due. Returns how many
+        rows were processed. Called on a loop by the poller and directly by tests.
+
+        The kill switch is honoured HERE too: while AUTO_ADVANCE_ROSTER_ORDERS is
+        off, due rows are left untouched (progression pauses) and resume when it
+        is turned back on — a durable version of the same switch.
+        """
+        if not settings.AUTO_ADVANCE_ROSTER_ORDERS:
+            return 0
+        now = now or datetime.now(timezone.utc)
+        due = (await db.execute(text(
+            "SELECT order_id, next_stage FROM auto_advance_schedule "
+            "WHERE due_at <= :now ORDER BY due_at LIMIT 100"
+        ), {"now": now})).fetchall()
+        processed = 0
+        for r in due:
+            try:
+                await TestingService._advance_one_scheduled(db, r.order_id, r.next_stage)
+                processed += 1
+            except Exception:
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+        return processed
+
+    @staticmethod
+    async def _advance_one_scheduled(db: AsyncSession, order_id, stage: str) -> None:
+        """Run ONE scheduled stage for an order, then rewrite the schedule row to
+        the following stage — or delete it once READY has been driven (READY
+        chains into the existing auto-pickup, which closes the order).
+
+        Reuses CarevoService.advance_status verbatim — the SAME function a staff
+        tap calls — so there is no parallel status-writing path. A monotonic
+        guard never moves an order backward and never re-animates a finished one.
+        """
+        order = (await db.execute(select(CustomerOrder).where(
+            CustomerOrder.id == order_id))).scalars().first()
+        cur = (order.status or "").upper() if order is not None else None
+        if order is None or cur in _TERMINAL_STATUSES:
+            # Order gone or already finished (auto-pickup / staff) — drop the row.
+            await db.execute(text(
+                "DELETE FROM auto_advance_schedule WHERE order_id = :o"),
+                {"o": str(order_id)})
+            await db.commit()
+            return
+
+        # Advance unless something already moved it to/past this stage.
+        if _STAGE_RANK.get(cur, 0) < _STAGE_RANK[stage]:
+            await CarevoService.advance_status(db, order_id, stage)
+
+        idx = _AUTO_ADVANCE_STAGES.index(stage)
+        if idx + 1 < len(_AUTO_ADVANCE_STAGES):
+            nxt = _AUTO_ADVANCE_STAGES[idx + 1]
+            due = datetime.now(timezone.utc) + timedelta(
+                seconds=settings.AUTO_ADVANCE_DELAY_SECONDS)
+            await db.execute(text(
+                "UPDATE auto_advance_schedule SET next_stage = :s, due_at = :d, "
+                "updated_at = now() WHERE order_id = :o"),
+                {"s": nxt, "d": due, "o": str(order_id)})
+        else:
+            # READY was the last driven stage; auto-pickup closed the order.
+            await db.execute(text(
+                "DELETE FROM auto_advance_schedule WHERE order_id = :o"),
+                {"o": str(order_id)})
+        await db.commit()
+
+
+async def auto_advance_poller_loop() -> None:
+    """Background loop: every AUTO_ADVANCE_POLL_SECONDS, advance any due steps.
+
+    This is the durability mechanism — a lightweight periodic check started at
+    app startup (main.py), reusing the codebase's own asyncio + AsyncSessionLocal
+    pattern rather than adding a broker/scheduler dependency. On restart it simply
+    finds past-due rows in auto_advance_schedule and resumes them, so a redeploy
+    mid-progression costs nothing. Each pass is best-effort and fully swallowed —
+    one bad pass must never kill the loop — and it runs regardless of the kill
+    switch, since process_due_auto_advances itself no-ops while the switch is off.
+    """
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                await TestingService.process_due_auto_advances(db)
+        except Exception:
+            pass
+        await asyncio.sleep(settings.AUTO_ADVANCE_POLL_SECONDS)

@@ -74,6 +74,26 @@ async def on_startup():
     async with AsyncSessionLocal() as session:
         await init_initial_data(session)
 
+
+@app.on_event("startup")
+async def _start_auto_advance_poller():
+    """Durable roster auto-progression: a background loop that advances due
+    steps recorded in auto_advance_schedule (migration 028). Persisting the
+    schedule is what makes progression survive restarts; this loop is only the
+    driver. Lazily imported so importing the app (e.g. in tests) has no side
+    effect — and the httpx test client never fires startup, so it stays off in
+    the suite, which drives the processor directly instead."""
+    import asyncio
+    from app.modules.testing_dashboard.service import auto_advance_poller_loop
+    app.state.auto_advance_task = asyncio.create_task(auto_advance_poller_loop())
+
+
+@app.on_event("shutdown")
+async def _stop_auto_advance_poller():
+    task = getattr(app.state, "auto_advance_task", None)
+    if task is not None:
+        task.cancel()
+
 # Endpoints
 # Note: The specific paths (like /organizations, /outlets) are already defined 
 # inside the controllers, so we only need to prefix them with /api/v1 here.

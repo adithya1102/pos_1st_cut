@@ -1107,6 +1107,21 @@ class CarevoService:
             await PredictionService.recompute_twin(db, order.id)
         except Exception:
             await db.rollback()
+
+        # Roster-scoped auto-progression (testing only). If the feature is on and
+        # this order's phone is a tester, schedule the automatic RECEIVED ->
+        # PREPARING -> READY advances (READY then chains into the existing
+        # auto-pickup) so the tester needs zero restaurant-side taps. NON-roster
+        # orders are never scheduled, so a real customer's order is untouched.
+        # Lazy import breaks the cycle (testing_dashboard imports CarevoService);
+        # best-effort so a scheduling failure can never affect the committed
+        # payment. Only the true PAID transition reaches here — the idempotent
+        # early-returns above mean a retried webhook does not re-schedule.
+        try:
+            from app.modules.testing_dashboard.service import TestingService
+            await TestingService.maybe_schedule_auto_advance(db, order)
+        except Exception:
+            pass
         return order
 
     # Rejecting is allowed right up until the food is ready. Past READY the

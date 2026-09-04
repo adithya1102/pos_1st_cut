@@ -97,6 +97,23 @@ class Settings(BaseSettings):
     # hardcode the real key in source.
     TESTING_DASHBOARD_KEY: str = ""
 
+    # --- Roster-scoped auto-progression (testing only, migration 025 roster) ---
+    # Master kill switch. While ON, a TESTER's order (phone on the `testers`
+    # roster) auto-advances RECEIVED -> PREPARING -> READY after payment, with a
+    # delay between each, and READY then chains into the existing auto-pickup —
+    # so a 14-day Play Store test across the roster needs ZERO restaurant-side
+    # taps. OFF by default: while false a roster order behaves exactly like a
+    # real customer's (staff advance it manually). This is the switch to flip off
+    # after the test window. NON-roster orders are never touched at any value.
+    AUTO_ADVANCE_ROSTER_ORDERS: bool = False
+    # The single gap, in seconds, before each automatic stage. One knob, easy to
+    # tune. 20s reads as a plausible kitchen cadence to a watching tester.
+    AUTO_ADVANCE_DELAY_SECONDS: int = 20
+    # How often the durable poller checks for due steps. Small so a step fires
+    # close to its due time; the real gap between stages is AUTO_ADVANCE_DELAY_SECONDS
+    # (enforced by each row's due_at), this only bounds the polling lag on top.
+    AUTO_ADVANCE_POLL_SECONDS: int = 5
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()
