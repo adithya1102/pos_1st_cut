@@ -4,6 +4,7 @@ Mounted under /api/v1/testing. These endpoints are PUBLIC-REACHABLE (same host
 as the customer API) but secret-protected and fail-closed (see deps). They exist
 for tester operations only and touch no customer/owner behaviour.
 """
+import uuid
 from datetime import datetime
 from typing import Optional
 
@@ -40,6 +41,10 @@ class SetLabelIn(BaseModel):
     label: Optional[str] = None  # empty/None clears the label
 
 
+class RejectOrderIn(BaseModel):
+    reason: Optional[str] = None
+
+
 @router.get("/outlets")
 async def outlets(db: AsyncSession = Depends(get_db)):
     return await TestingService.outlets_status(db)
@@ -72,6 +77,21 @@ async def set_label(identifier: str, payload: SetLabelIn,
                     db: AsyncSession = Depends(get_db)):
     # :path so a phone '+91…' or an email survives routing intact.
     return await TestingService.set_label(db, identifier, payload.label or "")
+
+
+@router.post("/orders/{order_id}/approve")
+async def approve_order(order_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    # Reuses CarevoService.advance_status (the exact staff/auto_receive action).
+    return await TestingService.approve_order(db, order_id)
+
+
+@router.post("/orders/{order_id}/reject")
+async def reject_order(order_id: uuid.UUID,
+                       payload: RejectOrderIn | None = None,
+                       db: AsyncSession = Depends(get_db)):
+    # Reuses CarevoService.reject_order (the exact owner_app Reject action).
+    return await TestingService.reject_order(
+        db, order_id, payload.reason if payload else None)
 
 
 @router.get("/compliance")

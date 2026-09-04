@@ -145,6 +145,23 @@ async def api_compliance(_=Depends(require_session)):
     return await _proxy("GET", "/compliance")
 
 
+@app.post("/api/orders/{order_id}/approve")
+async def api_approve_order(order_id: str, _=Depends(require_session)):
+    # Proxies to the backend's testing approve route, which reuses the real
+    # advance_status. Key attached server-side, never sent to the browser.
+    return await _proxy("POST", f"/orders/{order_id}/approve")
+
+
+@app.post("/api/orders/{order_id}/reject")
+async def api_reject_order(order_id: str, request: Request,
+                          _=Depends(require_session)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    return await _proxy("POST", f"/orders/{order_id}/reject", json_body=body)
+
+
 @app.get("/api/testers")
 async def api_testers(_=Depends(require_session)):
     return await _proxy("GET", "/testers")

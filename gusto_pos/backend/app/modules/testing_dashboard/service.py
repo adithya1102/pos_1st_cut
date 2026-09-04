@@ -38,6 +38,27 @@ _STAGE_RANK = {"CREATED": 0, "PAID": 1, "RECEIVED": 2, "PREPARING": 3,
                "READY": 4, "COMPLETED": 5}
 _TERMINAL_STATUSES = {"COMPLETED", "CANCELLED", "ABANDONED", "PICKED_UP"}
 
+# --- Manual Approve / Reject decision window (dashboard buttons) -------------
+# Approve = advance one stage via CarevoService.advance_status (the exact staff
+# action behind /customer/orders/{id}/advance and auto_receive). Offered only
+# before the kitchen commits — accepting (CREATED/PAID -> RECEIVED) or starting
+# prep (RECEIVED -> PREPARING). Hidden from PREPARING on: past the accept gate.
+_APPROVABLE_STATUSES = {"CREATED", "PAID", "RECEIVED"}
+# Reject = CarevoService.reject_order verbatim. Its real accepted set is
+# REJECTABLE_STATUSES = {PAID, RECEIVED, PREPARING} (same set owner_app's Reject
+# button uses), so the button mirrors it exactly rather than inventing a stricter
+# rule the server would disagree with.
+_REJECTABLE_STATUSES = CarevoService.REJECTABLE_STATUSES
+
+
+def _ist_str(dt: datetime | None) -> str | None:
+    """Format a timestamptz as 'YYYY-MM-DD HH:MM' in IST — the project-wide
+    Asia/Kolkata convention. asyncpg returns timestamptz as tz-aware (UTC), so
+    astimezone is exact."""
+    if dt is None:
+        return None
+    return dt.astimezone(TESTING_TZ).strftime("%Y-%m-%d %H:%M")
+
 
 def current_window(now: datetime | None = None) -> tuple[datetime, datetime]:
     """The rolling [23:00 IST, next 23:00 IST) window that contains `now`.
@@ -209,8 +230,48 @@ class TestingService:
             "identifier": r.identifier,
             "label": r.label,
             "created_at": r.created_at,
+            # Date + time the order was placed, in IST (project convention).
+            "created_at_ist": _ist_str(r.created_at),
+            # Which manual buttons the dashboard should show for this order —
+            # computed server-side so the gate matches what the real endpoints
+            # actually accept (see the constants above).
+            "can_approve": (r.status or "").upper() in _APPROVABLE_STATUSES,
+            "can_reject": (r.status or "").upper() in _REJECTABLE_STATUSES,
             "items": by_order.get(str(r.id), []),
         } for r in rows]
+
+    # ------------------------ manual approve / reject ---------------------
+    # Both REUSE the exact staff service functions — no parallel logic. The real
+    # functions stay authoritative (advance_status computes the next stage;
+    # reject_order enforces REJECTABLE_STATUSES and 409s otherwise), so a stale
+    # button that fires on a no-longer-valid order is refused by the server, not
+    # silently mis-handled here.
+    @staticmethod
+    async def approve_order(db: AsyncSession, order_id) -> dict:
+        """Advance an order one stage — the SAME advance_status the owner_app
+        progression / auto_receive path calls. Accepts a paid order into the
+        kitchen (PAID -> RECEIVED) or starts prep (RECEIVED -> PREPARING)."""
+        order = (await db.execute(select(CustomerOrder).where(
+            CustomerOrder.id == order_id))).scalars().first()
+        if order is None:
+            raise HTTPException(status_code=404, detail="Order not found")
+        previous = (order.status or "").upper()
+        updated = await CarevoService.advance_status(db, order_id)
+        return {"order_id": str(order_id), "previous_status": previous,
+                "status": updated.status}
+
+    @staticmethod
+    async def reject_order(db: AsyncSession, order_id, reason: str | None = None) -> dict:
+        """Refuse an order — the SAME CarevoService.reject_order the owner_app
+        Reject button calls (-> CANCELLED + ORDER_REJECTED + customer notify).
+        The order's own outlet_id is looked up and passed, so the function's
+        outlet-scope check is satisfied for this cross-outlet tester tool."""
+        order = (await db.execute(select(CustomerOrder).where(
+            CustomerOrder.id == order_id))).scalars().first()
+        if order is None:
+            raise HTTPException(status_code=404, detail="Order not found")
+        return await CarevoService.reject_order(
+            db, order_id, order.outlet_id, reason=reason, actor_user_id=None)
 
     # ------------------------------ labels --------------------------------
     @staticmethod

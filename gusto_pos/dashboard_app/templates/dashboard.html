@@ -100,6 +100,33 @@
       loadCompliance();
     }
 
+    // Approve / Reject reuse the backend testing routes, which call the exact
+    // same advance_status / reject_order the owner_app staff button uses. The
+    // buttons a row shows are decided server-side (can_approve / can_reject).
+    async function approveOrder(id) {
+      try {
+        await api('/api/orders/' + encodeURIComponent(id) + '/approve',
+          { method: 'POST', body: JSON.stringify({}) });
+        refreshAll();
+      } catch (e) { alert('Approve failed: ' + e.message); }
+    }
+    async function rejectOrder(id) {
+      const reason = (prompt('Reason for rejecting? (optional)') || '').trim();
+      try {
+        await api('/api/orders/' + encodeURIComponent(id) + '/reject',
+          { method: 'POST', body: JSON.stringify({ reason }) });
+        refreshAll();  // a rejected order becomes CANCELLED and drops off the list
+      } catch (e) { alert('Reject failed: ' + e.message); }
+    }
+    const actionButtons = o => {
+      const b = [];
+      if (o.can_approve)
+        b.push(`<button onclick="approveOrder('${esc(o.order_id)}')">Approve</button>`);
+      if (o.can_reject)
+        b.push(`<button class="ghost" onclick="rejectOrder('${esc(o.order_id)}')">Reject</button>`);
+      return b.join(' ') || '<span class="muted">—</span>';
+    };
+
     function render(outlets, orders) {
       const byOutlet = {};
       orders.forEach(o => (byOutlet[o.outlet_id] ??= []).push(o));
@@ -115,9 +142,11 @@
                 <span class="raw">${esc(o.identifier) || '<i>unknown</i>'}</span>
               </div>
             </td>
+            <td class="muted" style="white-space:nowrap">${esc(o.created_at_ist) || '—'}</td>
             <td class="otp">${esc(o.pickup_code) || '<span class="muted" style="font-size:12px">—</span>'}</td>
             <td>${pill(o.status, o.status)}</td>
             <td>${(o.items||[]).map(i => esc(i.quantity)+'× '+esc(i.name)).join('<br>')}</td>
+            <td style="white-space:nowrap">${actionButtons(o)}</td>
           </tr>`).join('');
         return `
           <div class="outlet">
@@ -128,7 +157,8 @@
               <span class="muted">${ou.opening_time ? esc(ou.opening_time)+'–'+esc(ou.closing_time) : ''}</span>
             </div>
             ${rows ? `<table><thead><tr>
-                <th>Identifier / label</th><th>OTP</th><th>Status</th><th>Items</th>
+                <th>Identifier / label</th><th>Placed (IST)</th><th>OTP</th>
+                <th>Status</th><th>Items</th><th>Actions</th>
               </tr></thead><tbody>${rows}</tbody></table>`
               : '<div class="empty">no live orders</div>'}
           </div>`;

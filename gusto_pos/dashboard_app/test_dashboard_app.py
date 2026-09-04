@@ -146,6 +146,32 @@ class TestProxyAttachesKey:
             "the proxy must attach X-Testing-Key on the backend call"
 
 
+class TestOrderActions:
+    def test_approve_proxies_to_backend_with_key(self, _env_and_backend):
+        c = _client(); _login(c)
+        r = c.post("/api/orders/o1/approve")
+        assert r.status_code == 200
+        assert _env_and_backend[-1].get("x-testing-key") == KEY
+        assert r.json()["echo_path"].endswith("/orders/o1/approve")
+
+    def test_reject_proxies_body_to_backend_with_key(self, _env_and_backend):
+        c = _client(); _login(c)
+        r = c.post("/api/orders/o1/reject", json={"reason": "wrong order"})
+        assert r.status_code == 200
+        assert _env_and_backend[-1].get("x-testing-key") == KEY
+        assert r.json()["echo_path"].endswith("/orders/o1/reject")
+
+    def test_actions_require_a_session(self):
+        c = _client()
+        assert c.post("/api/orders/o1/approve").status_code == 401
+        assert c.post("/api/orders/o1/reject", json={}).status_code == 401
+
+    def test_actions_do_not_leak_the_key(self, _env_and_backend):
+        c = _client(); _login(c)
+        assert KEY not in c.post("/api/orders/o1/approve").text
+        assert KEY not in c.post("/api/orders/o1/reject", json={"reason": "x"}).text
+
+
 class TestKeyNeverReachesBrowser:
     def test_login_page_has_no_key(self):
         assert KEY not in _client().get("/login").text
