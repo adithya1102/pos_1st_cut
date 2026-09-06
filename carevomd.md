@@ -4510,3 +4510,409 @@ rather than orphaning the test — same code-and-tests-together discipline as th
 other commits. Full customer_app suite: 320 passing.
 
 ---
+
+## 2026-09-06 — Manual "Ready" button on the testing dashboard (uncommitted)
+
+### Task 1 — what advance_status actually accepts
+
+`CarevoService.advance_status(db, order_id, target=None)`
+(`carevo_customer/service.py:1382`). With an explicit target the ONLY validation
+is membership:
+
+```python
+if target:
+    new_status = target.upper()
+    if new_status not in _PROGRESSION:      # ["RECEIVED","PREPARING","READY"]
+        raise HTTPException(400, "Invalid target status")
+```
+
+So `target="READY"` is accepted — already exercised in-tree by
+`test_ready_hides_both`. Progression order confirmed by `_STAGE_RANK` in the
+testing service: CREATED 0 → PAID 1 → RECEIVED 2 → PREPARING 3 → READY 4 →
+COMPLETED 5. `_PROGRESSION` is the *driveable* subset of that, not a
+contradiction of it.
+
+**The one thing that is NOT true of this path:** with an explicit target,
+advance_status never reads the order's current status. There is no from→to
+legality check. PREPARING→READY is valid, but so is PAID→READY. That breaks the
+assumption the existing docstring states for Approve/Reject — "a stale button …
+is refused by the server" — because Approve is self-guarding only by virtue of
+passing NO target (the server computes the next stage and cannot skip), and
+Reject is guarded by `reject_order`'s own `REJECTABLE_STATUSES`. Ready has
+neither, so the gate is enforced at the call site in `TestingService.ready_order`
+(409). It gates; it does not re-implement the transition.
+
+Approve hidden at PREPARING: confirmed, `_APPROVABLE_STATUSES = {CREATED, PAID,
+RECEIVED}`. Ready picks up exactly where Approve stops, so no row shows both.
+
+Auto-pickup on this path: confirmed by construction, not just by test. The hook
+is *inside* advance_status (`if new_status == "READY": maybe_auto_pickup(...)`),
+below the commit and independent of how `new_status` was derived — so the manual
+button chains into it identically to the poller. No new logic added.
+
+### New route, not a parameterised /approve
+
+`POST /api/v1/testing/orders/{id}/ready`. A target parameter on `/approve` was
+rejected because `approve_order` deliberately calls `advance_status` with no
+target; accepting a client-named stage would convert Approve from "advance one
+stage, server decides" into "client names the stage" and delete the very
+property that makes Approve unable to skip the kitchen. A separate route also
+keeps one gating constant and one proxy per action.
+
+### Changed
+
+* `testing_dashboard/service.py` — `_READYABLE_STATUSES = {"PREPARING"}`,
+  `can_ready` in the orders payload, `ready_order()` (404 unknown, 409 wrong
+  state, else advance_status with target READY).
+* `testing_dashboard/controller.py` — the route, on the same key-gated router.
+* `dashboard_app/main.py` — `/api/orders/{id}/ready` proxy, key attached
+  server-side as with the others.
+* `dashboard_app/templates/dashboard.html` — `readyOrder()` + a button gated on
+  `o.can_ready`.
+
+Untouched, as required: `pickup_code` exposure, `OrderOut`, `PickupScreen`.
+
+### Tests — 269 backend + 19 dashboard_app, all passing
+
+Backend +8: `can_ready` true only at PREPARING (checked at PAID, RECEIVED,
+PREPARING, READY, and that `can_approve` is False in the same row);
+PREPARING→READY through the endpoint; **roster order reaching READY via the
+button still auto-picks-up** (COMPLETED + a real `PICKUP_VERIFIED` event, so it
+went through verify_pickup rather than a shortcut); non-roster stops at READY
+with no pickup event; a PAID order is refused 409 and stays PAID (the guard
+above — without it this test would show a stage skip); 404; 401 without the key.
+
+OTP is asserted as an **equality against the value captured beforehand**, in both
+the API row and the DB column — a regression that regenerated or blanked the
+code would pass a mere "field still present" check.
+
+dashboard_app +4: `/ready` proxies to the backend's own `/ready` with the key;
+needs a session; leaks nothing; and the template still gates the button on
+`o.can_ready` and renders the OTP cell from `o.pickup_code`.
+
+Not committed, not pushed. Not exercised against a live backend or a browser.
+
+---
+
+## 2026-09-06 — Dashboard: four manual actions, flat list, day filter (uncommitted)
+
+Follow-on from the same day's ABANDONED diagnosis, which found the `testers`
+roster EMPTY in prod — so auto-advance and auto-pickup have never fired there
+and every order is driven by hand. This makes the dashboard the primary control
+surface and removes its last dependence on the roster.
+
+### Delivered — verify_pickup, not a status write
+
+`POST /api/v1/testing/orders/{id}/deliver` calls
+`CarevoService.verify_pickup(db, order.id, order.pickup_code, order.outlet_id)`
+— byte-for-byte what `maybe_auto_pickup` already does, and what the owner_app
+counter scan does. COMPLETED, `PICKUP_VERIFIED`, the customer broadcast and the
+prediction outcome all happen because verify_pickup did them.
+
+`can_deliver` = `status in _LIVE_STATUSES` **and** a pickup_code exists.
+`_LIVE_STATUSES` is IMPORTED from carevo_customer.service, not copied — it is
+the same set verify_pickup itself tests, so the button and the endpoint cannot
+drift.
+
+**Why the gate is server-side, and it matters more here than for Ready:**
+verify_pickup treats a wrong code OR a non-live status as a FAILED ATTEMPT —
+`failed_attempts += 1`, and `is_locked = True` on the third, after which the
+order raises 423 forever. An ungated stale button would permanently brick real
+orders. There is a test that a refused Deliver costs zero attempts.
+
+### Flat list + day filter
+
+`active_orders` is now flat across all outlets, `ORDER BY created_at DESC`, and
+filtered to one IST calendar day (`day=YYYY-MM-DD`, default today IST). The page
+no longer groups by outlet; `outlet_name` became a column. The page does NOT
+re-sort — re-deriving "newest" client-side would be a second definition free to
+disagree with the server's.
+
+Gotcha worth remembering: `CAST(:day AS date)` makes asyncpg infer the bind as a
+`date`, so passing the 'YYYY-MM-DD' **string** fails with
+`'str' object has no attribute 'toordinal'`. Bind `date.fromisoformat(day)`.
+
+Still non-terminal-only, so an older day shows what is STILL live from that day,
+not a history of it. Given the 86 abandoned orders found earlier, an old day
+will usually look empty — flagged to the user, not silently widened.
+
+### OTP after Delivered — the assumption was wrong
+
+Traced, not assumed. `pickup_screen.dart:457` `status?.isCompleted`, straight
+from polling; `_PickupCodeCard` renders `completed` at :904-933. The OTP does
+**NOT** disappear. It stays on screen, struck through (`TextDecoration
+.lineThrough`), label flips PICKUP CODE -> COLLECTED, plus a COLLECTED stamp —
+deliberate: "kept as a record, but it can no longer be used". Identical for all
+three completion paths because the screen only ever sees the polled status.
+Zero client changes needed. Tests assert the strike-through, with a READY
+control proving the difference is the status.
+
+### Tests — backend 284, dashboard_app 27, customer_app 332; 0 failures
+
+Backend +15: flat newest-first interleaved across two outlets (a second outlet
+is inserted so clustering-by-restaurant would fail); day filter subset both
+ways; default day = today IST; malformed day -> 422; can_deliver over exactly
+_LIVE_STATUSES and false without a code; deliver -> COMPLETED + PICKUP_VERIFIED
++ pickup_verified_at; drops off the list; from READY; **refused Deliver costs no
+failed attempt**; 404; 401. Plus a `TestNoRosterDependency` class that DELETEs
+all testers and forces `AUTO_ADVANCE_ROSTER_ORDERS=False`, then drives
+Approve -> Approve -> Ready -> Delivered end to end and asserts READY did not
+self-complete.
+
+dashboard_app +8, customer_app +2.
+
+Not committed, not pushed. Not exercised against a live backend or a browser.
+
+---
+
+## 2026-09-06 (later) — The day view shows the whole day (uncommitted)
+
+Reverses the "drops off the list" behaviour deliberately kept in the previous
+entry, now that the day filter exists to make it safe.
+
+### The query change
+
+`TestingService.active_orders`, one clause deleted:
+
+```sql
+-- before
+WHERE co.status NOT IN ('COMPLETED','CANCELLED','ABANDONED')
+  AND (co.created_at AT TIME ZONE 'Asia/Kolkata')::date = CAST(:day AS date)
+
+-- after
+WHERE (co.created_at AT TIME ZONE 'Asia/Kolkata')::date = CAST(:day AS date)
+```
+
+The day is now the whole filter. `ORDER BY co.created_at DESC` unchanged. Same
+rule on every day — today included — rather than special-casing past days.
+
+Why it matters beyond tidiness: past the 45-minute pickup TTL, a past day under
+the old filter showed *nothing*, and an order swept to ABANDONED vanished from
+the one surface being watched. That is how the 86 lost orders diagnosed earlier
+today became invisible.
+
+### Actions on finished rows
+
+No new gate needed and none added. `_APPROVABLE_STATUSES`, `_READYABLE_STATUSES`
+and `_DELIVERABLE_STATUSES` (= `_LIVE_STATUSES`) and
+`CarevoService.REJECTABLE_STATUSES` contain no terminal status, so all four
+can_* flags are already False for COMPLETED/CANCELLED/ABANDONED. Verified by
+test rather than by reading.
+
+### UI
+
+`.pill.COMPLETED` and `.pill.CANCELLED/.ABANDONED` added — deliberately dimmer
+than the live pills so done vs in-play reads at a glance. `tr.done .otp` strikes
+the spent code through, mirroring the customer's own ticket. Count line is now
+"N orders · M still active". The client-side `DONE` list is presentation ONLY —
+a test asserts buttons still come solely from the server's can_* flags, so a
+status missing from that list could never surface a live button on a dead order.
+
+### Tests — backend 288, dashboard_app 30; 0 failures
+
+Two existing tests INVERTED on purpose (they asserted the old disappearance):
+rejected and delivered orders now stay on their day as CANCELLED/COMPLETED with
+all four flags False.
+
+New backend +4: a past day returns COMPLETED + ABANDONED + CANCELLED + PREPARING
+together, still newest-first across the mixed set; today shows finished orders
+too (no "today = live only" regression); each terminal status offers no actions;
+an empty day is `[]`, not an error. dashboard_app +3 on the presentation.
+
+Not committed, not pushed. Not exercised against a live backend or a browser.
+
+---
+
+## 2026-09-06 (later still) — One-time backlog cleanup: 11 live orders delivered
+
+DATA OPERATION against prod Neon. No code changed, nothing committed.
+
+### Target set
+
+11 orders in PAID/RECEIVED/PREPARING/READY (8 PREPARING, 2 READY, 1 RECEIVED).
+All had a pickup_code, none locked, all payment_status=PAID. The 98 CREATED
+orders were excluded as instructed and untouched, as were 86 ABANDONED / 35
+COMPLETED / 3 CANCELLED.
+
+### The TTL collision — reported BEFORE executing, user authorised the fix
+
+9 of the 11 were already past the 45-minute TTL. `verify_pickup`'s FIRST action
+is `_expire_stale_pickups(order_id=...)`, and the ABANDONED early-return at
+service.py:1545 fires before the code is even compared — so running the brief
+verbatim would have produced **2 COMPLETED and 9 ABANDONED**, the opposite of
+the intent. Stopped and asked; user chose "refresh updated_at, then verify".
+
+Per order: `UPDATE customer_orders SET updated_at = now()` (committed) to put it
+back inside the window, then the real
+`CarevoService.verify_pickup(db, id, own pickup_code, outlet_id)`. Fresh session
+per order so one failure could not poison the next. No retries.
+
+### Result — 11/11, zero skipped, zero failed
+
+Every one verified afterwards: status COMPLETED, `pickup_verified_at` set, and
+exactly one `PICKUP_VERIFIED` event — proof it went through the real
+verification and not a status write. PICKUP_VERIFIED total 34 -> 45.
+No target ended locked or with failed_attempts > 0.
+
+Re-query: **0 orders remain in PAID/RECEIVED/PREPARING/READY.**
+Status mix now: CREATED 98, ABANDONED 86, COMPLETED 46 (was 35), CANCELLED 3.
+
+### Notes for next time
+
+* No customer push landed: COMPLETED does map to "Picked up — Enjoy!", but all
+  11 customers have `fcm_token = NULL`. Checked before executing, not assumed.
+* No lockout risk existed: the ABANDONED early-return does not call
+  `record_pickup_miss`, so failures on this path cannot burn an outlet's budget.
+* The 98 CREATED orders are still there and are NOT reachable by this cleanup —
+  they were never paid, have no pickup_code, and the TTL sweeper ignores them
+  (CREATED is not in `_LIVE_STATUSES`). They will sit there indefinitely.
+
+---
+
+## 2026-09-06 (final) — 98 unpaid CREATED orders cancelled
+
+DATA OPERATION against prod Neon. No code changed, nothing committed. Completes
+the backlog cleanup started with the 11 live orders earlier the same day.
+
+### Diagnosis first (Task 1), then explicit user go-ahead
+
+98 orders in CREATED, all `payment_status='PENDING'`. Three independent probes
+agreed none was ever paid: 0 with a non-PENDING payment_status, 0 with a
+pickup_code, 0 with a successful payment transaction (all 98 gateway txns sit at
+status='CREATED').
+
+11 tables carry an FK to customer_orders. These 98 held: customer_order_items
+136, payment_transactions 98, order_events 92 (across 88 orders),
+promotion_redemptions 3. `order_events.order_id` is ON DELETE NO ACTION and the
+table carries `order_events_immutable` (BEFORE DELETE **OR UPDATE**) plus
+`order_events_no_truncate` — so deletion was impossible and cancellation was the
+only route. Confirmed, not assumed.
+
+### Why NO ORDER_REJECTED event was written
+
+1. Nothing reads it. Written only by `reject_order`; no production query, report
+   or dashboard consumes it — the only readers in the repo are two tests.
+2. The invariant already did not hold: of the 3 pre-existing CANCELLED orders,
+   only ONE had an ORDER_REJECTED event.
+3. Writing it would be actively WRONG. Per reject_order's own docstring the event
+   means "a human saying no to money already taken — the only one of the three
+   that obliges a refund". These were never paid, and order_events is immutable,
+   so the false claim could never be corrected.
+
+User confirmed: cancel without the event.
+
+### Risks reported before executing (all still open, none blocking)
+
+* **A late webhook can resurrect a cancelled order.** `mark_paid` guards ONLY on
+  `payment_status == 'PAID'` — it never checks `order.status` and sets
+  `status='PAID'` unconditionally (service.py:1064-1067). Same exposure exists
+  for reject_order's own cancellations, so this write is no worse. All 98 still
+  have a pending gateway txn.
+* **4 CREATED orders carried staff-tap events** (3x ORDER_READY, 1x
+  ITEM_UNAVAILABLE, all Annapoorna, actor=staff/tap) — staff acted in owner_app
+  on unpaid orders without the status ever moving. Pre-existing quirk.
+* **3 promotion redemptions are never released on cancel** (₹20/₹32/₹19, two
+  against a per-customer cap of 1). No code path exists to release them.
+* `_APPROVABLE_STATUSES` includes CREATED, so the dashboard's Approve button was
+  appearing on unpaid orders. Cancelling removed that footgun.
+
+### Execution + result — 98/98, 0 skipped, 0 failed
+
+Per order, individually logged: `UPDATE customer_orders SET status='CANCELLED',
+updated_at=now() WHERE id=$1 AND status='CREATED' AND payment_status='PENDING'`.
+The guard means a late settlement between read and write would match zero rows
+and leave that order alone rather than clobber it.
+
+Verified independently afterwards: all 98 CANCELLED, none gained a pickup_code,
+none had payment_status change; dependent rows intact (items 136, events 92,
+txns 98, redemptions 3 — unchanged); **zero events written by the operation**;
+ORDER_REJECTED still 1 DB-wide.
+
+Delta across every status: CREATED 98 -> 0, CANCELLED 3 -> 101. ABANDONED 86 and
+COMPLETED 46 both unchanged. Total orders 233 before and after.
+
+Prod now has **0 orders in CREATED and 0 in PAID/RECEIVED/PREPARING/READY** —
+the backlog is fully cleared and every new order is driven manually from the
+dashboard. The 98 share an `updated_at` fingerprint of 2026-09-06 15:16:02-10Z,
+which is the only in-DB marker of this operation (no event was written).
+
+---
+
+## 2026-09-06 (final) — mark_paid can no longer resurrect a finished order
+
+Closes the gap flagged during the two cleanups earlier today. CODE change, not
+data. Not committed.
+
+### Task 1 — the exact gap
+
+`mark_paid` had TWO early returns and NEITHER looked at `order.status`:
+
+```python
+if gateway_payment_id: ... if existing: return   # dedupe on the PAYMENT id
+if order.payment_status == "PAID": return        # dedupe on the PAYMENT status
+...
+order.payment_status = "PAID"
+order.status = "PAID"                            # unconditional
+```
+
+Both key on the payment, never the order. So any order whose payment had not
+settled could be driven to PAID from ANY status, minting a pickup code.
+
+Prod exposure at the time: the 98 freshly-cancelled orders (all
+payment_status=PENDING, all still holding a pending gateway txn) plus the 7
+PENDING ABANDONED ones. The ~180 terminal orders that WERE paid were already
+protected by the second return — which is also why COMPLETED retries are the
+common case and must stay silent.
+
+### Task 2 — the guard, and why it is THIRD
+
+`_TERMINAL_STATUSES = {CANCELLED, COMPLETED, ABANDONED, PICKED_UP}` added to
+carevo_customer/service.py. The check sits AFTER both idempotency returns, which
+is load-bearing: a duplicate webhook with a known payment id still short-circuits
+on the first, and a retry against an already-PAID order still returns on the
+second — including when it has since been COMPLETED. Only an order that is
+finished AND unpaid reaches the guard, which is exactly the resurrection case.
+
+Refusal RETURNS THE ORDER UNCHANGED and logs `logger.warning("mark_paid
+REFUSED: ...")` with order id, status, gateway_payment_id, method and raw
+payload. It does not raise: the webhook caller must answer the gateway 200 or it
+retries forever.
+
+Two consequences handled:
+* **webhook** (controller.py) — after mark_paid it now checks
+  `payment_status != "PAID"` and returns early with `applied: False`. Without
+  this it would still run auto_receive and push the OUTLET about a new order,
+  leaking the resurrection through the side effects even though the status held.
+* **`mark_order_paid_by_staff`** — raises 409 instead. The two callers need
+  opposite things from a refusal: the gateway needs a 200, a human who just
+  tapped "mark paid" needs to be TOLD it did not happen.
+
+### Task 3 — CREATED is no longer approvable
+
+`_APPROVABLE_STATUSES` {CREATED, PAID, RECEIVED} -> {PAID, RECEIVED}. Searched
+first: no caller, test or flow relied on approving a CREATED order (every
+existing `can_approve is True` assertion uses the PAID fixture).
+
+Hiding the flag was NOT enough — `approve_order` had no state gate at all, and
+`advance_status` maps CREATED straight to RECEIVED, so the route would still
+push an unpaid order into the kitchen. Added the 409 gate in `approve_order`,
+same discipline as ready_order/deliver_order: the flag decides what is SHOWN,
+the gate decides what is ALLOWED.
+
+### Tests — backend 301 (+13), dashboard_app 30; 0 failures
+
+New `tests/test_api_payment_resurrection.py` (11): each of CANCELLED/COMPLETED/
+ABANDONED refused, unchanged, no pickup code minted, warning logged carrying the
+order id + claimed payment id (asserted via caplog, so "not silent" is pinned);
+no payment_transaction is marked PAID either; staff tap gets 409.
+Idempotency half: repeat webhook on a PAID order unchanged and does NOT re-mint
+the code; a COMPLETED order's retry does not trip the guard and logs NO warning;
+duplicate gateway_payment_id still short-circuits; an ordinary unpaid order
+still pays normally.
+
++2 in test_api_testing_actions.py: can_approve False for CREATED, and the
+endpoint 409s while leaving the order in CREATED.
+
+NOTE: caplog needs the logging plugin, so these fail under `-p no:logging`.
+
+---

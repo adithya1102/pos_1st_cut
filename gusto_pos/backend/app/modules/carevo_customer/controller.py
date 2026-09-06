@@ -473,6 +473,19 @@ async def payment_webhook(request: Request, db: AsyncSession = Depends(get_db)):
             method=evt.method,
             raw_payload=data or None,
         )
+        # mark_paid refuses to reopen a finished order, so the payment may not
+        # have been applied at all. Everything below assumes it WAS: auto_receive
+        # moves the order on, and the outlet push tells staff food needs making.
+        # Firing those for a cancelled order would leak the resurrection through
+        # the side effects even though the status itself held.
+        #
+        # Still answered 200: the gateway must stop retrying either way, and the
+        # response reports the real status so the caller can see what happened.
+        # mark_paid has already logged the refusal loudly.
+        if order.payment_status != "PAID":
+            return {"ok": True, "outcome": "PAID", "applied": False,
+                    "status": order.status, "pickup_code": order.pickup_code}
+
         # No human gate: a paid order is an accepted order. Staff are pushed
         # about it and may reject, but the order never waits to be noticed.
         order = await CarevoService.auto_receive(db, order)
@@ -483,8 +496,8 @@ async def payment_webhook(request: Request, db: AsyncSession = Depends(get_db)):
             await PushService.notify_outlet_new_order(db, order)
         except Exception:
             await db.rollback()
-        return {"ok": True, "outcome": "PAID", "status": order.status,
-                "pickup_code": order.pickup_code}
+        return {"ok": True, "outcome": "PAID", "applied": True,
+                "status": order.status, "pickup_code": order.pickup_code}
 
     if evt.outcome == "FAILED":
         # Previously there was no failure path at all: a failed payment left the

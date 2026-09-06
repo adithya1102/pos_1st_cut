@@ -7,7 +7,7 @@ the X-Testing-Key gate.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
@@ -17,7 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.modules.carevo_customer.model import CustomerOrder
-from app.modules.carevo_customer.service import CarevoService
+# _LIVE_STATUSES is imported, not copied. It is the set verify_pickup itself
+# tests (`order.status.upper() in _LIVE_STATUSES`), so can_deliver has to be the
+# same object or the button and the endpoint could drift apart.
+from app.modules.carevo_customer.service import _LIVE_STATUSES, CarevoService
 
 # The compliance day runs 23:00 -> 23:00 in India. Every outlet, customer, and
 # the operating-hours gate (migration 024) already reason in IST, so the day
@@ -41,14 +44,55 @@ _TERMINAL_STATUSES = {"COMPLETED", "CANCELLED", "ABANDONED", "PICKED_UP"}
 # --- Manual Approve / Reject decision window (dashboard buttons) -------------
 # Approve = advance one stage via CarevoService.advance_status (the exact staff
 # action behind /customer/orders/{id}/advance and auto_receive). Offered only
-# before the kitchen commits — accepting (CREATED/PAID -> RECEIVED) or starting
-# prep (RECEIVED -> PREPARING). Hidden from PREPARING on: past the accept gate.
-_APPROVABLE_STATUSES = {"CREATED", "PAID", "RECEIVED"}
+# before the kitchen commits — accepting (PAID -> RECEIVED) or starting prep
+# (RECEIVED -> PREPARING). Hidden from PREPARING on: past the accept gate.
+#
+# CREATED was REMOVED from this set. advance_status maps CREATED straight to
+# RECEIVED (`if cur in ("CREATED","PAID")`), so Approve on a CREATED order put
+# an order nobody had paid for into the kitchen queue — indistinguishable there
+# from a paid one, and it would then be prepared and handed over for free. An
+# unpaid order has nothing to approve; payment is what makes it real.
+_APPROVABLE_STATUSES = {"PAID", "RECEIVED"}
 # Reject = CarevoService.reject_order verbatim. Its real accepted set is
 # REJECTABLE_STATUSES = {PAID, RECEIVED, PREPARING} (same set owner_app's Reject
 # button uses), so the button mirrors it exactly rather than inventing a stricter
 # rule the server would disagree with.
 _REJECTABLE_STATUSES = CarevoService.REJECTABLE_STATUSES
+# Ready = the SAME advance_status, called with an explicit target of READY —
+# the last stage the auto-advance worker drives (_AUTO_ADVANCE_STAGES above), so
+# the button is the manual twin of that step and not a new path.
+#
+# Offered only from PREPARING, which picks up exactly where Approve stops:
+# Approve walks CREATED/PAID -> RECEIVED -> PREPARING and is then hidden, so a
+# row shows Approve or Ready, never both.
+#
+# WHY THE GATE IS ENFORCED HERE AND NOT LEFT TO THE SERVER, unlike Approve and
+# Reject: those two are self-guarding. Approve calls advance_status with NO
+# target, so the real function computes the next stage and physically cannot
+# skip one; Reject is refused by reject_order's own REJECTABLE_STATUSES check.
+# advance_status with an EXPLICIT target validates only that the target is a
+# known stage (`target not in _PROGRESSION` -> 400) and never looks at the
+# order's current status — so nothing downstream would stop a stale dashboard
+# row from firing Ready at a PAID order and jumping the whole kitchen. The
+# check therefore has to live at this call site. It gates, it does not
+# re-implement: the transition itself is still advance_status's to perform.
+_READYABLE_STATUSES = {"PREPARING"}
+# Delivered = CarevoService.verify_pickup with the order's OWN pickup_code —
+# byte-for-byte the call maybe_auto_pickup makes, and the same one staff make
+# from owner_app. verify_pickup accepts exactly _LIVE_STATUSES (imported above),
+# so the button offers itself over exactly that set and nothing wider.
+#
+# A code is required as well as a live status: verify_pickup compares the
+# submitted code against `order.pickup_code`, so an order that has none can
+# never verify. Offering the button there would guarantee a failure.
+#
+# The gate is enforced server-side before the call for a sharper reason than
+# tidiness. verify_pickup treats a wrong code OR a non-live status as a FAILED
+# ATTEMPT: it increments `failed_attempts` and sets `is_locked` on the third,
+# after which the order raises 423 forever. A stale dashboard row firing into
+# that would permanently brick a real order, so the state is checked here and
+# verify_pickup is only ever called when it can actually succeed.
+_DELIVERABLE_STATUSES = _LIVE_STATUSES
 
 
 def _ist_str(dt: datetime | None) -> str | None:
@@ -179,13 +223,61 @@ class TestingService:
 
     # --------------------------- active orders ----------------------------
     @staticmethod
-    async def active_orders(db: AsyncSession) -> list[dict]:
-        """Every non-terminal order across ALL outlets, with OTP + phone.
+    def resolve_day(day: str | None = None, *, now: datetime | None = None) -> str:
+        """The 'YYYY-MM-DD' the order list should show, defaulting to today IST.
+
+        IST, not UTC, and not the browser's clock: the outlets, the operating
+        hours and the compliance window all reason in Asia/Kolkata, so "today"
+        has to mean the same day here as it does everywhere else in the tool.
+        A UTC default would roll the dashboard over to tomorrow at 05:30 local.
+        """
+        d = (day or "").strip()
+        if d:
+            # Validated rather than interpolated: this reaches a CAST in SQL,
+            # and a parse failure should be a 422 the caller can read, not a
+            # database error.
+            try:
+                datetime.strptime(d, "%Y-%m-%d")
+            except ValueError:
+                raise HTTPException(
+                    status_code=422, detail="day must be YYYY-MM-DD")
+            return d
+        return (now or datetime.now(TESTING_TZ)).astimezone(
+            TESTING_TZ).strftime("%Y-%m-%d")
+
+    @staticmethod
+    async def active_orders(db: AsyncSession, day: str | None = None) -> list[dict]:
+        """EVERY order across ALL outlets for one IST day, whatever its status.
 
         Not scoped to one outlet (unlike list_active_orders) and includes the
         customer phone — this is a tester's-eye view, so it deliberately shows
         what the customer-facing and owner-facing APIs never would.
+
+        FLAT and newest-first. The rows used to be regrouped per restaurant by
+        the page; they are not any more, so `ORDER BY created_at DESC` is now
+        the order the operator actually sees and the newest order is always the
+        top row. outlet_name stays in the payload — it became a column instead
+        of a heading.
+
+        ## No status filter — this is a DAY view, not a live queue
+
+        It used to exclude COMPLETED/CANCELLED/ABANDONED, so an order vanished
+        the moment it finished and a past day showed only whatever was somehow
+        still live from it — which for any day older than the 45-minute pickup
+        TTL is nothing at all. Worse, an order swept to ABANDONED disappeared
+        with no trace on the one surface being watched, which is exactly how a
+        run of test orders came to look "lost".
+
+        A day now shows everything that happened on it. Finished orders are not
+        noise here; they are the record. The buttons stay correct on their own:
+        can_approve/can_ready/can_deliver/can_reject are all computed from
+        status sets that contain no terminal status, so a finished row simply
+        offers nothing.
+
+        The name is now a slight misnomer — kept because `/testing/orders` and
+        every caller already use it, and renaming buys nothing.
         """
+        day = TestingService.resolve_day(day)
         rows = (await db.execute(text("""
             SELECT co.id, co.outlet_id, co.status, co.payment_status,
                    co.pickup_code, co.total_amount, co.created_at,
@@ -201,9 +293,19 @@ class TestingService:
             LEFT JOIN customers c ON c.id = co.customer_id
             LEFT JOIN contact_labels cl
                    ON cl.identifier = COALESCE(c.phone_number, c.email)
-            WHERE co.status NOT IN ('COMPLETED','CANCELLED','ABANDONED')
+            -- The day IS the whole filter. No status exclusion: see the
+            -- docstring — a finished or abandoned order is part of what
+            -- happened that day, and hiding it is what made orders look lost.
+            --
+            -- IST calendar date, matching the created_at_ist column shown in
+            -- the row. Comparing in UTC would put an 05:00 IST order on the
+            -- previous day.
+            WHERE (co.created_at AT TIME ZONE 'Asia/Kolkata')::date
+                  = CAST(:day AS date)
             ORDER BY co.created_at DESC
-        """))).fetchall()
+            -- Bound as a real date, not the 'YYYY-MM-DD' string: asyncpg infers
+            -- the parameter's type from the CAST and rejects a str outright.
+        """), {"day": date.fromisoformat(day)})).fetchall()
         if not rows:
             return []
         ids = [str(r.id) for r in rows]
@@ -237,15 +339,25 @@ class TestingService:
             # actually accept (see the constants above).
             "can_approve": (r.status or "").upper() in _APPROVABLE_STATUSES,
             "can_reject": (r.status or "").upper() in _REJECTABLE_STATUSES,
+            "can_ready": (r.status or "").upper() in _READYABLE_STATUSES,
+            # Needs BOTH: verify_pickup matches the submitted code against
+            # r.pickup_code, so a live order without one can never verify.
+            "can_deliver": ((r.status or "").upper() in _DELIVERABLE_STATUSES
+                            and bool(r.pickup_code)),
             "items": by_order.get(str(r.id), []),
         } for r in rows]
 
-    # ------------------------ manual approve / reject ---------------------
-    # Both REUSE the exact staff service functions — no parallel logic. The real
-    # functions stay authoritative (advance_status computes the next stage;
+    # --------------------- manual approve / ready / reject ----------------
+    # All three REUSE the exact staff service functions — no parallel logic. The
+    # real functions stay authoritative (advance_status performs the transition;
     # reject_order enforces REJECTABLE_STATUSES and 409s otherwise), so a stale
-    # button that fires on a no-longer-valid order is refused by the server, not
-    # silently mis-handled here.
+    # button that fires on a no-longer-valid order is refused rather than
+    # silently mis-handled.
+    #
+    # Where that refusal COMES FROM differs, and only Ready needs help: Approve
+    # and Reject are refused by the real functions themselves, while Ready names
+    # its target stage explicitly and so is gated by _READYABLE_STATUSES at this
+    # call site. See that constant for why.
     @staticmethod
     async def approve_order(db: AsyncSession, order_id) -> dict:
         """Advance an order one stage — the SAME advance_status the owner_app
@@ -256,9 +368,86 @@ class TestingService:
         if order is None:
             raise HTTPException(status_code=404, detail="Order not found")
         previous = (order.status or "").upper()
+        # Hiding the button is not enough on its own. advance_status with no
+        # target still maps CREATED -> RECEIVED, so without this the endpoint
+        # would happily push an unpaid order into the kitchen for anyone who
+        # called it directly or clicked a stale row. Same discipline as
+        # ready_order and deliver_order: the flag decides what is SHOWN, this
+        # decides what is ALLOWED.
+        if previous not in _APPROVABLE_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail=f"An order in {previous} cannot be approved.")
         updated = await CarevoService.advance_status(db, order_id)
         return {"order_id": str(order_id), "previous_status": previous,
                 "status": updated.status}
+
+    @staticmethod
+    async def ready_order(db: AsyncSession, order_id) -> dict:
+        """Mark a prepared order READY — the SAME CarevoService.advance_status,
+        given the explicit target the auto-advance worker uses for its final
+        stage (_advance_one_scheduled passes 'READY' the same way).
+
+        Nothing about pickup is done here. Reaching READY is what triggers the
+        EXISTING auto-pickup hook inside advance_status, so a roster order
+        closes itself through the real verify_pickup exactly as it does on the
+        automatic path; a non-roster order stops at READY. Both are that hook's
+        behaviour, unchanged and not re-stated here.
+
+        409 rather than 400 on a wrong state, matching what reject_order returns
+        when it refuses: same meaning (the order moved on), same shape for the
+        dashboard's error handling.
+        """
+        order = (await db.execute(select(CustomerOrder).where(
+            CustomerOrder.id == order_id))).scalars().first()
+        if order is None:
+            raise HTTPException(status_code=404, detail="Order not found")
+        previous = (order.status or "").upper()
+        if previous not in _READYABLE_STATUSES:
+            # See _READYABLE_STATUSES: an explicit target bypasses the ordering
+            # advance_status would otherwise impose, so a stale button must be
+            # refused here or it would skip stages silently.
+            raise HTTPException(
+                status_code=409,
+                detail=f"Order is {previous}, not PREPARING")
+        updated = await CarevoService.advance_status(db, order_id, target="READY")
+        return {"order_id": str(order_id), "previous_status": previous,
+                "status": updated.status}
+
+    @staticmethod
+    async def deliver_order(db: AsyncSession, order_id) -> dict:
+        """Hand the order over — the SAME CarevoService.verify_pickup staff call
+        from owner_app, given the order's OWN pickup_code.
+
+        Identical in shape to what maybe_auto_pickup already does
+        (`verify_pickup(db, order.id, order.pickup_code, order.outlet_id)`), so
+        this is the manual twin of auto-pickup rather than a second way to
+        complete an order. Passing the order's own code is what makes it a
+        verification and not a status write: everything downstream of a real
+        counter scan — COMPLETED, PICKUP_VERIFIED, the customer broadcast, the
+        prediction outcome — happens because verify_pickup did it.
+
+        Guarded before the call: see _DELIVERABLE_STATUSES. A wrong state there
+        would be counted as a failed attempt and could lock the order for good.
+        """
+        order = (await db.execute(select(CustomerOrder).where(
+            CustomerOrder.id == order_id))).scalars().first()
+        if order is None:
+            raise HTTPException(status_code=404, detail="Order not found")
+        previous = (order.status or "").upper()
+        if previous not in _DELIVERABLE_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Order is {previous}, which cannot be handed over")
+        if not order.pickup_code:
+            raise HTTPException(
+                status_code=409, detail="Order has no pickup code yet")
+        result = await CarevoService.verify_pickup(
+            db, order.id, order.pickup_code, order.outlet_id)
+        # verify_pickup's own dict, passed through unaltered — including the
+        # {"verified": false, "status": "ABANDONED"} case, where its internal
+        # TTL sweep expired the order between the gate above and the call.
+        return {"order_id": str(order_id), "previous_status": previous, **result}
 
     @staticmethod
     async def reject_order(db: AsyncSession, order_id, reason: str | None = None) -> dict:

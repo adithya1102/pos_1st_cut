@@ -39,6 +39,15 @@
     .pill.open,.pill.PAID,.pill.RECEIVED { background:rgba(46,204,113,.15); color:var(--green); }
     .pill.closing_soon,.pill.PREPARING,.pill.READY { background:rgba(243,156,18,.15); color:var(--amber); }
     .pill.closed,.pill.CREATED,.pill.PENDING { background:rgba(231,76,60,.15); color:var(--red); }
+    /* Terminal states. The day view keeps finished orders as the record of what
+       happened, so they need to read as DONE at a glance and not compete with
+       the orders still in play — hence deliberately dimmer than the live pills
+       above, with cancelled/abandoned distinguished from a clean completion. */
+    .pill.COMPLETED { background:rgba(46,204,113,.10); color:#6f8f7d; }
+    .pill.CANCELLED,.pill.ABANDONED { background:rgba(231,76,60,.10); color:#a9736c; }
+    /* A spent code, struck through — the same treatment the customer's own
+       ticket gives it once collected. */
+    tr.done .otp { color:var(--soft); text-decoration:line-through; }
     .ident { display:flex; flex-direction:column; gap:2px; }
     .ident .raw { color:var(--soft); font-size:12px; }
     .label-edit { background:#0f1115; border:1px dashed var(--line); color:var(--ink);
@@ -63,7 +72,27 @@
   </header>
 
   <main>
-    <div id="outlets"></div>
+    <!-- ONE flat table for every restaurant, newest order first. It used to be
+         a section per outlet; with several restaurants live at once that buried
+         the newest order somewhere down the third group, which is the opposite
+         of what someone driving orders manually needs. The restaurant is a
+         column now, not a heading. -->
+    <div class="outlet">
+      <div class="outlet-head">
+        <h2>Orders</h2>
+        <span class="muted" id="order-count"></span>
+        <span style="flex:1"></span>
+        <label class="muted" for="day">Day</label>
+        <input type="date" id="day" onchange="refreshAll()">
+        <button class="ghost" onclick="setDay(istToday())">Today</button>
+      </div>
+      <div id="orders"></div>
+    </div>
+
+    <div class="outlet">
+      <div class="outlet-head"><h2>Restaurants</h2></div>
+      <div id="outlets" style="padding:12px 16px"></div>
+    </div>
 
     <div class="outlet">
       <div class="outlet-head"><h2>Testers — ordered today</h2>
@@ -100,9 +129,10 @@
       loadCompliance();
     }
 
-    // Approve / Reject reuse the backend testing routes, which call the exact
-    // same advance_status / reject_order the owner_app staff button uses. The
-    // buttons a row shows are decided server-side (can_approve / can_reject).
+    // Approve / Ready / Reject reuse the backend testing routes, which call the
+    // exact same advance_status / reject_order the owner_app staff button uses.
+    // The buttons a row shows are decided server-side (can_approve / can_ready /
+    // can_reject) — the client never re-derives the gate from the status text.
     async function approveOrder(id) {
       try {
         await api('/api/orders/' + encodeURIComponent(id) + '/approve',
@@ -110,59 +140,112 @@
         refreshAll();
       } catch (e) { alert('Approve failed: ' + e.message); }
     }
+    async function readyOrder(id) {
+      try {
+        await api('/api/orders/' + encodeURIComponent(id) + '/ready',
+          { method: 'POST', body: JSON.stringify({}) });
+        // A roster order auto-picks-up on reaching READY and lands on
+        // COMPLETED; a non-roster one stops at READY. Refreshing covers both
+        // without the page needing to know which happened.
+        refreshAll();
+      } catch (e) { alert('Ready failed: ' + e.message); }
+    }
     async function rejectOrder(id) {
       const reason = (prompt('Reason for rejecting? (optional)') || '').trim();
       try {
         await api('/api/orders/' + encodeURIComponent(id) + '/reject',
           { method: 'POST', body: JSON.stringify({ reason }) });
-        refreshAll();  // a rejected order becomes CANCELLED and drops off the list
+        // The row STAYS, now CANCELLED and buttonless — the day view keeps the
+        // record of what happened rather than making it disappear.
+        refreshAll();
       } catch (e) { alert('Reject failed: ' + e.message); }
+    }
+    // Delivered = the real counter verification (verify_pickup with this
+    // order's own code), not a status write. The order becomes COMPLETED and
+    // the row stays, marked done — same as Reject.
+    async function deliverOrder(id) {
+      try {
+        const r = await api('/api/orders/' + encodeURIComponent(id) + '/deliver',
+          { method: 'POST', body: JSON.stringify({}) });
+        // verify_pickup answers rather than throwing when it declines — e.g. it
+        // expired the order on its way in. Say so instead of silently doing
+        // nothing, or the row just reappears with no explanation.
+        if (r && r.verified === false)
+          alert('Not handed over: order is ' + (r.status || 'not verifiable') + '.');
+        refreshAll();
+      } catch (e) { alert('Delivered failed: ' + e.message); }
     }
     const actionButtons = o => {
       const b = [];
       if (o.can_approve)
         b.push(`<button onclick="approveOrder('${esc(o.order_id)}')">Approve</button>`);
+      // Never alongside Approve: can_ready is PREPARING-only and can_approve
+      // stops before it, so the two are mutually exclusive server-side.
+      if (o.can_ready)
+        b.push(`<button onclick="readyOrder('${esc(o.order_id)}')">Ready</button>`);
+      if (o.can_deliver)
+        b.push(`<button onclick="deliverOrder('${esc(o.order_id)}')">Delivered</button>`);
       if (o.can_reject)
         b.push(`<button class="ghost" onclick="rejectOrder('${esc(o.order_id)}')">Reject</button>`);
       return b.join(' ') || '<span class="muted">—</span>';
     };
 
-    function render(outlets, orders) {
-      const byOutlet = {};
-      orders.forEach(o => (byOutlet[o.outlet_id] ??= []).push(o));
-      document.getElementById('outlets').innerHTML = outlets.map(ou => {
-        const rows = (byOutlet[ou.id] || []).map(o => `
-          <tr>
-            <td>
-              <div class="ident">
-                <input class="label-edit" data-ident="${esc(o.identifier)}"
-                       value="${esc(o.label || '')}" placeholder="add a name…"
-                       onblur="saveLabel(this)"
-                       onkeydown="if(event.key==='Enter'){this.blur();}">
-                <span class="raw">${esc(o.identifier) || '<i>unknown</i>'}</span>
-              </div>
-            </td>
-            <td class="muted" style="white-space:nowrap">${esc(o.created_at_ist) || '—'}</td>
-            <td class="otp">${esc(o.pickup_code) || '<span class="muted" style="font-size:12px">—</span>'}</td>
-            <td>${pill(o.status, o.status)}</td>
-            <td>${(o.items||[]).map(i => esc(i.quantity)+'× '+esc(i.name)).join('<br>')}</td>
-            <td style="white-space:nowrap">${actionButtons(o)}</td>
-          </tr>`).join('');
-        return `
-          <div class="outlet">
-            <div class="outlet-head">
-              <h2>${esc(ou.name)}</h2>
-              ${pill(ou.order_status, ou.order_status.replace('_',' '))}
-              ${ou.is_manually_closed ? '<span class="pill closed">manually closed</span>' : ''}
-              <span class="muted">${ou.opening_time ? esc(ou.opening_time)+'–'+esc(ou.closing_time) : ''}</span>
+    // ONE table, every restaurant mixed together, newest first.
+    //
+    // The server already returns the rows ORDER BY created_at DESC, so this
+    // does NOT re-sort: re-deriving the order client-side would be a second
+    // definition of "newest" free to disagree with the server's. The auto-
+    // refresh below re-fetches, so an order placed a moment ago arrives at the
+    // top on its own.
+    // Terminal statuses, mirrored from the backend's own terminal set. Used
+    // ONLY for presentation — which rows read as finished. It decides no
+    // buttons: those come from the server's can_* flags, so this list being
+    // wrong could never enable an action the server would refuse.
+    const DONE = ['COMPLETED', 'CANCELLED', 'ABANDONED', 'PICKED_UP'];
+    const isDone = o => DONE.includes((o.status || '').toUpperCase());
+
+    function render(orders) {
+      const live = orders.filter(o => !isDone(o)).length;
+      document.getElementById('order-count').textContent = orders.length
+        ? `${orders.length} order${orders.length === 1 ? '' : 's'} · ${live} still active`
+        : '';
+      const rows = orders.map(o => `
+        <tr class="${isDone(o) ? 'done' : ''}">
+          <td>
+            <div class="ident">
+              <input class="label-edit" data-ident="${esc(o.identifier)}"
+                     value="${esc(o.label || '')}" placeholder="add a name…"
+                     onblur="saveLabel(this)"
+                     onkeydown="if(event.key==='Enter'){this.blur();}">
+              <span class="raw">${esc(o.identifier) || '<i>unknown</i>'}</span>
             </div>
-            ${rows ? `<table><thead><tr>
-                <th>Identifier / label</th><th>Placed (IST)</th><th>OTP</th>
-                <th>Status</th><th>Items</th><th>Actions</th>
-              </tr></thead><tbody>${rows}</tbody></table>`
-              : '<div class="empty">no live orders</div>'}
-          </div>`;
-      }).join('') || '<div class="empty">no outlets</div>';
+          </td>
+          <td style="white-space:nowrap">${esc(o.outlet_name) || '—'}</td>
+          <td class="muted" style="white-space:nowrap">${esc(o.created_at_ist) || '—'}</td>
+          <td class="otp">${esc(o.pickup_code) || '<span class="muted" style="font-size:12px">—</span>'}</td>
+          <td>${pill(o.status, o.status)}</td>
+          <td>${(o.items||[]).map(i => esc(i.quantity)+'× '+esc(i.name)).join('<br>')}</td>
+          <td style="white-space:nowrap">${actionButtons(o)}</td>
+        </tr>`).join('');
+      document.getElementById('orders').innerHTML = rows
+        ? `<table><thead><tr>
+             <th>Identifier / label</th><th>Restaurant</th><th>Placed (IST)</th>
+             <th>OTP</th><th>Status</th><th>Items</th><th>Actions</th>
+           </tr></thead><tbody>${rows}</tbody></table>`
+        : '<div class="empty">no orders placed on this day</div>';
+    }
+
+    // Outlet health kept as its own strip. It is NOT grouping — the orders no
+    // longer hang off it — but open/closed and the hours are still worth seeing
+    // and had nowhere else to live once the per-outlet sections went.
+    function renderOutlets(outlets) {
+      document.getElementById('outlets').innerHTML = outlets.map(ou => `
+        <div style="display:flex;align-items:center;gap:10px;padding:4px 0">
+          <span style="min-width:200px">${esc(ou.name)}</span>
+          ${pill(ou.order_status, ou.order_status.replace('_',' '))}
+          ${ou.is_manually_closed ? '<span class="pill closed">manually closed</span>' : ''}
+          <span class="muted">${ou.opening_time ? esc(ou.opening_time)+'–'+esc(ou.closing_time) : ''}</span>
+        </div>`).join('') || '<div class="empty">no outlets</div>';
     }
 
     async function loadCompliance() {
@@ -183,17 +266,38 @@
     document.addEventListener('focusin', e => { if (e.target.classList.contains('label-edit')) editing = true; });
     document.addEventListener('focusout', e => { if (e.target.classList.contains('label-edit')) editing = false; });
 
+    // "Today" in IST, not in the device's timezone — the server defaults the
+    // day to Asia/Kolkata (as the compliance window and outlet hours already
+    // do), so a tester on a laptop set to another zone must still be shown the
+    // same day the backend means. en-CA formats as YYYY-MM-DD.
+    const istToday = () => new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
+
+    function setDay(d) {
+      document.getElementById('day').value = d;
+      refreshAll();
+    }
+
     async function refreshAll() {
       const status = document.getElementById('status');
       status.textContent = 'refreshing…';
+      const day = document.getElementById('day').value;
       try {
-        const [outlets, orders] = await Promise.all([api('/api/outlets'), api('/api/orders')]);
-        if (!editing) render(outlets, orders);  // don't clobber an in-progress edit
+        const [outlets, orders] = await Promise.all([
+          api('/api/outlets'),
+          api('/api/orders' + (day ? '?day=' + encodeURIComponent(day) : '')),
+        ]);
+        if (!editing) {            // don't clobber an in-progress label edit
+          render(orders);
+          renderOutlets(outlets);
+        }
         await loadCompliance();
         status.textContent = 'updated ' + new Date().toLocaleTimeString();
       } catch (e) { status.textContent = 'error: ' + e.message; }
     }
 
+    document.getElementById('day').value = istToday();
     refreshAll();
     setInterval(() => { if (!editing) refreshAll(); }, 15000);
   </script>

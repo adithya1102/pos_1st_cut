@@ -51,8 +51,11 @@ async def outlets(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/orders")
-async def active_orders(db: AsyncSession = Depends(get_db)):
-    return await TestingService.active_orders(db)
+async def active_orders(day: Optional[str] = None,
+                        db: AsyncSession = Depends(get_db)):
+    # `day` is an IST calendar date, YYYY-MM-DD; omitted means today IST. Flat
+    # across all outlets, newest first — the page no longer regroups by outlet.
+    return await TestingService.active_orders(db, day)
 
 
 @router.get("/testers")
@@ -83,6 +86,23 @@ async def set_label(identifier: str, payload: SetLabelIn,
 async def approve_order(order_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     # Reuses CarevoService.advance_status (the exact staff/auto_receive action).
     return await TestingService.approve_order(db, order_id)
+
+
+@router.post("/orders/{order_id}/ready")
+async def ready_order(order_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    # Reuses CarevoService.advance_status with an explicit READY target — the
+    # same call the auto-advance worker's final stage makes. A SEPARATE route
+    # rather than a target parameter on /approve: approve deliberately passes NO
+    # target so the server picks the next stage and cannot skip one, and giving
+    # it a client-named target would remove exactly that guarantee.
+    return await TestingService.ready_order(db, order_id)
+
+
+@router.post("/orders/{order_id}/deliver")
+async def deliver_order(order_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    # Reuses CarevoService.verify_pickup with the order's own pickup_code —
+    # the same call auto-pickup and the owner_app counter scan both make.
+    return await TestingService.deliver_order(db, order_id)
 
 
 @router.post("/orders/{order_id}/reject")

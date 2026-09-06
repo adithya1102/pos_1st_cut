@@ -325,6 +325,45 @@ void main() {
       expect(find.text('Enjoy your\nfood!'), findsNothing);
       expect(find.text('PICKUP CODE'), findsOneWidget);
     });
+
+    testWidgets('a completed order KEEPS the code, struck through — it does '
+        'not vanish', (tester) async {
+      // What the customer sees after the counter hands the food over — whether
+      // that was owner_app's verify, roster auto-pickup, or the testing
+      // dashboard's Delivered button. All three call the SAME verify_pickup, so
+      // this screen cannot tell them apart: it renders from the polled status
+      // alone (`status?.isCompleted`, pickup_screen.dart:457), and COMPLETED is
+      // COMPLETED whoever wrote it.
+      //
+      // Asserting the code STAYS is deliberate. It is easy to assume completing
+      // an order hides the OTP; it does not, by design — "kept as a record, but
+      // it can no longer be used". A test asserting it disappeared would be
+      // asserting a bug.
+      await tester.pumpWidget(pickupHost('COMPLETED'));
+      await tester.pump(const Duration(milliseconds: 600));
+
+      expect(find.text('7788'), findsOneWidget,
+          reason: 'the code remains on screen as a record of the order');
+      final code = tester.widget<Text>(find.text('7788'));
+      expect(code.style?.decoration, TextDecoration.lineThrough,
+          reason: 'struck through: it can no longer be used');
+
+      // And it is unmistakably spent — the live label is gone, replaced by the
+      // collected one plus the ticket stamp.
+      expect(find.text('PICKUP CODE'), findsNothing);
+      expect(find.text('COLLECTED'), findsNWidgets(2));
+    });
+
+    testWidgets('a live order shows the same code with NO strike-through',
+        (tester) async {
+      // The control for the test above: the difference really is the status,
+      // not something incidental about the card.
+      await tester.pumpWidget(pickupHost('READY'));
+      await tester.pump(const Duration(milliseconds: 600));
+
+      final code = tester.widget<Text>(find.text('7788'));
+      expect(code.style?.decoration, TextDecoration.none);
+    });
   });
 
   group('collected state', () {

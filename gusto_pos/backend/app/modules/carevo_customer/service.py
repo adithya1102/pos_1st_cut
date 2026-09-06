@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import secrets
@@ -49,9 +50,19 @@ _pickup_miss_hits: dict[str, list[float]] = defaultdict(list)
 # real options in the dish form's category picker immediately. Order = display.
 DEFAULT_CATEGORIES = ["Starters", "Mains", "Sides", "Desserts", "Beverages"]
 
+logger = logging.getLogger(__name__)
+
 # Status progression for the pickup flow
 _PROGRESSION = ["RECEIVED", "PREPARING", "READY"]
 _LIVE_STATUSES = {"PAID", "RECEIVED", "PREPARING", "READY"}
+
+# Finished, from the CUSTOMER's point of view — the order is over and they have
+# been told so. A payment landing against one of these cannot reopen it: see the
+# guard in mark_paid. PICKED_UP is included alongside the three the app can
+# currently produce because it is terminal in exactly the same sense (the client
+# treats it as collected) and a future writer of it must not reopen a gap this
+# guard was added to close.
+_TERMINAL_STATUSES = {"CANCELLED", "COMPLETED", "ABANDONED", "PICKED_UP"}
 
 # Operating-hours gate (migration 024). Kept as named constants so they are easy
 # to tune later without hunting through query strings.
@@ -1022,7 +1033,24 @@ class CarevoService:
         method: Optional[str] = None,
         raw_payload: Optional[dict] = None,
     ) -> CustomerOrder:
-        """Idempotent PAID transition shared by webhook + simulate."""
+        """Idempotent PAID transition shared by webhook + simulate.
+
+        Refuses to reopen a FINISHED order. The two idempotency checks below
+        both key on the PAYMENT, never on the order, so before this guard
+        existed any order whose payment had not settled could be driven to
+        PAID no matter what its status was — a late or replayed webhook could
+        flip a CANCELLED order back to live and mint it a pickup code. See
+        _TERMINAL_STATUSES.
+
+        Ordering here is deliberate and load-bearing: the guard is THIRD, after
+        both idempotency returns, so genuine retries are untouched. A duplicate
+        webhook carrying a known payment id still short-circuits on the first
+        check, and a second webhook for an already-PAID order still returns on
+        the second — including when that order has since been COMPLETED, which
+        is the common case and must not start logging warnings. Only an order
+        that is finished AND unpaid reaches the guard, which is precisely the
+        resurrection case and nothing else.
+        """
         # Idempotency on gateway_payment_id.
         if gateway_payment_id:
             existing = (await db.execute(text("""
@@ -1037,6 +1065,25 @@ class CarevoService:
 
         if order.payment_status == "PAID":
             return order  # already settled
+
+        current = (order.status or "").upper()
+        if current in _TERMINAL_STATUSES:
+            # Loud on purpose. Reaching here means money may have moved against
+            # an order the customer was told was over, so it is either a very
+            # late gateway callback or a replay worth investigating — and the
+            # refund, if one is owed, is a human decision made off-app.
+            logger.warning(
+                "mark_paid REFUSED: order %s is %s (terminal) and cannot be "
+                "reopened by a payment. gateway_payment_id=%s method=%s "
+                "payment_status=%s raw_payload=%s",
+                order.id, current, gateway_payment_id, method,
+                order.payment_status,
+                json.dumps(raw_payload, default=str) if raw_payload else None,
+            )
+            # Returned unchanged rather than raised: the webhook caller must
+            # still answer the gateway 200, or it retries this forever. The
+            # caller sees an order that is plainly not PAID and reports that.
+            return order
 
         gw = get_gateway()
         pay_id = gateway_payment_id or gw.make_payment_id()
@@ -2173,6 +2220,17 @@ class CarevoService:
         order = res.scalars().first()
         if not order or str(order.outlet_id) != str(outlet_id):
             raise HTTPException(status_code=404, detail="Order not found for this outlet")
+        # A finished order cannot be reopened by a payment — same rule as the
+        # webhook. Raised here rather than inside mark_paid, because the two
+        # callers need opposite things from a refusal: the gateway must get a
+        # 200 or it retries forever, whereas staff who just tapped "mark paid"
+        # must be TOLD it did not happen. A 200 carrying an unchanged status
+        # would read as success.
+        if (order.status or "").upper() in _TERMINAL_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail=f"This order is {order.status} and can no longer be "
+                       f"marked paid.")
         order = await CarevoService.mark_paid(db, order, method="upi_manual")
         return {
             "order_id": order.id,

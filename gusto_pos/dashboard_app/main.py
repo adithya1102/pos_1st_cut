@@ -136,8 +136,10 @@ async def api_outlets(_=Depends(require_session)):
 
 
 @app.get("/api/orders")
-async def api_orders(_=Depends(require_session)):
-    return await _proxy("GET", "/orders")
+async def api_orders(day: str = "", _=Depends(require_session)):
+    # `day` (YYYY-MM-DD, IST) is passed straight through; the backend validates
+    # it and decides the default, so the two never disagree about "today".
+    return await _proxy("GET", f"/orders?day={day}" if day else "/orders")
 
 
 @app.get("/api/compliance")
@@ -150,6 +152,21 @@ async def api_approve_order(order_id: str, _=Depends(require_session)):
     # Proxies to the backend's testing approve route, which reuses the real
     # advance_status. Key attached server-side, never sent to the browser.
     return await _proxy("POST", f"/orders/{order_id}/approve")
+
+
+@app.post("/api/orders/{order_id}/ready")
+async def api_ready_order(order_id: str, _=Depends(require_session)):
+    # Proxies to the backend's testing ready route, which reuses the same
+    # advance_status Approve does — here with an explicit READY target. Key
+    # attached server-side, never sent to the browser.
+    return await _proxy("POST", f"/orders/{order_id}/ready")
+
+
+@app.post("/api/orders/{order_id}/deliver")
+async def api_deliver_order(order_id: str, _=Depends(require_session)):
+    # Proxies to the backend's testing deliver route, which reuses the real
+    # verify_pickup. Key attached server-side, never sent to the browser.
+    return await _proxy("POST", f"/orders/{order_id}/deliver")
 
 
 @app.post("/api/orders/{order_id}/reject")
