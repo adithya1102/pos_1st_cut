@@ -113,17 +113,22 @@ void main() {
       expect(find.byKey(const Key('filter_button')), findsOneWidget);
     });
 
-    testWidgets('tapping the filter icon opens the sheet with ALL ten options',
-        (tester) async {
+    testWidgets('tapping the filter icon opens the sheet with every VISIBLE '
+        'option', (tester) async {
+      // Was "ALL ten". Recommended is now hidden outright — it promised a
+      // personalisation judgement the app has no data for — so the sheet shows
+      // nine. The other blocked options still appear, greyed.
       _sizeSurface(tester);
       await _load(tester);
       await _openSheet(tester);
 
       expect(find.byKey(const Key('sort_sheet')), findsOneWidget);
-      for (final s in OutletSort.values) {
+      for (final s in OutletSort.visible) {
         expect(find.byKey(Key('sort_${s.name}')), findsOneWidget,
             reason: '${s.label} should be in the sheet');
       }
+      expect(find.byKey(const Key('sort_recommended')), findsNothing,
+          reason: 'Recommended is hidden, not greyed');
     });
 
     testWidgets('selecting an option CLOSES the sheet', (tester) async {

@@ -44,11 +44,52 @@ enum VegFilter {
       };
 }
 
+/// Ordering applied to the items within the selected category.
+///
+/// ## Only price, and deliberately so
+///
+/// "Highest rated" was asked for alongside these and is NOT here: nothing in
+/// the schema stores a rating for a menu item — no column, no table, nowhere —
+/// so the option would have had to invent an order. A control that looks live
+/// and does nothing is the exact bug the OPEN badge had, and the restaurant
+/// list already refuses to ship one (see [OutletSort]). Price is offered
+/// because [MenuItem.basePrice] is real, present on every row, and is the same
+/// number the card displays — so what the customer sorts by is what they read.
+enum MenuSort {
+  /// The menu's own order — how the restaurant chose to present its food.
+  /// First because it is the only one carrying the outlet's intent, and it is
+  /// what someone browsing rather than price-hunting wants.
+  featured,
+  priceLowHigh,
+  priceHighLow;
+
+  String get label => switch (this) {
+        MenuSort.featured => 'Featured',
+        MenuSort.priceLowHigh => 'Price ↑',
+        MenuSort.priceHighLow => 'Price ↓',
+      };
+
+  /// Sort [items] by this option. Returns a NEW list; never mutates the input,
+  /// so [MenuSort.featured] can always get back the menu's original order.
+  List<MenuItem> apply(List<MenuItem> items) {
+    if (this == MenuSort.featured) return List<MenuItem>.of(items);
+    final out = List<MenuItem>.of(items);
+    // Sorted on basePrice — the figure MenuItemCard renders. The zone tiers
+    // (normal/ac/lounge) are resolved server-side before the menu is returned,
+    // so there is no second price here that could disagree with the visible one.
+    out.sort((a, b) => this == MenuSort.priceLowHigh
+        ? a.basePrice.compareTo(b.basePrice)
+        : b.basePrice.compareTo(a.basePrice));
+    return out;
+  }
+}
+
 class _MenuScreenState extends State<MenuScreen> {
   late Future<MenuResponse> _future;
   // -1 = the cumulative "All" view; 0..n-1 = a specific category.
   int _selectedCategory = -1;
   VegFilter _vegFilter = VegFilter.all;
+  MenuSort _sort = MenuSort.featured;
 
   @override
   void initState() {
@@ -208,9 +249,13 @@ class _MenuScreenState extends State<MenuScreen> {
             final sourceItems = isAll
                 ? categories.expand((cat) => cat.items).toList()
                 : categories[_selectedCategory].items;
-            final visibleItems = sourceItems
-                .where((it) => _vegFilter.matches(it.isVeg))
-                .toList();
+            // Filter first, then sort: sorting the rows that were about to be
+            // dropped is wasted work, and ordering must be over what is
+            // actually shown or "cheapest" would name an item that is not on
+            // screen.
+            final visibleItems = _sort.apply(
+              sourceItems.where((it) => _vegFilter.matches(it.isVeg)).toList(),
+            );
             final sectionTitle = isAll ? 'All items' : categories[_selectedCategory].name;
             // Whether ANY visible row has a photo. Drives the thumbnail gutter
             // on every row so a mixed list still aligns — see MenuItemCard.
@@ -244,9 +289,14 @@ class _MenuScreenState extends State<MenuScreen> {
                     },
                   ),
                 ),
+                // Veg filter and price sort share one scrolling row. They are
+                // different questions ("which items?" and "in what order?"), so
+                // a divider separates them rather than letting six chips read
+                // as one undifferentiated set.
                 SizedBox(
                   height: 50,
                   child: ListView(
+                    key: const Key('menu_filter_sort_row'),
                     scrollDirection: Axis.horizontal,
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     children: [
@@ -255,6 +305,24 @@ class _MenuScreenState extends State<MenuScreen> {
                           label: f.label,
                           selected: f == _vegFilter,
                           onTap: () => setState(() => _vegFilter = f),
+                        ),
+                        const SizedBox(width: 10),
+                      ],
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 4, vertical: 12),
+                        child: VerticalDivider(
+                            width: 1,
+                            thickness: 1,
+                            color: AppColors.of(context).border),
+                      ),
+                      const SizedBox(width: 10),
+                      for (final s in MenuSort.values) ...[
+                        NeoChip(
+                          key: Key('menu_sort_${s.name}'),
+                          label: s.label,
+                          selected: s == _sort,
+                          onTap: () => setState(() => _sort = s),
                         ),
                         const SizedBox(width: 10),
                       ],

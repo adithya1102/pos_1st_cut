@@ -1068,7 +1068,10 @@ class _SortSheet extends StatelessWidget {
                 shrinkWrap: true,
                 padding: const EdgeInsets.only(bottom: 12),
                 children: [
-                  for (final option in OutletSort.values)
+                  // `visible`, not `values`: Recommended is hidden outright.
+                  // See OutletSort.hidden for why that one is the exception to
+                  // showing blocked options.
+                  for (final option in OutletSort.visible)
                     _SortSheetRow(
                       option: option,
                       selected: option == active,

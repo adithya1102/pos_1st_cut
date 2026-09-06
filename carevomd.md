@@ -4979,3 +4979,67 @@ defining behaviour (whole string in a single edit), which is the mechanism that
 broke it, but providers vary in what they hand over.
 
 ---
+
+## 2026-09-07 — Menu price sort shipped; Recommended hidden
+
+Acting on the sort/rating data audit from the same day. Built only what has a
+backing signal; nothing was faked.
+
+### Interpretation
+
+"The three that work" read as the audit's own buildable list: **Nearest**,
+**Best Offer**, **menu-item price**. The first two were ALREADY live on the
+restaurant list (OutletSort.nearest / .bestOffers) and needed no work — so the
+only genuinely unbuilt item was the in-restaurant price sort.
+
+### Built
+
+`MenuSort` enum in menu_screen.dart — `featured` (default, the restaurant's own
+order), `priceLowHigh`, `priceHighLow`. Sorts on `MenuItem.basePrice`, the exact
+figure MenuItemCard renders, so what the customer sorts by is what they read;
+zone tiers (normal/ac/lounge) are resolved server-side so no second price can
+disagree. `apply` copies rather than sorts in place, so Featured can always be
+returned to. Filter runs BEFORE sort — ordering must be over what is shown, or
+"cheapest" names an item that is not on screen.
+
+Rendered as chips in the existing veg-filter row, separated by a divider: two
+different questions ("which items?" / "in what order?").
+
+**No rating sort**, in the menu or the list: `menu_items` has no rating column
+and the schema has no ratings table at all. A test pins MenuSort to exactly
+three values so a future addition has to confront that.
+
+### Hidden
+
+`OutletSort.hidden` flag added; `recommended` is the only one set. The class doc
+argues for SHOWING blocked options ("Most Reviewed" tells you reviews are
+intended) — Recommended is the exception because it promises a personalisation
+judgement with no data and no opt-in behind it. Value KEPT rather than deleted:
+`blockedBy` is the record of why it does not exist, and deleting the constant
+would break anything that persisted the name. Sheet now iterates
+`OutletSort.visible`.
+
+### Three EXISTING tests updated — they encoded the old policy
+
+Not incidental churn; the policy deliberately changed:
+* filter_dropdown_and_card_size: "sheet with ALL ten options" -> every VISIBLE
+  option, plus an explicit assertion Recommended is absent;
+* ui_batch_2026_08_24b: "all ten options are reachable" -> same treatment;
+* ui_batch_2026_08_24b: "seven are not [available]" -> six, since Recommended
+  left comingSoon.
+
+The enabled three are unchanged in all of them.
+
+### Tests — 375 passing (+15 new), 0 failures
+
+New `test/menu_sort_and_hidden_recommended_test.dart`: both price directions,
+featured preserved, no-mutation, tied prices, empty menu, MenuSort has exactly
+three values with no rating; Recommended hidden and the ONLY hidden one, absent
+from visible/comingSoon but kept in values with its reason; Nearest nulls-last;
+Best Offers by count; enabled == the three backed options; and a blocked option
+leaves order untouched rather than faking one.
+
+Not exercised on a device — the chip row's layout on a narrow screen is worth
+an eyeball.
+
+---

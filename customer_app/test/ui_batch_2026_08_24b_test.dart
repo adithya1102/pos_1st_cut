@@ -190,10 +190,13 @@ void main() {
   // SORT — real options work, blocked options cannot be selected
   // =========================================================================
   group('SORT: only the three backed options do anything', () {
-    test('exactly three options are available, seven are not', () {
+    test('exactly three options are available; six more say "coming soon"', () {
+      // Was "seven are not". Recommended is hidden rather than greyed, so it
+      // has left comingSoon — the enabled three are unchanged.
       expect(OutletSort.enabled,
           [OutletSort.nearest, OutletSort.newest, OutletSort.bestOffers]);
-      expect(OutletSort.comingSoon, hasLength(7));
+      expect(OutletSort.comingSoon, hasLength(6));
+      expect(OutletSort.comingSoon, isNot(contains(OutletSort.recommended)));
     });
 
     test('every blocked option states WHY it is blocked', () {
@@ -304,18 +307,21 @@ void main() {
       await tester.pump();
     }
 
-    testWidgets('all ten options are reachable, not just the working three',
+    testWidgets('every VISIBLE option is reachable, not just the working three',
         (tester) async {
+      // Was "all ten". Recommended is hidden now; the remaining blocked
+      // options are still shown so the intended shape stays honest.
       _sizeSurface(tester);
       await tester.pumpWidget(sortHost());
       await tester.pump(const Duration(milliseconds: 600));
       await openSortSheet(tester);
 
-      for (final s in OutletSort.values) {
+      for (final s in OutletSort.visible) {
         await scrollToSort(tester, s);
         expect(find.byKey(Key('sort_${s.name}')), findsOneWidget,
             reason: '${s.label} should be present in the bar');
       }
+      expect(find.byKey(const Key('sort_recommended')), findsNothing);
     });
 
     testWidgets('every blocked option carries a "Coming soon" caption',

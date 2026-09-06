@@ -39,6 +39,7 @@ enum OutletSort {
   recommended(
     label: 'Recommended',
     available: false,
+    hidden: true,
     blockedBy: 'needs a personalisation model; no per-customer signal is '
         'collected yet',
   ),
@@ -79,6 +80,7 @@ enum OutletSort {
   const OutletSort({
     required this.label,
     required this.available,
+    this.hidden = false,
     this.blockedBy,
   });
 
@@ -86,6 +88,20 @@ enum OutletSort {
 
   /// False for an option that is displayed but cannot be selected.
   final bool available;
+
+  /// Not rendered at all, not even greyed.
+  ///
+  /// The class doc argues for SHOWING blocked options rather than hiding them,
+  /// and that still holds for the rest: "Most Reviewed" tells you the platform
+  /// intends reviews. Recommended is the exception because it does not describe
+  /// a missing signal so much as promise a judgement the app has no basis for —
+  /// personalisation nobody has opted into and no data to build it from. It
+  /// sets an expectation the roadmap does not hold, so it is not shown.
+  ///
+  /// Kept as a VALUE rather than deleted: [blockedBy] records why it does not
+  /// exist, which is the thing a future reader needs, and removing the constant
+  /// would silently break anything that has persisted the name.
+  final bool hidden;
 
   /// Why [available] is false. Null for the three that work.
   final String? blockedBy;
@@ -97,7 +113,11 @@ enum OutletSort {
   static List<OutletSort> get enabled =>
       values.where((s) => s.available).toList();
   static List<OutletSort> get comingSoon =>
-      values.where((s) => !s.available).toList();
+      values.where((s) => !s.available && !s.hidden).toList();
+
+  /// Everything the sort sheet should render, in order.
+  static List<OutletSort> get visible =>
+      values.where((s) => !s.hidden).toList();
 
   /// Sort [outlets] by this option. Returns a NEW list; never mutates input.
   ///
