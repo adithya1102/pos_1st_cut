@@ -4916,3 +4916,66 @@ endpoint 409s while leaving the order in CREATED.
 NOTE: caplog needs the logging plugin, so these fail under `-p no:logging`.
 
 ---
+
+## 2026-09-07 — Autofilled phone numbers were silently corrupted
+
+### Task 1 — normalisation already existed and was already correct
+
+`normalisePhone` (login_screen.dart:20) has been there all along, and both
+readers go through it — `_valid` (:68) and `_submitPhone` (:78). No second path:
+the OTP resend uses `auth.pendingPhone`, the already-normalised value.
+
+So the raw string was NOT sent as-is. The function was fine. **It was being
+handed input that had already been destroyed.**
+
+### The actual bug — the field, not the function
+
+```dart
+maxLength: 10,
+inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+```
+
+Autofill delivers the whole string in ONE edit. "+91 98765 43210" ->
+digitsOnly strips the plus and spaces -> "919876543210" -> maxLength truncates
+to the FIRST ten -> **"9198765432"**.
+
+That is a well-formed 10-digit number, so normalisePhone accepted it and
+returned +919198765432. The OTP went to a real but WRONG person, and nothing on
+screen looked wrong. This is the "+9198765432" case from the report — it is the
+OUTPUT of the corruption, not something a user typed.
+
+### The fix
+
+Field now preserves what normalisePhone needs: `maxLength: 18` and
+`FilteringTextInputFormatter.allow(RegExp(r'[0-9+\s\-()]'))`. Letters are still
+refused at the field.
+
+normalisePhone hardened too:
+* strips EVERY non-digit (`\D`), not the old hand-listed `[\s\-().]` — a stray
+  letter used to survive into the length check and fail a good number;
+* captures `hadPlus` BEFORE reducing to digits. This is the one bit that cannot
+  be recovered afterwards and it decides the nastiest case: `+9198765432` has a
+  plus, so 91 is a country code WHATEVER the length, leaving 8 subscriber
+  digits -> invalid. The identical digits WITHOUT a plus (`9198765432`) are a
+  legitimate number. Same digits, opposite verdict, because the input said
+  something different;
+* over-long input keeps the LAST ten — a garbled prefix corrupts the front,
+  never the subscriber number at the end.
+
+### Tests — 360 passing (+22), 0 failures
+
+New `test/phone_normalisation_test.dart`. Nine accepted forms, the truncation
+case, the without-plus counterpart, five too-short forms, junk-stripping, and
+last-ten fallback.
+
+Crucially it is NOT only a pure-function test — those would all have passed
+throughout the bug, since the function was never wrong. Four widget tests drive
+a real TextField the way autofill does, including one that **rebuilds the OLD
+`maxLength: 10` + digitsOnly config and asserts it produces "9198765432"** — so
+the regression is demonstrated, not just asserted away.
+
+Not exercised on a device with real autofill — the tests reproduce autofill's
+defining behaviour (whole string in a single edit), which is the mechanism that
+broke it, but providers vary in what they hand over.
+
+---

@@ -18,15 +18,35 @@ import 'post_auth_router.dart';
 /// tag again: people paste numbers in whatever shape they already have them,
 /// and silently rejecting a pasted `+91…` would look like the field is broken.
 String? normalisePhone(String raw) {
-  // Formatting characters people actually paste.
-  var digits = raw.replaceAll(RegExp(r'[\s\-().]'), '');
-  if (digits.startsWith('+91')) {
-    digits = digits.substring(3);
+  // Whether the INPUT declared a country code, captured before the string is
+  // reduced to digits. This is the one bit of information that cannot be
+  // recovered afterwards, and case 3 below turns on it.
+  final hadPlus = raw.trimLeft().startsWith('+');
+
+  // Every non-digit goes, not just the punctuation we thought to list. The old
+  // set was [\s\-().], which let a stray letter or a unicode dash through to
+  // the length check and failed a number that was really fine.
+  var digits = raw.replaceAll(RegExp(r'\D'), '');
+
+  if (hadPlus && digits.startsWith('91')) {
+    // "+91…" says the 91 is a country code, WHATEVER the length. So
+    // "+9198765432" is a +91 number with only 8 digits after it — a truncated
+    // number, not the valid 10-digit 9198765432 it would look like once the
+    // plus is thrown away. Rejecting it is the point: submitting it would send
+    // a real but WRONG person's number.
+    digits = digits.substring(2);
   } else if (digits.length == 12 && digits.startsWith('91')) {
+    // No plus, but 12 digits can only be 91 + a 10-digit number.
     digits = digits.substring(2);
   } else if (digits.length == 11 && digits.startsWith('0')) {
+    // Domestic trunk prefix.
     digits = digits.substring(1);
+  } else if (digits.length > 10) {
+    // Anything else over-long: keep the LAST 10. A garbled or doubled prefix
+    // corrupts the front of the string, never the subscriber number at the end.
+    digits = digits.substring(digits.length - 10);
   }
+
   if (!RegExp(r'^\d{10}$').hasMatch(digits)) return null;
   return '+91$digits';
 }
@@ -172,9 +192,30 @@ class _LoginScreenState extends State<LoginScreen> {
                                 // to delete digits that were never there.
                                 hintText: 'Phone number',
                                 keyboardType: TextInputType.phone,
-                                maxLength: 10,
+                                // THE AUTOFILL BUG.
+                                //
+                                // This was `maxLength: 10` + digitsOnly, and
+                                // the two together silently corrupted every
+                                // autofilled number. Autofill delivers the
+                                // whole string at once, e.g. "+91 98765 43210":
+                                // digitsOnly stripped the plus and the spaces
+                                // to "919876543210", then maxLength truncated
+                                // to the FIRST ten — "9198765432". That is a
+                                // well-formed 10-digit number, so normalisePhone
+                                // accepted it and the OTP went to a real but
+                                // WRONG number, with nothing on screen looking
+                                // amiss.
+                                //
+                                // normalisePhone was never the problem; it was
+                                // being handed already-broken input. So the
+                                // field now preserves what it needs — digits,
+                                // the leading plus, and the separators people
+                                // paste — and normalisePhone stays the single
+                                // place that decides what a number means.
+                                maxLength: 18,
                                 inputFormatters: [
-                                  FilteringTextInputFormatter.digitsOnly,
+                                  FilteringTextInputFormatter.allow(
+                                      RegExp(r'[0-9+\s\-()]')),
                                 ],
                                 onChanged: (_) => setState(() {}),
                                 onSubmitted: (_) =>
