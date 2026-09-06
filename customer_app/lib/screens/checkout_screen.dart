@@ -18,6 +18,7 @@ import '../theme/widgets/neo_button.dart';
 import '../theme/widgets/neo_card.dart';
 import '../theme/widgets/ticket_card.dart';
 import '../widgets/arrival_time_picker.dart';
+import '../widgets/focus_release.dart';
 import '../widgets/location_permission_dialog.dart';
 import '../widgets/offer_sheet.dart';
 import '../widgets/price_text.dart';
@@ -66,6 +67,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   /// one place that decides whether a code is spendable.
   final _coupon = TextEditingController();
 
+  /// Held so the screen can answer "is the keyboard up?" — which is the same
+  /// question as "does a field on this screen have focus". Needed by the
+  /// [PopScope] in build(): a back press while typing must close the keyboard
+  /// instead of leaving checkout.
+  final _couponFocus = FocusNode();
+
   /// The offer the customer picked from the restaurant's list (migration 016).
   ///
   /// Mutually exclusive with [_coupon] because V1 does not stack: the server
@@ -74,7 +81,22 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   Offer? _offer;
 
   @override
+  void initState() {
+    super.initState();
+    // Rebuild on focus change so PopScope.canPop is re-evaluated. Without this
+    // the flag is read once and back would keep popping the screen even while
+    // the keyboard is up.
+    _couponFocus.addListener(_onFocusChanged);
+  }
+
+  void _onFocusChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
   void dispose() {
+    _couponFocus.removeListener(_onFocusChanged);
+    _couponFocus.dispose();
     _coupon.dispose();
     super.dispose();
   }
@@ -444,6 +466,37 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final outlet = cart.outlet;
     final blocked = outlet != null && !outlet.isAcceptingOrders;
 
+    // Back closes the keyboard BEFORE it leaves checkout.
+    //
+    // Android's back already dismisses the IME at the platform level, but the
+    // field keeps focus — so the caret goes on blinking and the NEXT back pops
+    // the screen out from under someone who was still mid-coupon. Consuming the
+    // first back and releasing focus makes the two presses mean the obvious
+    // things: close the keyboard, then leave.
+    //
+    // Nothing about the order is touched, so checkout is exactly resumable:
+    // the typed code stays in _coupon and the field simply loses focus.
+    return PopScope(
+      canPop: !_couponFocus.hasFocus,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) releaseFocus();
+      },
+      child: _buildScaffold(context, cart, textTheme, c, subtotal, discount,
+          payable, outlet, blocked),
+    );
+  }
+
+  Widget _buildScaffold(
+    BuildContext context,
+    CartState cart,
+    TextTheme textTheme,
+    AppColorScheme c,
+    double subtotal,
+    double discount,
+    double payable,
+    Outlet? outlet,
+    bool blocked,
+  ) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Checkout'),
@@ -464,7 +517,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        outlet.closedReason ??
+                        // `blocked` is only true when outlet is non-null, but
+                        // that promotion is lost across the parameter boundary.
+                        outlet!.closedReason ??
                             'This outlet is not accepting orders right now.',
                         style: textTheme.bodyMedium
                             ?.copyWith(color: AppColors.tomato),
@@ -477,7 +532,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               NeoButton(
                 key: const Key('checkout_pay'),
                 label: blocked
-                    ? outlet.statusLabel
+                    ? outlet!.statusLabel
                     : 'Pay ${formatRupees(payable)}',
                 icon: blocked ? Icons.block : Icons.lock,
                 loading: _placing,
@@ -633,13 +688,31 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             ),
             const SizedBox(height: 12),
             TextField(
+              key: const Key('checkout_coupon_field'),
               controller: _coupon,
+              focusNode: _couponFocus,
               // Disabled, not hidden: the customer can see why it is
               // unavailable and what to do about it.
               enabled: _offer == null,
               autocorrect: false,
               enableSuggestions: false,
               textCapitalization: TextCapitalization.characters,
+              // The three dismissal routes. This is a raw TextField rather than
+              // a NeoTextField (it needs the label + prefix icon decoration),
+              // which is exactly how it missed the fix NeoTextField already
+              // carries — see the note on NeoTextField.onTapOutside for why a
+              // null onTapOutside leaves the IME up on Android.
+              //
+              //  * tap outside  -> onTapOutside
+              //  * confirm key  -> textInputAction + onSubmitted
+              //  * back button  -> the PopScope in build()
+              onTapOutside: (_) => releaseFocus(),
+              // "Done", not "Next": this is the last field on the screen, and
+              // the coupon is validated server-side at order creation, so the
+              // key has nothing to submit — its whole job is to put the
+              // keyboard away.
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => releaseFocus(),
               decoration: const InputDecoration(
                 labelText: 'Coupon code (optional)',
                 hintText: 'PTS-ABCD2345',

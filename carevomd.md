@@ -5043,3 +5043,61 @@ Not exercised on a device — the chip row's layout on a narrow screen is worth
 an eyeball.
 
 ---
+
+## 2026-09-07 — Checkout keyboard dismissal (coupon field)
+
+### The reported bug did not exist; a real one did
+
+Brief was a "PhonePe/UPI keypad" on the payment page that wouldn't dismiss, and
+a "lock page" error. Traced all of it — none of that exists:
+
+* **No phone-number keypad on checkout.** Every `keyboardType` in lib/ is
+  exactly two: `TextInputType.phone` at login_screen.dart:174 and
+  `TextInputType.number` at otp_screen.dart:318. Neither is on checkout.
+* **No custom keypad anywhere, deliberately.** otp_screen.dart:19-21 records
+  rejecting one (it forfeits SMS autofill), and v2_light_screens_test.dart:138
+  actively asserts none is rendered.
+* **No "lock page".** Grepping `lock` returns only `Icons.lock_outline` —
+  decorative padlocks on the cart button and checkout's "pay securely" card.
+* The UPI/PhonePe entry being described is inside the **Cashfree Drop-in native
+  sheet** (checkout_screen.dart:369) — Flutter cannot intercept its keyboard,
+  back button or outside taps at all.
+
+No crash was found and none was invented. What WAS found: the checkout coupon
+field is a raw `TextField` (it needs the label + prefix-icon decoration) rather
+than a `NeoTextField`, so it missed every dismissal behaviour NeoTextField
+already carries — no `onTapOutside`, no `textInputAction`, no `onSubmitted`.
+All three of the requested behaviours were genuinely broken there.
+
+### Fixed
+
+* **confirm key** — `TextInputAction.done` + `onSubmitted: releaseFocus`. "Done"
+  not "Next": last field on the screen, and the coupon is validated server-side
+  at order creation, so the key's only job is putting the keyboard away.
+* **back button** — `PopScope(canPop: !_couponFocus.hasFocus)`, releasing focus
+  when it consumes the pop. Android already drops the IME on back, but the field
+  KEPT focus, so the caret went on blinking and the NEXT back popped checkout
+  out from under someone mid-coupon.
+* **tap outside** — `onTapOutside: releaseFocus`, reusing the existing helper
+  rather than a screen-level GestureDetector, which neo_text_field.dart:79-82
+  warns swallows taps meant for buttons underneath.
+
+Order/cart/payment state untouched, so checkout stays exactly resumable.
+
+Build note: extracting `_buildScaffold` lost Dart's null promotion on `outlet`
+across the parameter boundary — two `outlet!` needed where `blocked` already
+guarantees non-null.
+
+### Tests
+
+`test/checkout_keyboard_dismissal_test.dart` (6). Two things make them mean
+something: the tests push checkout onto a REAL base route, because with it as
+`home:` back can never succeed and "back doesn't leave checkout" would pass for
+the wrong reason; and focus is read from the FIELD'S own node, since
+`FocusManager.primaryFocus` falls back to the enclosing scope and reports focus
+on a screen nobody has touched. Also covers the counterpart — a second back,
+keyboard down, DOES leave — so consuming back cannot trap the customer.
+
+375 passing, 0 failures. Not exercised on a device.
+
+---
