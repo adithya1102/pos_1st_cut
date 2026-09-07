@@ -38,7 +38,24 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
-  int _index = 0;
+  // Tab order, named rather than written as bare integers.
+  //
+  // The index was previously a magic number at six separate sites — the
+  // initial value, two "jump to Orders" jumps, the app-bar visibility toggle,
+  // the FAB switch and the destination list. Reordering the bar meant finding
+  // all six by hand, and missing one puts a control on the wrong tab rather
+  // than failing loudly. These are the single place the order is decided.
+  //
+  // Menu sits in the CENTRE: it is the tab reached by thumb from either side,
+  // and it is the one the owner opens repeatedly while editing dishes.
+  static const _ordersTab = 0;
+  static const _menuTab = 1;
+  static const _offersTab = 2;
+
+  /// Orders is where the app opens. It is the only tab that is time-critical —
+  /// a queue of paying customers — so it is what should be on screen when a
+  /// phone is picked up, rather than the menu editor.
+  int _index = _ordersTab;
 
   /// Held rather than read from `context` on demand, because both are torn down
   /// in [dispose] and an ancestor lookup there is not safe — by then the element
@@ -101,7 +118,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   void _onPushTapped() {
     if (!mounted) return;
-    setState(() => _index = 1);           // Orders tab
+    setState(() => _index = _ordersTab);
     _orders.load();                       // the pushed order may be brand new
     _push.openOrderId.value = null;       // consume once
   }
@@ -138,7 +155,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         duration: const Duration(seconds: 8),
         action: SnackBarAction(
           label: 'View',
-          onPressed: () => setState(() => _index = 1),
+          onPressed: () => setState(() => _index = _ordersTab),
         ),
       ));
   }
@@ -154,17 +171,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  static const _titles = ['Menu & Outlet', 'Orders', 'Offers'];
+  // Index-aligned with the destinations below and with the *Tab constants.
+  static const _titles = ['Orders', 'Menu & Outlet', 'Offers'];
 
   @override
   Widget build(BuildContext context) {
-    final pages = const [_DishesTab(), OrdersScreen(), OffersScreen()];
+    final pages = const [OrdersScreen(), _DishesTab(), OffersScreen()];
 
     return Scaffold(
       appBar: AppBar(
         title: _AppBarTitle(section: _titles[_index]),
         actions: [
-          if (_index == 0) const _OutletVisibilityToggle(),
+          // Belongs to the Menu & Outlet tab — it is an outlet control.
+          if (_index == _menuTab) const _OutletVisibilityToggle(),
           IconButton(
             key: const Key('open_outlet_settings'),
             tooltip: 'Hours & availability',
@@ -199,14 +218,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
       body: IndexedStack(index: _index, children: pages),
       floatingActionButton: switch (_index) {
-        0 => FloatingActionButton.extended(
+        _menuTab => FloatingActionButton.extended(
             onPressed: () => _openDishEditor(context, null),
             icon: const Icon(Icons.add),
             label: const Text('Add dish'),
           ),
         // "Create offer", never "create coupon": the owner is choosing a
         // discount their restaurant funds, not minting a code.
-        2 => FloatingActionButton.extended(
+        _offersTab => FloatingActionButton.extended(
             onPressed: () => openOfferEditor(context, null),
             icon: const Icon(Icons.local_offer_outlined),
             label: const Text('Create offer'),
@@ -216,16 +235,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (i) => setState(() => _index = i),
+        // Orders, Menu, Offers — index-aligned with _titles and the *Tab
+        // constants. Menu is the centre destination.
         destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.restaurant_menu_outlined),
-            selectedIcon: Icon(Icons.restaurant_menu),
-            label: 'Menu',
-          ),
           NavigationDestination(
             icon: Icon(Icons.receipt_long_outlined),
             selectedIcon: Icon(Icons.receipt_long),
             label: 'Orders',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.restaurant_menu_outlined),
+            selectedIcon: Icon(Icons.restaurant_menu),
+            label: 'Menu',
           ),
           NavigationDestination(
             icon: Icon(Icons.local_offer_outlined),

@@ -5439,3 +5439,53 @@ server offers no code entry, and a configured one offers it EVEN WITH A
 NULL HINT — hiding it there would have leaked which usernames are real.
 
 ---
+
+## 2026-09-08 — Orders is the landing tab; Menu moves to the centre
+
+### Before
+
+`home_screen.dart`: `_index = 0` was Menu & Outlet, and the bar read
+Menu(0), Orders(1), Offers(2). The app opened on the dish editor.
+
+### After
+
+Orders(0), Menu(1), Offers(2), landing on Orders. Orders is the only
+time-critical tab — a queue of paying customers — so it is what a
+picked-up phone should show. Menu takes the centre slot, reachable by
+thumb from either side and the tab the owner returns to most while
+editing dishes.
+
+### The part that was actually risky
+
+The index was a bare integer at SIX sites: the initial value, the push-tap
+jump, the snackbar "View" jump, the app-bar outlet-visibility toggle, the
+FAB switch and the destination list. Reordering by hand means finding all
+six, and a missed one puts a control on the wrong tab rather than failing
+loudly — "Add dish" would simply have appeared on Orders.
+
+Replaced with `_ordersTab` / `_menuTab` / `_offersTab`, so the order is
+decided in one place, and added tests asserting each per-tab control
+(dish FAB, offer FAB, visibility switch) is on ITS tab and absent from
+the landing tab.
+
+### Tests — 65 (+7), 0 failures
+
+New `home_navigation_test.dart`: opens on Orders, Menu is the centre
+destination (asserted both as the literal list and positionally),
+selectedIndex tracks taps, every tab shows its own section title, and the
+three per-tab controls moved with their tabs.
+
+Four existing tests hardcoded the old landing tab and were updated, not
+weakened:
+
+* `new_order_alert_test` "the banner jumps to the Orders tab" now
+  switches to Menu FIRST — with Orders as the default the assertion would
+  have passed while "View" did nothing at all.
+* Two alert assertions were scoped to the banner. Orders being visible
+  means the card underneath carries the same id and total, so unscoped
+  finders matched twice and could have passed on the card alone.
+* `outlet_name_test` × 3: landing section is now Orders; the tab-switch
+  test targets `NavigationDestination` rather than bare text, since the
+  section label and tab label are the same word on the current tab.
+
+---

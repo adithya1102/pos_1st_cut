@@ -150,6 +150,16 @@ Future<void> _tick(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+/// Text inside the alert banner specifically.
+///
+/// Orders is the landing tab, so the queue behind the banner shows the same
+/// order ids and totals. Every assertion about what the ALERT says has to be
+/// scoped, or it could be satisfied by the card underneath it.
+Finder _inBanner(String text) => find.descendant(
+      of: find.byKey(HomeScreen.newOrderBannerKey),
+      matching: find.textContaining(text),
+    );
+
 /// See [outlet_name_test] — unmounting stops the poll timer, and a live timer
 /// at teardown fails the test.
 Future<void> _close(WidgetTester tester) async {
@@ -307,9 +317,13 @@ void main() {
 
       expect(find.byKey(HomeScreen.newOrderBannerKey), findsOneWidget);
       // Names the order: the short id, what is in it, and what it is worth.
-      expect(find.textContaining('#881111'), findsOneWidget);
-      expect(find.textContaining('3 items'), findsOneWidget);
-      expect(find.textContaining('240'), findsOneWidget);
+      //
+      // Scoped to the banner. Orders is the landing tab now, so the order card
+      // underneath carries the same id — an unscoped finder would match both
+      // and could pass on the card alone while the banner said nothing.
+      expect(_inBanner('#881111'), findsOneWidget);
+      expect(_inBanner('3 items'), findsOneWidget);
+      expect(_inBanner('240'), findsOneWidget);
 
       await _close(tester);
     });
@@ -385,15 +399,20 @@ void main() {
         [_order(_idA)],
       ])));
       await tester.pumpAndSettle();
+
+      // Orders is now the landing tab, so the jump has to be tested from
+      // somewhere else — otherwise "View" would pass by doing nothing at all.
+      await tester.tap(find.widgetWithText(NavigationDestination, 'Menu'));
+      await tester.pumpAndSettle();
       await _tick(tester);
 
-      // Starts on the Menu tab; the alert is actionable from there.
       expect(
         find.descendant(
           of: find.byType(AppBar),
           matching: find.text('Menu & Outlet'),
         ),
         findsOneWidget,
+        reason: 'the alert must be actionable from a tab that is not Orders',
       );
 
       await tester.tap(find.text('View'));
@@ -416,8 +435,8 @@ void main() {
       await tester.pumpAndSettle();
       await _tick(tester);
 
-      expect(find.textContaining('#881111'), findsOneWidget);
-      expect(find.textContaining('+1 more'), findsOneWidget,
+      expect(_inBanner('#881111'), findsOneWidget);
+      expect(_inBanner('+1 more'), findsOneWidget,
           reason: 'the second order must not vanish behind the first');
 
       await _close(tester);

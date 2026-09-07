@@ -127,11 +127,12 @@ void main() {
       findsOneWidget,
     );
     // The section label survives alongside it — the name is added context, not
-    // a replacement for knowing which tab you are on.
+    // a replacement for knowing which tab you are on. Orders is the landing
+    // tab, so that is the section on show.
     expect(
       find.descendant(
         of: find.byType(AppBar),
-        matching: find.text('Menu & Outlet'),
+        matching: find.text('Orders'),
       ),
       findsOneWidget,
     );
@@ -163,13 +164,19 @@ void main() {
     await tester.pumpWidget(_host(_backend(outletName: 'Anand Bhavan')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Orders'));
+    // Away from the landing tab. Targeted at the destination rather than by
+    // bare text: the section label and the tab label are the same word on
+    // whichever tab is current, so find.text alone is ambiguous.
+    await tester.tap(find.widgetWithText(NavigationDestination, 'Menu'));
     await tester.pumpAndSettle();
 
     expect(find.byKey(HomeScreen.outletNameKey), findsOneWidget);
     expect(find.text('Anand Bhavan'), findsOneWidget);
     expect(
-      find.descendant(of: find.byType(AppBar), matching: find.text('Orders')),
+      find.descendant(
+        of: find.byType(AppBar),
+        matching: find.text('Menu & Outlet'),
+      ),
       findsOneWidget,
     );
     await _close(tester);
@@ -184,10 +191,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(HomeScreen.outletNameKey), findsNothing);
+    // Falls back to the section label alone — Orders, the landing tab.
     expect(
       find.descendant(
         of: find.byType(AppBar),
-        matching: find.text('Menu & Outlet'),
+        matching: find.text('Orders'),
       ),
       findsOneWidget,
     );
