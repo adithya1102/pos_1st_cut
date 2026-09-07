@@ -16,6 +16,23 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
+/// The request failed at the transport — no connection, DNS failure, or a
+/// timeout. It never reached a reply, so the server's opinion is unknown.
+///
+/// Distinct from a plain [ApiException], which means the server DID answer and
+/// said no. The distinction is load-bearing twice over: only this one is safe
+/// to retry, and only this one can be classified into "offline" versus
+/// "timeout" — which needs [cause], the original error, kept rather than
+/// stringified.
+class NetworkException extends ApiException {
+  NetworkException(this.cause)
+      : super('Network error: unable to reach server. ($cause)');
+
+  /// The original TimeoutException / SocketException / whatever it was.
+  /// For classification and logs — never shown to a customer.
+  final Object cause;
+}
+
 /// The stored session is no longer usable — expired, malformed, or issued by a
 /// DIFFERENT backend (a token signed with another SECRET_KEY fails to decode).
 ///
@@ -101,9 +118,35 @@ class ApiClient {
     );
   }
 
+  /// A read, with ONE silent retry on a transport failure.
+  ///
+  /// GET only, and that restriction is the whole safety argument: a read can be
+  /// repeated with no consequence, whereas retrying a POST could place a second
+  /// order for a request that actually succeeded and only lost its reply. The
+  /// other verbs below deliberately get no retry.
+  ///
+  /// This is where the cold-start bug is fixed. See [AppConfig.coldRetryTimeout]
+  /// for the measurements: the first attempt fails fast for a warm server, and
+  /// the retry is patient enough to outlast a sleeping one, so the customer
+  /// sees a spinner rather than an error they have to dismiss themselves.
   Future<dynamic> get(String path, {Map<String, dynamic>? query}) async {
-    return _send(() =>
-        _client.get(_uri(path, query), headers: _headers()).timeout(AppConfig.requestTimeout));
+    try {
+      return await _send(() => _client
+          .get(_uri(path, query), headers: _headers())
+          .timeout(AppConfig.requestTimeout));
+    } on NetworkException catch (e) {
+      // ONLY a transport failure is retried. An ApiException (4xx/5xx) means
+      // the server answered and repeating the call would just get the same
+      // answer more slowly.
+      if (kDebugMode) {
+        debugPrint('GET $path failed at the transport (${e.cause}); '
+            'retrying once with a ${AppConfig.coldRetryTimeout.inSeconds}s '
+            'budget for a cold backend.');
+      }
+      return await _send(() => _client
+          .get(_uri(path, query), headers: _headers())
+          .timeout(AppConfig.coldRetryTimeout));
+    }
   }
 
   Future<dynamic> post(String path, {Object? body}) async {
@@ -128,7 +171,12 @@ class ApiClient {
     try {
       res = await run();
     } catch (e) {
-      throw ApiException('Network error: unable to reach server. ($e)');
+      // The CAUSE is preserved rather than flattened into a message string.
+      // It used to be interpolated into "Network error: unable to reach
+      // server. ($e)" — which both threw away the type the error classifier
+      // needs to tell a timeout from being offline, AND put a raw
+      // TimeoutException in front of the customer.
+      throw NetworkException(e);
     }
 
     final body = res.body.isEmpty ? null : _tryDecode(res.body);

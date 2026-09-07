@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 
-import '../services/api_client.dart';
+import '../services/app_error.dart';
 import '../services/customer_service.dart';
 import '../state/auth_state.dart';
 import '../state/cart_state.dart';
@@ -15,6 +15,7 @@ import '../theme/widgets/neo_card.dart';
 import '../theme/widgets/page_header.dart';
 import '../widgets/account_button.dart';
 import '../widgets/active_order_card.dart';
+import '../widgets/error_state.dart';
 import 'cart_screen.dart';
 import 'location_screen.dart';
 import 'name_capture_screen.dart';
@@ -65,7 +66,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   List<OrderHistoryEntry>? _orders;
-  String? _error;
+  AppError? _error;
 
   @override
   void initState() {
@@ -100,17 +101,22 @@ class _HomeScreenState extends State<HomeScreen> {
       final orders = await svc.orders(limit: 20);
       if (!mounted) return;
       setState(() => _orders = orders);
-    } on ApiException catch (e) {
+    } catch (e) {
+      // ONE catch, and it classifies rather than wording anything itself.
+      // This used to be two branches that each invented their own string —
+      // `e.message` (which carried the raw exception text straight to the
+      // screen) and a hand-written 'Could not reach the server.'
+      //
+      // The transport retry lives lower down, in ApiClient.get, so by the time
+      // a failure arrives here the cold-start case has already been given its
+      // second chance. Anything reaching this point is worth telling the
+      // customer about.
       if (!mounted) return;
+      final err = AppError.from(e);
+      err.logTo('HomeScreen.orders');
       setState(() {
-        _error = e.message;
+        _error = err;
         // An empty list, NOT the first-run screen: see the guard in build().
-        _orders = const [];
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _error = 'Could not reach the server.';
         _orders = const [];
       });
     }
@@ -276,7 +282,7 @@ class _ReturningHome extends StatelessWidget {
   });
 
   final List<OrderHistoryEntry> orders;
-  final String? error;
+  final AppError? error;
   final VoidCallback onDiscover;
   final VoidCallback onHistory;
   final void Function(OrderHistoryEntry) onTrackOrder;
@@ -309,7 +315,10 @@ class _ReturningHome extends StatelessWidget {
         const SizedBox(height: 20),
 
         if (error != null) ...[
-          _HomeErrorBanner(message: error!, onRetry: onRefresh),
+          // The shared banner, not a bespoke one: content is already on screen
+          // (past orders, the cart), so a failed refresh does not deserve the
+          // full-screen treatment.
+          ErrorBanner(error: error!, onRetry: onRefresh),
           const SizedBox(height: 16),
         ],
 
@@ -708,35 +717,8 @@ class _HowItWorksStep extends StatelessWidget {
   }
 }
 
-/// Inline failure notice for the orders lookup.
-class _HomeErrorBanner extends StatelessWidget {
-  const _HomeErrorBanner({required this.message, required this.onRetry});
-  final String message;
-  final Future<void> Function() onRetry;
+// _HomeErrorBanner was REMOVED. It hand-wrote its own wording and pasted the
+// raw exception text after it ("Couldn't load your orders. $message").
+// ErrorBanner + AppError now do that job for every screen, so the copy
+// lives in one place and the technical detail goes to the log instead.
 
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: c.surfaceAlt,
-        borderRadius: BorderRadius.circular(AppTheme.radius),
-        border: Border.all(color: c.border, width: 2),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.cloud_off_outlined, size: 18, color: c.inkSoft),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              "Couldn't load your orders. $message",
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ),
-          TextButton(onPressed: onRetry, child: const Text('Retry')),
-        ],
-      ),
-    );
-  }
-}

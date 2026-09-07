@@ -170,8 +170,15 @@ void main() {
       ));
       await tester.pump(const Duration(milliseconds: 600));
 
-      expect(find.text('Try again'), findsOneWidget);
+      // Label is now 'Try Again' (capital A): failures render through the
+      // shared ErrorStateView, so the wording is defined once in AppError
+      // rather than per screen. The point of the test is unchanged — a real
+      // load failure offers a RETRY, not the clear-filters action.
+      expect(find.text('Try Again'), findsOneWidget);
       expect(find.text('Show all restaurants'), findsNothing);
+      // And it is classified: a 500 is the server category, not a generic
+      // "could not load restaurants".
+      expect(find.text('We hit a little roadblock.'), findsOneWidget);
     });
   });
 }

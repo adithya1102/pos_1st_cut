@@ -5101,3 +5101,82 @@ keyboard down, DOES leave — so consuming back cannot trap the customer.
 375 passing, 0 failures. Not exercised on a device.
 
 ---
+
+## 2026-09-07 — Cold-start retry, nearby-latency profiling, error layer
+
+### Task 1 — root cause CONFIRMED, and it is not the suspected auth race
+
+The suspected cause (orders fired before the token loaded) is **ruled out**:
+`main.dart:40` does `await api.loadToken()` BEFORE `runApp`, and
+`Firebase.initializeApp()` is awaited above it. Splash then waits 900ms before
+pushing Home. The token cannot be unready.
+
+The real mechanism, measured not guessed:
+
+* backend is Render **free plan** (`render.yaml:10`), which sleeps a service
+  after 15 min idle;
+* a genuinely cold free-plan service **took 32.4s**; the same call warm took
+  **0.27s** (probed carevo-admin-dashboard, idle all day, then immediately
+  again);
+* `AppConfig.requestTimeout` is **20s**, and ApiClient had **no retry**;
+* so a cold open times out -> `catch (_)` -> "Could not reach the server."
+  (home_screen.dart), and a manual retry seconds later succeeds because the
+  server has finished booting. Exactly the reported signature.
+
+### Task 2 — fix
+
+`ApiClient.get` now retries ONCE on `NetworkException` with
+`AppConfig.coldRetryTimeout` (60s). **GET only** — retrying a POST could place
+a second order for a request that succeeded and lost its reply. A 4xx/5xx is
+NOT retried (the server answered).
+
+`_send` now throws `NetworkException(cause)` instead of flattening the error
+into `'Network error: unable to reach server. ($e)'` — that string both leaked
+a raw TimeoutException to the screen AND destroyed the type the classifier
+needs to tell offline from timeout.
+
+**This is mitigation, not a cure.** The real fix is a backend that does not
+sleep — paid instance or a keep-warm ping.
+
+### Task 3 — nearby latency: the API is NOT the slow part
+
+EXPLAIN ANALYZE against prod:
+* outlets query: **Seq Scan, 0.038 ms**, 1 buffer, 6 visible rows. An index
+  would be pointless — Postgres correctly prefers a seq scan at 8 rows.
+* offer summary: **0.101 ms**, one HashAggregate. Already batched —
+  `offer_summary_by_outlet` is explicitly anti-N+1. **No N+1 anywhere.**
+* total DB work ~0.14 ms; payload is 6 rows, ~3KB.
+
+What IS slow: **six full-size Cloudinary originals** fetched per card into a
+~76px box, via raw `Image.network` with no disk cache (no cached_network_image
+dependency). Plus the same cold start as Task 1.
+
+### Task 4 — fix
+
+`cdnThumbnail()` rewrites Cloudinary delivery URLs to
+`w_200,h_200,c_fill,q_auto,f_auto`, so the CDN resizes and picks WebP/AVIF.
+Pure string function, no new dependency. Anything not a recognisable Cloudinary
+URL passes through untouched — it can only make an image cheaper, never
+missing. Persistent disk caching deliberately NOT added: that is a dependency
+decision, and the profiling did not call for it.
+
+### Task 5/6 — error layer, wired into Home + Outlets
+
+`AppError.from(Object)` classifies into offline / timeout / server / request /
+empty / unknown with the exact specified copy; `technical` is kept for
+`logTo()` (debug builds only) and never rendered. `ErrorStateView` (full-screen)
+and `ErrorBanner` (inline, when content is already shown) render it. `empty`
+carries no Try Again — the request worked.
+
+Removed `_HomeErrorBanner`, which hand-wrote its own wording and appended the
+raw exception ("Couldn't load your orders. $message").
+
+### Tests — 397 passing (+22 new), 0 failures
+
+One EXISTING test updated: greeting_and_offers_filter expected the button label
+'Try again'; the shared component uses 'Try Again' per spec. Intent unchanged,
+and strengthened to assert the 500 now classifies as the server category.
+
+Committed. Not exercised on a device.
+
+---

@@ -92,6 +92,23 @@ class AppConfig {
   /// Network request timeout.
   static const Duration requestTimeout = Duration(seconds: 20);
 
+  /// Timeout for the ONE silent retry a read is given after a transport
+  /// failure. Deliberately much longer than [requestTimeout].
+  ///
+  /// The backend runs on Render's free plan, which spins a service down after
+  /// 15 minutes of inactivity and takes roughly a minute to boot it again. A
+  /// cold call was MEASURED at 32.4s against 0.27s warm — comfortably past the
+  /// 20s first attempt, which is why "couldn't load orders" appeared on a cold
+  /// app open and then vanished on a manual retry seconds later: by then the
+  /// server had finished starting.
+  ///
+  /// 20s stays the first attempt so an ordinary warm failure is still reported
+  /// quickly. The retry is what absorbs a cold start.
+  ///
+  /// NOTE: this is mitigation, not a cure. The real fix is a backend that does
+  /// not sleep — a paid instance, or a keep-warm ping.
+  static const Duration coldRetryTimeout = Duration(seconds: 60);
+
   /// App display name.
   static const String appName = 'Gusto Skip';
 }

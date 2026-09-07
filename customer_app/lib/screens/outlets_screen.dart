@@ -4,7 +4,9 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models/outlet.dart';
 import '../models/outlet_sort.dart';
-import '../services/api_client.dart';
+import '../services/app_error.dart';
+import '../services/image_cdn.dart';
+import '../widgets/error_state.dart';
 import '../services/catalog_service.dart';
 import '../services/customer_service.dart';
 import '../services/location_service.dart';
@@ -482,11 +484,15 @@ class _OutletsScreenState extends State<OutletsScreen> {
                       return const Center(child: CircularProgressIndicator());
                     }
                     if (snap.hasError) {
-                      return _ErrorState(
-                        message: snap.error is ApiException
-                            ? (snap.error as ApiException).message
-                            : 'Could not load restaurants.',
-                        onRetry: _retry,
+                      // Classified, not hand-worded. This used to render
+                      // ApiException.message straight out, which is how
+                      // "Network error: unable to reach server.
+                      // (TimeoutException after 0:00:20)" reached customers.
+                      final err = AppError.from(snap.error!);
+                      err.logTo('OutletsScreen.outlets');
+                      return ErrorStateView(
+                        error: err,
+                        onRetry: () async => _retry(),
                       );
                     }
                     if (outlets.isEmpty && all.isNotEmpty) {
@@ -508,11 +514,9 @@ class _OutletsScreenState extends State<OutletsScreen> {
                       );
                     }
                     if (outlets.isEmpty) {
-                      return _ErrorState(
-                        message: picked.isEmpty
-                            ? 'No restaurants found here yet.'
-                            : 'No restaurants in ${picked.join(', ')} yet.',
-                      );
+                      // Genuinely no data, NOT a failure — so it gets the
+                      // empty copy and no Try Again (see AppError.canRetry).
+                      return ErrorStateView(error: AppError.empty());
                     }
                     return RefreshIndicator(
                       onRefresh: () async => _retry(),
@@ -716,7 +720,12 @@ class _OutletCard extends StatelessWidget {
                     // size it would have floated in the middle of the frame.
                     ? Icon(Icons.restaurant, color: c.onAccent, size: 32)
                     : Image.network(
-                        outlet.imageUrl!,
+                        // Resized BY THE CDN rather than by Flutter, via
+                        // cdnThumbnail. The box is ~76px; the source images
+                        // are full-size Cloudinary originals, so six cards
+                        // meant six full-resolution downloads for six
+                        // thumbnails.
+                        cdnThumbnail(outlet.imageUrl)!,
                         fit: BoxFit.cover,
                         errorBuilder: (_, _, _) =>
                             Icon(Icons.restaurant, color: c.onAccent, size: 32),
