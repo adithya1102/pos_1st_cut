@@ -5307,3 +5307,57 @@ ride along, it belongs inside the header delegate.
 ### Tests — 440 passing (+19), 0 failures
 
 ---
+
+## 2026-09-07 (evening) — The position fix is bounded
+
+### Found by running it, not by reading it
+
+Ran the app on the Pixel 7 emulator against a local backend (prod Neon
+DB, read-only) to check the new outlet screen. Everything verified —
+Home goes straight to the list, the picker auto-opens on refusal,
+`?city=Bengaluru&city=Chennai` goes out as repeated params, the search
+bar pins while everything else scrolls, pull-to-refresh preserves the
+filter, zero Flutter exceptions.
+
+But the location chip spinner ran for about a minute. Cause:
+`Geolocator.getCurrentPosition` was called with NO time limit. A grant
+is permission to ask, not a guarantee of an answer — the emulator had
+no GPS source, so nothing below ever completed and the spinner had no
+end state.
+
+### Fix
+
+`LocationService.fixTimeout = 15s`, applied twice at the same deadline:
+
+* `timeLimit:` in LocationSettings — geolocator's own, the one that
+  matters in production, because it lets the platform tear down the
+  native listener rather than leaving it running behind an abandoned
+  Future;
+* a Dart `.timeout()` — because `timeLimit` is honoured per platform
+  implementation, so one that ignores it reintroduces the exact hang.
+  This bound is ours and cannot be ignored.
+
+Either throws TimeoutException, which the ALREADY PRESENT `catch (_)`
+turns into `LocationOutcome.error`. No new outcome, no new branch;
+every caller's "could not get your location" path applies unchanged.
+
+15s and not 10 because timing out is not free — the customer loses the
+auto-detected city and picks one by hand. A slow-but-real fix is worth
+waiting for. Tolerable only because the arrival flow has the list
+loaded behind the spinner: nothing is blocked, only the chip is busy.
+
+Constant lives in LocationService, not AppConfig — it bounds a sensor,
+not a request.
+
+### Tests — 444 passing (+4), 0 failures
+
+The fake's `hangOnPosition` returns a Completer future that never
+completes and DELIBERATELY ignores timeLimit. A fake that honoured it
+would only prove geolocator works; hanging proves the bound is ours.
+Covers: resolves to error just after the deadline (and is still pending
+one second before it), is not recorded as a refusal, does not latch the
+in-flight de-dup, and opens the city picker on the outlet list.
+
+Not exercised on a device — the emulator still runs the pre-fix build.
+
+---

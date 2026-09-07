@@ -12,6 +12,7 @@
 // The load-bearing default is `autoLocate: false`. Opening this screen with no
 // cities and no origin is a legitimate "show me everything", and it must not
 // raise a permission dialog nobody asked for — only the Home CTA passes true.
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -331,6 +332,91 @@ void main() {
   });
 
   // =========================================================================
+  // A granted permission that never produces a fix
+  // =========================================================================
+  group('the position fix is bounded', () {
+    testWidgets('a hanging fix resolves as `error`, not never', (tester) async {
+      // Permission is GRANTED here — this is not a refusal. The platform simply
+      // never answers, which is what an emulator with no GPS source does, and
+      // what a phone indoors can do. Before the timeout this future never
+      // completed and the caller's spinner ran forever.
+      fake.permission = LocationPermission.whileInUse;
+      fake.hangOnPosition = true;
+
+      LocationResult? result;
+      // Not awaited: awaiting a call that may never return is the very failure
+      // under test, and would hang the test rather than fail it.
+      service.getCurrentLocation(userInitiated: true).then((r) => result = r);
+
+      await tester.pump();
+      expect(fake.positionRequested, isTrue,
+          reason: 'the fix must actually have been asked for');
+      expect(result, isNull, reason: 'it should still be waiting');
+
+      // One tick short of the deadline: still waiting, so the bound is the
+      // timeout firing and not something else resolving early.
+      await tester.pump(LocationService.fixTimeout - const Duration(seconds: 1));
+      expect(result, isNull);
+
+      await tester.pump(const Duration(seconds: 2));
+      expect(result, isNotNull, reason: 'the timeout must have fired');
+      expect(result!.outcome, LocationOutcome.error);
+      expect(result!.hasCoordinates, isFalse);
+    });
+
+    testWidgets('a timeout is NOT recorded as a refusal', (tester) async {
+      // The distinction is load-bearing: `isRefusal` drives copy about the
+      // customer having said no, and nobody said no here.
+      fake.permission = LocationPermission.whileInUse;
+      fake.hangOnPosition = true;
+
+      LocationResult? result;
+      service.getCurrentLocation(userInitiated: true).then((r) => result = r);
+      await tester.pump(LocationService.fixTimeout + const Duration(seconds: 1));
+
+      expect(result!.isRefusal, isFalse);
+      // The grant survives — the permission was never the problem.
+      expect(service.hasPermission, isTrue);
+    });
+
+    testWidgets('a later attempt can still succeed', (tester) async {
+      // The in-flight de-dup must not latch a timed-out call forever.
+      fake.permission = LocationPermission.whileInUse;
+      fake.hangOnPosition = true;
+
+      LocationResult? first;
+      service.getCurrentLocation(userInitiated: true).then((r) => first = r);
+      await tester.pump(LocationService.fixTimeout + const Duration(seconds: 1));
+      expect(first!.outcome, LocationOutcome.error);
+
+      fake.hangOnPosition = false;
+      final second = await service.getCurrentLocation(userInitiated: true);
+      expect(second.outcome, LocationOutcome.granted);
+      expect(second.hasCoordinates, isTrue);
+    });
+
+    testWidgets('on the outlet list it opens the city picker', (tester) async {
+      // The whole point of routing a timeout to `error`: it lands on the same
+      // fallback every other non-granted outcome already uses. No new branch.
+      fake.permission = LocationPermission.whileInUse;
+      fake.hangOnPosition = true;
+
+      await tester.pumpWidget(
+          _host(const OutletsScreen(autoLocate: true), location: service));
+      await tester.pump();
+
+      // Still waiting: no picker yet, so its appearance below is caused by the
+      // timeout rather than by the screen opening it unconditionally.
+      expect(find.byKey(const Key('city_picker_sheet')), findsNothing);
+
+      await tester.pump(LocationService.fixTimeout + const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('city_picker_sheet')), findsOneWidget);
+    });
+  });
+
+  // =========================================================================
   // Exclusivity — cities REPLACE a radius
   // =========================================================================
   group('choosing cities clears the radius', () {
@@ -499,6 +585,19 @@ class _FakeGeolocator extends GeolocatorPlatform {
   /// How many times the OS dialog was actually raised.
   int requestCount = 0;
 
+  /// Permission granted, position never arrives — indoors, or an emulator with
+  /// no GPS source.
+  ///
+  /// Deliberately ignores `timeLimit` and never completes. That is the whole
+  /// point: `timeLimit` is enforced per platform implementation, so a fake that
+  /// honoured it would only prove geolocator works. Hanging proves the bound is
+  /// LocationService's own.
+  bool hangOnPosition = false;
+
+  /// Set when a fix is asked for, so the test can prove the request really was
+  /// made rather than short-circuited earlier.
+  bool positionRequested = false;
+
   @override
   Future<bool> isLocationServiceEnabled() async => serviceEnabled;
 
@@ -516,8 +615,13 @@ class _FakeGeolocator extends GeolocatorPlatform {
   }
 
   @override
-  Future<Position> getCurrentPosition({LocationSettings? locationSettings}) async =>
-      Position(
+  Future<Position> getCurrentPosition({LocationSettings? locationSettings}) async {
+    positionRequested = true;
+    if (hangOnPosition) return Completer<Position>().future;
+    return _position();
+  }
+
+  Position _position() => Position(
         latitude: 12.9716,
         longitude: 77.5946,
         timestamp: DateTime.fromMillisecondsSinceEpoch(0),

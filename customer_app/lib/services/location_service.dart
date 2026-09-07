@@ -45,6 +45,23 @@ class LocationResult {
 /// any screen having asked — the app-resume re-check does exactly that — and a
 /// screen showing "location is off" has to stop showing it once it isn't.
 class LocationService extends ChangeNotifier {
+  /// How long a position fix is given before it is called a failure.
+  ///
+  /// A grant is permission to ask, not a guarantee of an answer. A warm fused
+  /// fix comes back in a second or two; a genuine cold one outdoors can take
+  /// five to fifteen. Past that it is usually not coming at all — indoors, or
+  /// on hardware with no GPS source — and continuing to wait only holds a
+  /// spinner in front of someone who could already be choosing a city.
+  ///
+  /// 15s rather than something tighter because timing out is not free: the
+  /// customer loses the auto-detected city and has to pick one by hand, so a
+  /// slow-but-real fix is worth waiting for. It is only cheap BECAUSE the
+  /// fallback is good — every caller of this service has a manual path.
+  ///
+  /// Lives here, not in AppConfig, because it bounds a sensor, not a request.
+  /// AppConfig's timeouts are all about the network.
+  static const Duration fixTimeout = Duration(seconds: 15);
+
   /// Last status read from the OS.
   LocationPermission? _permission;
   LocationPermission? get permission => _permission;
@@ -217,15 +234,38 @@ class LocationService extends ChangeNotifier {
         );
       }
 
+      // BOUNDED. A granted permission is not a fix: indoors, or with no recent
+      // cached position, the platform can sit on this call indefinitely. That
+      // was observed on an emulator with no GPS source — the caller's spinner
+      // simply ran forever, because nothing below it ever completed.
+      //
+      // Two mechanisms, same deadline, deliberately:
+      //
+      //  * `timeLimit` is geolocator's own, and is the one that matters in
+      //    production — it lets the platform tear down the native listener
+      //    rather than leaving it running behind an abandoned Future.
+      //  * the Dart `.timeout` makes the bound OURS. `timeLimit` is honoured
+      //    by each platform implementation separately, so a platform that
+      //    ignores it reintroduces exactly the hang this fixes. This one
+      //    cannot be ignored.
+      //
+      // Whichever fires first throws TimeoutException, which the catch below
+      // already turns into [LocationOutcome.error] — no new outcome, and every
+      // caller's existing "could not get your location" path applies unchanged.
       final position = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.medium),
-      );
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.medium,
+          timeLimit: fixTimeout,
+        ),
+      ).timeout(fixTimeout);
       return LocationResult(
         LocationOutcome.granted,
         latitude: position.latitude,
         longitude: position.longitude,
       );
     } catch (_) {
+      // Timeouts land here too, as an `error` — the outcome that already means
+      // "we could not get a position", which is exactly what a timeout is.
       return const LocationResult(LocationOutcome.error);
     } finally {
       if (changed) notifyListeners();
