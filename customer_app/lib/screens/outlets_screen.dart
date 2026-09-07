@@ -116,7 +116,6 @@ class _OutletsScreenState extends State<OutletsScreen> {
   /// mutually exclusive by product decision.
   late Set<String> _cities;
 
-
   /// Active radius mode, or null when browsing by city instead.
   ///
   /// Near Me is the default, but ONLY when the customer did not arrive having
@@ -240,6 +239,20 @@ class _OutletsScreenState extends State<OutletsScreen> {
 
   /// Guards the arrival flow so it runs once per screen, not once per rebuild.
   bool _bootstrapped = false;
+
+  /// The most recent loaded list, cached OUTSIDE the FutureBuilder.
+  ///
+  /// The pinned search header holds a callback that opens the sort sheet, and
+  /// the sort sheet needs the loaded outlets to decide whether the Nearest
+  /// option already has distances to work with. A header delegate is only
+  /// rebuilt when [_PinnedSearchHeader.shouldRebuild] says so, so a callback
+  /// that CLOSED OVER the list would keep whichever list existed when the
+  /// delegate was made — the empty one from the first frame — and every sort
+  /// would then look distance-less and ask for location it did not need.
+  ///
+  /// Reading a field instead means the callback sees the current list whenever
+  /// it is actually invoked.
+  List<Outlet> _loaded = const [];
 
   @override
   void initState() {
@@ -529,7 +542,9 @@ class _OutletsScreenState extends State<OutletsScreen> {
   }
 
   Future<List<Outlet>> _load() {
-    return context.read<CatalogService>().fetchOutlets(
+    final pending = context
+        .read<CatalogService>()
+        .fetchOutlets(
           lat: _lat,
           lng: _lng,
           // The chosen cities ARE the filter. They previously only fed the
@@ -539,10 +554,125 @@ class _OutletsScreenState extends State<OutletsScreen> {
           // measure from, so the mode stays selected in the UI but sends
           // nothing — the list is then simply unfiltered rather than empty.
           radiusKm: (_lat != null && _lng != null) ? _radiusMode?.radiusKm : null,
-        );
+        )
+        // Cached for the pinned header's sort callback — see [_loaded].
+        .then((list) {
+      _loaded = list;
+      return list;
+    });
+
+    // Observe the failure here, TOO, and throw the result away.
+    //
+    // The FutureBuilder is the thing that renders the error, but it only
+    // subscribes on the next build. A request that fails before that frame —
+    // which is what a pull-to-refresh against a down backend does, since
+    // setState only schedules a rebuild — would reject with nobody listening
+    // and be reported as an unhandled async error. Attaching a handler marks
+    // it observed; `pending` still carries the real error to the builder.
+    pending.catchError((Object _) => const <Outlet>[]);
+
+    return pending;
   }
 
-  void _retry() => setState(() => _future = _load());
+  /// A BLOCK body, not an arrow.
+  ///
+  /// `setState(() => _future = _load())` returns the assigned Future out of the
+  /// closure, and setState asserts on a callback that returns one. Nothing
+  /// caught it while the only RefreshIndicator sat in the success branch and no
+  /// test ever pulled it; wiring refresh into every state made it reachable.
+  void _retry() {
+    setState(() {
+      _future = _load();
+    });
+  }
+
+  /// The list, or whichever of the four non-list states applies.
+  ///
+  /// Every placeholder is a [SliverFillRemaining] with `hasScrollBody: false`.
+  /// Both halves are deliberate: *FillRemaining* so a one-line message still
+  /// centres in the space left under the header rather than clinging to it, and
+  /// *hasScrollBody: false* so the box does NOT introduce a scrollable of its
+  /// own — the enclosing CustomScrollView is the only one, which is what lets
+  /// the RefreshIndicator work from these states. That is also why
+  /// [ErrorStateView] is asked for its non-scrolling shape here.
+  List<Widget> _contentSlivers({
+    required bool loading,
+    required AsyncSnapshot<List<Outlet>> snap,
+    required List<Outlet> all,
+    required List<Outlet> outlets,
+  }) {
+    if (loading) {
+      return const [
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      ];
+    }
+
+    if (snap.hasError) {
+      // Classified, not hand-worded. This used to render ApiException.message
+      // straight out, which is how "Network error: unable to reach server.
+      // (TimeoutException after 0:00:20)" reached customers.
+      final err = AppError.from(snap.error!);
+      err.logTo('OutletsScreen.outlets');
+      return [
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: ErrorStateView(
+            error: err,
+            scrollable: false,
+            onRetry: () async => _retry(),
+          ),
+        ),
+      ];
+    }
+
+    if (outlets.isEmpty && all.isNotEmpty) {
+      // Filtered to nothing — distinct from "no restaurants here", because the
+      // fix is different: clear a chip.
+      return [
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: _ErrorState(
+            message: 'No restaurants match those filters.',
+            // Nothing failed — the filter worked and matched none — so the
+            // button clears the filters rather than retrying.
+            retryLabel: 'Show all restaurants',
+            onRetry: () => setState(() {
+              _search.clear();
+              _offersOnly = false;
+              // Sort is not cleared: it changes ORDER, never membership, so it
+              // can never be why the list is empty. Resetting it would move the
+              // list under someone who was only trying to clear a filter.
+            }),
+          ),
+        ),
+      ];
+    }
+
+    if (outlets.isEmpty) {
+      // Genuinely no data, NOT a failure — so it gets the empty copy and no
+      // Try Again (see AppError.canRetry).
+      return [
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: ErrorStateView(error: AppError.empty(), scrollable: false),
+        ),
+      ];
+    }
+
+    return [
+      SliverPadding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+        sliver: SliverList.separated(
+          itemCount: outlets.length,
+          separatorBuilder: (_, _) => const SizedBox(height: 18),
+          itemBuilder: (_, i) => _OutletCard(outlet: outlets[i]),
+        ),
+      ),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -569,9 +699,10 @@ class _OutletsScreenState extends State<OutletsScreen> {
         actions: careVoActions(),
       ),
       body: SafeArea(
-        // The FutureBuilder wraps the WHOLE column, not just the list, so the
-        // result count can sit under the search box — it needs the filtered
-        // length, which only exists inside the builder.
+        // The FutureBuilder still wraps EVERYTHING, not just the list. That was
+        // true of the old Column and matters just as much here: the result
+        // count needs the filtered length, which only exists inside the
+        // builder, and it is a sliver several positions above the list.
         child: FutureBuilder<List<Outlet>>(
           future: _future,
           builder: (context, snap) {
@@ -581,175 +712,261 @@ class _OutletsScreenState extends State<OutletsScreen> {
             final searching = _search.text.trim().isNotEmpty;
             final filtering = searching || _offersOnly;
 
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const PageHeader('Pick a spot'),
-                      const SizedBox(height: 8),
-                      // The location line is now the CONTROL for changing it,
-                      // not just a readout. It was the only thing on screen
-                      // naming where the list came from, so it is where someone
-                      // looks when that is the thing they want to change —
-                      // which previously meant going back to a screen that no
-                      // longer exists on this route.
-                      _LocationChip(
-                        label: subtitle,
-                        busy: _locating,
-                        onTap: _openCityPicker,
+            // ONE RefreshIndicator around the WHOLE scroll view, not around the
+            // success branch alone.
+            //
+            // It used to wrap only the ListView, so the three states a customer
+            // most wants to refresh FROM — a load error, an empty list, a
+            // filtered-to-nothing list — were the exact three where pulling did
+            // nothing. Wrapping the CustomScrollView fixes that for every state
+            // at once, and is why the placeholder slivers below are
+            // SliverFillRemaining rather than plain boxes: they keep the scroll
+            // view scrollable when there is nothing to scroll.
+            return RefreshIndicator(
+              onRefresh: () async => _retry(),
+              child: CustomScrollView(
+                // Required for pull-to-refresh on a SHORT list. Without it a
+                // viewport with little content refuses the overscroll drag and
+                // the indicator never appears.
+                physics: const AlwaysScrollableScrollPhysics(),
+                slivers: [
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const PageHeader('Pick a spot'),
+                          const SizedBox(height: 8),
+                          // The location line is now the CONTROL for changing
+                          // it, not just a readout. It was the only thing on
+                          // screen naming where the list came from, so it is
+                          // where someone looks when that is the thing they
+                          // want to change — which previously meant going back
+                          // to a screen that no longer exists on this route.
+                          _LocationChip(
+                            label: subtitle,
+                            busy: _locating,
+                            onTap: _openCityPicker,
+                          ),
+                          const SizedBox(height: 10),
+                          // How far the list reaches. Sits under the location
+                          // line because it qualifies it: "closest to you" is
+                          // only meaningful once "how close" has an answer.
+                          _RadiusToggle(
+                            selected: _radiusMode,
+                            onSelect: _setRadiusMode,
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 10),
-                      // How far the list reaches. Sits under the location line
-                      // because it qualifies it: "closest to you" is only
-                      // meaningful once "how close" has an answer.
-                      _RadiusToggle(
-                        selected: _radiusMode,
-                        onSelect: _setRadiusMode,
-                      ),
-                    ],
-                  ),
-                ),
-                const _ActiveOrderBanner(),
-                // ---- search + filters (v2) ----
-                // Search + the collapsed filter control, on ONE row.
-                //
-                // The filter lives here rather than under the search box
-                // because collapsing the sort bar was about reclaiming
-                // vertical space — putting the replacement on its own row
-                // would have given most of it straight back.
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Expanded(
-                        child: NeoTextField(
-                          key: const Key('outlet_search'),
-                          controller: _search,
-                          hintText: 'Search restaurants or areas',
-                          prefixIcon: Icons.search,
-                          onChanged: (_) => setState(() {}),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      _FilterButton(
-                        // The badge is driven by "is a non-default sort
-                        // applied", which is the only thing the collapsed
-                        // control can no longer show by being visible.
-                        active: _sort != OutletSort.initial,
-                        busy: _locating,
-                        onTap: () => _openSortSheet(all),
-                      ),
-                    ],
-                  ),
-                ),
-                // Result count, DIRECTLY under the search box.
-                //
-                // Position is the whole point. A count at the foot of the list
-                // is under the raised keyboard at exactly the moment it is
-                // wanted — while typing — so it is pinned here instead, in the
-                // top third of the screen where nothing covers it.
-                //
-                // Only while a filter is active: "6 restaurants" over an
-                // unfiltered list is a number nobody asked for.
-                if (filtering && !loading)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                    child: Text(
-                      key: const Key('outlet_result_count'),
-                      outlets.length == 1
-                          ? '1 restaurant'
-                          : '${outlets.length} restaurants',
-                      style: textTheme.bodySmall?.copyWith(color: c.inkSoft),
                     ),
                   ),
-                // NO horizontal sort bar here any more — the ten options moved
-                // behind the filter button on the search row above, into
-                // [_SortSheet]. The bar cost ~52px of vertical space on every
-                // screen for a control most customers touch once, if ever.
-                //
-                // The offers FILTER stays visible and is separate from the
-                // offers SORT: one hides outlets without an offer, the other
-                // just floats them up.
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Row(
-                    children: [
-                      NeoChip(
-                        key: const Key('chip_offers'),
-                        label: 'Offers only',
-                        icon: Icons.local_offer_outlined,
-                        selected: _offersOnly,
-                        onTap: () => setState(() => _offersOnly = !_offersOnly),
-                      ),
-                      // NO "Open now" chip here — see the comment by the
-                      // (removed) `_openOnly` field above for why.
-                    ],
+                  // Scrolls with everything else now, and is no longer capped.
+                  // See [_ActiveOrderBanner].
+                  const SliverToBoxAdapter(child: _ActiveOrderBanner()),
+                  // ---- search + filters (v2) ----
+                  // THE one pinned element on the screen. Everything above
+                  // scrolls up under it; everything below scrolls beneath it.
+                  //
+                  // Its POSITION is unchanged — still between the active-order
+                  // strip and the result count — so the screen reads exactly as
+                  // it did on arrival. What changed is that scrolling no longer
+                  // takes it away: searching is the one thing on this screen a
+                  // customer does *after* looking at the list, which is the
+                  // moment the old layout had just scrolled the field off.
+                  SliverPersistentHeader(
+                    pinned: true,
+                    delegate: _PinnedSearchHeader(
+                      controller: _search,
+                      // The badge is driven by "is a non-default sort applied",
+                      // which is the only thing the collapsed control can no
+                      // longer show by being visible.
+                      filterActive: _sort != OutletSort.initial,
+                      busy: _locating,
+                      onChanged: () => setState(() {}),
+                      // Reads [_loaded] at TAP time, not at build time — the
+                      // delegate outlives the build that created it.
+                      onFilterTap: () => _openSortSheet(_loaded),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 8),
-                Expanded(
-                  child: Builder(builder: (context) {
-                    if (loading) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    if (snap.hasError) {
-                      // Classified, not hand-worded. This used to render
-                      // ApiException.message straight out, which is how
-                      // "Network error: unable to reach server.
-                      // (TimeoutException after 0:00:20)" reached customers.
-                      final err = AppError.from(snap.error!);
-                      err.logTo('OutletsScreen.outlets');
-                      return ErrorStateView(
-                        error: err,
-                        onRetry: () async => _retry(),
-                      );
-                    }
-                    if (outlets.isEmpty && all.isNotEmpty) {
-                      // Filtered to nothing — distinct from "no restaurants
-                      // here", because the fix is different: clear a chip.
-                      return _ErrorState(
-                        message: 'No restaurants match those filters.',
-                        // Nothing failed — the filter worked and matched none —
-                        // so the button clears the filters rather than retrying.
-                        retryLabel: 'Show all restaurants',
-                        onRetry: () => setState(() {
-                          _search.clear();
-                          _offersOnly = false;
-                          // Sort is not cleared: it changes ORDER, never
-                          // membership, so it can never be why the list is
-                          // empty. Resetting it would move the list under
-                          // someone who was only trying to clear a filter.
-                        }),
-                      );
-                    }
-                    if (outlets.isEmpty) {
-                      // Genuinely no data, NOT a failure — so it gets the
-                      // empty copy and no Try Again (see AppError.canRetry).
-                      return ErrorStateView(error: AppError.empty());
-                    }
-                    return RefreshIndicator(
-                      onRefresh: () async => _retry(),
-                      child: ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
-                        itemCount: outlets.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 18),
-                        itemBuilder: (_, i) => _OutletCard(outlet: outlets[i]),
+                  // Result count, DIRECTLY under the search box.
+                  //
+                  // Position is the whole point. A count at the foot of the
+                  // list is under the raised keyboard at exactly the moment it
+                  // is wanted — while typing — so it sits here instead, right
+                  // beneath the field, where the pinned header keeps it in the
+                  // top third of the screen.
+                  //
+                  // Only while a filter is active: "6 restaurants" over an
+                  // unfiltered list is a number nobody asked for.
+                  //
+                  // `outlets` is the FILTERED list, computed by the enclosing
+                  // FutureBuilder — which is why that builder still wraps the
+                  // whole scroll view rather than just the list sliver.
+                  if (filtering && !loading)
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                        child: Text(
+                          key: const Key('outlet_result_count'),
+                          outlets.length == 1
+                              ? '1 restaurant'
+                              : '${outlets.length} restaurants',
+                          style: textTheme.bodySmall?.copyWith(color: c.inkSoft),
+                        ),
                       ),
-                    );
-                  }),
-                ),
-              ],
+                    ),
+                  // NO horizontal sort bar here any more — the ten options
+                  // moved behind the filter button on the search row above,
+                  // into [_SortSheet]. The bar cost ~52px of vertical space on
+                  // every screen for a control most customers touch once.
+                  //
+                  // The offers FILTER stays visible and is separate from the
+                  // offers SORT: one hides outlets without an offer, the other
+                  // just floats them up.
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Row(
+                        children: [
+                          NeoChip(
+                            key: const Key('chip_offers'),
+                            label: 'Offers only',
+                            icon: Icons.local_offer_outlined,
+                            selected: _offersOnly,
+                            onTap: () =>
+                                setState(() => _offersOnly = !_offersOnly),
+                          ),
+                          // NO "Open now" chip here — see the comment by the
+                          // (removed) `_openOnly` field above for why.
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SliverToBoxAdapter(child: SizedBox(height: 8)),
+                  ..._contentSlivers(
+                    loading: loading,
+                    snap: snap,
+                    all: all,
+                    outlets: outlets,
+                  ),
+                ],
+              ),
             );
           },
         ),
       ),
     );
   }
+}
+
+/// The search row, pinned to the top of the scroll view.
+///
+/// ## Why a SliverPersistentHeader and not a SliverAppBar
+///
+/// SliverAppBar is an APP BAR — it brings a leading/title/actions layout,
+/// toolbar semantics, a system-overlay style and back-button handling, none of
+/// which this row wants, and this Scaffold already has a real [AppBar] above it
+/// ('Nearby'). A second one would announce itself to screen readers as another
+/// toolbar and put two app bars on one screen. SliverPersistentHeader is the
+/// primitive underneath it: pinning behaviour, nothing else. The row it renders
+/// is the same Row as before, moved verbatim.
+///
+/// The extent is fixed and stated in parts below rather than measured, because
+/// a delegate has to declare its height before its child is laid out.
+class _PinnedSearchHeader extends SliverPersistentHeaderDelegate {
+  const _PinnedSearchHeader({
+    required this.controller,
+    required this.filterActive,
+    required this.busy,
+    required this.onChanged,
+    required this.onFilterTap,
+  });
+
+  final TextEditingController controller;
+  final bool filterActive;
+  final bool busy;
+  final VoidCallback onChanged;
+  final VoidCallback onFilterTap;
+
+  /// Natural height of the search field: 16+16 content padding around a
+  /// single line of bodyLarge, plus the 2px border top and bottom. Taller than
+  /// [_FilterButton]'s 56, so it is the one that sets the row.
+  ///
+  /// A delegate must declare its extent BEFORE its child is laid out, so this
+  /// cannot be measured — it is stated. [_headroom] is what keeps that from
+  /// being fragile, and the row is top-aligned rather than stretched so a
+  /// mismatch shows as space, never as an overflow.
+  static const double _rowHeight = 62;
+
+  /// The Neo hard shadow hangs 3px below the field and is part of the control.
+  static const double _shadow = 3;
+
+  /// Slack for a slightly taller row than [_rowHeight] predicts — a larger
+  /// system text scale being the realistic cause.
+  static const double _headroom = 6;
+
+  static const double _padTop = 4;
+  static const double _padBottom = 8;
+
+  static const double extent =
+      _rowHeight + _shadow + _headroom + _padTop + _padBottom;
+
+  @override
+  double get minExtent => extent;
+
+  @override
+  double get maxExtent => extent;
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+    // OPAQUE, and that is not decoration: pinned means content passes
+    // underneath, so a transparent header would have outlet cards sliding
+    // visibly behind the search field.
+    return Material(
+      color: Theme.of(context).scaffoldBackgroundColor,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, _padTop, 20, _padBottom),
+        // Top-aligned, NOT stretched. A delegate hands its child a tight box of
+        // exactly [extent]; letting the Row take its natural height inside that
+        // box means the leftover shows up as the shadow gap and [_headroom]
+        // rather than as a RenderFlex overflow.
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: NeoTextField(
+                  key: const Key('outlet_search'),
+                  controller: controller,
+                  hintText: 'Search restaurants or areas',
+                  prefixIcon: Icons.search,
+                  onChanged: (_) => onChanged(),
+                ),
+              ),
+              const SizedBox(width: 10),
+              _FilterButton(
+                active: filterActive,
+                busy: busy,
+                onTap: onFilterTap,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  bool shouldRebuild(_PinnedSearchHeader old) =>
+      // NOT the controller's TEXT: the field owns that, and rebuilding the
+      // header on every keystroke would rebuild the TextField under the cursor.
+      // The screen rebuilds for the result count anyway; this only has to catch
+      // changes to what the header itself renders.
+      old.controller != controller ||
+      old.filterActive != filterActive ||
+      old.busy != busy;
 }
 
 /// The "where am I looking" line under the page title — a readout that is also
@@ -1326,41 +1543,39 @@ class _ActiveOrderBannerState extends State<_ActiveOrderBanner> {
     // codes were reachable only by navigating — which is precisely the moment
     // someone is standing at a counter being asked for one. Collapsing several
     // codes behind a count made the common multi-order case the slowest.
-    // Height-capped and internally scrollable.
     //
-    // This stack sits ABOVE the outlet list, outside its scroll view, so its
-    // height is taken straight out of the list's. Ticket cards are much taller
-    // than the single banner they replaced, and three concurrent orders were
-    // enough to squeeze the restaurant list down to a few pixels — the orders
-    // pushed the thing you came to the screen to do off the bottom. Capping it
-    // at ~38% of the viewport keeps both usable no matter how many orders are
-    // live; past the cap the stack scrolls on its own.
-    final maxH = MediaQuery.sizeOf(context).height * 0.38;
+    // ## No height cap, and no scroll view of its own
+    //
+    // Both used to be here: a maxHeight of 38% of the viewport wrapped around
+    // an internally-scrolling ListView. Neither was about active orders. They
+    // existed because this strip sat ABOVE the outlet list and OUTSIDE its
+    // scroll view, so every pixel it took came straight out of the list's —
+    // three concurrent orders squeezed the restaurant list down to almost
+    // nothing, and the cap was the patch.
+    //
+    // The strip is now a sliver in the screen's one CustomScrollView, so it has
+    // no fixed space to run out of: it is as tall as its orders and the whole
+    // page scrolls. That removes the reason for the cap, and removes the
+    // scrollable that came with it — a ListView here would now be a second
+    // vertical scroll view inside the first, which is the arrangement that
+    // makes a drag land in whichever one wins the gesture arena. A plain Column
+    // has no such ambiguity.
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxHeight: maxH),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (_active.length > 1) ...[
-              Text('${_active.length} orders in progress',
-                  style: textTheme.titleSmall),
-              const SizedBox(height: 8),
-            ],
-            Flexible(
-              child: ListView.separated(
-                shrinkWrap: true,
-                padding: EdgeInsets.zero,
-                itemCount: _active.length,
-                separatorBuilder: (_, _) => const SizedBox(height: 10),
-                itemBuilder: (_, i) =>
-                    ActiveOrderCard(order: _active[i], onChanged: _load),
-              ),
-            ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_active.length > 1) ...[
+            Text('${_active.length} orders in progress',
+                style: textTheme.titleSmall),
+            const SizedBox(height: 8),
           ],
-        ),
+          for (var i = 0; i < _active.length; i++) ...[
+            if (i > 0) const SizedBox(height: 10),
+            ActiveOrderCard(order: _active[i], onChanged: _load),
+          ],
+        ],
       ),
     );
   }

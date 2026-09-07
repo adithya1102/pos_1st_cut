@@ -24,14 +24,28 @@ class ErrorStateView extends StatelessWidget {
     required this.error,
     this.onRetry,
     this.retryLabel = 'Try Again',
+    this.scrollable = true,
   });
 
   final AppError error;
+
+  /// Whether to provide its own scroll view.
+  ///
+  /// True standalone: the copy has to survive a short screen or a raised
+  /// keyboard, and a parent [RefreshIndicator] needs a scrollable to attach to.
+  ///
+  /// FALSE when this is already inside one — a sliver, say. Two scrollables on
+  /// the same axis is not a layout detail: the inner one wins the drag, so the
+  /// outer RefreshIndicator never sees the gesture and pull-to-refresh silently
+  /// stops working in exactly the state where retrying matters most.
+  final bool scrollable;
 
   /// Re-fires the original request. Required in practice for everything except
   /// [AppErrorKind.empty] — see [AppError.canRetry].
   final Future<void> Function()? onRetry;
   final String retryLabel;
+
+  static const _padding = EdgeInsets.fromLTRB(28, 40, 28, 40);
 
   @override
   Widget build(BuildContext context) {
@@ -39,13 +53,7 @@ class ErrorStateView extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
     final showRetry = error.canRetry && onRetry != null;
 
-    return Center(
-      child: SingleChildScrollView(
-        // Scrollable so it still works under a keyboard or on a short screen,
-        // and so a parent RefreshIndicator keeps a scrollable to attach to.
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(28, 40, 28, 40),
-        child: Column(
+    final content = Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(_icon, size: 46, color: c.inkSoft),
@@ -73,7 +81,17 @@ class ErrorStateView extends StatelessWidget {
               ),
             ],
           ],
-        ),
+        );
+
+    if (!scrollable) {
+      return Center(child: Padding(padding: _padding, child: content));
+    }
+
+    return Center(
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: _padding,
+        child: content,
       ),
     );
   }

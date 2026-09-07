@@ -5238,3 +5238,72 @@ One real bug found by the new tests: the added chevron pushed
 Flexible + ellipsis, which it needed anyway.
 
 ---
+
+## 2026-09-07 (later still) — OutletsScreen is one scroll region, search pinned
+
+### Before
+
+A Column of five fixed children over an `Expanded(ListView)`: header,
+active-order strip, search row, result count and offers chip all held
+their space permanently; only the cards scrolled. Two consequences,
+both now removed rather than mitigated:
+
+* the active-order strip was capped at 38% of the viewport around an
+  internally-scrolling ListView, because every pixel it took came out
+  of the list's — three concurrent orders squeezed the restaurant list
+  to almost nothing;
+* the RefreshIndicator wrapped only the SUCCESS branch, so pulling did
+  nothing in the error, empty and filtered-to-nothing states — the
+  three a customer would most want to refresh from.
+
+### After
+
+One `CustomScrollView` with `AlwaysScrollableScrollPhysics`, one
+RefreshIndicator around all of it, and the search row pinned via
+`SliverPersistentHeader`.
+
+NOT SliverAppBar: that is an app bar — leading/title/actions layout,
+toolbar semantics, back-button handling — and this Scaffold already has
+a real AppBar ('Nearby'). A second would put two toolbars on one screen
+and announce itself as one to a screen reader. SliverPersistentHeader is
+the primitive underneath: pinning, nothing else.
+
+Sliver order is UNCHANGED from the old Column, so the screen reads
+identically at rest; the field just stops scrolling away.
+
+Delegate extent is stated in parts (62 row + 3 shadow + 6 headroom + 12
+padding) because a delegate must declare its height before its child is
+laid out. The row is `Align`ed to the top rather than stretched, so a
+mismatch shows as space, not a RenderFlex overflow. Guessing 56 (copied
+from _FilterButton's comment) was 3px short and broke 81 tests.
+
+Placeholders are `SliverFillRemaining(hasScrollBody: false)`, and
+ErrorStateView gained a `scrollable` flag (default true, unchanged
+standalone) set false inside the sliver — its own SingleChildScrollView
+would otherwise win the drag and the RefreshIndicator would never fire.
+
+### Three real bugs found on the way, all pre-existing
+
+1. Stale closure: `shouldRebuild` does not compare callbacks, so
+   `onFilterTap: () => _openSortSheet(all)` kept the empty first-frame
+   list forever — every sort looked distance-less and asked for a
+   location it did not need. Now reads a `_loaded` field at tap time.
+2. `setState(() => _future = _load())` returns the assigned Future out
+   of the closure, which setState asserts on. Unreachable while the
+   only RefreshIndicator sat in the success branch. Block body now.
+3. Unhandled async error: setState only SCHEDULES a rebuild, so a
+   request rejecting before that frame had no listener — pull-to-refresh
+   against a down backend reported an unhandled zone error. `_load` now
+   attaches an observing catchError; the builder still gets the error.
+
+### Known trade-off
+
+The result count is no longer pinned — it scrolls with the content. That
+follows from pinning exactly one thing, but partly undoes its original
+reason for being under the field (visible while typing, above the
+keyboard). Recorded in a test rather than papered over. If it should
+ride along, it belongs inside the header delegate.
+
+### Tests — 440 passing (+19), 0 failures
+
+---
