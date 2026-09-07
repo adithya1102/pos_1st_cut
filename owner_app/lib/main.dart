@@ -7,6 +7,7 @@ import 'config/app_config.dart';
 import 'services/api_client.dart';
 import 'services/auth_service.dart';
 import 'services/location_service.dart';
+import 'services/menu_ocr_service.dart';
 import 'services/menu_service.dart';
 import 'services/offer_service.dart';
 import 'services/order_service.dart';
@@ -71,6 +72,9 @@ class GustoOwnerApp extends StatelessWidget {
         // one-prompt latch inside is app-wide bookkeeping, and a per-screen
         // instance would reset it and re-raise the OS dialog.
         ChangeNotifierProvider<LocationService>(create: (_) => LocationService()),
+        // Menu photo import. Holds no state — it uploads and returns
+        // suggestions; the review screen owns them until they are approved.
+        Provider(create: (_) => MenuOcrService(apiClient)),
       ],
       child: MaterialApp(
         title: AppConfig.appName,

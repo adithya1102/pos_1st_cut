@@ -24,6 +24,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:owner_app/screens/home_screen.dart';
 import 'package:owner_app/services/api_client.dart';
 import 'package:owner_app/services/auth_service.dart';
+import 'package:owner_app/services/menu_ocr_service.dart';
 import 'package:owner_app/services/menu_service.dart';
 import 'package:owner_app/services/offer_service.dart';
 import 'package:owner_app/services/order_service.dart';
@@ -71,6 +72,11 @@ Widget _host() {
       ChangeNotifierProvider(create: (_) => OrdersState(OrderService(api))),
       ChangeNotifierProvider(create: (_) => OffersState(OfferService(api))),
       Provider(create: (_) => StaffPushService(OrderService(api))),
+      // The Menu tab's empty state offers photo import, so it needs this
+      // exactly as main.dart provides it. The mock backends below answer
+      // 404 for /pos/menu-import/status, which MenuOcrService.available()
+      // reads as "no OCR" — so these tests see the plain empty state.
+      Provider(create: (_) => MenuOcrService(api)),
     ],
     child: const MaterialApp(home: HomeScreen()),
   );

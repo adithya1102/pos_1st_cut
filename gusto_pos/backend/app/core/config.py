@@ -122,6 +122,23 @@ class Settings(BaseSettings):
     PUSH_ENABLED: bool = False
     FCM_SERVICE_ACCOUNT_FILE: Optional[str] = None
 
+    # --- Menu photo import (OCR) ---------------------------------------------
+    # Gates the RapidOCR-backed /pos/menu-import routes, exactly as
+    # PUSH_ENABLED gates FCM.
+    #
+    # OFF BY DEFAULT ON PURPOSE. rapidocr-onnxruntime pulls onnxruntime +
+    # OpenCV + numpy: ~124 MB of wheels, ~346 MB installed, and inference holds
+    # a few hundred MB of RSS while it runs. That is a serious ask of a 512 MB
+    # free-tier instance, so turning this on is a deliberate act with a plan
+    # behind it, not a default.
+    #
+    # The import is LAZY (see menu_ocr.service), so with this false — or with
+    # the package simply not installed — the app boots and every other route
+    # behaves exactly as before. `ocr_available()` requires BOTH the flag and a
+    # working import, and the app asks /pos/menu-import/status before it offers
+    # the button.
+    OCR_ENABLED: bool = False
+
     # Shared secret for the local testing dashboard (testing_dashboard module).
     # Every dashboard endpoint requires the X-Testing-Key header to equal this.
     # Empty by default = the dashboard is FAIL-CLOSED (all requests 401) until a

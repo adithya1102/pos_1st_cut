@@ -30,6 +30,7 @@ from app.modules.analytics.router import router as analytics_router
 # CareVo Skip (additive; customer pre-order / pickup)
 from app.modules.carevo_customer.controller import router as carevo_customer_router
 from app.modules.carevo_pos.controller import router as carevo_pos_router
+from app.modules.menu_ocr.controller import router as menu_ocr_router
 from app.modules.onboarding.controller import router as onboarding_router
 
 # Local testing dashboard (additive; every route gated by X-Testing-Key)
@@ -121,6 +122,11 @@ app.include_router(analytics_router, prefix="/api/v1")
 # CareVo Skip routers → /api/v1/customer/... and /api/v1/pos/...
 app.include_router(carevo_customer_router, prefix="/api/v1")
 app.include_router(carevo_pos_router, prefix="/api/v1")
+# Menu photo import → /api/v1/pos/menu-import/*. SUGGESTS dishes from photos;
+# it never creates one — approved candidates go back through the ordinary
+# POST /pos/menu-items. Inert (503) until OCR_ENABLED and rapidocr are both
+# present; the import is lazy, so this mounts fine without the package.
+app.include_router(menu_ocr_router, prefix="/api/v1")
 # Local testing dashboard → /api/v1/testing/... (all routes X-Testing-Key gated)
 app.include_router(testing_router, prefix="/api/v1")
 # Public owner self-signup → /api/v1/register (unauthenticated, rate-limited).

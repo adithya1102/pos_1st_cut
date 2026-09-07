@@ -13,6 +13,7 @@ import '../state/home_state.dart';
 import '../state/offers_state.dart';
 import '../state/orders_state.dart';
 import '../widgets/dish_row.dart';
+import '../widgets/menu_import_empty_state.dart';
 import 'change_password_screen.dart';
 import 'outlet_settings_screen.dart';
 import 'dish_edit_screen.dart';
@@ -371,9 +372,14 @@ class _DishesTab extends StatelessWidget {
             ),
           ),
           if (state.items.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(32),
-              child: Center(child: Text('No dishes found.')),
+            // A new restaurant lands here, and typing twenty dishes into a
+            // phone by hand is where owners give up — so this leads with
+            // photographing the printed menu. Falls back to plain manual
+            // entry when the server has no OCR.
+            Center(
+              child: MenuImportEmptyState(
+                onAddManually: () => _openDishEditor(context, null),
+              ),
             )
           else
             // FLAT list — deliberately no categories.

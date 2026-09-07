@@ -5559,3 +5559,92 @@ off-screen — scroll first), and the result SnackBar sits directly over
 the button, so a second tap needs it timed out first.
 
 ---
+
+## 2026-09-08 — OCR menu import (BUILT, NOT COMMITTED — awaiting review)
+
+Held back from commit deliberately: it adds a heavy backend dependency to
+a constrained free-tier service, and that is the reviewer's call.
+
+### Sub-task A — what already existed
+
+**Creation path to reuse:** `POST /api/v1/pos/menu-items` →
+`CarevoService.create_menu_item` (carevo_pos/controller.py:168). owner_app
+already calls it via `MenuService.createItem` → `HomeState.createDish`.
+Approved candidates go through exactly this. No parallel creation route
+was built, so ownership scoping, category validation and the returned
+item shape keep one implementation.
+
+**Categories are not a problem.** Signup seeds a v1 menu plus
+DEFAULT_CATEGORIES (Starters/Mains/Sides/Desserts/Beverages,
+carevo_customer/service.py:51,2113-2125), so `CreateMenuItemIn`'s required
+`category_id` always has a real value even on a brand-new restaurant.
+
+**No migration. Candidates are not persisted.** They are derived data with
+a lifetime of one sitting — shoot, review, approve — and the source of
+truth is the photograph, which the owner still has; re-running OCR
+reproduces the list. A table would buy only "resume a half-finished review
+after killing the app", and would cost a migration, a cleanup policy for
+rows that are garbage the moment they are approved, and another
+outlet-scoped surface to get wrong. Adding persistence later is purely
+additive; starting with a table and removing it is not. The APPROVED
+output is of course persisted — by the existing menu-items path.
+
+### Sub-task B — backend
+
+`rapidocr-onnxruntime==1.4.4`, LEFT COMMENTED OUT in requirements.txt.
+
+MEASURED (linux x86_64 / py3.11, not estimated):
+  * 124 MB of wheels; **346 MB installed**
+  * OpenCV is 182 MB of that (opencv_python.libs 106 + cv2 76)
+  * models ~15 MB, BUNDLED in the wheel — nothing fetched at runtime
+  * onnxruntime holds a few hundred MB RSS during inference
+
+Render free tier is 512 MB and the app already sits ~150 MB. Enabling
+this there is likely an OOM kill during inference, not a slow response.
+
+Gated by `OCR_ENABLED` and imported LAZILY, following the PUSH_ENABLED /
+EMAIL_ENABLED pattern. VERIFIED: with the rapidocr import blocked
+entirely, `app.main` still imports, both routes still mount, and
+`ocr_available()` returns False.
+
+`POST /pos/menu-import/ocr` (≤10 images, 8 MB each, 120s deadline) and
+`GET /pos/menu-import/status`. Inference runs via `asyncio.to_thread` —
+it is CPU-bound and would otherwise stall the whole event loop.
+
+Two details that were not obvious: OCR spans are regrouped into LINES by
+vertical position before parsing (name and price are separate spans, and
+the heuristic's core rule is "the price is at the end of the line"), and
+EXIF orientation is applied (a portrait phone photo is stored rotated and
+OCRs to nothing).
+
+### Sub-task C — owner_app
+
+Empty state on the Menu tab leads with "Take or upload photo", capped at
+10, downscaled to 2000px before upload. It asks `/status` first and falls
+back to the plain "Add a dish manually" state when the server has no OCR.
+
+Review screen: every row editable (name + price), checkbox each, and the
+four bulk actions. Rows arrive PRE-SELECTED — the common case is "most of
+this is right", and ticking twenty correct rows defeats the point.
+Approve and Reject are deliberately unequal in weight: approving writes to
+the live menu, rejecting only shortens a list that was never saved.
+
+### Sub-task D — tests. Backend 363 (+35), owner_app 93 (+18)
+
+Backend failures still 21, failing set byte-identical to baseline.
+
+Parser tests are pure and import no OCR, so the suite runs on a machine
+without the dependency — the state requirements.txt ships in. One test
+exercises the REAL engine and skips itself when the package is absent.
+
+Verified end-to-end against real RapidOCR on a rendered menu: all six
+dishes read, "Rs. 120" / "₹ 260" / "1,250" / "320.50" / "40/-" all parsed,
+"Chicken 65" kept its number in the NAME, and the heading and phone number
+were dropped.
+
+**A real bug the tests caught:** `_rejectSelected` built its kept-list
+from `_candidates` before `_replaceAll` synced the text controllers, so it
+captured pre-edit copies — an in-flight rename silently reverted on every
+reject. The sync now happens before the snapshot.
+
+---

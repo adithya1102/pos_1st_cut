@@ -35,6 +35,36 @@ httpx>=0.27
 # the service-account file is mounted. Pinned to the version validated locally.
 google-auth==2.53.0
 
+# --- Menu photo import (OCR) ---------------------------------------------
+# COMMENTED OUT DELIBERATELY. Uncomment together with setting OCR_ENABLED=true;
+# the two are useless apart and the code checks for both.
+#
+# MEASURED COST (linux x86_64, py3.11, this exact resolution):
+#   downloads   ~124 MB of wheels
+#   installed   ~346 MB on disk, of which OpenCV is ~182 MB
+#               (opencv_python.libs 106 MB + cv2 76 MB)
+#   models       ~15 MB, BUNDLED in the rapidocr wheel — nothing is fetched at
+#                runtime, so a cold start does not depend on the network
+#   runtime      onnxruntime holds a few hundred MB of RSS during inference
+#
+# Render's free tier is 512 MB. Baseline FastAPI + SQLAlchemy already sits
+# around 150 MB, so enabling this on the free instance is likely to end in an
+# OOM kill during inference rather than a slow response. Treat the paid tier,
+# or a separate worker, as a precondition rather than an optimisation.
+#
+# It also drags numpy forward (installing it here upgraded numpy to 2.4.x),
+# which is a real blast radius for anything else pinned against numpy 1.x.
+#
+# `opencv-python-headless` saves ~38 MB installed and is the right server
+# choice, but rapidocr declares `opencv-python` by name, so getting headless
+# needs a two-step install (headless first, then rapidocr with --no-deps)
+# rather than a single requirements line.
+#
+# The import is lazy and OCR_ENABLED-gated, so leaving this commented costs
+# nothing: the app boots, the routes mount, and /pos/menu-import answers 503.
+#
+# rapidocr-onnxruntime==1.4.4
+
 # --- test-only -----------------------------------------------------------
 # The API suite (tests/test_api_*.py) runs in-process against the ASGI app via
 # httpx.ASGITransport, so no server and no network is involved. httpx is
