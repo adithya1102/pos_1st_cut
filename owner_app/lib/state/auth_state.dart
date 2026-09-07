@@ -145,6 +145,35 @@ class AuthState extends ChangeNotifier {
   Future<ForgotPasswordResult> forgotPassword(String username) =>
       _auth.forgotPassword(username);
 
+  /// Redeems a reset code. Returns null on success, or a staff-facing message.
+  ///
+  /// 400 is the server's single answer for wrong / expired / already-used, so
+  /// this cannot say which — and must not guess, since inventing "expired" for
+  /// a mistyped code would send the owner off requesting another mail.
+  Future<String?> resetPassword({
+    required String token,
+    required String newPassword,
+  }) async {
+    try {
+      await _auth.resetPassword(token: token, newPassword: newPassword);
+      return null;
+    } on ApiException catch (e) {
+      return switch (e.statusCode) {
+        400 => 'That code is invalid or has expired. Request a new one.',
+        422 => 'Password must be at least 8 characters.',
+        429 => 'Too many attempts. Wait a minute and try again.',
+        >= 500 => 'The server hit an error (${e.statusCode}). Try again shortly.',
+        _ => 'Could not reset the password (${e.statusCode}).',
+      };
+    } on NetworkException catch (e) {
+      return e.timedOut
+          ? 'The server is waking up — try again in a few seconds.'
+          : 'Could not reach the server. Check your internet connection.';
+    } catch (_) {
+      return 'Something went wrong. Please try again.';
+    }
+  }
+
   /// Owner self-signup. Returns null on success, or a staff-facing error.
   /// Does not log in — the outlet is pending admin verification.
   Future<String?> register({

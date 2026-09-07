@@ -78,9 +78,9 @@ class AuthService {
 
   /// `POST /auth/password/forgot` — PUBLIC, no token.
   ///
-  /// The response is identical whether or not the username exists, so this
-  /// never reveals which accounts are real. [maskedEmail] is non-null only
-  /// when there is an address on file.
+  /// [maskedEmail] is non-null only when there is an address on file.
+  /// [emailConfigured] describes the SERVER, not the account: false means no
+  /// mail can be sent at all, so the screen must not promise one.
   Future<ForgotPasswordResult> forgotPassword(String username) async {
     final data = await _client.post('/auth/password/forgot', body: {
       'username': username.trim(),
@@ -90,7 +90,26 @@ class AuthService {
       message: m['message']?.toString() ?? '',
       maskedEmail: m['email_hint']?.toString(),
       needsAdminHelp: m['needs_admin_help'] == true,
+      emailConfigured: m['email_configured'] == true,
     );
+  }
+
+  /// `POST /auth/password/reset` — PUBLIC, no token.
+  ///
+  /// Completes the flow [forgotPassword] starts, redeeming the single-use code
+  /// from the reset email. Without this the emailed code had nothing to be
+  /// typed into and forgot-password could never finish.
+  ///
+  /// Throws [ApiException] 400 when the code is wrong, already spent or
+  /// expired — the server deliberately does not say which.
+  Future<void> resetPassword({
+    required String token,
+    required String newPassword,
+  }) async {
+    await _client.post('/auth/password/reset', body: {
+      'token': token.trim(),
+      'new_password': newPassword,
+    });
   }
 
   /// `POST /account/change-password` — requires the CURRENT password on top of
@@ -133,6 +152,7 @@ class ForgotPasswordResult {
     required this.message,
     this.maskedEmail,
     this.needsAdminHelp = false,
+    this.emailConfigured = false,
   });
 
   final String message;
@@ -142,6 +162,12 @@ class ForgotPasswordResult {
 
   /// Legacy account with no email on file: recover via the admin queue.
   final bool needsAdminHelp;
+
+  /// Whether the SERVER can send mail at all. A property of the deploy, not of
+  /// the account, so branching on it reveals nothing about the username.
+  ///
+  /// When false there is no point offering "enter the code" — none is coming.
+  final bool emailConfigured;
 }
 
 class AccountInfo {

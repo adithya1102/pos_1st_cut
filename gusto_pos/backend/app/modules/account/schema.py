@@ -23,14 +23,18 @@ class ForgotPasswordIn(BaseModel):
 
 
 class ForgotPasswordOut(BaseModel):
-    """Deliberately uniform. `ok` and `message` are identical whether or not the
-    username exists, so this endpoint cannot be used to enumerate accounts."""
+    """`ok` and the shape are uniform; see AccountService.request_password_reset
+    for exactly which fields do and do not vary with the username."""
     ok: bool = True
     message: str
     # Null unless there is a real address to hint at, e.g. "a*****a@g****.com".
     email_hint: Optional[str] = None
     # True for legacy accounts with no email: recover via the admin queue.
     needs_admin_help: bool = False
+    # Whether THIS DEPLOY can send mail at all (EMAIL_ENABLED + an SMTP host).
+    # Constant across usernames, so it leaks nothing about any account; it
+    # exists so the app stops promising a reset mail a server cannot send.
+    email_configured: bool = False
 
 
 class ResetPasswordIn(BaseModel):

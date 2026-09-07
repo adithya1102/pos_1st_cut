@@ -5361,3 +5361,81 @@ in-flight de-dup, and opens the city picker on the outlet list.
 Not exercised on a device — the emulator still runs the pre-fix build.
 
 ---
+
+## 2026-09-08 — Forgot password was a dead end at both ends
+
+### Diagnosis
+
+owner_app's flow was wired correctly and reached the right route
+(`POST /api/v1/auth/password/forgot`, mounted at main.py:138). Nothing
+was wrong with the request. Two things downstream made it useless.
+
+**1. No mail transport existed.** `AccountService._deliver`
+(account/service.py) had a flag check and nothing behind it: with
+`EMAIL_ENABLED` false it logged "EMAIL SKIPPED"; with it TRUE it logged
+`"EMAIL_ENABLED=true but no transport is implemented"` and returned
+`"skipped"` anyway. There was no branch that sent. A token was minted
+and committed on every request and no owner ever received one — and the
+endpoint answered "we've sent reset instructions" each time.
+
+**2. Nothing could redeem a token.** `POST /auth/password/reset` existed
+server-side (account/controller.py:84) and had NO caller anywhere in
+owner_app. Grepping the app for "reset" found only copy strings. So even
+a delivered code had nowhere to be typed.
+
+Either alone breaks it; both together meant no owner could ever recover
+an account by email, on any deploy, however the config was set.
+
+### Fix
+
+* `_deliver` speaks SMTP — stdlib `smtplib` + `EmailMessage` over
+  `asyncio.to_thread`, so no dependency was added to a constrained
+  free-tier image and the single uvicorn loop is not blocked on a remote
+  mail server. Returns `sent` | `skipped` | `failed` and NEVER raises.
+* Config: `EMAIL_SMTP_HOST/PORT/USER/PASSWORD/STARTTLS/TIMEOUT`.
+  `email_configured()` requires the flag AND a host — `EMAIL_ENABLED`
+  alone was precisely the trap the old code fell into.
+* **Commit before send.** Delivery used to be awaited BEFORE
+  `db.commit()`, so a throwing transport rolled back the very token it
+  was carrying and the owner got a 500. Same reorder in `set_email`.
+* **New: ResetPasswordScreen.** Redeems the code by TYPING it. A tapped
+  link would need a web landing page or deep-link association; neither
+  exists, and a typed code needs neither. Reached from "I have a code"
+  on the forgot panel.
+* **It stops claiming sends it cannot make.** `email_configured` is a
+  property of the DEPLOY, identical for every username, so it is safe on
+  a public endpoint. When false the panel says so and routes to the
+  admin queue instead of promising mail.
+
+`maybePop` rather than a fixed two-level pop: the old draft assumed a
+stack shape the screen cannot see and threw when opened as a first route.
+
+### Known, NOT fixed — deliberate
+
+The endpoint's docstring claimed it "cannot be used to enumerate
+accounts". That is false and was false before this change: `email_hint`
+is non-null only for a real account with an address, and
+`needs_admin_help` distinguishes a real account without one. A caller CAN
+tell an existing username from an invented one. Closing it means dropping
+the masked hint — which is a deliberate UX affordance (which inbox do I
+check?), so removing it is a product call, not a code fix. The docstrings
+now describe the real behaviour instead of asserting the opposite.
+
+### Tests — backend 314 (+13), owner_app 58 (+13)
+
+Backend 21 failures, unchanged from baseline and identical in
+distribution (test_api_testing_actions / testing_dashboard /
+promotions_account / owner_queue_paid_gate) — all pre-existing and
+unrelated.
+
+The SMTP conversation is stubbed at `_send_smtp_blocking`, not at
+`_deliver`, so the real gate/to_thread/failure handling stays in the
+path. Covers: the mail reaches a transport at all (the assertion that
+failed before the fix), the code it carries redeems, the owner can then
+actually sign in and the old password is dead, single-use, expiry, and a
+dead mail server leaving the token intact. App side: the code is POSTed
+to /auth/password/reset (nothing called it before), an unconfigured
+server offers no code entry, and a configured one offers it EVEN WITH A
+NULL HINT — hiding it there would have leaked which usernames are real.
+
+---

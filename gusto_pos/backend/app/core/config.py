@@ -84,8 +84,40 @@ class Settings(BaseSettings):
     EMAIL_ENABLED: bool = False
     # Base URL the emailed links point at (the app/web page that completes the
     # flow). Left empty until the flows have a real landing page.
+    #
+    # owner_app does NOT rely on this: it redeems the reset CODE typed into
+    # ResetPasswordScreen, so recovery works with this empty. A link is only a
+    # convenience for a future web landing page.
     EMAIL_LINK_BASE_URL: str = ""
     EMAIL_FROM: str = "no-reply@carevo.app"
+
+    # --- SMTP transport ------------------------------------------------------
+    # The actual wire. Until these were added, EMAIL_ENABLED=true still sent
+    # nothing: AccountService._deliver had no transport behind the flag, so
+    # every password-reset mail was logged and dropped and forgot-password was
+    # a dead end for every owner.
+    #
+    # Any submission-port SMTP provider works (SES, SendGrid, Mailgun, Gmail
+    # app-password). Set on Render as env vars; never commit real credentials.
+    #
+    #   EMAIL_ENABLED=true
+    #   EMAIL_SMTP_HOST=email-smtp.ap-south-1.amazonaws.com
+    #   EMAIL_SMTP_PORT=587
+    #   EMAIL_SMTP_USER=...
+    #   EMAIL_SMTP_PASSWORD=...
+    #
+    # EMAIL_ENABLED alone is not enough — _deliver also requires a host, and
+    # reports "skipped" rather than pretending when one is missing.
+    EMAIL_SMTP_HOST: str = ""
+    EMAIL_SMTP_PORT: int = 587
+    EMAIL_SMTP_USER: str = ""
+    EMAIL_SMTP_PASSWORD: str = ""
+    # STARTTLS on the submission port (587) is the default. Set false only for
+    # implicit TLS on 465, which uses SMTP_SSL instead.
+    EMAIL_SMTP_STARTTLS: bool = True
+    # Ceiling on one SMTP conversation. Sized well under the request timeout:
+    # a wedged mail server must not hold a password-reset request open.
+    EMAIL_SMTP_TIMEOUT_SECONDS: int = 15
 
     PUSH_ENABLED: bool = False
     FCM_SERVICE_ACCOUNT_FILE: Optional[str] = None

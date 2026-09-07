@@ -4,18 +4,27 @@ import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../state/auth_state.dart';
+import 'reset_password_screen.dart';
 
 /// Forgot password: the owner enters a username, the server looks up the email
-/// on file and sends reset instructions.
+/// on file and sends a single-use reset code.
 ///
-/// ## What this screen deliberately does NOT do
-/// It never says whether the username exists. The backend returns an identical
-/// message either way, and this screen shows that message verbatim — so no
-/// branching here can leak the difference. The masked hint ("a*****a@g***l.com")
-/// appears only when the server supplies one, which it does only for a real
-/// account with an email on file.
+/// ## The flow only completes because of the second step
+/// Requesting the mail is half of it. [ResetPasswordScreen], reachable from the
+/// panel below, is what redeems the code — without it the server was minting
+/// tokens nothing could spend.
+///
+/// ## It does not promise mail the server cannot send
+/// `emailConfigured` reports whether THIS DEPLOY has a mail transport at all.
+/// When it is false the panel says so and offers the admin route instead of
+/// claiming a send. That flag describes the server, not the account, so
+/// branching on it reveals nothing about the username.
 class ForgotPasswordScreen extends StatefulWidget {
   const ForgotPasswordScreen({super.key});
+
+  static const submitKey = Key('forgot_submit');
+  static const resultKey = Key('forgot_result');
+  static const enterCodeKey = Key('forgot_enter_code');
 
   @override
   State<ForgotPasswordScreen> createState() => _ForgotPasswordScreenState();
@@ -77,6 +86,18 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     });
   }
 
+  /// Opens the redeem step and, if it succeeded, closes this screen too so the
+  /// owner is returned to login rather than to a stale "we've sent it" panel.
+  Future<void> _openReset(String? emailHint) async {
+    final done = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => ResetPasswordScreen(emailHint: emailHint),
+      ),
+    );
+    if (!mounted || done != true) return;
+    await Navigator.of(context).maybePop();
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -116,6 +137,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                     ),
                     const SizedBox(height: 24),
                     FilledButton(
+                      key: ForgotPasswordScreen.submitKey,
                       onPressed: _submitting ? null : _submit,
                       child: _submitting
                           ? const SizedBox(
@@ -137,6 +159,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                     if (result != null) ...[
                       const SizedBox(height: 24),
                       Container(
+                        key: ForgotPasswordScreen.resultKey,
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
                           color: theme.colorScheme.surfaceContainerHighest,
@@ -170,6 +193,23 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                                 ),
                               ),
                             ],
+                            // The step that finishes the job. Offered whenever
+                            // the server can actually send, INCLUDING when
+                            // email_hint is null — that case covers both an
+                            // unknown username and a rate-limited real one, and
+                            // hiding the button for it would tell the caller
+                            // which they were looking at.
+                            if (result.emailConfigured) ...[
+                              const SizedBox(height: 12),
+                              const Divider(height: 1),
+                              const SizedBox(height: 4),
+                              TextButton.icon(
+                                key: ForgotPasswordScreen.enterCodeKey,
+                                icon: const Icon(Icons.key_outlined, size: 18),
+                                label: const Text('I have a code'),
+                                onPressed: () => _openReset(result.maskedEmail),
+                              ),
+                            ],
                             // Legacy account with no email: the humans are the
                             // fallback, via the existing admin queue.
                             if (result.needsAdminHelp) ...[
@@ -182,9 +222,20 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                                   const SizedBox(width: 8),
                                   Expanded(
                                     child: Text(
-                                      'Older accounts may have no email on file. '
-                                      'Your CareVo admin can recover it from the '
-                                      'admin dashboard.',
+                                      result.emailConfigured
+                                          ? 'Older accounts may have no email on '
+                                              'file. Your CareVo admin can '
+                                              'recover it from the admin '
+                                              'dashboard.'
+                                          // No transport on this deploy: the
+                                          // admin queue is the ONLY route, and
+                                          // saying "check your email" would
+                                          // send the owner to wait for mail
+                                          // that is never coming.
+                                          : 'This server cannot send reset '
+                                              'email yet. Your CareVo admin can '
+                                              'recover the account from the '
+                                              'admin dashboard.',
                                       style: theme.textTheme.bodySmall,
                                     ),
                                   ),
