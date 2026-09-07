@@ -5180,3 +5180,61 @@ and strengthened to assert the 500 now classifies as the server category.
 Committed. Not exercised on a device.
 
 ---
+
+## 2026-09-07 (later) — Discover is skipped; the city picker moves onto the list
+
+### The route
+
+"Find restaurants near you" on Home now pushes OutletsScreen directly.
+It used to push LocationScreen (Discover), which asked "where are you?"
+and pushed OutletsScreen with the answer — a full stop in front of the
+thing just asked for. Both CTA call sites go through one `_openDiscover`,
+so it was one change.
+
+LocationScreen is UNTOUCHED and still builds; nothing routes to it.
+`git diff` on location_screen.dart and area_picker.dart is empty.
+
+### What the list had to grow
+
+* `autoLocate`, defaulting to FALSE. That default is load-bearing: 11
+  existing test sites build `const OutletsScreen()` and several of their
+  provider trees have no LocationService, so an unconditional arrival
+  prompt would have thrown in some and opened a sheet over others.
+  Only the Home CTA opts in.
+* Arrival flow reuses the EXISTING outcome handling from
+  `_setRadiusMode`/`_selectSort` — settings dialog for deniedForever, a
+  one-line SnackBar otherwise. Granted takes the radius path; every
+  refusal opens the city picker.
+* `OutletsScreen.nearestCity` — city of the closest outlet carrying a
+  `distance_km`. This is the stand-in for a reverse geocode and is
+  deliberately not one: no dependency, no extra request, and the answer
+  is always a city the picker can offer because it came off an outlet
+  that exists. Outlets with a null distance are SKIPPED, not treated as
+  zero — that field is null for every row when the request had no
+  origin, so nulls-first would "detect" whatever came back first.
+* `_CityPickerSheet` wraps the existing AreaPicker unchanged, holds a
+  DRAFT selection (ticking three cities must not be three refetches),
+  and caches areas on the parent.
+* `_applyCities` mirrors `_setRadiusMode`: cities replace the radius.
+  lat/lng SURVIVE — an origin is not a filter, and dropping it would
+  lose distance_km and silently break the Nearest sort.
+
+### Backend: nothing needed
+
+`list_outlets` already took `city: Optional[list[str]]` and returned the
+union via `lower(city) = ANY(...)`; OutletsScreen already accepted a
+`Set<String>`. The multi-select conversion was done in an earlier pass.
+
+### Label strings kept
+
+`In A & B` / `In N cities` / `Closest to you` / `All restaurants` are
+unchanged — ui_batch_2026_08_24b asserts the first. Only `Near {city}`
+is new.
+
+### Tests — 419 passing (+22), 0 failures
+
+One real bug found by the new tests: the added chevron pushed
+'In Bengaluru & Chennai' 2.2px past a 350px phone. The label is now
+Flexible + ellipsis, which it needed anyway.
+
+---

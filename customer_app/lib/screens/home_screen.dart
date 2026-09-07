@@ -17,9 +17,9 @@ import '../widgets/account_button.dart';
 import '../widgets/active_order_card.dart';
 import '../widgets/error_state.dart';
 import 'cart_screen.dart';
-import 'location_screen.dart';
 import 'name_capture_screen.dart';
 import 'order_history_screen.dart';
+import 'outlets_screen.dart';
 import 'pickup_screen.dart';
 
 /// The authenticated app's front door.
@@ -33,8 +33,9 @@ import 'pickup_screen.dart';
 /// something they already owned.
 ///
 /// Home is the landing surface; choosing a location is now one thing you can do
-/// FROM it, behind an explicit "Find restaurants near you". See
-/// [LocationScreen], which is that step and is titled Discover.
+/// FROM it, behind an explicit "Find restaurants near you" — which goes STRAIGHT
+/// to the outlet list. The separate Discover screen it used to pass through is
+/// gone from this route; see [_openDiscover].
 ///
 /// ## Location is not touched here
 ///
@@ -122,9 +123,23 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// "Find restaurants near you" — straight to the list.
+  ///
+  /// This used to push LocationScreen (Discover), which asked "where are you?"
+  /// and then pushed OutletsScreen with the answer. That screen was a full stop
+  /// in front of the thing the customer had just asked for: two taps and a
+  /// screen transition to reach a list that OutletsScreen can now assemble
+  /// itself. LocationScreen is left in the codebase and still builds — nothing
+  /// routes to it any more.
+  ///
+  /// Deliberately NO cities and NO lat/lng. Both were the point of the screen
+  /// that is being skipped, and OutletsScreen now acquires whichever applies:
+  /// [OutletsScreen.autoLocate] asks for location on arrival and falls back to
+  /// the city picker when that is refused.
   void _openDiscover() {
-    Navigator.of(context)
-        .push(MaterialPageRoute(builder: (_) => const LocationScreen()));
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const OutletsScreen(autoLocate: true)),
+    );
   }
 
   void _openHistory() {

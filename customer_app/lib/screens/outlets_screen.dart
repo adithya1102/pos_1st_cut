@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models/outlet.dart';
 import '../models/outlet_sort.dart';
+import '../services/api_client.dart';
 import '../services/app_error.dart';
 import '../services/image_cdn.dart';
 import '../widgets/error_state.dart';
@@ -20,6 +21,7 @@ import '../theme/widgets/neo_text_field.dart';
 import 'menu_screen.dart';
 import '../widgets/account_button.dart';
 import '../widgets/active_order_card.dart';
+import '../widgets/area_picker.dart';
 import '../widgets/location_permission_dialog.dart';
 import '../widgets/offer_sheet.dart';
 
@@ -43,20 +45,63 @@ enum RadiusMode {
 }
 
 /// Step 4: nearby restaurant discovery.
+///
+/// Now also step 3. "Find restaurants near you" on Home comes straight here
+/// rather than through the Discover screen, so the WHERE question — location
+/// permission, or a city — is answered on this screen instead of in front of
+/// it. See [autoLocate] and [_bootstrapLocation].
 class OutletsScreen extends StatefulWidget {
   const OutletsScreen({
     super.key,
     this.lat,
     this.lng,
     this.cities = const {},
+    this.autoLocate = false,
   });
 
   final double? lat;
   final double? lng;
 
-  /// Cities chosen on Discover. Multi-select, so this is a set — empty means
-  /// no city filter (the "Near me" path, which filters by coordinates instead).
+  /// Cities to open with. Multi-select, so this is a set — empty means no city
+  /// filter (the location path, which filters by coordinates instead).
   final Set<String> cities;
+
+  /// Whether to go looking for a location on arrival.
+  ///
+  /// Defaults to FALSE, and that default is the important half. Arriving with
+  /// neither cities nor coordinates is a legitimate way to open this screen —
+  /// "just show me everything" — and it must not raise a permission dialog
+  /// nobody asked for. Only the Home CTA passes true, because tapping "Find
+  /// restaurants near you" IS the request: the customer has just said what they
+  /// want, which is exactly the moment the prompt explains itself.
+  ///
+  /// Ignored when [lat]/[lng] or [cities] are supplied — there is nothing to
+  /// acquire, and asking anyway would prompt for something already answered.
+  final bool autoLocate;
+
+  /// City of the closest outlet that has one.
+  ///
+  /// This is the app's stand-in for a reverse geocode, and it is deliberately
+  /// not one: no new dependency, no extra request, and — the reason it is
+  /// actually better here — the answer is always a city the picker can offer,
+  /// because it came off an outlet that exists. A geocoder would happily return
+  /// the town the customer is standing in and leave every box unticked.
+  ///
+  /// Static and pure so the rule is testable without a screen.
+  ///
+  /// Outlets with no `distance_km` are SKIPPED rather than treated as distance
+  /// zero: that field is null for every outlet whenever the request carried no
+  /// origin, and sorting nulls first would "detect" whichever city happened to
+  /// come back first.
+  static String? nearestCity(List<Outlet> outlets) {
+    Outlet? closest;
+    for (final o in outlets) {
+      if (o.distanceKm == null) continue;
+      if ((o.city ?? '').trim().isEmpty) continue;
+      if (closest == null || o.distanceKm! < closest.distanceKm!) closest = o;
+    }
+    return closest?.city?.trim();
+  }
 
   @override
   State<OutletsScreen> createState() => _OutletsScreenState();
@@ -65,10 +110,12 @@ class OutletsScreen extends StatefulWidget {
 class _OutletsScreenState extends State<OutletsScreen> {
   late Future<List<Outlet>> _future;
 
-  /// Cities actually applied to the query. Seeded from the caller (the picker
-  /// on [LocationScreen]) but MUTABLE, because choosing a radius mode clears
-  /// them — the two are mutually exclusive by product decision.
+  /// Cities actually applied to the query. Seeded from [OutletsScreen.cities]
+  /// but MUTABLE from both directions: the picker sets them (see
+  /// [_applyCities]) and choosing a radius mode clears them — the two are
+  /// mutually exclusive by product decision.
   late Set<String> _cities;
+
 
   /// Active radius mode, or null when browsing by city instead.
   ///
@@ -174,6 +221,26 @@ class _OutletsScreenState extends State<OutletsScreen> {
   /// True while the Nearest sort is waiting on a GPS fix.
   bool _locating = false;
 
+  /// Cities offered by the picker, from GET /customer/areas. Null until the
+  /// sheet has fetched them once; cached here so reopening it does not refetch.
+  List<AreaOption>? _areas;
+
+  /// City the customer appears to be in, derived from the NEAREST outlet in a
+  /// location-based response — not from a geocoder.
+  ///
+  /// Deriving it from the list we already fetched costs nothing and has a
+  /// property a real reverse geocode does not: the answer is always a city the
+  /// picker can actually offer, because it came off an outlet that exists. A
+  /// geocoder will happily return the town you are standing in and leave the
+  /// box unticked because no restaurant there serves it.
+  ///
+  /// This only PRE-TICKS the picker. It is not itself a filter — while it is
+  /// set the list is still the radius query that produced it.
+  String? _detectedCity;
+
+  /// Guards the arrival flow so it runs once per screen, not once per rebuild.
+  bool _bootstrapped = false;
+
   @override
   void initState() {
     super.initState();
@@ -193,7 +260,101 @@ class _OutletsScreenState extends State<OutletsScreen> {
         ? RadiusMode.nearMe
         : null;
     _future = _load();
+
+    // Post-frame, not inline: the arrival flow shows a dialog, a SnackBar and a
+    // modal sheet, all of which need a mounted route to attach to.
+    if (_shouldAutoLocate) {
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _bootstrapLocation());
+    }
   }
+
+  /// Arriving with nothing — no cities, no origin — AND having been told to go
+  /// looking. Both halves matter: see [OutletsScreen.autoLocate].
+  bool get _shouldAutoLocate =>
+      widget.autoLocate &&
+      widget.cities.isEmpty &&
+      widget.lat == null &&
+      widget.lng == null;
+
+  /// The arrival flow, for a customer who tapped "Find restaurants near you"
+  /// and has told us nothing else.
+  ///
+  /// This is the work the Discover screen used to do, minus the screen. The
+  /// outcome handling is the SAME as [_setRadiusMode] and [_selectSort] — a
+  /// permanent denial gets the settings dialog, everything else gets a
+  /// one-line SnackBar — because it is the same question being asked.
+  ///
+  /// Where it differs is the fallback. Those two are refinements of a list the
+  /// customer is already looking at, so a refusal just leaves it alone. Here a
+  /// refusal leaves them with no way to have expressed a location at all, so it
+  /// opens the city picker: the alternative Discover used to offer, at the
+  /// moment it becomes the only one left.
+  Future<void> _bootstrapLocation() async {
+    if (_bootstrapped || !mounted) return;
+    _bootstrapped = true;
+
+    setState(() => _locating = true);
+    final service = context.read<LocationService>();
+    // userInitiated: the tap on Home IS the request. Same reasoning as the
+    // radius chips — and the same shared one-prompt latch it has to defeat, or
+    // a customer who declined once elsewhere would silently get no dialog and
+    // no explanation of why the screen did nothing.
+    final result = await service.getCurrentLocation(userInitiated: true);
+    if (!mounted) return;
+    setState(() => _locating = false);
+
+    if (result.hasCoordinates) {
+      setState(() {
+        _lat = result.latitude;
+        _lng = result.longitude;
+        _radiusMode = RadiusMode.nearMe;
+        _future = _load();
+      });
+      await _detectCityFrom(_future);
+      return;
+    }
+
+    if (result.outcome == LocationOutcome.deniedForever) {
+      await showLocationBlockedDialog(
+        context,
+        service: service,
+        purpose: 'find restaurants near you',
+      );
+    } else {
+      final message = switch (result.outcome) {
+        LocationOutcome.serviceDisabled =>
+          'Location services are off. Pick your city instead.',
+        LocationOutcome.denied => 'No problem — pick your city instead.',
+        _ => 'Could not get your location. Pick your city instead.',
+      };
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
+    }
+
+    // Every non-granted outcome lands here, including the permanent one: the
+    // settings dialog explains the refusal but does not resolve it, and the
+    // customer still came here to find restaurants.
+    if (!mounted) return;
+    await _openCityPicker();
+  }
+
+  /// Read the customer's city off a location-based response.
+  ///
+  /// Failure is silent and total: a load error, an empty list, outlets with no
+  /// city — all just leave [_detectedCity] null, which costs an unticked box in
+  /// a picker the customer is about to use anyway. Nothing here is worth
+  /// interrupting them for.
+  Future<void> _detectCityFrom(Future<List<Outlet>> pending) async {
+    try {
+      final city = OutletsScreen.nearestCity(await pending);
+      if (!mounted || city == null) return;
+      setState(() => _detectedCity = city);
+    } catch (_) {
+      // The list itself reports its own failure — see the FutureBuilder.
+    }
+  }
+
 
   @override
   void dispose() {
@@ -322,6 +483,51 @@ class _OutletsScreenState extends State<OutletsScreen> {
     return _sort.apply(out);
   }
 
+  /// Open the city picker, and apply whatever comes back.
+  ///
+  /// Seeded with the cities already in effect, or — when there are none — with
+  /// [_detectedCity], so the common case is one confirming tap rather than a
+  /// hunt down the list. Dismissing returns null and changes nothing.
+  Future<void> _openCityPicker() async {
+    final seed = _cities.isNotEmpty ? _cities : {?_detectedCity};
+
+    final picked = await showModalBottomSheet<Set<String>>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => _CityPickerSheet(
+        initialSelection: seed,
+        // Handed the cached list so a second open is instant. The sheet fetches
+        // only when this is null.
+        cached: _areas,
+        onLoaded: (areas) => _areas = areas,
+      ),
+    );
+
+    if (picked == null || !mounted) return;
+    _applyCities(picked);
+  }
+
+  /// Filter by cities, REPLACING any radius.
+  ///
+  /// The mirror image of [_setRadiusMode], which clears the cities. The two
+  /// controls are mutually exclusive in this app — the server is happy to
+  /// answer both at once, so this is a UI decision about what the two mean to
+  /// each other, and it has to be enforced from both sides or the losing
+  /// control keeps claiming a filter that is no longer applied.
+  ///
+  /// [_lat]/[_lng] deliberately SURVIVE. They are an origin, not a filter: with
+  /// the radius gone they no longer narrow anything, but they still make the
+  /// server return `distance_km`, so a city list keeps its distances and the
+  /// Nearest sort keeps working without re-asking for permission.
+  void _applyCities(Set<String> picked) {
+    setState(() {
+      _cities = picked;
+      _radiusMode = null;
+      _future = _load();
+    });
+  }
+
   Future<List<Outlet>> _load() {
     return context.read<CatalogService>().fetchOutlets(
           lat: _lat,
@@ -343,10 +549,16 @@ class _OutletsScreenState extends State<OutletsScreen> {
     final c = AppColors.of(context);
     final textTheme = Theme.of(context).textTheme;
     // Names the cities while there are few enough to read, then falls back to
-    // a count — the same rule the Discover CTA uses.
+    // a count.
+    //
+    // Precedence is "what is the list actually under": chosen cities beat a
+    // detected one, because a detection the customer has overridden is no
+    // longer what they are looking at.
     final picked = _cities.toList()..sort();
     final subtitle = picked.isEmpty
-        ? (_lat != null ? 'Closest to you' : 'All restaurants')
+        ? (_detectedCity != null
+            ? 'Near $_detectedCity'
+            : (_lat != null ? 'Closest to you' : 'All restaurants'))
         : (picked.length <= 2
             ? 'In ${picked.join(' & ')}'
             : 'In ${picked.length} cities');
@@ -379,14 +591,16 @@ class _OutletsScreenState extends State<OutletsScreen> {
                     children: [
                       const PageHeader('Pick a spot'),
                       const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Icon(Icons.place, size: 16, color: c.primary),
-                          const SizedBox(width: 4),
-                          Text(subtitle,
-                              style: textTheme.titleSmall
-                                  ?.copyWith(color: c.inkSoft)),
-                        ],
+                      // The location line is now the CONTROL for changing it,
+                      // not just a readout. It was the only thing on screen
+                      // naming where the list came from, so it is where someone
+                      // looks when that is the thing they want to change —
+                      // which previously meant going back to a screen that no
+                      // longer exists on this route.
+                      _LocationChip(
+                        label: subtitle,
+                        busy: _locating,
+                        onTap: _openCityPicker,
                       ),
                       const SizedBox(height: 10),
                       // How far the list reaches. Sits under the location line
@@ -532,6 +746,227 @@ class _OutletsScreenState extends State<OutletsScreen> {
               ],
             );
           },
+        ),
+      ),
+    );
+  }
+}
+
+/// The "where am I looking" line under the page title — a readout that is also
+/// the way to change it.
+///
+/// A row rather than a NeoChip: it sits directly under a PageHeader and the
+/// chip styling read as a filter control, which it is not — it is the statement
+/// of what the whole list is scoped to.
+class _LocationChip extends StatelessWidget {
+  const _LocationChip({
+    required this.label,
+    required this.busy,
+    required this.onTap,
+  });
+
+  final String label;
+
+  /// True while a location request is in flight, so the affordance does not
+  /// invite a second tap on top of a dialog that is already coming.
+  final bool busy;
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final textTheme = Theme.of(context).textTheme;
+
+    return Semantics(
+      button: true,
+      label: '$label. Tap to change location.',
+      child: InkWell(
+        key: const Key('location_chip'),
+        onTap: busy ? null : onTap,
+        borderRadius: BorderRadius.circular(AppTheme.radius),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 2),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.place, size: 16, color: c.primary),
+              const SizedBox(width: 4),
+              // Flexible + ellipsis, because this label is not bounded: it
+              // grows with the city names in it ("In Bengaluru & Chennai" is
+              // already 2px past a 350px-wide phone once the chevron is
+              // allowed for). Truncating is right for the same reason the
+              // label counts cities past two — the chevron saying it can be
+              // changed matters more than the tail of the third name.
+              //
+              // Excluded from semantics: the wrapper above already announces
+              // the full label, and leaving this in reads the location twice.
+              Flexible(
+                child: ExcludeSemantics(
+                  child: Text(
+                    label,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.titleSmall?.copyWith(color: c.inkSoft),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
+              if (busy)
+                SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: c.inkSoft),
+                )
+              else
+                Icon(Icons.expand_more, size: 18, color: c.primary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The city picker, as a sheet over the outlet list.
+///
+/// Wraps [AreaPicker] — the same widget the Discover screen uses, unchanged.
+/// That widget was already multi-select, already search-backed, and already
+/// had no navigation capability of its own, which is what makes it reusable
+/// here: the thing that changes between the two callers is what "confirm"
+/// means, and that lives in the host.
+///
+/// Owns a DRAFT selection rather than editing the screen's. Ticking a box mid-
+/// sheet must not refetch the list behind it — the customer is still deciding,
+/// and a list that reloaded under every tap would make choosing three cities
+/// three round trips. Nothing is applied until the CTA.
+///
+/// Fetches its own areas so opening the sheet is what pays for them; the host
+/// caches the result via [onLoaded] so a reopen is instant.
+class _CityPickerSheet extends StatefulWidget {
+  const _CityPickerSheet({
+    required this.initialSelection,
+    required this.cached,
+    required this.onLoaded,
+  });
+
+  final Set<String> initialSelection;
+  final List<AreaOption>? cached;
+  final ValueChanged<List<AreaOption>> onLoaded;
+
+  @override
+  State<_CityPickerSheet> createState() => _CityPickerSheetState();
+}
+
+class _CityPickerSheetState extends State<_CityPickerSheet> {
+  List<AreaOption>? _areas;
+  String? _error;
+  late final Set<String> _draft = Set<String>.of(widget.initialSelection);
+
+  @override
+  void initState() {
+    super.initState();
+    _areas = widget.cached;
+    if (_areas == null) _loadAreas();
+  }
+
+  Future<void> _loadAreas() async {
+    setState(() => _error = null);
+    try {
+      final areas = await context.read<CatalogService>().fetchAreas();
+      if (!mounted) return;
+      setState(() {
+        _areas = areas;
+        // Drop ticks for cities that no longer have an outlet, as a set
+        // difference so a refresh that removes one does not clear the rest.
+        final live = areas.map((a) => a.city).toSet();
+        _draft.removeWhere((city) => !live.contains(city));
+      });
+      widget.onLoaded(areas);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _areas = const [];
+        _error = e.message;
+      });
+    }
+  }
+
+  /// Names the cities while there are few enough to read, then counts them.
+  String get _ctaLabel {
+    final picked = _draft.toList()..sort();
+    if (picked.isEmpty) return 'Pick at least one city';
+    if (picked.length <= 2) return 'Show outlets in ${picked.join(' & ')}';
+    return 'Show outlets in ${picked.length} cities';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final textTheme = Theme.of(context).textTheme;
+
+    return SafeArea(
+      top: false,
+      child: Container(
+        key: const Key('city_picker_sheet'),
+        margin: const EdgeInsets.all(12),
+        constraints: BoxConstraints(
+          // Never taller than most of the screen: the list is as long as there
+          // are serviceable cities, and it must not grow past the viewport.
+          maxHeight: MediaQuery.of(context).size.height * 0.75,
+        ),
+        decoration: BoxDecoration(
+          color: c.surface,
+          borderRadius: BorderRadius.circular(AppTheme.radius),
+          border: Border.all(color: c.border, width: AppTheme.borderWidth),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 4),
+              child: Text('Where are you?', style: textTheme.headlineSmall),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+              child: Text(
+                'Pick one or more cities.',
+                style: textTheme.bodyMedium?.copyWith(color: c.inkSoft),
+              ),
+            ),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: AreaPicker(
+                  areas: _areas,
+                  error: _error,
+                  selected: _draft,
+                  // The draft is owned here, so the CTA label and the rows read
+                  // the same source.
+                  onToggle: (city) => setState(() {
+                    if (!_draft.remove(city)) _draft.add(city);
+                  }),
+                  onRetry: _loadAreas,
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
+              // Disabled on an empty selection rather than treating empty as
+              // "all": with a default, ticking none and ticking everything
+              // would do the same thing and nothing on screen would say what
+              // the boxes were for.
+              child: NeoButton(
+                key: const Key('city_picker_apply'),
+                label: _ctaLabel,
+                icon: Icons.arrow_forward,
+                onPressed: _draft.isEmpty
+                    ? null
+                    : () => Navigator.pop(context, Set<String>.of(_draft)),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -720,11 +1155,9 @@ class _OutletCard extends StatelessWidget {
                     // size it would have floated in the middle of the frame.
                     ? Icon(Icons.restaurant, color: c.onAccent, size: 32)
                     : Image.network(
-                        // Resized BY THE CDN rather than by Flutter, via
+                        // Thumbnail-sized, not the full original — see
                         // cdnThumbnail. The box is ~76px; the source images
-                        // are full-size Cloudinary originals, so six cards
-                        // meant six full-resolution downloads for six
-                        // thumbnails.
+                        // are unresized Cloudinary uploads.
                         cdnThumbnail(outlet.imageUrl)!,
                         fit: BoxFit.cover,
                         errorBuilder: (_, _, _) =>
