@@ -1726,7 +1726,7 @@ class CarevoService:
         app clobber them to null when the owner merely toggled the photo."""
         row = (await db.execute(text(
             "SELECT id, location_name, is_visible, image_url, "
-            "       opens_at, closes_at, is_manually_closed "
+            "       opens_at, closes_at, is_manually_closed, latitude, longitude "
             "FROM outlets WHERE id = :oid"
         ), {"oid": str(outlet_id)})).first()
         if not row:
@@ -1741,6 +1741,10 @@ class CarevoService:
             "is_manually_closed": bool(row.is_manually_closed),
             # The owner sees the same live state a customer would (migration 024).
             "order_status": avail["status"],
+            # Coordinates the customer app sorts by distance on. DECIMAL out of
+            # the driver, so cast — a Decimal would not survive JSON encoding.
+            "latitude": float(row.latitude) if row.latitude is not None else None,
+            "longitude": float(row.longitude) if row.longitude is not None else None,
         }
 
     @staticmethod
@@ -1795,6 +1799,39 @@ class CarevoService:
         if not row:
             raise HTTPException(status_code=404, detail="Outlet not found")
         await db.commit()
+        return await CarevoService._load_owner_outlet(db, outlet_id)
+
+    @staticmethod
+    async def set_outlet_location(
+        db: AsyncSession, outlet_id: uuid.UUID,
+        latitude: float, longitude: float,
+    ) -> dict:
+        """Pin the outlet's coordinates, from the owner tapping "Use current
+        location" while standing in their own restaurant.
+
+        Scoped to the caller's own outlet by the controller — there is no
+        outlet_id parameter — so one owner cannot move another's pin.
+
+        Range is validated at the schema edge AND here: a swapped lat/lng pair
+        is still in range and cannot be detected, but an out-of-range value is
+        a guaranteed-wrong pin and is worth refusing rather than storing. The
+        columns are DECIMAL(10,8)/(11,8), so a latitude above 99 would not fit
+        the column either.
+        """
+        if not (-90 <= latitude <= 90) or not (-180 <= longitude <= 180):
+            raise HTTPException(
+                status_code=422,
+                detail="Coordinates out of range",
+            )
+        row = (await db.execute(text(
+            "UPDATE outlets SET latitude = :lat, longitude = :lng "
+            "WHERE id = :oid RETURNING id"
+        ), {"lat": latitude, "lng": longitude, "oid": str(outlet_id)})).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Outlet not found")
+        await db.commit()
+        # Full OwnerOutletOut, so the app does not lose the hours or the photo
+        # when the owner only moved the pin.
         return await CarevoService._load_owner_outlet(db, outlet_id)
 
     @staticmethod

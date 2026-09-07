@@ -46,6 +46,12 @@ dependencies:
 
   # Dish image picking (uploaded to Cloudinary via unsigned preset)
   image_picker: ^1.1.2
+
+  # "Use current location" on the outlet settings screen. Pinned to the SAME
+  # version customer_app uses: lib/services/location_service.dart is a verbatim
+  # copy of that app's file, and a version skew would give two apps sharing one
+  # source file two different plugin behaviours.
+  geolocator: ^13.0.2
   # Staff push (migration 017): buzz every device at the outlet when a paid
   # order lands, so staff can reject a wrong one. Versions pinned to match
   # customer_app — both apps live in the same Firebase project (carevo-pos)

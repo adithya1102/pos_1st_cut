@@ -45,6 +45,17 @@ class OutletService {
     return Outlet.fromJson((data as Map).cast<String, dynamic>());
   }
 
+  /// `PATCH /pos/outlet/location` — pin the outlet's coordinates from the
+  /// owner's own device. Scoped server-side to the caller's own outlet, so no
+  /// outlet id is sent. Returns the full refreshed outlet.
+  Future<Outlet> setLocation(double latitude, double longitude) async {
+    final data = await _client.patch('/pos/outlet/location', body: {
+      'latitude': latitude,
+      'longitude': longitude,
+    });
+    return Outlet.fromJson((data as Map).cast<String, dynamic>());
+  }
+
   /// `POST /pos/outlet/closed` — flip the "temporarily closed" toggle
   /// (migration 024). Returns the full refreshed outlet.
   Future<Outlet> setManualClosed(bool isClosed) async {

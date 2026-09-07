@@ -1,19 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../services/location_service.dart';
 import '../state/home_state.dart';
 
-/// Outlet hours + the "temporarily closed" toggle (migration 024).
+/// Outlet hours, the "temporarily closed" toggle (migration 024), and the
+/// restaurant's map pin.
 ///
 /// Lives in owner_app, alongside the existing outlet controls (visibility,
 /// storefront photo) that already talk to `/pos/outlet`: the OWNER sets their
-/// own restaurant's hours, so this is theirs, not the platform admin's.
+/// own restaurant's hours and location, so this is theirs, not the platform
+/// admin's.
 ///
-/// Two independent controls:
+/// Three independent controls:
 ///   * Manual closure — takes effect immediately (like the visibility switch),
 ///     because "close now" is an emergency the owner should not have to Save.
 ///   * Opening/closing times — edited then Saved together, since a half-applied
 ///     schedule (new open, old close) would briefly be wrong.
+///   * Location — saved the moment a fix arrives, because the owner is standing
+///     in the restaurant when they tap it and a separate Save would be a second
+///     chance to get it wrong.
 class OutletSettingsScreen extends StatefulWidget {
   const OutletSettingsScreen({super.key});
 
@@ -21,6 +27,9 @@ class OutletSettingsScreen extends StatefulWidget {
   static const closeTimeKey = Key('settings_close_time');
   static const manualToggleKey = Key('settings_manual_closed');
   static const saveHoursKey = Key('settings_save_hours');
+  static const useLocationKey = Key('settings_use_location');
+  static const locationValueKey = Key('settings_location_value');
+  static const openSettingsKey = Key('settings_open_app_settings');
 
   @override
   State<OutletSettingsScreen> createState() => _OutletSettingsScreenState();
@@ -31,6 +40,11 @@ class _OutletSettingsScreenState extends State<OutletSettingsScreen> {
   TimeOfDay? _close;
   bool _initialised = false;
   bool _savingHours = false;
+  bool _locating = false;
+
+  /// True once a refusal was permanent, so the UI can offer system settings
+  /// instead of a retry the OS will silently swallow.
+  bool _locationBlocked = false;
 
   static TimeOfDay? _parse(String? hhmm) {
     if (hhmm == null) return null;
@@ -121,9 +135,124 @@ class _OutletSettingsScreenState extends State<OutletSettingsScreen> {
                       : const Icon(Icons.save_outlined),
                   label: const Text('Save hours'),
                 ),
+                const Divider(height: 32),
+
+                // --- Location (saved as soon as a fix arrives) ---
+                Text('Restaurant location',
+                    style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 4),
+                Text(
+                  'Customers sort outlets by how far away they are. Stand in '
+                  'your restaurant and tap the button to pin it.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Icon(
+                      outlet.hasLocation
+                          ? Icons.location_on
+                          : Icons.location_off_outlined,
+                      size: 18,
+                      color: outlet.hasLocation
+                          ? Colors.green
+                          : Theme.of(context).colorScheme.outline,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      outlet.hasLocation ? 'Pinned at' : 'Not set',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(width: 8),
+                    if (outlet.hasLocation)
+                      Text(
+                        // Five decimals is about a metre — more would imply a
+                        // precision a phone fix does not have.
+                        '${outlet.latitude!.toStringAsFixed(5)}, '
+                        '${outlet.longitude!.toStringAsFixed(5)}',
+                        key: OutletSettingsScreen.locationValueKey,
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodyMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  key: OutletSettingsScreen.useLocationKey,
+                  onPressed: _locating ? null : _useCurrentLocation,
+                  icon: _locating
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.my_location),
+                  label: Text(outlet.hasLocation
+                      ? 'Update to current location'
+                      : 'Use current location'),
+                ),
+                // Only a trip to system settings can undo a permanent refusal,
+                // so a retry button here would be guaranteed to do nothing.
+                if (_locationBlocked) ...[
+                  const SizedBox(height: 8),
+                  TextButton.icon(
+                    key: OutletSettingsScreen.openSettingsKey,
+                    icon: const Icon(Icons.settings_outlined, size: 18),
+                    label: const Text('Open app settings'),
+                    onPressed: () =>
+                        context.read<LocationService>().openSettings(),
+                  ),
+                ],
               ],
             ),
     );
+  }
+
+  /// Takes a fix and saves it immediately.
+  ///
+  /// `userInitiated: true` because this button IS the request — without it the
+  /// service's one-prompt latch would swallow the second tap after a denial,
+  /// and the button would visibly do nothing. Same reasoning, and the same
+  /// flag, as customer_app's "Near me".
+  Future<void> _useCurrentLocation() async {
+    // Both resolved BEFORE the await: reading providers off `context` after an
+    // async gap is exactly the use this lint exists to catch.
+    final location = context.read<LocationService>();
+    final home = context.read<HomeState>();
+
+    setState(() {
+      _locating = true;
+      _locationBlocked = false;
+    });
+
+    final result = await location.getCurrentLocation(userInitiated: true);
+    if (!mounted) return;
+
+    if (!result.hasCoordinates) {
+      setState(() {
+        _locating = false;
+        _locationBlocked = result.outcome == LocationOutcome.deniedForever;
+      });
+      // Each outcome gets its own words: "turn on location", "we were
+      // refused" and "the fix never arrived" are three different problems and
+      // three different things for the owner to do next.
+      _snack(switch (result.outcome) {
+        LocationOutcome.serviceDisabled =>
+          'Location is turned off on this device. Turn it on and try again.',
+        LocationOutcome.deniedForever =>
+          'Location permission is blocked. Allow it in app settings.',
+        LocationOutcome.denied =>
+          'Location permission was declined.',
+        _ => 'Could not get a location fix. Try again outdoors.',
+      });
+      return;
+    }
+
+    final err = await home.setLocation(result.latitude!, result.longitude!);
+    if (!mounted) return;
+    setState(() => _locating = false);
+    _snack(err ?? 'Location saved.');
   }
 
   Future<void> _pick(BuildContext context, {required bool isOpen}) async {

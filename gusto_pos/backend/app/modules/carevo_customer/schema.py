@@ -414,6 +414,20 @@ class OwnerOutletOut(BaseModel):
     closing_time: Optional[str] = None
     is_manually_closed: bool = False
     order_status: str = "open"
+    # Pin the customer app sorts by distance on. Null until the owner sets it.
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+
+
+class SetOutletLocationIn(BaseModel):
+    """Coordinates from the owner's own device, via "Use current location".
+
+    Both required: half a coordinate pair is not a location, and allowing one
+    without the other would let a partial write leave a pin at (lat, 0) — a
+    point in the Gulf of Guinea that the distance sort would happily use.
+    """
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
 
 
 _HHMM = r"^([01]\d|2[0-3]):[0-5]\d$"

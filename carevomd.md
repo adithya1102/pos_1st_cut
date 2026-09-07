@@ -5489,3 +5489,73 @@ weakened:
   section label and tab label are the same word on the current tab.
 
 ---
+
+## 2026-09-08 — "Use current location" on outlet settings
+
+Customers sort outlets by distance. `outlets.latitude/longitude` existed
+in the schema (and in the customer app's sort) but the owner had no way
+to set them — the pin could only be filled by hand in the database.
+
+### Reuse, not reimplementation
+
+`owner_app/lib/services/location_service.dart` is a BYTE-IDENTICAL copy
+of customer_app's file (`diff` clean), and `geolocator` is pinned to the
+same `^13.0.2`. That file already carries hard-won behaviour: the
+one-prompt latch, the `userInitiated` bypass for a deliberate tap, the
+doubled 15s bound on the position fix, and the deniedForever/settings
+hand-off. Rewriting it would have meant re-learning all four.
+
+Registered app-wide in main.dart, as customer_app registers it — the
+latch is app-wide bookkeeping and a per-screen instance would reset it
+and re-raise the OS dialog.
+
+Manifest gains ACCESS_FINE_LOCATION + ACCESS_COARSE_LOCATION.
+FOREGROUND ONLY, matching customer_app: no background permission, since
+the only caller is a button the owner is looking at when they tap it.
+
+### Backend
+
+New `PATCH /pos/outlet/location`, alongside the existing `/outlet/hours`
+and `/outlet/image` setters and following their pattern exactly: no
+outlet_id parameter (scoped to the caller's own account, so one owner
+cannot move another's pin onto their street and hijack the distance
+sort), and it returns the FULL `_load_owner_outlet` shape so moving the
+pin does not blank the hours.
+
+`latitude`/`longitude` added to that shared loader — cast to float,
+since DECIMAL comes out of the driver as Decimal and would not survive
+JSON encoding. Both coordinates are required: half a pair would leave a
+pin at (lat, 0), a real point in the Gulf of Guinea that the sort would
+happily use. Range is checked at the schema edge and again in the
+service.
+
+No migration — the columns already exist.
+
+### UI
+
+Saved the instant a fix lands, not behind a Save: the owner is standing
+in the restaurant when they tap, and a second step is a second chance to
+get it wrong. Each failure outcome gets its own words — location off,
+refused, blocked, no fix — because they are four different problems with
+four different next actions. A permanent refusal offers app settings
+rather than a retry the OS would silently swallow.
+
+### Tests — backend 328 (+14), owner_app 75 (+10)
+
+Backend failures still 21, and the failing SET is byte-identical to the
+pre-change baseline.
+
+Geolocator is faked by swapping `GeolocatorPlatform.instance`, the same
+way customer_app fakes it, so the REAL service stays in the test. Covers
+the pin reaching the endpoint, an already-pinned outlet offering
+"Update", a second tap after a denial re-asking, neither control
+clobbering the other, and every no-fix path saving nothing. Backend
+covers scoping (a second outlet stays untouched), out-of-range refusal,
+and both-coordinates-required.
+
+Test-only wrinkle worth remembering: the location block sits below the
+fold in a lazy ListView (so `find.byKey` returns NOTHING, not something
+off-screen — scroll first), and the result SnackBar sits directly over
+the button, so a second tap needs it timed out first.
+
+---

@@ -79,6 +79,22 @@ class HomeState extends ChangeNotifier {
     }
   }
 
+  /// Pin the outlet's coordinates. Not optimistic: the fix has already been
+  /// taken by the time this runs, so there is no latency left worth hiding,
+  /// and showing a pin that failed to save would be worse than showing none.
+  /// Returns null on success, or a staff-facing error message.
+  Future<String?> setLocation(double latitude, double longitude) async {
+    if (_outlet == null) return 'No outlet loaded.';
+    try {
+      _outlet = await _outletService.setLocation(latitude, longitude);
+      notifyListeners();
+      return null;
+    } catch (e) {
+      if (kDebugMode) debugPrint('setLocation failed: $e');
+      return 'Could not save the location. Try again.';
+    }
+  }
+
   /// Flip the "temporarily closed" toggle (migration 024). Optimistic on the
   /// flag itself, then reconciled with the server's returned outlet (which also
   /// carries the recomputed order_status).

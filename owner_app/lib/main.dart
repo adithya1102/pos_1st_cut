@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'config/app_config.dart';
 import 'services/api_client.dart';
 import 'services/auth_service.dart';
+import 'services/location_service.dart';
 import 'services/menu_service.dart';
 import 'services/offer_service.dart';
 import 'services/order_service.dart';
@@ -66,6 +67,10 @@ class GustoOwnerApp extends StatelessWidget {
         Provider(
           create: (_) => StaffPushService(OrderService(apiClient)),
         ),
+        // Registered app-wide, exactly as customer_app registers it: the
+        // one-prompt latch inside is app-wide bookkeeping, and a per-screen
+        // instance would reset it and re-raise the OS dialog.
+        ChangeNotifierProvider<LocationService>(create: (_) => LocationService()),
       ],
       child: MaterialApp(
         title: AppConfig.appName,

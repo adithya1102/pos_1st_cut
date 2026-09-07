@@ -111,6 +111,23 @@ async def set_outlet_hours(
     )
 
 
+@router.patch("/outlet/location", response_model=s.OwnerOutletOut)
+async def set_outlet_location(
+    payload: s.SetOutletLocationIn,
+    staff: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Pin the outlet's coordinates from the owner's own device.
+
+    Scoped to the caller's own outlet via _require_outlet — there is no
+    outlet_id parameter — so one owner cannot move another's pin onto their
+    own street and hijack the customer app's distance sort.
+    """
+    return await CarevoService.set_outlet_location(
+        db, _require_outlet(staff), payload.latitude, payload.longitude
+    )
+
+
 @router.post("/outlet/closed", response_model=s.OwnerOutletOut)
 async def set_outlet_manual_closed(
     payload: s.SetManualClosedIn,
