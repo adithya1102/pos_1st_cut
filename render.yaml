@@ -52,8 +52,25 @@ services:
         value: stub
       - key: PAYMENT_GATEWAY_SHAPE
         value: razorpay
+      # Firebase phone-OTP and Google sign-in. TRUE in production: both
+      # /customer/auth/firebase and /customer/auth/google raise 501
+      # "Firebase authentication is not enabled on this deployment" when this
+      # is false, and with CUSTOMER_AUTH_ENABLED=false closing the stub path
+      # there is then NO way to log in at all.
+      #
+      # This file said "false" while prod ran "true" (SESSION_HANDOFF.md), so
+      # the record disagreed with reality. Corrected here — but see the note on
+      # CUSTOMER_AUTH_ENABLED above: changing this value does NOT change the
+      # running service. The dashboard wins for an existing key. To actually
+      # change it, change it in the Render dashboard and verify by probing:
+      #
+      #   curl -X POST .../api/v1/customer/auth/firebase \
+      #        -H 'Content-Type: application/json' -d '{"id_token":"probe"}'
+      #
+      #   501 = disabled (login is DOWN)   401 = enabled (healthy: the gate
+      #   passed and token verification ran, then rejected the junk token)
       - key: FIREBASE_ENABLED
-        value: "false"
+        value: "true"
 
   # --------------------------------------------------------------------------
   # CareVo Admin Dashboard (internal). PREPPED, NOT DEPLOYED.
