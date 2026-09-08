@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+1
+version: 1.0.0+2
 
 environment:
   sdk: ^3.12.1
@@ -47,6 +47,21 @@ dependencies:
   # Dish image picking (uploaded to Cloudinary via unsigned preset)
   image_picker: ^1.1.2
 
+  # "Use current location" on the outlet settings screen. Pinned to the SAME
+  # version customer_app uses: lib/services/location_service.dart is a verbatim
+  # copy of that app's file, and a version skew would give two apps sharing one
+  # source file two different plugin behaviours.
+  geolocator: ^13.0.2
+  # Staff push (migration 017): buzz every device at the outlet when a paid
+  # order lands, so staff can reject a wrong one. Versions pinned to match
+  # customer_app — both apps live in the same Firebase project (carevo-pos)
+  # and a version skew between them buys nothing but divergent SDK behaviour.
+  #
+  # NOTE: do NOT add firebase_bom here. It breaks FlutterFire's own version
+  # resolution; the plugin versions below are the contract.
+  firebase_core: ^4.12.1
+  firebase_messaging: ^16.5.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -57,6 +72,31 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+
+# Launcher icon generation: `dart run flutter_launcher_icons`.
+# Same brand mark and same split as customer_app — see that pubspec for the full
+# reasoning. In short: `app_icon.png` (opaque white square) drives iOS and the
+# legacy pre-API-26 Android icon, while Android's adaptive icon takes
+# `app_icon_foreground.png`, the same logo keyed onto TRANSPARENCY.
+#
+# The transparency matters: feeding the white square in as the adaptive
+# foreground leaves a faint rounded-square ghost inside Android's circular mask,
+# because the square's field is not pure white (244-255) against a #FFFFFF
+# background layer. Regenerate the foreground with
+# `python scripts/make_adaptive_foreground.py` if the source logo changes.
+#
+# Inset 12 matches customer_app: keyed artwork fills 92% of its canvas, landing
+# at ~56% of the 108dp adaptive canvas, inside the 61% safe zone.
+flutter_launcher_icons:
+  image_path: "assets/icon/app_icon.png"
+  android: true
+  ios: true
+  # iOS rejects icons with an alpha channel at App Store submission.
+  remove_alpha_ios: true
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/icon/app_icon_foreground.png"
+  adaptive_icon_foreground_inset: 12
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -69,10 +109,12 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
-  # To add assets to your application, add an assets section, like this:
-  # assets:
-  #   - images/a_dot_burr.jpeg
-  #   - images/a_dot_ham.jpeg
+  assets:
+    # Brand lockup on transparency, for the splash. The same bytes customer_app
+    # ships — both are written by scripts/make_app_icon.py rather than copied by
+    # hand. Declared as a single file, not the whole directory: assets/icon is a
+    # build-time input for flutter_launcher_icons and must NOT ship in the APK.
+    - assets/brand/gusto_logo.png
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

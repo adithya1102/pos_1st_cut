@@ -30,10 +30,28 @@ from app.modules.analytics.router import router as analytics_router
 # CareVo Skip (additive; customer pre-order / pickup)
 from app.modules.carevo_customer.controller import router as carevo_customer_router
 from app.modules.carevo_pos.controller import router as carevo_pos_router
+from app.modules.menu_ocr.controller import router as menu_ocr_router
 from app.modules.onboarding.controller import router as onboarding_router
+
+# Local testing dashboard (additive; every route gated by X-Testing-Key)
+from app.modules.testing_dashboard.controller import router as testing_router
 
 # CareVo Admin Dashboard (additive; SUPER_ADMIN-gated platform ops)
 from app.modules.carevo_admin.controller import router as carevo_admin_router
+from app.modules.account.controller import (
+    public_router as account_public_router,
+    router as account_router,
+)
+from app.modules.push.controller import (
+    admin_router as push_admin_router,
+    customer_router as push_customer_router,
+)
+# Promotions (migration 016): CareVo Campaigns + Restaurant Offers.
+from app.modules.promotions.controller import (
+    admin_router as promotions_admin_router,
+    customer_router as promotions_customer_router,
+    pos_router as promotions_pos_router,
+)
 
 
 app = FastAPI(title="Gusto POS", version="2.0.0")
@@ -56,6 +74,26 @@ async def on_startup():
     await init_db()
     async with AsyncSessionLocal() as session:
         await init_initial_data(session)
+
+
+@app.on_event("startup")
+async def _start_auto_advance_poller():
+    """Durable roster auto-progression: a background loop that advances due
+    steps recorded in auto_advance_schedule (migration 028). Persisting the
+    schedule is what makes progression survive restarts; this loop is only the
+    driver. Lazily imported so importing the app (e.g. in tests) has no side
+    effect — and the httpx test client never fires startup, so it stays off in
+    the suite, which drives the processor directly instead."""
+    import asyncio
+    from app.modules.testing_dashboard.service import auto_advance_poller_loop
+    app.state.auto_advance_task = asyncio.create_task(auto_advance_poller_loop())
+
+
+@app.on_event("shutdown")
+async def _stop_auto_advance_poller():
+    task = getattr(app.state, "auto_advance_task", None)
+    if task is not None:
+        task.cancel()
 
 # Endpoints
 # Note: The specific paths (like /organizations, /outlets) are already defined 
@@ -84,11 +122,35 @@ app.include_router(analytics_router, prefix="/api/v1")
 # CareVo Skip routers → /api/v1/customer/... and /api/v1/pos/...
 app.include_router(carevo_customer_router, prefix="/api/v1")
 app.include_router(carevo_pos_router, prefix="/api/v1")
+# Menu photo import → /api/v1/pos/menu-import/*. SUGGESTS dishes from photos;
+# it never creates one — approved candidates go back through the ordinary
+# POST /pos/menu-items. Inert (503) until OCR_ENABLED and rapidocr are both
+# present; the import is lazy, so this mounts fine without the package.
+app.include_router(menu_ocr_router, prefix="/api/v1")
+# Local testing dashboard → /api/v1/testing/... (all routes X-Testing-Key gated)
+app.include_router(testing_router, prefix="/api/v1")
 # Public owner self-signup → /api/v1/register (unauthenticated, rate-limited).
 app.include_router(onboarding_router, prefix="/api/v1")
 # CareVo Admin router → /api/v1/admin/...  (inert until migration 003 + a
 # SUPER_ADMIN role grant exist; every route 403s for ordinary staff.)
 app.include_router(carevo_admin_router, prefix="/api/v1")
+# Push notifications (migration 014). Token registration is customer-authed;
+# the nudge triggers are SUPER_ADMIN-only. Sending stays inert until
+# PUSH_ENABLED + a Firebase service account are configured.
+# Owner account: email on file, change password, forgot/reset password
+# (migration 015). The /auth/password/* pair is PUBLIC by necessity — a
+# locked-out owner has no token. Email sending stays inert until EMAIL_ENABLED.
+app.include_router(account_router, prefix="/api/v1")
+app.include_router(account_public_router, prefix="/api/v1")
+app.include_router(push_customer_router, prefix="/api/v1")
+app.include_router(push_admin_router, prefix="/api/v1")
+# Promotions (migration 016) → /api/v1/admin/promotions (SUPER_ADMIN),
+# /api/v1/pos/offers (outlet staff, own outlet only), /api/v1/customer/offers.
+# Two DISTINCT products sharing one table, never one generic coupon: `scope`
+# alone decides who funds the discount and is set by the route, not the body.
+app.include_router(promotions_admin_router, prefix="/api/v1")
+app.include_router(promotions_pos_router, prefix="/api/v1")
+app.include_router(promotions_customer_router, prefix="/api/v1")
 
 @app.get("/")
 async def root():

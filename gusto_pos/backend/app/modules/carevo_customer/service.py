@@ -2,46 +2,128 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
+import os
 import secrets
 import string
 import time
 import uuid
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, time as dtime, timedelta, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, status
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.websocket_manager import customer_manager, pos_manager
 from app.modules.customers.model import Customer
 from app.modules.carevo_customer.model import (
+    Coupon,
     CustomerOrder,
     CustomerOrderItem,
     PaymentTransaction,
+    PointTransaction,
 )
 from app.modules.carevo_payments.gateway import get_gateway
 from app.modules.prediction import events as pe
+# Safe at module level: promotions.service imports only its own schema, so this
+# closes no cycle (promotions.controller reaches back into carevo_customer.deps,
+# never into this module).
+from app.modules.promotions.service import PromotionService
 
 # --- OTP rate limiter -------------------------------------------------------
 # NOTE: single-process limiter; use Redis in prod
 _otp_hits: dict[str, list[float]] = defaultdict(list)
 # Per-IP limiter for public owner self-signup (POST /register), same pattern.
 _register_hits: dict[str, list[float]] = defaultdict(list)
+# Per-OUTLET limiter for pickup-code misses, same pattern and same caveat.
+# Keyed by outlet rather than by IP or order: the thing being guarded is the
+# guessing of codes at one counter, and every request already arrives with an
+# authenticated staff account whose outlet_id is the natural bucket.
+_pickup_miss_hits: dict[str, list[float]] = defaultdict(list)
 
 # Default categories seeded for every self-registered outlet, so the owner has
 # real options in the dish form's category picker immediately. Order = display.
 DEFAULT_CATEGORIES = ["Starters", "Mains", "Sides", "Desserts", "Beverages"]
 
+logger = logging.getLogger(__name__)
+
 # Status progression for the pickup flow
 _PROGRESSION = ["RECEIVED", "PREPARING", "READY"]
 _LIVE_STATUSES = {"PAID", "RECEIVED", "PREPARING", "READY"}
 
+# Finished, from the CUSTOMER's point of view — the order is over and they have
+# been told so. A payment landing against one of these cannot reopen it: see the
+# guard in mark_paid. PICKED_UP is included alongside the three the app can
+# currently produce because it is terminal in exactly the same sense (the client
+# treats it as collected) and a future writer of it must not reopen a gap this
+# guard was added to close.
+_TERMINAL_STATUSES = {"CANCELLED", "COMPLETED", "ABANDONED", "PICKED_UP"}
+
+# Operating-hours gate (migration 024). Kept as named constants so they are easy
+# to tune later without hunting through query strings.
+#
+# New orders are refused within ORDER_CUTOFF_MINUTES of closing, so the kitchen
+# is never handed an order it cannot finish before the doors shut. All outlets
+# are in India, and `opens_at`/`closes_at` are stored as bare local time-of-day,
+# so the "what time is it now" comparison is done in IST — never the server's
+# UTC, which would gate orders against the wrong clock (the same class of bug as
+# the greeting that read UTC).
+ORDER_CUTOFF_MINUTES = 30
+_OUTLET_TZ = ZoneInfo("Asia/Kolkata")
+
+# Availability states, surfaced to the customer and used to gate order creation.
+AVAIL_OPEN = "open"
+AVAIL_CLOSING_SOON = "closing_soon"
+AVAIL_CLOSED = "closed"
+
 
 class CarevoService:
+    #: How long a verified pickup stays in the owner app's LIVE order queue
+    #: after staff confirm it, before dropping out of the default view.
+    #:
+    #: Server-side and derived from customer_orders.pickup_verified_at, so the
+    #: window survives app restarts and is identical on every device looking at
+    #: the same outlet. Only /pos/orders honours it — order history and the
+    #: admin order log are unaffected.
+    COMPLETED_GRACE = timedelta(minutes=30)
+
+    #: Instant the seven demo outlets were renamed to their current identities
+    #: (2026-08-20 21:10:32.960232 IST = 15:40:32.960232 UTC). Taken from the
+    #: created_at that the single rename transaction stamped on all 42 inserted
+    #: menu_items — the transaction's own clock, not an estimate from the backup
+    #: filename or a rounded wall-clock guess.
+    #:
+    #: Orders older than this belong to the outlet's PREVIOUS identity (Spice
+    #: Route Kitchen, Rudrarthi, Bistro, ...) and are hidden from the owner app
+    #: so a new restaurant does not open its queue onto a stranger's history.
+    #:
+    #: COSMETIC ONLY — a WHERE clause, never a delete. All 82 customer_orders
+    #: and every customer_order_items row stay exactly as they are, and the
+    #: ADMIN order log deliberately still shows the full history: it reads its
+    #: own queries in carevo_admin/service.py and does not pass through here.
+    #:
+    #: One timestamp covers all seven because the rename was one transaction.
+    #: If outlets are ever re-identified individually this must become a
+    #: per-outlet column rather than a constant.
+    #:
+    #: Overridable via RENAME_CUTOFF_ISO. The tests set it to the epoch, which
+    #: disables the filter: a test database is built from scratch and has no
+    #: pre-rename orders, so applying a real-world cutoff there only couples the
+    #: suite to one production data event. It also sidesteps a genuine trap —
+    #: models default these columns to the NAIVE `datetime.utcnow`, and
+    #: SQLAlchemy's asyncpg dialect localises a naive value using the CLIENT
+    #: machine's timezone before binding it to timestamptz. On an IST developer
+    #: box a "now" order is therefore written 5h30m in the past. Render runs UTC
+    #: so production rows are correct, but a local run is not.
+    RENAME_CUTOFF = datetime.fromisoformat(
+        os.getenv("RENAME_CUTOFF_ISO", "2026-08-20T15:40:32.960232+00:00")
+    )
+
     # ------------------------------ OTP ------------------------------------
     @staticmethod
     def check_otp_rate_limit(phone_number: str) -> None:
@@ -81,6 +163,134 @@ class CarevoService:
             await db.refresh(customer)
         return customer
 
+    @staticmethod
+    async def verify_firebase_token(
+        db: AsyncSession, id_token: str
+    ) -> tuple[Customer, bool]:
+        """Exchange a verified Firebase phone-auth token for a Customer row.
+
+        Independent of OTP_STUB_MODE: this path never trusts a client-supplied
+        code, so it is safe to run with the stub still enabled for dev builds.
+        """
+        from app.modules.carevo_customer.firebase import (
+            find_phone_variants,
+            normalize_phone,
+            verify_phone_token,
+        )
+
+        if not settings.FIREBASE_ENABLED:
+            raise HTTPException(
+                status_code=501,
+                detail="Firebase authentication is not enabled on this deployment",
+            )
+
+        phone, _uid = await verify_phone_token(id_token)
+        canonical = normalize_phone(phone)
+
+        # Match legacy spellings too, so pre-Firebase rows (and their order
+        # history) are reused instead of duplicated under the E.164 form.
+        res = await db.execute(
+            select(Customer).where(Customer.phone_number.in_(find_phone_variants(phone)))
+        )
+        customer = res.scalars().first()
+
+        created = False
+        if not customer:
+            customer = Customer(phone_number=canonical)
+            db.add(customer)
+            await db.commit()
+            await db.refresh(customer)
+            created = True
+        elif customer.phone_number != canonical:
+            # Upgrade the stored number to E.164 now that it is provider-verified.
+            customer.phone_number = canonical
+            await db.commit()
+            await db.refresh(customer)
+
+        # This path never sets a name (a phone row has no profile to take one
+        # from), so `created` changes nothing here today. Returned anyway so
+        # both auth routes have the same shape and the app applies one rule.
+        return customer, created
+
+    @staticmethod
+    async def verify_google_token(
+        db: AsyncSession, id_token: str
+    ) -> tuple[Customer, bool]:
+        """Exchange a verified Firebase Google-provider token for a Customer row.
+
+        Standalone identity: the resulting customer has NO phone number. The app
+        renders it as "—" until the customer verifies a phone separately, at
+        which point the phone-auth path fills it in on the same row.
+
+        Matching order is google_uid first, then email. The uid is the stable
+        key (an email can be reassigned by a Workspace admin); email is the
+        fallback that reunites a Google login with a row created by an earlier
+        Google sign-in before uid was stored, and backfills the uid onto it.
+
+        Returns `(customer, created)`. `created` distinguishes a SIGNUP from a
+        sign-in, which the app needs and cannot work out for itself: on a brand
+        new row the `name` below came from the Google profile moments ago, so a
+        name the customer typed at sign-in should replace it. On an existing
+        row that same name may be one they deliberately chose, and must not be
+        overwritten. Both look identical in the response without this flag.
+        """
+        from app.modules.carevo_customer.firebase import verify_google_token
+
+        if not settings.FIREBASE_ENABLED:
+            raise HTTPException(
+                status_code=501,
+                detail="Firebase authentication is not enabled on this deployment",
+            )
+
+        # The third element is the Google profile display name. It is READ and
+        # DISCARDED on purpose: `customers.name` is what the customer told US,
+        # captured once after signup by the app's name screen and written only
+        # by PATCH /customer/me. Nothing else may write that column.
+        #
+        # Seeding it from the provider is exactly the bug this removes — the
+        # row came back with a name the customer never chose, the app had no
+        # way to tell it apart from one they did, and the greeting showed the
+        # Google name. Keeping the provider out of that field means there is
+        # only ever one writer, so there is nothing to arbitrate.
+        email, uid, _google_display_name = await verify_google_token(id_token)
+
+        res = await db.execute(select(Customer).where(Customer.google_uid == uid))
+        customer = res.scalars().first()
+
+        if not customer:
+            res = await db.execute(
+                select(Customer).where(func.lower(Customer.email) == email)
+            )
+            customer = res.scalars().first()
+
+        if not customer:
+            # No phone: this is the standalone-identity case the nullable
+            # phone_number column (migration 008) exists for.
+            #
+            # `name` is deliberately NOT copied from the Google profile. See
+            # the note on the unpack above: customers.name is the customer's
+            # own answer, and seeding it here is what used to make the app
+            # greet people by their Google display name.
+            customer = Customer(email=email, google_uid=uid)
+            db.add(customer)
+            await db.commit()
+            await db.refresh(customer)
+            return customer, True
+
+        # Existing row — reconcile it with what Google just told us.
+        changed = False
+        if customer.google_uid != uid:
+            customer.google_uid = uid
+            changed = True
+        if customer.email != email:
+            customer.email = email
+            changed = True
+        if changed:
+            await db.commit()
+            await db.refresh(customer)
+
+        return customer, False
+
     # --------------------------- Discovery ---------------------------------
     @staticmethod
     def _haversine_km(lat1, lon1, lat2, lon2) -> float:
@@ -91,25 +301,155 @@ class CarevoService:
         a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
         return round(2 * r * math.asin(math.sqrt(a)), 3)
 
+    #: Haversine, as a SQL expression, mirroring _haversine_km above term for
+    #: term — same earth radius, same asin(sqrt(...)) form. Written out rather
+    #: than delegated to PostGIS because PostGIS is NOT installed on this
+    #: database (only pgcrypto and plpgsql are; ST_Distance raises
+    #: UndefinedObject). Installing it would be a schema change on prod for one
+    #: predicate over seven rows.
+    #:
+    #: The duplication is the point of the comment: the WHERE clause and the
+    #: Python annotation MUST agree, or the list would show a distance the
+    #: filter disagreed with. If either formula changes, change both.
+    _HAVERSINE_SQL = """
+        (2 * 6371.0 * asin(sqrt(
+             power(sin(radians(CAST(:lat AS double precision) - latitude) / 2), 2)
+           + cos(radians(latitude)) * cos(radians(CAST(:lat AS double precision)))
+           * power(sin(radians(CAST(:lng AS double precision) - longitude) / 2), 2)
+        )))
+    """
+
     @staticmethod
-    async def list_outlets(db: AsyncSession, lat: Optional[float], lng: Optional[float]) -> list[dict]:
+    async def list_outlets(
+        db: AsyncSession,
+        lat: Optional[float],
+        lng: Optional[float],
+        city: Optional[list[str]] = None,
+        radius_km: Optional[float] = None,
+    ) -> list[dict]:
+        """Visible outlets, optionally narrowed to one or more cities.
+
+        `city` became a LIST (was a single string) when the app's city picker
+        went multi-select. An empty/None list means "no city filter" — the
+        caller decides whether that is reachable; the app disables its CTA
+        rather than sending an empty selection.
+
+        `radius_km` filters IN THE QUERY, not after it. It needs lat/lng — a
+        radius with no origin has no meaning, so it is ignored without one
+        rather than guessing an origin or returning nothing.
+
+        City and radius are INDEPENDENT and AND together when both are given.
+        The app sends only one at a time (radius in Near Me / Travel, cities
+        when the customer picks them), but that is the app's product decision
+        and is deliberately NOT enforced here — a server that rejected the
+        combination would be inventing a rule the data does not have, and
+        "outlets in Chennai within 20km" is a perfectly coherent question.
+        """
+        # Normalised here rather than at the edge so every caller gets the same
+        # treatment: blanks dropped, lowercased once for the comparison below.
+        cities = [c.strip().lower() for c in (city or []) if c and c.strip()]
+
         rows = (await db.execute(text(
-            "SELECT id, location_name, city, latitude, longitude, upi_id FROM outlets "
-            "WHERE is_visible = true AND deactivated_at IS NULL"
-        ))).fetchall()
+            "SELECT id, location_name, city, locality, latitude, longitude, upi_id, image_url, "
+            "       phone_number, created_at, opens_at, closes_at, is_manually_closed "
+            "FROM outlets "
+            "WHERE is_visible = true AND deactivated_at IS NULL "
+            # `= ANY(array)` rather than an IN-list built by string
+            # interpolation: one bound parameter, no injection surface, and it
+            # works unchanged for one city or ten.
+            #
+            # CAST for the same reason as list_outlets in carevo_admin: with a
+            # NULL/empty bind Postgres cannot infer the parameter type from the
+            # comparison alone. Case-insensitive on both sides so a city picked
+            # from /customer/areas matches regardless of stored capitalisation.
+            "  AND (CAST(:cities AS varchar[]) IS NULL "
+            "       OR cardinality(CAST(:cities AS varchar[])) = 0 "
+            "       OR lower(city) = ANY(CAST(:cities AS varchar[])))"
+            # Radius, applied HERE rather than to the annotated list below.
+            # Filtering after the fetch would still pull every row and only
+            # hide some — fine at seven outlets, wrong as a shape.
+            #
+            # An outlet with no pin (latitude/longitude NULL) is excluded when
+            # a radius is asked for: its distance is unknowable, and silently
+            # including it would put an outlet of unknown distance inside a
+            # circle the customer explicitly drew.
+            "  AND (CAST(:radius_km AS double precision) IS NULL "
+            "       OR (latitude IS NOT NULL AND longitude IS NOT NULL "
+            "           AND " + CarevoService._HAVERSINE_SQL +
+            "               <= CAST(:radius_km AS double precision)))"
+        ), {
+            "cities": cities or None,
+            # Only a radius WITH an origin is a filter. Without lat/lng the
+            # expression has nothing to measure from, so it is dropped.
+            "radius_km": radius_km if (lat is not None and lng is not None) else None,
+            "lat": lat,
+            "lng": lng,
+        })).fetchall()
+
+        # Offer summary for the inline chip (migration 016). ONE query for the
+        # whole list — a per-card lookup would be N round trips on the first
+        # screen the customer sees. "*" holds the platform-wide campaigns, which
+        # reach every outlet including those with no offer of their own.
+        offers = await PromotionService.offer_summary_by_outlet(db)
+        platform = offers.get("*")
+
         out = []
         for r in rows:
-            oid, name, city, o_lat, o_lng, upi_id = r
+            (oid, name, city, locality, o_lat, o_lng, upi_id, image_url,
+             phone_number, created_at, opens_at, closes_at,
+             is_manually_closed) = r
             distance = None
             if lat is not None and lng is not None and o_lat is not None and o_lng is not None:
                 distance = CarevoService._haversine_km(lat, lng, float(o_lat), float(o_lng))
+            summary = offers.get(str(oid)) or platform
+            # Operating-hours status (migration 024), computed server-side from
+            # the SAME function that gates order creation, so the card's label
+            # and the order gate can never disagree.
+            avail = CarevoService.outlet_availability(
+                opens_at, closes_at, bool(is_manually_closed))
             out.append({
                 "id": oid,
                 "name": name,
-                "address": city,
-                "is_open": True,
+                # The fullest address this schema holds. `outlets` has no
+                # street-address column at all — locality (migration 012) and
+                # city are the whole of it — so "Koramangala, Bengaluru" IS the
+                # full address, not a truncation of one. Joined here rather than
+                # in each app so both clients read the same string.
+                #
+                # Falls back to whichever part exists: outlets predating 012
+                # have no locality and must still render their city.
+                "address": ", ".join(p for p in (locality, city) if p) or None,
+                # is_open kept for the existing client contract, but now REAL
+                # (was hardcoded True): true only when orders are accepted.
+                # order_status carries the three-state label the app shows;
+                # opening_time/closing_time back its "9:00 AM – 10:00 PM" line.
+                "is_open": avail["status"] == AVAIL_OPEN,
+                "order_status": avail["status"],
+                "closed_reason": avail["reason"],
+                "opening_time": opens_at.strftime("%H:%M") if opens_at else None,
+                "closing_time": closes_at.strftime("%H:%M") if closes_at else None,
                 "distance_km": distance,
                 "upi_id": upi_id,
+                "image_url": image_url,
+                "locality": locality,
+                # Also emitted on its own, not only folded into `address`
+                # above — behaviour (which transport modes to offer) is keyed
+                # off this, and keying it off a display string would break on
+                # pre-012 outlets whose `address` has no comma to split.
+                "city": city,
+                # Normalised to None so an empty string never renders a call
+                # button that dials nothing.
+                "phone_number": (phone_number or "").strip() or None,
+                # float() because the column is `numeric` -> Decimal, which
+                # would serialise as a JSON string and break the Maps URL.
+                "latitude": float(o_lat) if o_lat is not None else None,
+                "longitude": float(o_lng) if o_lng is not None else None,
+                "offer_count": (summary or {}).get("count", 0),
+                "offer_text": (summary or {}).get("text"),
+                # Backs the app's "Newest" sort. Real column, not a proxy —
+                # sorting by it is the outlet's actual join date, so the label
+                # means what it says.
+                "created_at": created_at,
             })
         if lat is not None and lng is not None:
             out.sort(key=lambda x: (x["distance_km"] is None, x["distance_km"] or 0))
@@ -118,7 +458,21 @@ class CarevoService:
     # ------------------------------ Menu -----------------------------------
     @staticmethod
     async def get_menu(db: AsyncSession, outlet_id: uuid.UUID) -> dict:
-        # Categories of the latest menu for this outlet, with available/active items.
+        # Categories of the latest menu for this outlet.
+        #
+        # `is_active` still filters (a deleted item should not exist for the
+        # customer at all), but `is_available` NO LONGER DOES: temporarily
+        # sold-out items are returned with `is_available: false` so the app can
+        # render them as greyed, non-orderable placeholders.
+        #
+        # Hiding them outright was worse than it looked. A regular who is
+        # scanning for their usual dish cannot tell "sold out today" from
+        # "taken off the menu" from "I'm on the wrong restaurant" — the row is
+        # simply absent, and absence has no explanation attached to it.
+        #
+        # This does NOT make an unavailable item orderable. check_cart_availability
+        # and create_order both re-check the flag server-side, and the app
+        # refuses to add these to the cart.
         rows = (await db.execute(text("""
             SELECT c.id AS cat_id, c.name AS cat_name,
                    mi.id AS item_id, mi.name AS item_name, mi.base_price,
@@ -129,7 +483,6 @@ class CarevoService:
             LEFT JOIN menu_items mi
                    ON mi.category_id = c.id
                   AND mi.is_active = true
-                  AND mi.is_available = true
             WHERE m.outlet_id = :oid AND m.is_latest = true
             ORDER BY c.name, mi.name
         """), {"oid": str(outlet_id)})).fetchall()
@@ -164,11 +517,76 @@ class CarevoService:
                     "tags": r.tags,
                     "customizations": mods.get(str(r.item_id), []),
                 })
-        return {"outlet_id": outlet_id, "categories": [cats[k] for k in order]}
+        phone = (await db.execute(text(
+            "SELECT phone_number FROM outlets WHERE id = :o"), {"o": str(outlet_id)})).scalar()
+        return {
+            "outlet_id": outlet_id,
+            "outlet_phone_number": (phone or "").strip() or None,
+            "categories": [cats[k] for k in order],
+        }
+
+    @staticmethod
+    def outlet_availability(opens_at, closes_at, is_manually_closed, *, now=None) -> dict:
+        """Current order availability for an outlet.
+
+        Returns {"status": AVAIL_*, "reason": str|None}. Pure and
+        clock-injectable (`now` is a tz-aware datetime), so it is directly
+        testable without waiting for real time. This is the SINGLE source of
+        truth: the same function decides what the customer is shown AND whether
+        a new order is accepted, so display and gate can never disagree.
+
+        Rules:
+          - is_manually_closed                 -> closed (temporarily closed)
+          - no schedule (either time is NULL)  -> open (backward compatible:
+            every existing outlet has NULL hours and must keep accepting orders)
+          - before opens_at, or at/after closes_at -> closed
+          - within ORDER_CUTOFF_MINUTES of closes_at -> closing_soon
+          - otherwise                          -> open
+        Handles an overnight window (closes_at <= opens_at, e.g. 18:00->02:00).
+        """
+        if is_manually_closed:
+            return {"status": AVAIL_CLOSED, "reason":
+                    "This outlet is temporarily closed and is not taking "
+                    "orders right now."}
+        if opens_at is None or closes_at is None:
+            return {"status": AVAIL_OPEN, "reason": None}
+
+        now = now or datetime.now(_OUTLET_TZ)
+        n = now.hour * 60 + now.minute
+        o = opens_at.hour * 60 + opens_at.minute
+        c = closes_at.hour * 60 + closes_at.minute
+
+        # Is `n` inside [o, c)? c <= o means the window wraps past midnight.
+        is_open_now = (o <= n < c) if o < c else (n >= o or n < c)
+        if not is_open_now:
+            return {"status": AVAIL_CLOSED,
+                    "reason": "This outlet is closed right now."}
+
+        mins_to_close = (c - n) % (24 * 60)
+        if mins_to_close <= ORDER_CUTOFF_MINUTES:
+            return {"status": AVAIL_CLOSING_SOON, "reason":
+                    "This outlet is closing soon and is not accepting new "
+                    "orders."}
+        return {"status": AVAIL_OPEN, "reason": None}
 
     # ----------------------------- Orders ----------------------------------
     @staticmethod
     async def create_order(db: AsyncSession, customer: Customer, payload) -> dict:
+        # Operating-hours / manual-closure gate (migration 024). Checked FIRST,
+        # before any row is written, so a closed outlet never leaves an orphan
+        # CREATED order behind. Only NEW orders are gated here — nothing touches
+        # orders already in progress.
+        gate = (await db.execute(text(
+            "SELECT opens_at, closes_at, is_manually_closed "
+            "FROM outlets WHERE id = :oid"
+        ), {"oid": str(payload.outlet_id)})).first()
+        if gate is None:
+            raise HTTPException(status_code=404, detail="Outlet not found")
+        avail = CarevoService.outlet_availability(
+            gate.opens_at, gate.closes_at, bool(gate.is_manually_closed))
+        if avail["status"] != AVAIL_OPEN:
+            raise HTTPException(status_code=409, detail=avail["reason"])
+
         # Snapshot name + price from menu_items.
         item_ids = [str(i.menu_item_id) for i in payload.items]
         rows = (await db.execute(text("""
@@ -190,12 +608,18 @@ class CarevoService:
 
         # PE Step 3 (FR-C1/C2): persist travel context on the order.
         if any(v is not None for v in (payload.transport_mode, payload.origin_lat,
-                                       payload.origin_lng, payload.origin_source)):
+                                       payload.origin_lng, payload.origin_source,
+                                       getattr(payload, "declared_arrival_at", None))):
             await db.execute(text("""
                 UPDATE customer_orders SET transport_mode=:tm, origin_lat=:la,
-                       origin_lng=:ln, origin_source=:os WHERE id=:id
+                       origin_lng=:ln, origin_source=:os,
+                       declared_arrival_at=:dec
+                WHERE id=:id
             """), {"tm": payload.transport_mode, "la": payload.origin_lat,
                    "ln": payload.origin_lng, "os": payload.origin_source,
+                   # Train only. Stored for any mode that sends it, but nothing
+                   # reads it outside the train branch, so a stray value is inert.
+                   "dec": getattr(payload, "declared_arrival_at", None),
                    "id": str(order.id)})
 
         total = 0.0
@@ -217,11 +641,71 @@ class CarevoService:
                 item_notes=line.item_notes,
             ))
 
-        order.total_amount = round(total, 2)
+        gross = round(total, 2)
+
+        # Coupon (migration 010). Applied BEFORE the gateway order is created so
+        # the customer is only ever charged the discounted amount — settling the
+        # full amount and refunding the difference would be a second money path
+        # to get wrong.
+        discount = 0.0
+        promotion_label: Optional[str] = None
+        wants_coupon = bool(getattr(payload, "coupon_code", None))
+        wants_promotion = bool(
+            getattr(payload, "promotion_id", None)
+            or getattr(payload, "promotion_code", None)
+        )
+
+        # No stacking in V1. Rejected outright rather than quietly honouring one
+        # of the two: a customer who supplies both and is charged for one has no
+        # way to tell which was ignored. The DB backs this up as well —
+        # idx_promo_redemption_one_per_order allows a single promotion per order.
+        if wants_coupon and wants_promotion:
+            raise HTTPException(
+                status_code=422,
+                detail="Use either a coupon or an offer on an order, not both.",
+            )
+
+        if wants_coupon:
+            discount = await CarevoService._consume_points_coupon(
+                db, customer, order_id=order.id, gross=gross,
+                code=payload.coupon_code,
+            )
+        elif wants_promotion:
+            # Promotions (migration 016). Runs in this same open transaction, so
+            # a failure below rolls the redemption back and the offer stays
+            # claimable — identical discipline to _consume_points_coupon.
+            applied = await PromotionService.apply_to_order(
+                db,
+                customer_id=customer.id,
+                outlet_id=payload.outlet_id,
+                order_id=order.id,
+                gross=gross,
+                promotion_id=getattr(payload, "promotion_id", None),
+                code=getattr(payload, "promotion_code", None),
+            )
+            discount = applied["discount_amount"]
+            promotion_label = applied["label"]
+
+        order.discount_amount = discount
+        # Never below zero: a ₹100 coupon on an ₹80 order settles at ₹0, and the
+        # unused ₹20 is not carried anywhere (single-use means single-use).
+        order.total_amount = round(max(gross - discount, 0.0), 2)
 
         # Create gateway order (stub / razorpay-shaped)
         gw = get_gateway()
-        g_order = gw.create_order(order.total_amount, currency="INR", receipt=str(order.id))
+        # Awaited now that the interface is async — a real gateway is a network
+        # call, and running it synchronously would block the event loop.
+        # `receipt` carries OUR order id, which Cashfree echoes back on the
+        # webhook so no correlation table is needed.
+        g_order = await gw.create_order(
+            order.total_amount, currency="INR", receipt=str(order.id),
+            customer={
+                "id": str(customer.id),
+                "phone": customer.phone_number,
+                "email": customer.email,
+                "name": customer.name,
+            },
+        )
 
         db.add(PaymentTransaction(
             customer_order_id=order.id,
@@ -232,6 +716,7 @@ class CarevoService:
             status="CREATED",
             method=None,
         ))
+        self_session_id = g_order.payment_session_id
 
         # FR-E1: ORDER_CREATED in the SAME transaction as the order insert.
         await pe.write_event(
@@ -262,17 +747,42 @@ class CarevoService:
                 "amount": g_order.amount,
                 "currency": g_order.currency,
                 "key_id": g_order.key_id,
+                # What the Cashfree Flutter SDK opens checkout with. Null for
+                # the Razorpay-shaped stub, which opens on order_id + key_id.
+                "payment_session_id": self_session_id,
             },
+            # The struck-through-price breakdown, computed here rather than in
+            # the app: `gross` is the pre-discount figure and only this function
+            # has ever known it.
+            "original_amount": gross,
+            "discount_amount": discount,
+            "final_amount": order.total_amount,
+            "promotion_label": promotion_label,
         }
 
     @staticmethod
     async def get_order(db: AsyncSession, order_id: uuid.UUID, customer: Customer) -> CustomerOrder:
+        """One of the customer's own orders, by id.
+
+        Honours `customers.history_cutoff_at` (migration 022) exactly as
+        list_my_orders does. Without it the cutoff hid an order from the LIST
+        while a direct link still returned it in full — a hole the shape of the
+        cross-outlet verify-pickup one fixed earlier: the filter existed, but
+        only on the path someone happened to look at.
+
+        The refusal is a 404, deliberately identical to "no such order", rather
+        than a 403 that would confirm the id exists. Nothing is deleted; the row
+        is still there and clearing the cutoff restores access instantly.
+        """
         res = await db.execute(select(CustomerOrder).where(CustomerOrder.id == order_id))
         order = res.scalars().first()
         if not order:
             raise HTTPException(status_code=404, detail="Order not found")
         if str(order.customer_id) != str(customer.id):
             raise HTTPException(status_code=403, detail="Not your order")
+        cutoff = getattr(customer, "history_cutoff_at", None)
+        if cutoff is not None and order.created_at is not None and order.created_at < cutoff:
+            raise HTTPException(status_code=404, detail="Order not found")
         return order
 
     @staticmethod
@@ -398,6 +908,50 @@ class CarevoService:
         await db.commit()
         return {"ok": True, "recorded": True}
 
+    @staticmethod
+    async def record_picked_up(db, order_id, customer) -> dict:
+        """The customer's own "I've picked this up" ack (migration 023).
+
+        Mirrors record_departed / record_arrived exactly: owned-order check,
+        idempotent via _has_event, one append-only CUSTOMER_PICKED_UP event,
+        commit. Deliberately does NOT move order.status — staff verifying the
+        pickup code (PICKUP_VERIFIED → COMPLETED) remains the only real
+        completion, unchanged by this. This event only gives the customer's
+        acknowledgment a durable server record instead of an on-device flag.
+        """
+        row = await CarevoService._owned_order_row(db, order_id, customer)
+        if await CarevoService._has_event(db, order_id, pe.CUSTOMER_PICKED_UP):
+            return {"ok": True, "recorded": False, "detail": "already acknowledged"}
+        await pe.write_event(
+            db, order_id, pe.CUSTOMER_PICKED_UP, actor_type="customer",
+            actor_id=customer.id, source="tap", outlet_id=row.outlet_id)
+        await db.commit()
+        return {"ok": True, "recorded": True}
+
+    @staticmethod
+    async def pickup_progress(db, order_id) -> dict:
+        """Which of the customer's own pickup-journey acknowledgments have been
+        recorded for this order: departed / arrived / picked_up.
+
+        One round trip rather than three: reads all three CUSTOMER_* event types
+        in a single query. Used by GET /customer/orders/{id} (OrderOut) so the
+        app can be server-sourced instead of trusting only local persistence.
+        Reads order_events, the same append-only log record_departed /
+        record_arrived / record_picked_up write to.
+        """
+        rows = (await db.execute(text("""
+            SELECT DISTINCT event_type FROM order_events
+             WHERE order_id = :o
+               AND event_type IN
+                   ('CUSTOMER_DEPARTED', 'CUSTOMER_ARRIVED', 'CUSTOMER_PICKED_UP')
+        """), {"o": str(order_id)})).scalars().all()
+        seen = set(rows)
+        return {
+            "departed": pe.CUSTOMER_DEPARTED in seen,
+            "arrived": pe.CUSTOMER_ARRIVED in seen,
+            "picked_up": pe.CUSTOMER_PICKED_UP in seen,
+        }
+
     # ---------------------------- Payment ----------------------------------
     @staticmethod
     async def _expire_stale_pickups(
@@ -479,7 +1033,24 @@ class CarevoService:
         method: Optional[str] = None,
         raw_payload: Optional[dict] = None,
     ) -> CustomerOrder:
-        """Idempotent PAID transition shared by webhook + simulate."""
+        """Idempotent PAID transition shared by webhook + simulate.
+
+        Refuses to reopen a FINISHED order. The two idempotency checks below
+        both key on the PAYMENT, never on the order, so before this guard
+        existed any order whose payment had not settled could be driven to
+        PAID no matter what its status was — a late or replayed webhook could
+        flip a CANCELLED order back to live and mint it a pickup code. See
+        _TERMINAL_STATUSES.
+
+        Ordering here is deliberate and load-bearing: the guard is THIRD, after
+        both idempotency returns, so genuine retries are untouched. A duplicate
+        webhook carrying a known payment id still short-circuits on the first
+        check, and a second webhook for an already-PAID order still returns on
+        the second — including when that order has since been COMPLETED, which
+        is the common case and must not start logging warnings. Only an order
+        that is finished AND unpaid reaches the guard, which is precisely the
+        resurrection case and nothing else.
+        """
         # Idempotency on gateway_payment_id.
         if gateway_payment_id:
             existing = (await db.execute(text("""
@@ -494,6 +1065,25 @@ class CarevoService:
 
         if order.payment_status == "PAID":
             return order  # already settled
+
+        current = (order.status or "").upper()
+        if current in _TERMINAL_STATUSES:
+            # Loud on purpose. Reaching here means money may have moved against
+            # an order the customer was told was over, so it is either a very
+            # late gateway callback or a replay worth investigating — and the
+            # refund, if one is owed, is a human decision made off-app.
+            logger.warning(
+                "mark_paid REFUSED: order %s is %s (terminal) and cannot be "
+                "reopened by a payment. gateway_payment_id=%s method=%s "
+                "payment_status=%s raw_payload=%s",
+                order.id, current, gateway_payment_id, method,
+                order.payment_status,
+                json.dumps(raw_payload, default=str) if raw_payload else None,
+            )
+            # Returned unchanged rather than raised: the webhook caller must
+            # still answer the gateway 200, or it retries this forever. The
+            # caller sees an order that is plainly not PAID and reports that.
+            return order
 
         gw = get_gateway()
         pay_id = gateway_payment_id or gw.make_payment_id()
@@ -544,10 +1134,16 @@ class CarevoService:
             actor_type="system", source="inferred", outlet_id=order.outlet_id,
             payload={"derived_from": "mark_paid"},
         )
+
+        # Loyalty accrual (migration 010), in the SAME transaction as the PAID
+        # transition: points are earned iff the payment is recorded, and the two
+        # can never diverge through a partial failure.
+        await CarevoService._accrue_points(db, order)
+
         await db.commit()
         await db.refresh(order)
 
-        await CarevoService._broadcast_status(order)
+        await CarevoService._broadcast_status(order, db)
 
         # PE Step 4 (shadow mode): compute the order twin once accepted. Runs in
         # its own transaction AFTER payment is committed, wrapped so a prediction
@@ -558,6 +1154,275 @@ class CarevoService:
             await PredictionService.recompute_twin(db, order.id)
         except Exception:
             await db.rollback()
+
+        # Roster-scoped auto-progression (testing only). If the feature is on and
+        # this order's phone is a tester, schedule the automatic RECEIVED ->
+        # PREPARING -> READY advances (READY then chains into the existing
+        # auto-pickup) so the tester needs zero restaurant-side taps. NON-roster
+        # orders are never scheduled, so a real customer's order is untouched.
+        # Lazy import breaks the cycle (testing_dashboard imports CarevoService);
+        # best-effort so a scheduling failure can never affect the committed
+        # payment. Only the true PAID transition reaches here — the idempotent
+        # early-returns above mean a retried webhook does not re-schedule.
+        try:
+            from app.modules.testing_dashboard.service import TestingService
+            await TestingService.maybe_schedule_auto_advance(db, order)
+        except Exception:
+            pass
+        return order
+
+    # Rejecting is allowed right up until the food is ready. Past READY the
+    # order is made and sitting on the counter — "we can't do this one" is no
+    # longer true, and the customer may already be walking over.
+    REJECTABLE_STATUSES = {"PAID", "RECEIVED", "PREPARING"}
+
+    # Statuses at or past which an order's COMPOSITION can no longer change.
+    # Expressed as a deny-list rather than an allow-list on purpose: the
+    # question is "has the kitchen finished or has the order ended", and a
+    # status nobody has thought of yet should default to still-changeable
+    # rather than being silently blocked.
+    #
+    # Same boundary as REJECTABLE_STATUSES for the same reason — once the food
+    # is made, telling the customer an item "won't be prepared" is false: it
+    # already was. Past that point the remedy is a refund conversation, not an
+    # availability notice.
+    COMPOSITION_LOCKED_STATUSES = {
+        "READY", "COMPLETED", "PICKED_UP", "CANCELLED", "ABANDONED",
+    }
+
+    @staticmethod
+    def _assert_composition_open(status: Optional[str], *, count: int = 1) -> None:
+        """Reject an item-unavailable action once the order is READY or over.
+
+        Server-side half of the cutoff. The owner app also disables the control,
+        but the UI is never the enforcement point — a stale screen, a replayed
+        request or a second device would otherwise walk straight past it.
+        """
+        s = (status or "").upper()
+        if s not in CarevoService.COMPOSITION_LOCKED_STATUSES:
+            return
+        noun = "This item" if count == 1 else "These items"
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{noun} can no longer be marked unavailable — the order is "
+                f"already {s.lower()}."
+                if s != "READY" else
+                f"{noun} can no longer be marked unavailable — the order is "
+                "already ready for pickup."
+            ),
+        )
+
+    @staticmethod
+    async def auto_receive(db: AsyncSession, order: CustomerOrder) -> CustomerOrder:
+        """PAID -> RECEIVED with no human gate.
+
+        There is no Accept step by design: a paid order is accepted. Staff get a
+        push and can REJECT if something is genuinely wrong, but the order is
+        never parked waiting for someone to notice it.
+
+        mark_paid is left completely untouched — it still emits the inferred
+        ORDER_ACCEPTED/PREP_STARTED the prediction engine anchors on, at exactly
+        the same moment it always did. This only moves the visible status on.
+        """
+        if (order.status or "").upper() != "PAID":
+            return order  # already moved on, or never paid
+        return await CarevoService.advance_status(db, order.id, "RECEIVED")
+
+    @staticmethod
+    async def reject_order(
+        db: AsyncSession, order_id: uuid.UUID, outlet_id: uuid.UUID,
+        *, reason: Optional[str] = None, actor_user_id: Optional[uuid.UUID] = None,
+    ) -> dict:
+        """Staff refuse a paid order -> CANCELLED + ORDER_REJECTED.
+
+        ORDER_REJECTED is a distinct event on purpose. ORDER_ABANDONED already
+        exists and means the TTL sweeper expired an order nobody paid for;
+        PAYMENT_FAILED means the gateway declined. This one is a human saying
+        no to money already taken — the only one of the three that obliges a
+        refund, and the only one worth surfacing to the customer as a decision
+        rather than an accident.
+
+        Refunds are deliberately OUT of scope: handled manually outside the app.
+        """
+        res = await db.execute(select(CustomerOrder).where(CustomerOrder.id == order_id))
+        order = res.scalars().first()
+        if not order or str(order.outlet_id) != str(outlet_id):
+            raise HTTPException(status_code=404, detail="Order not found for this outlet")
+
+        current = (order.status or "").upper()
+        if current == "CANCELLED":
+            # Idempotent: a double-tap is not an error.
+            return {"order_id": order.id, "status": current, "already": True}
+        if current not in CarevoService.REJECTABLE_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This order is already ready for pickup and can no longer be "
+                    "rejected." if current in ("READY", "COMPLETED")
+                    else f"An order in {current} cannot be rejected."
+                ),
+            )
+
+        order.status = "CANCELLED"
+        order.updated_at = datetime.now(timezone.utc)
+
+        await pe.write_event(
+            db, order.id, pe.ORDER_REJECTED,
+            actor_type="staff", source="tap", outlet_id=order.outlet_id,
+            actor_id=actor_user_id,
+            payload={"reason": reason, "from_status": current},
+        )
+        await db.commit()
+        await db.refresh(order)
+
+        # Same choke point every other transition uses, so the customer's WS
+        # banner and the FCM push both fire from one place.
+        await CarevoService._broadcast_status(order, db)
+        return {
+            "order_id": order.id,
+            "status": order.status,
+            "already": False,
+            "reason": reason,
+        }
+
+    @staticmethod
+    async def _notify_kitchen_for_due_trains(
+        db: AsyncSession, *, outlet_id=None
+    ) -> int:
+        """Check-on-read: push the kitchen for any TRAIN order now due to start.
+
+        Same pattern as _expire_stale_pickups, and for the same reason — this
+        deploy has no scheduler and Render's free tier sleeps, so "run at time
+        T" is implemented as "check whether T has passed, on a read that
+        happens often anyway" (GET /pos/orders). No Celery, no APScheduler, no
+        worker process.
+
+        Due when:  now() >= declared_arrival_at - prep_estimate - safety_buffer
+
+        The prep estimate is NOT recomputed here — it is read from the order's
+        twin (ready_sigma_s' sibling `inputs`), which predict_kitchen already
+        produced. Building a second prep estimator was explicitly out of scope.
+
+        Emits KITCHEN_START_NOTIFIED once per order. Idempotency is the event
+        log itself: order_events is append-only and already the source of
+        truth for every other transition, so "have we told them yet" is a
+        NOT EXISTS against it rather than a new flag column.
+
+        Does NOT touch status, PREP_STARTED, or anything else. Purely a push.
+        """
+        from app.modules.prediction.service import KITCHEN_NOTIFY_SAFETY_BUFFER_S
+
+        clauses = [
+            "co.transport_mode = 'train'",
+            "co.declared_arrival_at IS NOT NULL",
+            "co.status = ANY(:live)",
+            # Not already notified — the append-only log IS the flag.
+            "NOT EXISTS (SELECT 1 FROM order_events e "
+            " WHERE e.order_id = co.id AND e.event_type = 'KITCHEN_START_NOTIFIED')",
+            # Due: arrival minus prep minus buffer has passed. COALESCE because
+            # a twin may not exist yet for a very fresh order; falling back to 0
+            # prep makes it fire at (arrival - buffer), i.e. later, never earlier.
+            "now() >= co.declared_arrival_at"
+            "        - make_interval(secs => COALESCE(t.prep_s, 0))"
+            "        - make_interval(secs => :buf)",
+        ]
+        params = {"live": list(_LIVE_STATUSES),
+                  "buf": KITCHEN_NOTIFY_SAFETY_BUFFER_S}
+        if outlet_id is not None:
+            clauses.append("co.outlet_id = :oid")
+            params["oid"] = str(outlet_id)
+
+        rows = (await db.execute(text(f"""
+            SELECT co.id, co.outlet_id, co.declared_arrival_at,
+                   COALESCE(t.prep_s, 0) AS prep_s
+            FROM customer_orders co
+            LEFT JOIN LATERAL (
+                SELECT (ot.inputs ->> 'mu_ready_s')::numeric AS prep_s
+                FROM order_twin ot WHERE ot.order_id = co.id
+            ) t ON true
+            WHERE {' AND '.join(clauses)}
+        """), params)).fetchall()
+        if not rows:
+            return 0
+
+        for r in rows:
+            await pe.write_event(
+                db, r.id, pe.KITCHEN_START_NOTIFIED,
+                actor_type="system", source="system", outlet_id=r.outlet_id,
+                payload={
+                    "declared_arrival_at": r.declared_arrival_at.isoformat()
+                    if r.declared_arrival_at else None,
+                    "prep_estimate_s": float(r.prep_s or 0),
+                    "safety_buffer_s": KITCHEN_NOTIFY_SAFETY_BUFFER_S,
+                },
+            )
+        await db.commit()
+
+        # Push after the event is committed: the event is the record, the push
+        # is best-effort delivery of it. A push failure must not lose the fact
+        # that the order became due.
+        try:
+            from app.modules.push.service import PushService
+            for r in rows:
+                await PushService.notify_outlet_train_due(db, r.id, r.outlet_id)
+        except Exception:
+            await db.rollback()
+        return len(rows)
+
+    @staticmethod
+    async def mark_payment_failed(
+        db: AsyncSession,
+        order: CustomerOrder,
+        *,
+        gateway_payment_id: Optional[str] = None,
+        method: Optional[str] = None,
+        raw_payload: Optional[dict] = None,
+    ) -> CustomerOrder:
+        """Record a gateway-reported payment failure.
+
+        The mirror of mark_paid, and deliberately much smaller: nothing accrues,
+        no pickup code is issued, no ORDER_ACCEPTED/PREP_STARTED is inferred.
+        Only the payment outcome is recorded.
+
+        Idempotent and one-way — never downgrades an order that is already PAID.
+        Gateways retry, and retries arrive out of order; a late FAILED webhook
+        for a payment that later succeeded must not un-pay a settled order.
+        """
+        if order.payment_status == "PAID":
+            return order
+
+        res = await db.execute(
+            select(PaymentTransaction)
+            .where(PaymentTransaction.customer_order_id == order.id)
+            .order_by(PaymentTransaction.created_at.desc())
+        )
+        txn = res.scalars().first()
+        if txn is None:
+            txn = PaymentTransaction(customer_order_id=order.id, amount=order.total_amount)
+            db.add(txn)
+        txn.gateway = txn.gateway or get_gateway().name
+        if gateway_payment_id:
+            txn.gateway_payment_id = gateway_payment_id
+        txn.method = method or txn.method
+        txn.status = "FAILED"
+        txn.raw_payload = raw_payload
+        txn.updated_at = datetime.now(timezone.utc)
+
+        # The ORDER stays CREATED: the basket is still valid and the customer
+        # can retry payment. Only payment_status carries the failure, so a
+        # retry needs no resurrection logic.
+        order.payment_status = "FAILED"
+        order.updated_at = datetime.now(timezone.utc)
+
+        await pe.write_event(
+            db, order.id, pe.PAYMENT_FAILED,
+            actor_type="system", source="webhook", outlet_id=order.outlet_id,
+            payload={"method": method, "gateway_payment_id": gateway_payment_id},
+        )
+        await db.commit()
+        await db.refresh(order)
+        await CarevoService._broadcast_status(order, db)
         return order
 
     @staticmethod
@@ -585,12 +1450,30 @@ class CarevoService:
         order.updated_at = datetime.now(timezone.utc)
         await db.commit()
         await db.refresh(order)
-        await CarevoService._broadcast_status(order)
+        await CarevoService._broadcast_status(order, db)
+
+        # Roster-scoped auto-pickup (testing_dashboard, migration 025). When a
+        # TESTER's order reaches READY, complete it automatically via the SAME
+        # verify_pickup path staff use — reused verbatim, not reimplemented.
+        # Orders from non-roster phones are untouched: the roster check inside
+        # maybe_auto_pickup gates everything, and it is best-effort so it can
+        # never break a real status transition. Lazy import breaks the cycle
+        # (testing_dashboard imports CarevoService).
+        if new_status == "READY":
+            from app.modules.testing_dashboard.service import TestingService
+            if await TestingService.maybe_auto_pickup(db, order):
+                await db.refresh(order)  # now COMPLETED
         return order
 
     @staticmethod
-    async def _broadcast_status(order: CustomerOrder) -> None:
-        """Reuse the in-memory WS layer to push Skip status changes."""
+    async def _broadcast_status(order: CustomerOrder, db: AsyncSession = None) -> None:
+        """Reuse the in-memory WS layer to push Skip status changes.
+
+        Also the single hook for FCM order-status pushes (migration 014): every
+        transition already funnels through here, so notifications reuse this
+        choke point instead of re-deriving which statuses changed. Wrapped so a
+        push failure can never affect the order.
+        """
         payload = {
             "event": "SKIP_ORDER_STATUS",
             "order_id": str(order.id),
@@ -607,17 +1490,101 @@ class CarevoService:
         except Exception:
             pass
 
+        # FCM push for the same transition. Best-effort and fully swallowed:
+        # a notification must never fail or roll back the order it describes.
+        # Inert (logged as 'skipped') until PUSH_ENABLED + a service account
+        # are configured, so this is safe to ship before credentials exist.
+        if db is not None:
+            try:
+                from app.modules.push.service import PushService
+                await PushService.notify_order_status(db, order)
+            except Exception:
+                pass
+
     # ------------------------------ POS ------------------------------------
+    # --------------------------- pickup miss limit -------------------------
+    # The per-order 3-strike lockout only counts attempts against an order the
+    # caller already resolved. A miss resolves nothing, so before this it cost
+    # the caller nothing at all and could be repeated without limit — the code
+    # space is 8^6, small enough that unmetered guessing is worth denying.
     @staticmethod
-    async def verify_pickup(db: AsyncSession, order_id: uuid.UUID, pickup_code: str) -> dict:
+    def check_pickup_miss_limit(outlet_id) -> None:
+        """Refuse further pickup-code attempts for an outlet that keeps missing.
+
+        Raises 429 with a Retry-After hint rather than failing quietly, so the
+        app can tell staff to wait instead of showing "not found" for a code
+        that was never actually looked up.
+        """
+        now = time.time()
+        window = float(settings.PICKUP_MISS_WINDOW_SECONDS)
+        key = str(outlet_id)
+        hits = [t for t in _pickup_miss_hits[key] if now - t < window]
+        _pickup_miss_hits[key] = hits
+        if len(hits) >= settings.PICKUP_MISS_LIMIT:
+            # Until the OLDEST hit falls out of the window — that is the moment
+            # a slot frees up, so it is what the client should wait for.
+            retry_after = max(1, int(window - (now - hits[0])) + 1)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={
+                    "error": "too_many_pickup_attempts",
+                    "message": (
+                        "Too many incorrect pickup codes. "
+                        f"Try again in about {retry_after} seconds."
+                    ),
+                    "retry_after_seconds": retry_after,
+                },
+                headers={"Retry-After": str(retry_after)},
+            )
+
+    @staticmethod
+    def record_pickup_miss(outlet_id) -> None:
+        """Count one miss. Called only where nothing resolved."""
+        key = str(outlet_id)
+        _pickup_miss_hits[key].append(time.time())
+
+    @staticmethod
+    def clear_pickup_misses(outlet_id) -> None:
+        """A hit clears the outlet's misses — the limit is on CONSECUTIVE ones.
+
+        Real staff mistype, and a counter serving a queue should not be locked
+        out by scattered typos spread across successful handovers.
+        """
+        _pickup_miss_hits.pop(str(outlet_id), None)
+
+    @staticmethod
+    async def verify_pickup(
+        db: AsyncSession,
+        order_id: uuid.UUID,
+        pickup_code: str,
+        outlet_id: uuid.UUID,
+    ) -> dict:
+        """Confirm a pickup code and close the order.
+
+        `outlet_id` is the CALLER's outlet and is required. Without it this
+        route took an order_id from the request body and looked it up
+        unscoped, so any authenticated staff account could complete any
+        order in the system — including another restaurant's. It now 404s
+        exactly like mark_order_paid_by_staff does, and the 404 is
+        deliberately indistinguishable from "no such order": a caller must
+        not be able to probe which ids exist outside their own outlet.
+        """
+        # Checked BEFORE any work: once an outlet is over its miss budget the
+        # request must not touch the database at all.
+        CarevoService.check_pickup_miss_limit(outlet_id)
+
         # Expire this order first if its pickup window lapsed, so a stale code
         # can't be verified (and doesn't cost the staff a failed attempt).
         await CarevoService._expire_stale_pickups(db, order_id=order_id)
 
         res = await db.execute(select(CustomerOrder).where(CustomerOrder.id == order_id))
         order = res.scalars().first()
-        if not order:
-            raise HTTPException(status_code=404, detail="Order not found")
+        if not order or str(order.outlet_id) != str(outlet_id):
+            # Nothing resolved, so the per-order counter cannot see this. Count
+            # it here instead — this is the branch that used to be free, and
+            # the one an id-enumerating caller lives in.
+            CarevoService.record_pickup_miss(outlet_id)
+            raise HTTPException(status_code=404, detail="Order not found for this outlet")
 
         if order.is_locked:
             raise HTTPException(status_code=423, detail={"verified": False, "locked": True})
@@ -633,6 +1600,8 @@ class CarevoService:
         status_ok = order.status.upper() in _LIVE_STATUSES
 
         if code_ok and status_ok:
+            # Resolved and confirmed — this outlet is plainly not guessing.
+            CarevoService.clear_pickup_misses(outlet_id)
             order.status = "COMPLETED"
             order.pickup_verified_at = datetime.now(timezone.utc)
             order.updated_at = datetime.now(timezone.utc)
@@ -643,7 +1612,7 @@ class CarevoService:
             )
             await db.commit()
             await db.refresh(order)
-            await CarevoService._broadcast_status(order)
+            await CarevoService._broadcast_status(order, db)
             # PE Step 4: score the terminal order (trust + outcome), best-effort.
             try:
                 from app.modules.prediction.service import PredictionService
@@ -664,15 +1633,228 @@ class CarevoService:
         attempts_remaining = max(0, 3 - order.failed_attempts)
         return {"verified": False, "attempts_remaining": attempts_remaining, "locked": locked}
 
+    @staticmethod
+    async def lookup_pickup(
+        db: AsyncSession, outlet_id: uuid.UUID, pickup_code: str
+    ) -> dict:
+        """Find a live order at THIS outlet by its pickup code. Read-only.
+
+        Staff type the code the customer shows them and get back the order to
+        check against the bag. It deliberately does not close anything: the
+        confirm tap goes on to verify_pickup, which owns the state change. A
+        lookup that completed the order would mean a mistyped-but-valid code
+        closed someone else's order with no chance to notice.
+
+        No new identifier is introduced — this matches the SAME pickup_code
+        already issued at payment and shown in the customer app.
+
+        Scoping is by the caller's own outlet in the WHERE clause, so another
+        outlet's code cannot match even in principle. That is also why the
+        code alone is enough to find the order: it is unique among an outlet's
+        live orders by construction (_generate_pickup_code), though not
+        globally, so the outlet filter is what makes the lookup unambiguous
+        rather than merely private.
+        """
+        code = (pickup_code or "").strip().upper()
+        if not code:
+            # Not an attempt at a code, so it is not counted as a miss — the
+            # app refuses an empty box before it ever gets here.
+            return {"found": False}
+
+        # Checked BEFORE any work: once an outlet is over its miss budget the
+        # request must not touch the database at all.
+        CarevoService.check_pickup_miss_limit(outlet_id)
+
+        # Same check-on-read sweep the queue does, so a code whose pickup
+        # window has lapsed stops matching at the same moment the order
+        # leaves the queue rather than some later request.
+        await CarevoService._expire_stale_pickups(db, outlet_id=outlet_id)
+
+        row = (await db.execute(text("""
+            SELECT id, status, payment_status, is_locked, total_amount,
+                   created_at, pickup_verified_at
+            FROM customer_orders
+            WHERE outlet_id = :oid
+              AND upper(pickup_code) = :code
+              AND status = ANY(:live)
+            LIMIT 1
+        """), {
+            "oid": str(outlet_id),
+            "code": code,
+            "live": list(_LIVE_STATUSES),
+        })).first()
+
+        if not row:
+            CarevoService.record_pickup_miss(outlet_id)
+            return {"found": False}
+
+        # A real code at this outlet — clear the run of misses before it.
+        CarevoService.clear_pickup_misses(outlet_id)
+
+        items = (await db.execute(text("""
+            SELECT id, name_snap, quantity
+            FROM customer_order_items
+            WHERE customer_order_id = :id
+            ORDER BY created_at
+        """), {"id": str(row.id)})).fetchall()
+
+        return {
+            "found": True,
+            # Surfaced so the app can show the lockout instead of a confirm
+            # button it already knows the server will refuse with a 423.
+            "locked": bool(row.is_locked),
+            "order": {
+                "order_id": row.id,
+                "status": row.status,
+                "payment_status": row.payment_status,
+                "is_locked": bool(row.is_locked),
+                "total_amount": float(row.total_amount) if row.total_amount is not None else 0.0,
+                "created_at": row.created_at,
+                "pickup_verified_at": row.pickup_verified_at,
+                "items": [
+                    {"id": it.id, "name": it.name_snap, "quantity": it.quantity}
+                    for it in items
+                ],
+            },
+        }
+
     # ------------------------- Owner App (staff) ---------------------------
     @staticmethod
-    async def get_owner_outlet(db: AsyncSession, outlet_id: uuid.UUID) -> dict:
+    async def _load_owner_outlet(db: AsyncSession, outlet_id: uuid.UUID) -> dict:
+        """Single source of the OwnerOutletOut shape, so GET and every setter
+        return the SAME fields — a setter that omitted the hours would make the
+        app clobber them to null when the owner merely toggled the photo."""
         row = (await db.execute(text(
-            "SELECT id, location_name, is_visible FROM outlets WHERE id = :oid"
+            "SELECT id, location_name, is_visible, image_url, "
+            "       opens_at, closes_at, is_manually_closed, latitude, longitude "
+            "FROM outlets WHERE id = :oid"
         ), {"oid": str(outlet_id)})).first()
         if not row:
             raise HTTPException(status_code=404, detail="Outlet not found")
-        return {"id": row[0], "location_name": row[1], "is_visible": bool(row[2])}
+        avail = CarevoService.outlet_availability(
+            row.opens_at, row.closes_at, bool(row.is_manually_closed))
+        return {
+            "id": row.id, "location_name": row.location_name,
+            "is_visible": bool(row.is_visible), "image_url": row.image_url,
+            "opening_time": row.opens_at.strftime("%H:%M") if row.opens_at else None,
+            "closing_time": row.closes_at.strftime("%H:%M") if row.closes_at else None,
+            "is_manually_closed": bool(row.is_manually_closed),
+            # The owner sees the same live state a customer would (migration 024).
+            "order_status": avail["status"],
+            # Coordinates the customer app sorts by distance on. DECIMAL out of
+            # the driver, so cast — a Decimal would not survive JSON encoding.
+            "latitude": float(row.latitude) if row.latitude is not None else None,
+            "longitude": float(row.longitude) if row.longitude is not None else None,
+        }
+
+    @staticmethod
+    async def get_owner_outlet(db: AsyncSession, outlet_id: uuid.UUID) -> dict:
+        return await CarevoService._load_owner_outlet(db, outlet_id)
+
+    @staticmethod
+    def _parse_hhmm(value: Optional[str]) -> Optional[dtime]:
+        """'HH:MM' -> datetime.time, or None to clear. Validated at the schema
+        edge too, but re-checked here so the service can never write garbage."""
+        v = (value or "").strip()
+        if not v:
+            return None
+        try:
+            hh, mm = v.split(":")
+            return dtime(hour=int(hh), minute=int(mm))
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=422, detail=f"Invalid time: {value!r}")
+
+    @staticmethod
+    async def set_outlet_hours(
+        db: AsyncSession, outlet_id: uuid.UUID,
+        opening_time: Optional[str], closing_time: Optional[str]
+    ) -> dict:
+        """Set (or clear, with nulls) the daily opening/closing schedule.
+
+        Both-or-neither is NOT enforced — a half-set schedule (only one time)
+        reads as "no schedule" in outlet_availability and is harmless — but the
+        app sends both together.
+        """
+        o = CarevoService._parse_hhmm(opening_time)
+        c = CarevoService._parse_hhmm(closing_time)
+        row = (await db.execute(text(
+            "UPDATE outlets SET opens_at = :o, closes_at = :c WHERE id = :oid "
+            "RETURNING id"
+        ), {"o": o, "c": c, "oid": str(outlet_id)})).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Outlet not found")
+        await db.commit()
+        return await CarevoService._load_owner_outlet(db, outlet_id)
+
+    @staticmethod
+    async def set_outlet_manual_closed(
+        db: AsyncSession, outlet_id: uuid.UUID, is_manually_closed: bool
+    ) -> dict:
+        """The on-demand 'temporarily closed' toggle. Independent of the
+        schedule and of is_visible — see migration 024."""
+        row = (await db.execute(text(
+            "UPDATE outlets SET is_manually_closed = :m WHERE id = :oid "
+            "RETURNING id"
+        ), {"m": bool(is_manually_closed), "oid": str(outlet_id)})).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Outlet not found")
+        await db.commit()
+        return await CarevoService._load_owner_outlet(db, outlet_id)
+
+    @staticmethod
+    async def set_outlet_location(
+        db: AsyncSession, outlet_id: uuid.UUID,
+        latitude: float, longitude: float,
+    ) -> dict:
+        """Pin the outlet's coordinates, from the owner tapping "Use current
+        location" while standing in their own restaurant.
+
+        Scoped to the caller's own outlet by the controller — there is no
+        outlet_id parameter — so one owner cannot move another's pin.
+
+        Range is validated at the schema edge AND here: a swapped lat/lng pair
+        is still in range and cannot be detected, but an out-of-range value is
+        a guaranteed-wrong pin and is worth refusing rather than storing. The
+        columns are DECIMAL(10,8)/(11,8), so a latitude above 99 would not fit
+        the column either.
+        """
+        if not (-90 <= latitude <= 90) or not (-180 <= longitude <= 180):
+            raise HTTPException(
+                status_code=422,
+                detail="Coordinates out of range",
+            )
+        row = (await db.execute(text(
+            "UPDATE outlets SET latitude = :lat, longitude = :lng "
+            "WHERE id = :oid RETURNING id"
+        ), {"lat": latitude, "lng": longitude, "oid": str(outlet_id)})).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Outlet not found")
+        await db.commit()
+        # Full OwnerOutletOut, so the app does not lose the hours or the photo
+        # when the owner only moved the pin.
+        return await CarevoService._load_owner_outlet(db, outlet_id)
+
+    @staticmethod
+    async def set_outlet_image(
+        db: AsyncSession, outlet_id: uuid.UUID, image_url: Optional[str]
+    ) -> dict:
+        """Store the outlet storefront photo URL (migration 011).
+
+        The upload itself happens client-side against Cloudinary's unsigned
+        endpoint - the same pipeline dish images already use - so the backend
+        only ever stores the resulting URL and never handles image bytes.
+        Passing null clears the photo, returning the card to its fallback glyph.
+        """
+        url = (image_url or "").strip() or None
+        row = (await db.execute(text(
+            "UPDATE outlets SET image_url = :u WHERE id = :oid RETURNING id"
+        ), {"u": url, "oid": str(outlet_id)})).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Outlet not found")
+        await db.commit()
+        # Full OwnerOutletOut shape (incl. hours), so the app does not lose the
+        # schedule when the owner only changed the photo.
+        return await CarevoService._load_owner_outlet(db, outlet_id)
 
     @staticmethod
     async def set_outlet_visibility(
@@ -849,6 +2031,31 @@ class CarevoService:
         if taken:
             raise HTTPException(status_code=409, detail="Username already taken")
 
+        # Resolve the city BEFORE anything is written (migration 013).
+        # Exactly one of city / requested_city is accepted — the schema enforces
+        # that. A named city must already be active in the canonical list, so
+        # free-text spellings can no longer enter `outlets.city`; a requested one
+        # is recorded as pending for admin approval further down.
+        city_name = None
+        requested_city = (getattr(payload, "requested_city", None) or "").strip()
+        if payload.city:
+            row = (await db.execute(text(
+                "SELECT name FROM cities WHERE lower(name) = lower(:n) "
+                "AND status = 'active' LIMIT 1"
+            ), {"n": payload.city.strip()})).first()
+            if not row:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "That city is not available yet. Pick one from the list, "
+                        "or request a new city."
+                    ),
+                )
+            # Store the canonical spelling, not whatever casing was submitted.
+            city_name = row[0]
+        else:
+            city_name = requested_city
+
         try:
             org_id = (await db.execute(text(
                 "INSERT INTO organizations (id, name, created_at) "
@@ -856,21 +2063,52 @@ class CarevoService:
             ), {"n": payload.restaurant_name})).scalar()
 
             outlet_id = (await db.execute(text(
-                "INSERT INTO outlets (id, location_name, city, latitude, longitude, "
+                "INSERT INTO outlets (id, location_name, city, locality, phone_number, "
+                "  latitude, longitude, "
                 "  geofence_radius_meters, organization_id, verification_status, is_visible, "
                 "  upi_id, created_at) "
-                "VALUES (gen_random_uuid(), :ln, :city, :lat, :lng, 100, :org, "
+                "VALUES (gen_random_uuid(), :ln, :city, :locality, :phone, :lat, :lng, 100, :org, "
                 "        'pending_verification', false, :upi, now()) RETURNING id"
             ), {
-                "ln": payload.restaurant_name, "city": payload.city,
+                "ln": payload.restaurant_name, "city": city_name,
+                "locality": (payload.locality or "").strip(),
+                "phone": (payload.phone_number or "").strip() or None,
                 "lat": payload.latitude, "lng": payload.longitude, "org": str(org_id),
                 "upi": payload.upi_id,
             })).scalar()
 
+            # New-city request rides the SAME pending-approval pattern as outlet
+            # verification: a row with status='pending' that an admin approves or
+            # rejects, audited through admin_audit_logs. No second queue.
+            #
+            # ON CONFLICT DO NOTHING: if another owner already requested the same
+            # city (or it exists rejected), do not duplicate the row — the outlet
+            # still carries the name and rides the existing request's decision.
+            if requested_city:
+                await db.execute(text("""
+                    INSERT INTO cities (name, status, requested_by_outlet_id)
+                    VALUES (:n, 'pending', :oid)
+                    ON CONFLICT (lower(name)) DO NOTHING
+                """), {"n": requested_city, "oid": str(outlet_id)})
+
+            # email lands on the USER row (migration 015): password recovery is
+            # per-account, and an outlet can have several staff users.
+            taken_email = (await db.execute(text(
+                "SELECT 1 FROM users WHERE lower(email) = lower(:e) LIMIT 1"
+            ), {"e": payload.email})).first()
+            if taken_email:
+                raise HTTPException(
+                    status_code=409, detail="That email is already registered"
+                )
+
             await db.execute(text(
-                "INSERT INTO users (id, username, hashed_password, is_active, outlet_id, created_at) "
-                "VALUES (gen_random_uuid(), :u, :pw, true, :oid, now())"
-            ), {"u": payload.username, "pw": get_password_hash(payload.password), "oid": str(outlet_id)})
+                "INSERT INTO users (id, username, hashed_password, is_active, outlet_id, "
+                "  email, created_at) "
+                "VALUES (gen_random_uuid(), :u, :pw, true, :oid, :email, now())"
+            ), {
+                "u": payload.username, "pw": get_password_hash(payload.password),
+                "oid": str(outlet_id), "email": payload.email.strip().lower(),
+            })
 
             menu_id = (await db.execute(text(
                 "INSERT INTO menus (id, outlet_id, version_label, is_latest, created_at) "
@@ -928,12 +2166,57 @@ class CarevoService:
         """Active customer_orders for the outlet, newest first. NAME-FREE."""
         # Sweep expired pickups so the queue never shows stale orders.
         await CarevoService._expire_stale_pickups(db, outlet_id=outlet_id)
+        # Same check-on-read slot: push the kitchen for any train order that has
+        # become due. Wrapped because a notification failure must never stop the
+        # owner seeing their order queue.
+        try:
+            await CarevoService._notify_kitchen_for_due_trains(db, outlet_id=outlet_id)
+        except Exception:
+            await db.rollback()
+        # A verified pickup lingers for COMPLETED_GRACE, then drops out on its
+        # own. It used to vanish the instant staff tapped verify, which left no
+        # window to notice a mistake — and no way to confirm the right order was
+        # closed. The cutoff is computed from pickup_verified_at IN SQL, not
+        # from a client timer, so closing and reopening the app cannot revive a
+        # row that has already aged out, and two devices always agree.
+        #
+        # Order history and the admin order log read their own queries and are
+        # untouched: this thins the live kitchen queue only.
+        # Orders predating the outlet's rename belong to its previous identity
+        # and are hidden here. Cosmetic: the rows are untouched and the admin
+        # order log still shows all of them. See CarevoService.RENAME_CUTOFF.
         orders = (await db.execute(text("""
-            SELECT id, status, payment_status, is_locked, total_amount, created_at
+            SELECT id, status, payment_status, is_locked, total_amount,
+                   created_at, pickup_verified_at
             FROM customer_orders
-            WHERE outlet_id = :oid AND status NOT IN ('COMPLETED','CANCELLED','ABANDONED')
+            WHERE outlet_id = :oid
+              AND created_at >= :rename_cutoff
+              AND (
+                    -- Payment-confirmed and still live. Reuses _LIVE_STATUSES
+                    -- (the same set the expiry sweep uses) as the floor, which
+                    -- deliberately excludes CREATED: an unpaid order must not
+                    -- reach restaurant staff until payment succeeds. Every live
+                    -- status (RECEIVED -> PREPARING -> READY, plus PAID) is in
+                    -- the set; CREATED is the only one it drops.
+                    status = ANY(:live)
+                 OR (
+                      status = 'COMPLETED'
+                      AND pickup_verified_at IS NOT NULL
+                      AND pickup_verified_at >= now() - CAST(:grace AS interval)
+                    )
+              )
             ORDER BY created_at DESC
-        """), {"oid": str(outlet_id)})).fetchall()
+        """), {
+            "oid": str(outlet_id),
+            "rename_cutoff": CarevoService.RENAME_CUTOFF,
+            # The paid/live floor — same definition the expiry sweep uses, not a
+            # duplicated literal. CREATED (unpaid) is absent from it by design.
+            "live": list(_LIVE_STATUSES),
+            # A timedelta, not a string: the CAST tells asyncpg to expect an
+            # interval, and it maps timedelta -> interval natively while
+            # rejecting '1800 seconds' outright.
+            "grace": CarevoService.COMPLETED_GRACE,
+        })).fetchall()
         if not orders:
             return []
         order_ids = [str(o.id) for o in orders]
@@ -956,6 +2239,7 @@ class CarevoService:
                 "is_locked": bool(o.is_locked),
                 "total_amount": float(o.total_amount) if o.total_amount is not None else 0.0,
                 "created_at": o.created_at,
+                "pickup_verified_at": o.pickup_verified_at,
                 "items": by_order.get(str(o.id), []),
             }
             for o in orders
@@ -973,6 +2257,17 @@ class CarevoService:
         order = res.scalars().first()
         if not order or str(order.outlet_id) != str(outlet_id):
             raise HTTPException(status_code=404, detail="Order not found for this outlet")
+        # A finished order cannot be reopened by a payment — same rule as the
+        # webhook. Raised here rather than inside mark_paid, because the two
+        # callers need opposite things from a refusal: the gateway must get a
+        # 200 or it retries forever, whereas staff who just tapped "mark paid"
+        # must be TOLD it did not happen. A 200 carrying an unchanged status
+        # would read as success.
+        if (order.status or "").upper() in _TERMINAL_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail=f"This order is {order.status} and can no longer be "
+                       f"marked paid.")
         order = await CarevoService.mark_paid(db, order, method="upi_manual")
         return {
             "order_id": order.id,
@@ -998,7 +2293,7 @@ class CarevoService:
 
         # Order must exist and belong to the caller's outlet.
         order = (await db.execute(text(
-            "SELECT id, outlet_id FROM customer_orders WHERE id = :oid"
+            "SELECT id, outlet_id, status FROM customer_orders WHERE id = :oid"
         ), {"oid": str(order_id)})).first()
         if not order:
             raise HTTPException(status_code=404, detail="Order not found")
@@ -1009,6 +2304,10 @@ class CarevoService:
         resolved_item_id: Optional[uuid.UUID] = None
 
         if notify_type == "item_unavailable":
+            # Same cutoff as the batch endpoint. This single-item path is the
+            # older one and is still reachable, so guarding only the checklist
+            # would leave the hole open through a different door.
+            CarevoService._assert_composition_open(order.status)
             if item_id is None:
                 raise HTTPException(
                     status_code=422,
@@ -1073,3 +2372,662 @@ class CarevoService:
             "item_id": resolved_item_id,
             "item_name": item_name,
         }
+
+    # Tombstone marker for a deleted account, written to google_uid.
+    #
+    # It has to go SOMEWHERE, because customers_identity_present CHECKs that
+    # phone_number OR google_uid is non-null, and the row must survive to hold
+    # order history together (customer_orders.customer_id is RESTRICT).
+    #
+    # google_uid rather than phone_number for two concrete reasons:
+    #   * phone_number is varchar(20) — "deleted:" + a 36-char uuid is 44 chars
+    #     and does not fit. google_uid is varchar(128).
+    #   * putting it here lets phone_number be set to NULL, i.e. genuinely
+    #     erased, which is the better privacy outcome anyway.
+    # The uuid makes it unique by construction (google_uid has a partial unique
+    # index) and "deleted:<uuid>" can never match a real Google UID, so no
+    # sign-in path can find a tombstone and resurrect the dead account.
+    DELETED_UID_PREFIX = "deleted:"
+
+    @staticmethod
+    def is_deleted_customer(google_uid: Optional[str]) -> bool:
+        return bool(google_uid and google_uid.startswith(
+            CarevoService.DELETED_UID_PREFIX))
+
+    @staticmethod
+    async def delete_my_account(db: AsyncSession, customer: Customer) -> dict:
+        """Irreversibly erase the customer's personal data (Play Store requires
+        an in-app deletion route for apps with accounts).
+
+        NOT a row DELETE, and that is forced by the schema, not a preference:
+        customer_orders.customer_id is RESTRICT, so deleting the row fails for
+        anyone who has ever ordered — and cascading it would destroy the
+        restaurants' revenue records along with the customer.
+
+        So: anonymise in place. Every identifier is overwritten or nulled, the
+        row survives only as an unusable tombstone holding the orders together.
+
+        ERASED  — name, phone, email, google_uid, device token, points balance,
+                  premium window, unspent coupons, notification history.
+        RETAINED— order rows and their line items (business/tax records, as the
+                  privacy policy states), plus points/promotion ledgers, which
+                  carry ids and amounts but no personal data.
+
+        Login is impossible afterwards: the tombstoned phone matches no real
+        number and google_uid is gone, so neither sign-in path can find it.
+        """
+        cid = str(customer.id)
+
+        # Personal content first, so a failure part-way cannot leave the
+        # identity erased while their data lingers.
+        await db.execute(text("DELETE FROM coupons WHERE customer_id = :c"), {"c": cid})
+        await db.execute(
+            text("DELETE FROM push_notifications WHERE customer_id = :c"), {"c": cid})
+
+        row = (await db.execute(text("""
+            UPDATE customers
+            SET name = NULL,
+                email = NULL,
+                phone_number = NULL,
+                fcm_token = NULL,
+                fcm_token_updated_at = NULL,
+                points_balance = 0,
+                premium_until = NULL,
+                google_uid = :prefix || id::text
+            WHERE id = :c
+            RETURNING id
+        """), {"c": cid, "prefix": CarevoService.DELETED_UID_PREFIX})).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Account not found")
+
+        retained = (await db.execute(text(
+            "SELECT count(*) FROM customer_orders WHERE customer_id = :c"), {"c": cid}
+        )).scalar() or 0
+
+        await db.commit()
+        return {
+            "ok": True,
+            "deleted": True,
+            "orders_retained": int(retained),
+            "message": (
+                "Your account and personal details have been deleted. "
+                "Past order records are kept for the restaurants' tax and "
+                "accounting obligations, and are no longer linked to you."
+            ),
+        }
+
+    @staticmethod
+    async def register_staff_push_token(
+        db: AsyncSession, user_id: uuid.UUID, fcm_token: str
+    ) -> dict:
+        """Store a staff device token (migration 017). Last device wins, same
+        one-token-per-account model customers already use."""
+        await db.execute(text("""
+            UPDATE users SET fcm_token = :t, fcm_token_updated_at = now()
+            WHERE id = :uid
+        """), {"t": fcm_token.strip(), "uid": str(user_id)})
+        await db.commit()
+        return {"ok": True, "registered": True}
+
+    @staticmethod
+    async def mark_items_unavailable(
+        db: AsyncSession, order_id: uuid.UUID, outlet_id: uuid.UUID,
+        item_ids: list,
+    ) -> dict:
+        """Batch N/A: several line items, one staff action.
+
+        Deliberately NOT one event for the batch. Each item gets its own
+        ITEM_UNAVAILABLE event and its own push naming that dish, because:
+          * the prediction engine reads composition per item;
+          * "2 items unavailable" tells the customer nothing actionable.
+
+        Does NOT touch the order total. The original paid order stands as-is;
+        adjusting it here would be a second money path (refunds are manual and
+        off-app by decision), and the customer's remedy is to place a NEW order
+        for replacements.
+        """
+        # Ownership first — never leak whether an order id exists elsewhere.
+        order = (await db.execute(text(
+            "SELECT id, outlet_id, status FROM customer_orders WHERE id = :oid"
+        ), {"oid": str(order_id)})).first()
+        if not order or str(order.outlet_id) != str(outlet_id):
+            raise HTTPException(status_code=404, detail="Order not found for this outlet")
+        # Cutoff: once the food is made, "won't be prepared" is simply untrue.
+        CarevoService._assert_composition_open(order.status, count=len(item_ids))
+
+        # Collapse duplicates but keep the submitted order for stable output.
+        seen, wanted = set(), []
+        for i in item_ids:
+            if str(i) not in seen:
+                seen.add(str(i))
+                wanted.append(str(i))
+
+        rows = (await db.execute(text("""
+            SELECT id, name_snap FROM customer_order_items
+            WHERE customer_order_id = :oid AND id = ANY(:ids)
+        """), {"oid": str(order_id), "ids": wanted})).fetchall()
+        found = {str(r.id): r.name_snap for r in rows}
+
+        missing = [i for i in wanted if i not in found]
+        if missing:
+            # All-or-nothing: a checklist that half-applies is worse than one
+            # that refuses, because staff cannot see which half took.
+            raise HTTPException(
+                status_code=400,
+                detail=f"{len(missing)} of the selected items are not line items of this order",
+            )
+
+        now = datetime.now(timezone.utc)
+        marked = []
+        for iid in wanted:
+            await pe.write_event(
+                db, order_id, pe.ITEM_UNAVAILABLE,
+                actor_type="staff", source="tap", outlet_id=outlet_id,
+                payload={"item_id": iid, "batch_size": len(wanted)},
+            )
+        await db.commit()
+
+        # WS first (instant in-app banner), then FCM for a backgrounded app.
+        delivered_any = False
+        for iid in wanted:
+            name = found[iid]
+            payload = {
+                "event": "notify",
+                "order_id": str(order_id),
+                "type": "item_unavailable",
+                "item_id": iid,
+                "item_name": name,
+                "message": f"'{name}' is unavailable and won't be prepared.",
+                "ts": now.isoformat(),
+            }
+            delivered = bool(customer_manager.active_connections.get(str(order_id)))
+            try:
+                await customer_manager.send_order_update(str(order_id), payload)
+            except Exception:
+                delivered = False
+            delivered_any = delivered_any or delivered
+            marked.append({"item_id": iid, "name": name, "notified": delivered})
+
+        # One push per item, naming the dish. Best-effort throughout.
+        try:
+            from app.modules.push.service import PushService, KIND_ITEM_UNAVAILABLE
+            cust = (await db.execute(text(
+                "SELECT customer_id FROM customer_orders WHERE id = :oid"
+            ), {"oid": str(order_id)})).scalar()
+            if cust:
+                for iid in wanted:
+                    await PushService.send(
+                        db, customer_id=cust, kind=KIND_ITEM_UNAVAILABLE,
+                        title="Item unavailable",
+                        body=f"'{found[iid]}' can't be prepared. "
+                             f"Tap to reorder something else.",
+                        order_id=order_id,
+                        data={"item_id": iid, "item_name": found[iid] or ""},
+                    )
+        except Exception:
+            await db.rollback()
+
+        return {
+            "ok": True,
+            "order_id": order_id,
+            "marked": marked,
+            "delivered": delivered_any,
+        }
+
+    # ==================== Profile / loyalty / coupons (010) ====================
+    # Accrual rate: 0.10 points per Rs.20 spent, i.e. points = amount * 0.005.
+    # A Rs.10,000 lifetime spend reaches the 50-point threshold, which mints a
+    # Rs.100 coupon - 1% back. Constants live here so clients never hardcode them.
+    POINTS_PER_RUPEE = 0.10 / 20.0
+    REDEMPTION_THRESHOLD = 50.0
+    REDEMPTION_VALUE_RUPEES = 100.0
+    PREMIUM_TRIAL_DAYS = 60
+
+    @staticmethod
+    def _plan_label(premium_until: Optional[datetime]) -> str:
+        """Derive the plan from premium_until. Never stored - see MeOut."""
+        if premium_until is None:
+            return "Free"
+        # Rows written before 010 may come back naive; treat those as UTC rather
+        # than raising on an aware/naive comparison.
+        if premium_until.tzinfo is None:
+            premium_until = premium_until.replace(tzinfo=timezone.utc)
+        return "Premium" if premium_until > datetime.now(timezone.utc) else "Free"
+
+    @staticmethod
+    def _me_payload(customer: Customer) -> dict:
+        return {
+            "id": customer.id,
+            "name": customer.name,
+            "phone_number": customer.phone_number,
+            "email": customer.email,
+            "points_balance": float(customer.points_balance or 0),
+            "premium_until": customer.premium_until,
+            "plan": CarevoService._plan_label(customer.premium_until),
+        }
+
+    @staticmethod
+    async def get_me(db: AsyncSession, customer: Customer) -> dict:
+        return CarevoService._me_payload(customer)
+
+    @staticmethod
+    async def update_me(db: AsyncSession, customer: Customer, payload) -> dict:
+        """Name only. Phone and email are verified identities, not client-settable."""
+        name = (payload.name or "").strip()
+        if not name:
+            raise HTTPException(status_code=422, detail="Name cannot be empty")
+        customer.name = name
+        await db.commit()
+        await db.refresh(customer)
+        return CarevoService._me_payload(customer)
+
+    @staticmethod
+    async def list_my_orders(
+        db: AsyncSession, customer: Customer, limit: int = 50
+    ) -> list[dict]:
+        """The signed-in customer's own order history, newest first.
+
+        Scoped by customer_id taken from the bearer token - never from a
+        client-supplied id - so one customer can never read another's orders.
+
+        Also honours `customers.history_cutoff_at` (migration 022): orders
+        created before it are omitted. NULL - every account but the three
+        retired development ones - means no cutoff and changes nothing.
+
+        This is a VIEW filter on one endpoint, not a delete. The rows stay
+        exactly where they are and remain visible to owner_app's queue, the
+        admin order log and the prediction engine. Clearing the column restores
+        them here instantly. That distinction matters: `order_events` and
+        `prediction_log` carry BEFORE DELETE immutability triggers, so those
+        orders cannot be removed even deliberately, and pretending otherwise by
+        hiding them everywhere would misrepresent what actually happened.
+        """
+        orders = (await db.execute(text("""
+            SELECT co.id, co.outlet_id, o.location_name AS outlet_name,
+                   co.status, co.payment_status, co.total_amount,
+                   co.discount_amount, co.created_at,
+                   -- Needed so history can surface the pickup code for an
+                   -- order still in progress. Before this the code existed
+                   -- only on the transient post-checkout screen, so leaving
+                   -- that screen lost it permanently.
+                   co.pickup_code
+            FROM customer_orders co
+            LEFT JOIN outlets o ON o.id = co.outlet_id
+            WHERE co.customer_id = :cid
+              -- Read off the Customer already resolved from the token, so no
+              -- join is needed. NULL cutoff short-circuits to "show all".
+              AND (CAST(:cutoff AS timestamptz) IS NULL
+                   OR co.created_at >= CAST(:cutoff AS timestamptz))
+            ORDER BY co.created_at DESC
+            LIMIT :limit
+        """), {
+            "cid": str(customer.id),
+            "cutoff": getattr(customer, "history_cutoff_at", None),
+            "limit": limit,
+        })).fetchall()
+        if not orders:
+            return []
+
+        order_ids = [str(o.id) for o in orders]
+        items = (await db.execute(text("""
+            SELECT customer_order_id, name_snap, quantity
+            FROM customer_order_items
+            WHERE customer_order_id = ANY(:ids)
+            ORDER BY created_at
+        """), {"ids": order_ids})).fetchall()
+        by_order: dict = defaultdict(list)
+        for it in items:
+            by_order[str(it.customer_order_id)].append(
+                {"name": it.name_snap, "quantity": it.quantity}
+            )
+
+        return [
+            {
+                "order_id": o.id,
+                "outlet_id": o.outlet_id,
+                "outlet_name": o.outlet_name,
+                "status": o.status,
+                "payment_status": o.payment_status,
+                "total_amount": float(o.total_amount or 0),
+                "discount_amount": float(o.discount_amount or 0),
+                "created_at": o.created_at,
+                "pickup_code": o.pickup_code,
+                "items": by_order.get(str(o.id), []),
+            }
+            for o in orders
+        ]
+
+    @staticmethod
+    async def _accrue_points(db: AsyncSession, order: CustomerOrder) -> None:
+        """Award points for a paid order. Called inside mark_paid's transaction.
+
+        Earned on what was actually paid (total_amount, already net of any
+        discount): a redeemed coupon should not also re-earn points on the part
+        it paid for.
+        """
+        if order.customer_id is None:
+            return
+        amount = float(order.total_amount or 0)
+        points = round(amount * CarevoService.POINTS_PER_RUPEE, 2)
+        if points <= 0:
+            return
+
+        # Idempotency guard mirroring the partial unique index in migration 010:
+        # mark_paid is itself idempotent, but a retry must never double-award.
+        already = (await db.execute(text("""
+            SELECT 1 FROM point_transactions
+            WHERE order_id = :oid AND reason = 'ORDER_ACCRUAL' LIMIT 1
+        """), {"oid": str(order.id)})).first()
+        if already:
+            return
+
+        db.add(PointTransaction(
+            customer_id=order.customer_id,
+            order_id=order.id,
+            points_delta=points,
+            reason="ORDER_ACCRUAL",
+        ))
+        # Increment in SQL rather than read-modify-write: two orders settling at
+        # the same moment must not clobber each other's award.
+        await db.execute(text("""
+            UPDATE customers SET points_balance = COALESCE(points_balance, 0) + :p
+            WHERE id = :cid
+        """), {"p": points, "cid": str(order.customer_id)})
+
+    @staticmethod
+    async def get_points(db: AsyncSession, customer: Customer) -> dict:
+        rows = (await db.execute(text("""
+            SELECT id, order_id, points_delta, reason, created_at
+            FROM point_transactions
+            WHERE customer_id = :cid
+            ORDER BY created_at DESC
+            LIMIT 50
+        """), {"cid": str(customer.id)})).fetchall()
+        balance = float(customer.points_balance or 0)
+        return {
+            "points_balance": balance,
+            "redemption_threshold": CarevoService.REDEMPTION_THRESHOLD,
+            "redemption_value_rupees": CarevoService.REDEMPTION_VALUE_RUPEES,
+            "can_redeem": balance >= CarevoService.REDEMPTION_THRESHOLD,
+            "transactions": [
+                {
+                    "id": r.id,
+                    "order_id": r.order_id,
+                    "points_delta": float(r.points_delta),
+                    "reason": r.reason,
+                    "created_at": r.created_at,
+                }
+                for r in rows
+            ],
+        }
+
+    @staticmethod
+    def _make_coupon_code(prefix: str) -> str:
+        """Unambiguous alphabet: no O/0/I/1, so a code read aloud survives."""
+        alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        body = "".join(secrets.choice(alphabet) for _ in range(8))
+        return prefix + "-" + body
+
+    @staticmethod
+    async def redeem_points(db: AsyncSession, customer: Customer) -> dict:
+        """Spend REDEMPTION_THRESHOLD points to mint one Rs.100 discount coupon."""
+        threshold = CarevoService.REDEMPTION_THRESHOLD
+
+        # Read the balance BEFORE the UPDATE, while `customer` is still a live
+        # ORM object. The failure path below rolls back, which expires every
+        # loaded attribute — touching customer.points_balance after that would
+        # trigger a lazy refresh outside the greenlet context and raise
+        # MissingGreenlet, turning an intended 409 into a 500.
+        current_balance = float(customer.points_balance or 0)
+
+        # The conditional UPDATE is the whole concurrency guard: two simultaneous
+        # redemptions cannot both pass, because the second sees the debited
+        # balance and matches no row.
+        debited = (await db.execute(text("""
+            UPDATE customers
+            SET points_balance = points_balance - :t
+            WHERE id = :cid AND COALESCE(points_balance, 0) >= :t
+            RETURNING points_balance
+        """), {"t": threshold, "cid": str(customer.id)})).first()
+        if not debited:
+            await db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Not enough points. You need {:g} to redeem (you have {:g})."
+                ).format(threshold, current_balance),
+            )
+
+        coupon = Coupon(
+            code=CarevoService._make_coupon_code("PTS"),
+            customer_id=customer.id,
+            kind=Coupon.KIND_POINTS_DISCOUNT,
+            discount_amount=CarevoService.REDEMPTION_VALUE_RUPEES,
+            status="ACTIVE",
+        )
+        db.add(coupon)
+        db.add(PointTransaction(
+            customer_id=customer.id,
+            order_id=None,  # not tied to an order until the coupon is spent
+            points_delta=-threshold,
+            reason="COUPON_REDEMPTION",
+        ))
+        await db.commit()
+        await db.refresh(coupon)
+        await db.refresh(customer)
+
+        return {
+            "coupon": {
+                "id": coupon.id,
+                "code": coupon.code,
+                "kind": coupon.kind,
+                "discount_amount": float(coupon.discount_amount),
+                "trial_days": coupon.trial_days,
+                "status": coupon.status,
+                "expires_at": coupon.expires_at,
+                "created_at": coupon.created_at,
+            },
+            "points_balance": float(customer.points_balance or 0),
+            "message": "Rs.{:g} coupon ready. Apply it at checkout.".format(
+                CarevoService.REDEMPTION_VALUE_RUPEES
+            ),
+        }
+
+    @staticmethod
+    async def list_my_coupons(db: AsyncSession, customer: Customer) -> list[dict]:
+        rows = (await db.execute(text("""
+            SELECT id, code, kind, discount_amount, trial_days, status,
+                   expires_at, created_at
+            FROM coupons
+            WHERE customer_id = :cid AND status = 'ACTIVE'
+            ORDER BY created_at DESC
+        """), {"cid": str(customer.id)})).fetchall()
+        return [
+            {
+                "id": r.id,
+                "code": r.code,
+                "kind": r.kind,
+                "discount_amount": float(r.discount_amount or 0),
+                "trial_days": r.trial_days or 0,
+                "status": r.status,
+                "expires_at": r.expires_at,
+                "created_at": r.created_at,
+            }
+            for r in rows
+        ]
+
+    @staticmethod
+    async def _consume_points_coupon(
+        db: AsyncSession, customer: Customer, *, order_id, gross: float, code: str
+    ) -> float:
+        """Validate and burn a POINTS_DISCOUNT coupon; return the rupee discount.
+
+        Runs inside create_order's open transaction, so a later failure there
+        rolls the burn back with it and the coupon stays spendable.
+        """
+        code = (code or "").strip().upper()
+        now = datetime.now(timezone.utc)
+
+        # One UPDATE does lookup, ownership check, expiry check, status check and
+        # the burn together - leaving no window between validating and spending.
+        row = (await db.execute(text("""
+            UPDATE coupons
+            SET status = 'REDEEMED', redeemed_at = :now, redeemed_order_id = :oid
+            WHERE code = :code
+              AND kind = 'POINTS_DISCOUNT'
+              AND status = 'ACTIVE'
+              AND (customer_id IS NULL OR customer_id = :cid)
+              AND (expires_at IS NULL OR expires_at > :now)
+            RETURNING id, discount_amount
+        """), {
+            "now": now, "oid": str(order_id), "code": code, "cid": str(customer.id),
+        })).first()
+
+        if not row:
+            # Deliberately one message for every failure mode (unknown / already
+            # used / expired / someone else's): probing codes should not reveal
+            # which of those is true.
+            raise HTTPException(
+                status_code=422, detail="That coupon code is not valid."
+            )
+
+        await db.execute(text(
+            "UPDATE customer_orders SET coupon_id = :couid WHERE id = :oid"
+        ), {"couid": str(row[0]), "oid": str(order_id)})
+
+        # Cap at the order value, so the recorded discount is never larger than
+        # what was actually taken off.
+        return round(min(float(row[1] or 0), gross), 2)
+
+    @staticmethod
+    async def redeem_trial_coupon(db: AsyncSession, customer: Customer, payload) -> dict:
+        """Redeem a PREMIUM_TRIAL coupon: extends premium_until by trial_days.
+
+        No payment, no billing, no plan record - this grants a timestamp. Paid
+        plans are a separate workstream and premium unlocks nothing yet.
+        """
+        code = (payload.code or "").strip().upper()
+        now = datetime.now(timezone.utc)
+
+        row = (await db.execute(text("""
+            UPDATE coupons
+            SET status = 'REDEEMED', redeemed_at = :now,
+                customer_id = COALESCE(customer_id, CAST(:cid AS uuid))
+            WHERE code = :code
+              AND kind = 'PREMIUM_TRIAL'
+              AND status = 'ACTIVE'
+              AND (customer_id IS NULL OR customer_id = CAST(:cid AS uuid))
+              AND (expires_at IS NULL OR expires_at > :now)
+            RETURNING trial_days
+        """), {"now": now, "code": code, "cid": str(customer.id)})).first()
+
+        if not row:
+            raise HTTPException(
+                status_code=422, detail="That coupon code is not valid."
+            )
+
+        days = int(row[0] or CarevoService.PREMIUM_TRIAL_DAYS)
+        # Extend from whichever is later: an unexpired window is added to rather
+        # than thrown away, and a lapsed one restarts from today.
+        base = customer.premium_until
+        if base is not None and base.tzinfo is None:
+            base = base.replace(tzinfo=timezone.utc)
+        start = base if (base is not None and base > now) else now
+        new_until = start + timedelta(days=days)
+
+        await db.execute(text(
+            "UPDATE customers SET premium_until = :pu WHERE id = :cid"
+        ), {"pu": new_until, "cid": str(customer.id)})
+        await db.commit()
+        await db.refresh(customer)
+
+        return {
+            "kind": Coupon.KIND_PREMIUM_TRIAL,
+            "premium_until": customer.premium_until,
+            "plan": CarevoService._plan_label(customer.premium_until),
+            "message": "Premium trial active for {} days.".format(days),
+        }
+
+    @staticmethod
+    async def check_cart_availability(
+        db: AsyncSession, outlet_id: uuid.UUID, item_ids: list
+    ) -> dict:
+        """Re-check a cart against live menu state, BEFORE payment.
+
+        Exists because an item turned off after it was added stays in the
+        already-populated cart, and nothing notices until create_order raises
+        409. This endpoint moves that discovery earlier, to a point where the
+        customer can still fix it without having paid.
+
+        Still required now that get_menu RETURNS unavailable items rather than
+        filtering them out (they render as greyed placeholders). Returning them
+        makes the state visible while browsing; it does not make an unavailable
+        item orderable, and this gate is what enforces that.
+
+        Read-only and side-effect free: it never mutates the cart or the order.
+        create_order remains the authority - this is a courtesy pre-check, not a
+        replacement for server-side validation.
+        """
+        if not item_ids:
+            return {"ok": True, "unavailable": []}
+
+        ids = [str(i) for i in item_ids]
+        rows = (await db.execute(text("""
+            SELECT mi.id, mi.name, mi.is_available, mi.is_active
+            FROM menu_items mi
+            WHERE mi.id = ANY(:ids)
+        """), {"ids": ids})).fetchall()
+
+        found = {str(r.id): r for r in rows}
+        unavailable = []
+        for iid in ids:
+            r = found.get(iid)
+            if r is None:
+                # Deleted from the menu entirely since it was added.
+                unavailable.append({"menu_item_id": iid, "name": None})
+            elif not (r.is_available and r.is_active):
+                unavailable.append({"menu_item_id": iid, "name": r.name})
+
+        return {"ok": not unavailable, "unavailable": unavailable}
+
+    @staticmethod
+    async def list_areas(db: AsyncSession) -> list[dict]:
+        """Cities that actually have at least one orderable outlet.
+
+        Derived from live outlet rows, never a hardcoded list: a city appears
+        here only while it has >=1 visible, non-deactivated outlet, so picking
+        one can never lead to an empty result. When the last outlet in a city is
+        hidden or deactivated, the city disappears from the picker on its own.
+
+        `outlets` has no locality/area column today (only `city`), so this
+        returns city granularity. See migration 012 (proposed, not applied) for
+        the smallest addition that would let this return localities too.
+        """
+        rows = (await db.execute(text("""
+            SELECT city, count(*) AS outlet_count
+            FROM outlets
+            WHERE is_visible = true
+              AND deactivated_at IS NULL
+              AND city IS NOT NULL
+              AND btrim(city) <> ''
+            GROUP BY city
+            ORDER BY count(*) DESC, city
+        """))).fetchall()
+        return [
+            {"city": r.city, "outlet_count": int(r.outlet_count)}
+            for r in rows
+        ]
+
+    @staticmethod
+    async def list_active_cities(db: AsyncSession) -> list[dict]:
+        """Cities selectable at owner signup (migration 013).
+
+        PUBLIC and unauthenticated, because signup itself is: the dropdown has to
+        populate before the owner has an account. Returns only `active` — a
+        pending request is not selectable by anyone else until an admin approves
+        it, otherwise one owner's typo becomes everyone's option.
+        """
+        rows = (await db.execute(text(
+            "SELECT id, name FROM cities WHERE status = 'active' ORDER BY name"
+        ))).fetchall()
+        return [{"id": r.id, "name": r.name} for r in rows]

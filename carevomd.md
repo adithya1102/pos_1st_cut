@@ -1,0 +1,5650 @@
+# carevomd — Project Activity Log
+
+Maintained by the `carevomd` agent for this working directory
+(`C:\Users\Adithya\Desktop\demo2`). This file is append/update-only:
+entries are never deleted, even if the task, file, or feature they
+describe is later removed — later entries record that removal instead.
+Every entry carries a date and timestamp (IST, Asia/Calcutta).
+
+---
+
+## 2026-08-11 03:10 IST — Log created; full project history captured
+
+First write of this log. Below is the project's story so far,
+reconstructed from git history and prior working notes, plus the
+current in-progress (uncommitted) state at the time of writing.
+
+### What this project is
+
+**Gusto POS / CareVo** — a restaurant point-of-sale and customer
+ordering platform, on branch `21_7`. Components:
+
+- `gusto_pos/backend/` — FastAPI (Python), async SQLAlchemy, raw-SQL
+  migrations (no Alembic in practice, despite CLAUDE.md), live Neon
+  Postgres in production.
+- `customer_app/` — Flutter customer app ("CareVo Skip"): browse
+  outlets, order, pay, track status, loyalty/coupons.
+- `owner_app/` — owner-facing Flutter app: outlet management, auth,
+  push notifications.
+- `admin_app/` — admin dashboard.
+- `gusto_pos/GustoPOS/`, `gusto_pos/GustoWaiter/` — .NET MAUI Windows
+  apps for cashier/waiter terminals.
+- Backend + admin dashboard are deployed to **Render**; database is
+  **Neon** (production).
+
+### Timeline of shipped work (most recent first)
+
+| Date | Commit | What happened |
+|---|---|---|
+| 2026-08-10 23:16 | `8e7705f1` | Rebuilt the API test suite to run against a disposable/throwaway database instead of touching real data; fixed a 500 error in `redeem_points`. |
+| 2026-08-10 18:30 | `c48351e1` | Swapped UPI-intent payment flow in customer_app for **Cashfree** checkout. |
+| 2026-08-10 17:48 | `2971e8c2` | Wired Firebase Cloud Messaging push notifications into owner_app. |
+| 2026-08-10 15:08 | `19c64d76` | owner_app now distinguishes network failure vs. wrong password vs. server error at login instead of one generic message. |
+| 2026-08-10 15:03 | `5c87f4b6` | Added account deletion, an order-reject flow, an "item unavailable" checklist for kitchens, and a staff push-notification schema. |
+| 2026-08-10 01:02 | `22b87967` | Built the promotion engine: CareVo Campaigns + Restaurant Offers. |
+| 2026-08-08 00:53 | `a5aa484e` | Owner signup now requires email; added change-password and forgot-password flows. |
+| 2026-08-08 00:18 | `932412bc` | Pinned `google-auth` version so FCM push sending actually works on the deployed backend. |
+| 2026-08-07 23:14 | `71068055` | Push notifications for order status, re-engagement, and "top dish" nudges — FCM-based, feature-gated. |
+| 2026-08-07 03:57 | `c535f4b7` | Canonical city list with an admin-approval flow for new city requests; phone number made mandatory at owner signup. |
+| 2026-08-07 03:43 | `4d39c1b5` | City picker switched to chips (up to 8 cities) with search above that threshold. |
+| 2026-08-07 03:13 | `78540902` | Fixed: cart was being lost on a failed payment; area picker now derived from real outlet city data; fixed a header overlap on the location screen. |
+| 2026-08-07 01:56 | `49e45c1b` | Cart persistence, outlet images, persistent login/account access, admin activity stats, and an outlet-availability check at checkout. |
+| 2026-08-06 00:05 | `f63a3c1e` | Customer profile, order history, logout, and the loyalty points + coupon system. |
+| 2026-08-05 23:30 | `4e1fdc45` | Set `CUSTOMER_AUTH_ENABLED=false` in `render.yaml` to match what was actually live in prod (closed a gap where customer auth had briefly been exposed). |
+| earlier | `f63a3c1e` and back | Branded app icons/labels (CareVo Skip / CareVo Owner), outlet phone numbers for admin verification, email column for admin customers page, **standalone Google Sign-In**, customer analytics dashboard, **Firebase phone OTP** (with reCAPTCHA forced on Android), Places Autocomplete origin search, the **Prediction Engine** (Steps 3–6: travel events, geofencing, shadow-mode prediction service, admin dashboard, Distance Matrix travel prediction), secure Maps API key injection, outlet soft-delete for SUPER_ADMIN, package IDs renamed to `com.carevo.*`. |
+
+### Database migrations applied to production (from prior notes)
+
+- **Migration 008** — Google identity columns on customers; `phone_number` made nullable (code shipped as `e324808a`).
+- **Migration 009** — `outlets.phone_number varchar(20) NULL`, applied 2026-08-05.
+- **Migration 010** — loyalty points, coupons, `premium_until`; applied 2026-08-05; earn rate 0.005 pts/rupee (1% back); no billing wired up yet.
+
+### Deployment state (from prior notes)
+
+- `gusto-pos-backend` and `carevo-admin-dashboard` are live on Render, tracking branch `21_7`, against the production Neon database.
+- Customer auth toggle was briefly open in the Render dashboard, found to mismatch `render.yaml`, and was closed/reconciled by `4e1fdc45` — confirmed resolved.
+- Lesson on record: the Render dashboard is the source of truth over the committed blueprint; verify live settings rather than inferring them from the repo.
+
+### Work in progress right now (uncommitted, not yet on a commit)
+
+As of this log entry, the working tree has:
+
+- **New migration** `gusto_pos/backend/migrations/019_menu_item_tags.sql` — codifies a `menu_items.tags` (`json`) column that already exists by hand in production but was never in a migration, so any fresh/local database was missing it and `/customer/menu` would 500. The migration is a documented no-op against prod (`IF NOT EXISTS`).
+- **`gusto_pos/backend/app/modules/menu/model.py`** — added the corresponding `tags` field to the SQLAlchemy `MenuItem` model so `create_all` produces the column on a fresh DB too.
+- **`gusto_pos/backend/tests/bootstrap_test_db.py`** — removed the old manual `ALTER TABLE ... ADD COLUMN tags jsonb` workaround now that the ORM model + migration 019 cover it (note: prod is `json`, not `jsonb` — intentionally not "upgraded").
+- **New integration test** `customer_app/integration_test/app_flow_test.dart` (159 lines) and matching `Key(...)` widget keys added to `login_screen.dart`, `otp_screen.dart`, `outlets_screen.dart`, and `checkout_screen.dart` — stable driver targets for an end-to-end Flutter flow test (login → OTP → browse outlets → checkout).
+- **New `customer_app/PRIVACY_POLICY.md`** (143 lines) — not yet linked/committed.
+- **`customer_app/android/app/build.gradle.kts`** — modified, not yet reviewed in this log.
+- New **`pdf/` folder** — contains `GustoPOS_CareVo_Current_State_Inventory` in `.docx`, `.md`, and `.pdf` form (a separate project-state document, not this log).
+- `.claude/settings.local.json` modified (local tooling permissions, not app behavior).
+- Various `gusto_pos/GustoPOS/obj/**` and `gusto_pos/GustoWaiter/obj/**` build-artifact diffs — these are .NET build output, not source changes.
+
+None of the above is committed yet. Next natural step, if this thread continues, is likely finishing and running the new Flutter integration test, then committing the tags-migration + test-db fix together, and separately deciding what to do with `PRIVACY_POLICY.md` and the `pdf/` inventory doc.
+
+---
+
+<!-- Future entries: append new dated sections below this line. Do not delete or rewrite prior entries — if something above is later removed/reverted, add a new entry noting the removal instead. -->
+
+## 2026-08-11 — Migrations 012 + 020 applied; outlet locality (§4 phase 1) built
+
+### Migrations applied to PROD (Neon `ep-morning-meadow-ao6m0otk-pooler`)
+
+Both were approved by the user as previously reviewed, and both were confirmed
+genuinely unapplied against `information_schema` before writing.
+
+- **012 `outlet_locality`** — `outlets.locality varchar(80)` (nullable, no
+  backfill) + partial index `idx_outlets_city_locality`. Header comment updated
+  from "PROPOSED — NOT APPLIED" to "APPLIED".
+- **020 `train_transport_mode`** — `customer_orders.declared_arrival_at
+  timestamptz` + partial index; `push_kind_valid` CHECK widened to include
+  `TRAIN_START_DUE`; `outlet_config` `CREATE TABLE IF NOT EXISTS` block was a
+  verified no-op on prod (table already present, 0 rows, unchanged).
+
+Verification note worth keeping: migration 020's `outlet_config` block was
+re-checked column-by-column against `information_schema` before applying,
+because three sources disagreed about its shape — the migration file, the
+hand-written `migrate_outlet_config.py` (`config_value VARCHAR(500)`,
+`updated_at TIMESTAMPTZ`, no `created_at`, no FK), and the file's own comment.
+**Prod matched the migration file exactly**; `migrate_outlet_config.py` is stale
+and does NOT describe the live table. Do not trust that script.
+
+Applying multi-statement migration files needs the asyncpg *simple-query*
+protocol (`raw.driver_connection.execute(sql)`); `conn.execute(text(sql))`
+fails with "cannot insert multiple commands into a prepared statement".
+
+### §4 phase 1 — outlet locality (built, tested)
+
+- **Locality required at owner registration.** Enforced in `RegisterIn`
+  (Pydantic), not in the DB — the column stays nullable so pre-012 outlets keep
+  NULL. Same pattern `phone_number` and `email` already use. Stored trimmed.
+  Deliberately free text, not a reference list like `cities`: localities are too
+  numerous and inconsistently named to curate.
+- **Display as "{Restaurant Name} · {Locality}"** — one definition in
+  `Outlet.displayName` (Dart) and inline in the admin table; the separator is
+  suppressed entirely when locality is null.
+- **Admin approval blocks same-city name+locality collisions** → HTTP 409.
+  Compares against ACTIVE, non-deactivated outlets only, case- and
+  whitespace-insensitively. Pending/rejected/deactivated duplicates do NOT
+  block, and **rejection is never blocked** — the guard gates approval only.
+  Placed at approval rather than signup because signup is unauthenticated
+  (blocking there leaks which restaurants exist and where) and because it must
+  not stop an owner re-registering after a rejection.
+- **"Open in Maps" on the customer confirm screen** (`checkout_screen.dart`) —
+  plain universal URL `https://www.google.com/maps/search/?api=1&query={lat},{lng}`
+  via `url_launcher` (already a dependency). No API key, no Maps SDK, no
+  billing. Uses coordinates rather than a name query so it cannot land on a
+  different branch of the same chain. Button hidden when the outlet has no pin.
+- **Full address shown plainly** on that same screen. Note: `outlets` has **no
+  street-address column at all** — "{locality}, {city}" IS the full address this
+  schema holds, not a truncation. Composed server-side so both apps read one
+  string.
+- **GPS distance-sort untouched**, with a regression test asserting it.
+- `/customer/outlets` now also returns `locality`, `latitude`, `longitude`
+  (floats, not Decimal — `numeric` would serialise as a quoted string and break
+  the Maps URL). It returned none of these before.
+
+### Migration 021 — written, NOT applied
+
+`021_outlet_relocation_request.sql` adds `pending_locality`, `pending_latitude`,
+`pending_longitude`, `relocation_is_pending` + a partial index, for a FUTURE
+relocation-request workflow. **Schema only — no endpoint, no queue, no UI**, by
+explicit instruction. Nothing in the codebase reads these columns yet, so the
+migration is inert. It is applied to the local `carevo_test` DB (bootstrap runs
+every migration) but was pending Checkpoint A approval for prod as of this entry.
+
+`relocation_is_pending` is `NOT NULL DEFAULT false` rather than nullable — a
+nullable boolean carries three states for a two-state question. Flagged to the
+user as a deviation from the "nullable columns" instruction.
+
+### Tests
+
+New `tests/test_api_outlet_locality.py` — 18 tests covering the required field,
+the collision guard's allow/block matrix, the discovery payload, and the
+no-password-leak guard on the admin list. **Full suite: 90 passed.** Note the
+per-IP `/register` rate limit (5/hour, in-process dict) must be cleared between
+tests or the sixth registration 429s for unrelated reasons.
+
+---
+## 2026-08-11 — Timing Engine Item 1 (train mode), locality §4, admin username lookup
+
+### Commit identity
+
+Committed on branch `21_7`. Hash lineage recorded in full, because it was messy:
+
+- `c6cfb5aa` — first attempt. **Dead.** It silently dropped
+  `tests/test_api_train_mode.py`: the file had been staged and reviewed, but was
+  unstaged again before the commit ran, and because `carevomd.md` was added in the
+  same operation the file count stayed at 30, so the swap did not show up in the
+  summary line. Caught right after by listing committed files by name instead of
+  trusting the count.
+- `27eac507` — the amend that put `test_api_train_mode.py` back. 31 files,
+  2219 insertions, 46 deletions.
+- This entry was then appended and amended into that same commit, per the standing
+  rule below, which changes the hash once more. **The live hash is the one reported
+  at push**; a commit cannot contain its own hash, so it is not repeated here.
+
+`74ff6b0d` appears in the session transcript as the post-amend hash. **It never
+existed** — there is no such object in this repo. It was reported in error by the
+agent, stated without being read back from git. Recorded so a future reader does
+not go hunting for it.
+
+### What shipped
+
+- **Timing Engine addendum Item 1 — train transport mode.** Customer enters an
+  expected arrival time; the kitchen is pushed when it is time to start, computed
+  backwards from that arrival. `declared_arrival_at` persisted on `customer_orders`,
+  sent as UTC ISO-8601 (a local-time string would be read as UTC and shift the
+  notification by the offset). Delivery is a check-on-read sweep
+  (`_notify_kitchen_for_due_trains`) on `GET /pos/orders`, because this deploy has
+  no scheduler and Render's free tier sleeps. New `KITCHEN_START_NOTIFIED` event and
+  `TRAIN_START_DUE` push kind — a prompt only: it sets no status and does not start
+  prep. owner_app routes a tapped push to the existing Orders tab. Per-outlet
+  last-mile constant read from existing `outlet_config`, not a new column.
+- **Outlet locality — §4 phase 1.** `locality` surfaced through the admin and
+  customer APIs; `/customer/menu` now returns `"Koramangala, Bengaluru"` as the
+  outlet address (`outlets` has no street-address column, so locality + city is the
+  whole of it). Duplicate guard on `(city, location_name, locality)` enforced at
+  admin approval rather than signup — signup is unauthenticated, so blocking there
+  would tell an anonymous caller which restaurants exist and where.
+- **Admin username lookup.** Admin outlet rows now carry `owner_username`, taken
+  from the earliest active staff row, so support can recover a login for an owner
+  who has forgotten BOTH username and password. Read-only; no password material
+  exposed.
+- **Migrations 012 / 019 / 020 / 021.** 012 and 020 were **already applied to prod
+  before this commit** — committing them brings the repo in sync with the live
+  schema, it does not apply anything. 019 codifies `menu_items.tags`, which prod
+  already has and live code already reads: a no-op against prod, and it exists so a
+  database built from this repo alone is not missing the column (`/customer/menu`
+  500s without it on every fresh deploy and new Neon branch). 021 is inert schema
+  for a future relocation workflow; nothing reads it yet.
+- **Also:** Play Store upload signing config (keystore and `key.properties` stay
+  outside the repo; debug-signing fallback when absent, which Play rejects, so it
+  cannot silently ship an unsigned release), `PRIVACY_POLICY.md`, a Flutter
+  integration-test flow plus the widget keys it drives, and `SESSION_HANDOFF.md`.
+- **Tests: 90 passed** against `carevo_test` (adds 18 locality + 12 train-mode).
+
+### What is explicitly NOT in this commit
+
+- **Addendum Item 2 (cold-start JIT prep scheduling) is NOT built.** Verified by
+  direct search, not inferred: `PREP_SCHEDULED` is a defined but never-emitted
+  constant (its only two occurrences are the definition and a comment saying it is
+  not emitted); no code path ANDs `trusted_order_count < 30` with
+  `hold_tolerance_seconds < 300` — the one `trusted_order_count` check that exists
+  only widens sigma; and `order_twin.scheduled_prep_start_at` /
+  `latest_safe_start_at` are written by nothing. Item 2 is the next piece of work.
+- **Addendum Item 3 (`ITEM_UNAVAILABLE` cutoff at READY) shipped earlier**, in
+  `d936fe85`. No part of it is in this commit.
+
+### Files deliberately excluded
+
+`pdf/`, `.env` (untracked and gitignored — never appears in status, cannot be
+staged by accident), `.claude/settings.local.json`, and the ~60 modified MAUI build
+artifacts under `GustoPOS/obj/` and `GustoWaiter/obj/`.
+
+`CareVo_Skip_Project_Handoff_Updated.md` was **deleted from the working tree** after
+this commit, by explicit instruction: `SESSION_HANDOFF.md` supersedes it, and two
+competing handoff docs in-repo is a liability rather than a record. It was never
+tracked, so git holds no copy. Its §1–3 (business vision, MSME registration,
+product inventory, the 11-step customer flow) were product context that
+`SESSION_HANDOFF.md` does not clearly duplicate.
+
+### Standing rule established (applies to every agent, every session)
+
+**Every commit gets a corresponding `carevomd.md` entry as part of that commit —
+not a follow-up, not optional.** `carevomd.md` is a pure record: append only, never
+edit or reinterpret prior entries. One structural limit found while establishing
+this rule: an entry cannot cite its own commit hash, because amending the entry in
+changes that hash. Cite superseded hashes and prior commits; take the live hash
+from the push.
+
+---
+
+## 2026-08-11 — Correction: commit 9114c93e's message names the wrong endpoint
+
+### The error
+
+Commit `9114c93e` ("feat: train transport mode, outlet locality, admin username
+lookup") contains one factually wrong line in its message body, under
+"Outlet location Phase 1 (section 4)":
+
+> `- locality surfaced through the admin and customer APIs. /customer/menu now`
+> `  returns "Koramangala, Bengaluru" as the outlet address; ...`
+
+The endpoint that returns the composed `"{locality}, {city}"` address string is
+**`/customer/outlets`**, not `/customer/menu`. The address is built in
+`CarevoService.list_outlets`, which backs `GET /api/v1/customer/outlets`.
+`/customer/menu` returns dishes and has no outlet-address field at all.
+
+**Documentation only. No code, schema, or behaviour is affected** — the message
+is wrong, the commit's 31-file tree is correct and unchanged.
+
+### Note the OTHER `/customer/menu` reference in that message is CORRECT
+
+The same commit message mentions `/customer/menu` a second time, under
+"Migrations":
+
+> `019 codifies menu_items.tags ... /customer/menu 500s without it on every`
+> `fresh deploy and new Neon branch.`
+
+That one is accurate and must not be "corrected" by anyone reading this entry.
+`/customer/menu` genuinely does SELECT `mi.tags`, so a database built without
+migration 019 fails on exactly that endpoint. Only the Phase-1 line is wrong.
+
+### Why this is recorded forward instead of amended
+
+The error was found after `9114c93e` had already been pushed to `origin/21_7`.
+A message-only amend was made locally (`2a547116`, tree byte-identical —
+`118c3697`), which left local and origin diverged 1↔1 and would have required a
+force-push over published history to land.
+
+That amend was **discarded** (`git reset --hard origin/21_7`) rather than
+force-pushed. Rewriting a published commit to fix one word in prose is not worth
+breaking history for anyone who has already fetched it. This entry is the
+correction of record.
+
+Consistent with the standing rule above: the record is append-only, and a wrong
+prior entry is superseded by a new one rather than edited in place. The same
+principle now extends to commit messages — a published message is part of the
+record, and its corrections belong forward, not retroactively.
+
+### Process finding from the same episode
+
+Three commits and one push to `21_7` (`c6cfb5aa` → `27eac507` → `9114c93e`,
+pushed 21:50:15 IST) were made by a **second, concurrent Claude Code session**
+running with `--dangerously-skip-permissions`, while another session was mid-task
+and under instruction not to push. The concurrent session also staged files into
+a shared index that the other session was preparing, which surfaced as an
+unexplained staged file.
+
+Practical rule: **one agent session per repo at a time.** Two skip-permissions
+sessions sharing a working tree share one index and one HEAD, and neither sees
+the other's writes until after the fact — amends silently overwrite each other,
+and no merge conflict is ever raised.
+
+---
+
+## 2026-08-11 — Timing Engine addendum Item 2: cold-start JIT fallback (shadow mode)
+
+Builds on `bb668762`. Two files: `app/modules/prediction/service.py` and a new
+`tests/test_api_cold_start_jit.py`. **No migration** — see below.
+
+### What it does, and what it deliberately does not
+
+Fires only when BOTH halves of a conjunction hold, a pairing that existed
+nowhere in the repo before:
+
+```
+trusted_order_count(outlet) < 30   AND   hold_tolerance_seconds(order) < 300
+```
+
+When it fires it writes `order_twin.scheduled_prep_start_at` /
+`latest_safe_start_at` and emits one `PREP_SCHEDULED` event.
+
+**IT DOES NOT CHANGE WHEN ANY KITCHEN STARTS COOKING.** Nothing reads either
+column or that event to control prep — verified by search across the backend and
+all three clients before building, and the payload carries `shadow_mode: true`
+so no later reader mistakes a logged schedule for an instruction that was
+actually given. `mark_paid` is untouched and still emits its inferred
+`ORDER_ACCEPTED`/`PREP_STARTED` exactly as before. The departure-window display
+stays behind the existing `GRADUATION_THRESHOLD = 300` gate in
+`carevo_admin/service.py`, which this change does not touch.
+
+### The buffer is station-specific, and grounded in existing code
+
+The master timing-engine doc (§11.3/§11.4) is **still not in this repo** —
+searched again, still absent. So the buffer comes from `STATION_DEFAULTS`, this
+codebase's actual pool-defaults table, rather than a number invented for the
+occasion.
+
+`STATION_DEFAULTS` is a dict of **3-tuples**, not objects — there is no
+`.hold_tolerance_s` attribute. The field is the third element, called `d_hold`
+in `_resolve_item`, and the new `_jit_station_buffer_s()` reads it by the same
+tuple-unpack idiom (not an index literal, so it survives the tuple gaining a
+field) with `STATION_DEFAULTS["other"]` as the fallback for a missing station.
+
+```
+effective_buffer_s = min(station_pool_default, this order's own hold_tol)
+```
+
+Whichever is tighter wins. **The observable band is narrow and worth knowing:**
+the gate already requires `hold_tol < 300`, and every station default except
+fryer (240) and griddle (300) is >= 300 — so outside fryer-bound orders with
+`hold_tol` in [240, 300), the dish's own value still wins exactly as it did
+under the flat constant. Per-station is more honest than one number; it is not
+expected to move much data.
+
+The **gate threshold** (`COLD_START_JIT_HOLD_TRIGGER_S = 300`) was deliberately
+left flat and NOT made station-specific. It is a hard spec threshold about
+cold-start uncertainty, which is a property of the outlet's missing history, not
+of any station.
+
+### Station dimension on an order-level twin
+
+`PREP_SCHEDULED`'s payload carries `binding_station` and `station_load_s`,
+stashed from `predict_kitchen` via the same `outlet_state` idiom
+`_hold_tolerance_s` already used. `order_twin` stays order-level: it has one
+`scheduled_prep_start_at` column, not one per station. That mismatch is the
+known simultaneous-start modelling gap — μ_ready assumes every station begins at
+once, with no stagger. Carrying the breakdown in the event payload is what makes
+the gap measurable from logged data before anyone builds real per-station
+scheduling on an order-level column.
+
+### No migration needed — verified, not assumed
+
+`order_twin.scheduled_prep_start_at` and `latest_safe_start_at` already exist as
+`timestamptz` nullable from migration 006, confirmed against
+`information_schema` on **both** `carevo_test` and prod. Prod had **0 non-null
+rows** in either column — written by no code path until now. `order_events` has
+**zero CHECK constraints**, so `PREP_SCHEDULED` needed no widening (unlike
+`push_notifications.kind`, which did in migration 018).
+
+This is the first `PREP_SCHEDULED` write site in the repo. It is emitted once
+per order, mirroring `PROMISE_ISSUED`'s guard — `recompute_twin` runs on every
+status read, and re-emitting would turn an append-only event log into a poll log.
+
+### Tests
+
+**110 passing** overall, 20 in the new file (zero Item-2 tests existed before).
+Seven of the twenty are regression assertions that shadow mode really is
+shadow: `mark_paid`'s inferred events intact, `PREP_STARTED`'s timestamp
+unmoved, order status unchanged, departure window still produced,
+`PROMISE_ISSUED` still once, Item 1 (train mode) intact, Item 3
+(`ITEM_UNAVAILABLE` cutoff) still enforced.
+
+**Flaky-test finding worth remembering:** one test failed roughly 1 run in 4 by
+comparing Postgres's `SELECT now()` against a clamp that uses Python's
+`datetime.now()`. On Windows, Python's clock has ~15ms timer granularity while
+Postgres reads a finer one, so the two disagree by a few milliseconds at random
+(the observed delta was ~3ms). It was a test bug, not a code bug. **Do not
+compare a DB-generated timestamp against a Python-generated one in an
+assertion** — pick one clock, and prefer the clock the code under test uses.
+
+---
+
+## 2026-08-12 — customer_app: dead-session handling, multi-order OTP, collected state
+
+Builds on `06fb2de4`. Six files, all in `customer_app`. No backend change, no
+migration.
+
+### The bug that made the integration test fail
+
+`ApiClient._send` threw on a 401 but **never cleared the stored token**.
+`clearToken()` existed and was only ever called from profile logout / account
+deletion. So a dead session was kept forever: every request 401'd while
+`isAuthenticated` stayed `true`, and the app sat on a permanently empty screen
+with no route back to login.
+
+This is exactly what a token from ANOTHER environment does. A JWT signed with a
+different `SECRET_KEY` cannot be decoded by this backend, so *every* endpoint
+401s at once. It is what broke the Flutter integration test when it was pointed
+at a local backend while holding a token minted by prod.
+
+Fixed centrally in `_send`, so it covers every endpoint and every verb rather
+than the one call site that surfaced it:
+
+- clears the persisted token, bumps an `authFailures` `ValueNotifier`, throws a
+  distinct `AuthExpiredException`
+- `main.dart` gained a global navigator key + listener →
+  `pushAndRemoveUntil(LoginScreen)`. Named route, so a burst of simultaneous
+  401s (the normal case — several screens poll at once) produces ONE redirect
+  instead of one per failed request.
+- `AuthState` drops its cached `Customer` on the same signal, so no screen shows
+  a name for a session that no longer exists.
+
+**401 ONLY — 403 is deliberately excluded.** `get_current_customer` raises 401
+for a bad token, but this API also returns 403 for ordinary authorisation
+denials (`"Not your order"`, `"Simulation disabled"`) where the session is
+perfectly valid. Clearing on 403 would sign a customer out for a permission
+error they could not have avoided. There is a regression test pinning this
+distinction; do not "simplify" it to `>= 401`.
+
+### Multi-order OTP visibility
+
+The single active-order banner showed only `_active.first`'s pickup code and
+collapsed the rest into a count ("3 orders in progress"). Every other code was
+reachable only by navigating — precisely when someone is standing at a counter
+being asked for one. Replaced with **one card per in-progress order**: outlet
+name, status word, and the code itself in a large accent chip, all readable
+without tapping. Reuses the existing `isActive` / `activeStatuses` filtering
+already built for Order History rather than inventing a second rule. Cards carry
+`Key('active_order_<id>')`; an order whose payment has not settled shows
+"Code soon" rather than a blank slot.
+
+### READY vs COMPLETED — a stepper-index collision
+
+`stepIndex` maps **both** `READY` and `COMPLETED` to 2, and the pickup screen
+branched on `step >= 2`. So an order already handed over still read
+"Ready to collect!" — telling a customer walking away with their food to go and
+collect it. `completed` was already computed on that screen and simply unused in
+the headline.
+
+Now checked BEFORE `step >= 2`: "Enjoy your food!" with collected copy, the code
+card label flips `PICKUP CODE` → `COLLECTED`, and the highlight switches off
+since the code has been used. `COMPLETED` is already absent from
+`activeStatuses`, so a collected order also leaves the main-screen stack on its
+own — no extra filtering needed.
+
+### Tests
+
+`customer_app`: **29 passing** (was 16; +13 new in
+`test/session_and_active_orders_test.dart`). Backend unchanged at **110**.
+
+Two harness traps found while writing them, both worth remembering:
+
+1. A missing `ThemeProvider` made the shared AppBar actions throw
+   `ProviderNotFound`, which rendered an error widget whose *overflow* was the
+   only visible symptom — it masked every real assertion in the group. If a
+   widget test fails with a RenderFlex overflow in a toolbar, check for a
+   missing provider before touching layout.
+2. `_StatusStepper` overflows under `flutter test` because `GoogleFonts` cannot
+   fetch a webfont there, so text measures differently than on a device. Given
+   a wider logical surface rather than reshaping real layout around a
+   font-metrics artifact.
+
+### Disk cleanup performed alongside (not part of the commit)
+
+Freed ~12 GB: `.gradle` (regrows on next build, expected), and the .NET
+`GustoPOS/bin|obj` + `GustoWaiter/bin|obj` trees.
+
+**Consequence worth knowing: those obj/bin trees are TRACKED in git.** Deleting
+them showed up as **16,631 deletions** in `git status`. They were deliberately
+NOT staged here — this commit contains only the six source files plus this entry.
+The artifacts are restorable with `git checkout` or by rebuilding. Whether ~1.6 GB
+of .NET build output should be tracked at all is a separate decision, left open
+rather than resolved by a cleanup side effect.
+
+Deliberately NOT deleted: `customer_app/build` (holds the signed `.aab`),
+`.android/avd` (the emulator), and `Desktop/demo1` + `Desktop/meet` (outside this
+repo, contents unknown — flagged rather than guessed at).
+
+---
+
+## 2026-08-12 — Onboarding forms brought back in line with /register
+
+Builds on `3ea1a0d4`. Fixes a LIVE breakage: **both** onboarding forms had been
+rejected with 422 on every submission.
+
+### What was broken, and how it happened
+
+`locality` was made REQUIRED on `RegisterIn` in `9114c93e` (the outlet-locality
+work) and deployed — but neither signup UI was updated to send it. That is a
+self-inflicted regression from this same session's earlier work.
+
+Investigating it turned up a second, older gap: admin_app's onboarding form was
+missing **three** required fields, not one.
+
+| Form | Missing before this commit |
+|---|---|
+| `owner_app` self-signup | `locality` |
+| `admin_app` admin-assisted onboarding | `locality`, `phone_number`, `email` |
+
+Both post to the SAME `POST /api/v1/register`. Verified against the LIVE
+deployed `/openapi.json`, not source:
+`required: [email, locality, password, phone_number, restaurant_name, upi_id, username]`
+
+Confirmed end-to-end against the live backend before fixing: a body without
+`locality` returns 422 `{"loc":["body","locality"],"msg":"Field required"}`
+(no write), and a complete body returns 201 with a correct pending outlet.
+That live check used a `TEST_CAREVO_`-prefixed fixture with teardown proven —
+delta 0 across organizations/outlets/users/menus/categories, 0 rows left.
+
+### What changed
+
+- **owner_app** — required "Area / locality" field, threaded through
+  `signup_screen` -> `AuthState.register` -> `AuthService.register` -> body.
+- **admin_app** — added `locality`, `phone_number`, `email`; **city is now a
+  dropdown of APPROVED cities** loaded from `adminApi.cities("active")` rather
+  than free text, because `/register` only accepts a city already active in the
+  canonical list and a typed one is refused 422 with nothing on screen
+  explaining why; latitude/longitude made required WITH range validation.
+
+**lat/lng are required by the FORM, not by the server.** The server still
+accepts an outlet with no pin, and a test pins that so nobody later assumes
+otherwise. The form-level rule exists because without coordinates the customer
+app cannot show the restaurant on a map or compute a distance to it.
+
+`city` is subtler than "optional": `city` and `requested_city` are each
+individually optional in the schema, but the `_exactly_one_city` validator
+rejects both-or-neither, so exactly one is effectively mandatory.
+
+### Tests
+
+New `tests/test_api_onboarding_contract.py` (8 tests). Backend **118 passing**.
+
+The load-bearing one enumerates required fields from `RegisterIn.model_fields`
+itself rather than a hand-written list, so **the next field made required is
+covered automatically** — which is precisely the failure mode that produced this
+commit. Also asserts a missing field is a readable 422 naming the field and
+explicitly NOT a 500, that the admin-shaped body yields the same pending outlet
+plus a working owner login (verified by actually logging in), and that the
+password is stored hashed.
+
+---
+
+## 2026-08-12 — v2 UI redesign: ticket visual language, dark theme, call button
+
+Follows the onboarding commit. Scope is the RESOLVED portion of
+`UI_REDESIGN_HANDOFF.md`; §3.1/§3.2 (restricted locations, zone hierarchy) are
+deferred and NOTHING was built or scaffolded for them.
+
+### Verified before building — some things did not need building
+
+- **§3.7 payment method picker: NOT built.** The integration already uses
+  `CFWebCheckoutPaymentBuilder` — Cashfree's *hosted* checkout, which presents
+  UPI/card/netbanking/wallet inside its own page. A new picker would duplicate it.
+- **Menu category chips + veg filter chips already existed** and already used
+  `NeoChip`. Rebuilding them would have been churn.
+- **Multi-order concurrency needs no backend change** — no single-active-order
+  guard exists server-side.
+
+### §3.6 direct call — the backend addition WAS needed
+
+`phone_number` was absent from both `OutletOut` and `MenuOut` on live, so it was
+added to `list_outlets` and `get_menu` (as `outlet_phone_number`, carried on the
+menu payload so the menu screen needs no second request). Empty strings are
+normalised to NULL.
+
+**The hidden case is the COMMON case:** 5 of 7 prod outlets have no phone, and 5
+of the 6 customer-visible ones. The call button is hidden entirely when null
+rather than rendered dead — and that path is the one tested hardest.
+
+### §3.3 pickup acknowledgment — acknowledgment ONLY
+
+A plain client-side bool. Calls no endpoint, moves no status, is not persisted.
+Staff verification in owner_app remains the only way an order completes. On tap
+it is replaced by a note saying exactly that, so the tap cannot be misread as
+"done". The test asserts on **what was NOT called** — it records every request
+and fails on any POST/PATCH/DELETE after the tap.
+
+### §3.5 OTP — system keyboard kept
+
+The prototype's custom in-app numeric keypad was NOT built, by instruction.
+
+### Ticket visual language + new dark theme
+
+New `lib/theme/widgets/ticket_card.dart`: perforated top edge and dashed rules
+drawn with `CustomPainter` (no image assets), plus a rotated ghost stamp.
+Applied to the pickup ticket, the multi-order active stack, and order history —
+so an order reads as one continuous paper object from payment to collection.
+
+**Dark theme replaced.** The old pale-brown surfaces read as a washed-out light
+theme rather than a deliberate dark mode. New palette:
+
+```
+paperCenter     #B5783A   ticket stock in dark mode
+contrastDark    #0B1B2B   app background + ticket ink
+contrastVibrant #00D4FF   primary / focal accent
+contrastSlate   #3A77B5   secondary accent
+```
+
+`TicketColors` is theme-aware with two hand-tuned schemes, NOT one dimmed: light
+is cream stock with brown ink, dark is warm tan stock printed near-black.
+Dimming the cream produced a glary panel that looked like a rendering bug.
+
+**Supersedes an earlier note in this log** which recorded the ticket palette as
+deliberately theme-independent. That decision was reversed; the palette is now
+theme-aware.
+
+### A real layout bug this surfaced
+
+Taller ticket cards plus the new search bar exposed a genuine fault: the
+active-order stack renders OUTSIDE the outlet list's scroll view, so its height
+comes straight out of the list's. Three concurrent orders squeezed the
+restaurant list to **6 pixels** — the orders pushed away the thing you opened the
+screen to do. Caught by a test. Fixed by capping the stack at ~38% of viewport
+height and letting it scroll internally, NOT by relaxing the assertion.
+
+### Could not be built honestly
+
+The prototype's **veg and rating filter chips for the outlet LIST** were not
+built: `Outlet` has no veg or rating field and neither exists server-side. The
+three chips the data actually supports were built instead (Nearest first /
+Offers / Open now). Rating would need a new table and a review flow — its own
+decision, not a silent stub.
+
+### Tests
+
+`customer_app` **41 passing** (was 29): +9 in new `test/v2_redesign_test.dart`,
++3 search/filter. Backend **118**. One existing assertion updated, not a
+regression: the collected ticket renders "COLLECTED" twice (header label + ghost
+stamp), so `findsOneWidget` became `findsNWidgets(2)`.
+
+**Still not restyled:** login, OTP, cart, checkout.
+
+### Amendment — v2 is SINGLE-THEME, and the palette is pinned by tests
+
+The light/dark toggle is gone. The pale/cream light scheme was **replaced**, not
+toggled away from: `AppColors.light` and `AppColors.dark` are now both aliases of
+one `AppColors.v2` scheme, both `AppTheme` entry points build it at
+`Brightness.dark`, `themeMode` is pinned, and the theme-toggle button was removed
+from the shared app-bar actions rather than left as a control that visibly does
+nothing. `ThemeProvider` is retained — it still persists a preference a future
+variant could read.
+
+```
+paperCenter     #B5783A   ticket stock ONLY — stays warm/paper-toned
+contrastDark    #0B1B2B   app shell + ticket ink
+contrastVibrant #00D4FF   single accent: active states, focal highlights
+contrastSlate   #3A77B5   secondary, large/UI only
+```
+
+**Measured contrast decided where each colour is allowed:**
+
+| pair | ratio | rule |
+|---|---|---|
+| `#00D4FF` on `#0B1B2B` | 9.84:1 | accent is text-safe on the shell |
+| `#0B1B2B` on `#B5783A` | 4.74:1 | ticket ink passes for body text |
+| `#00D4FF` on `#B5783A` | **2.08:1** | **FAILS — accent never goes on a ticket** |
+| `#3A77B5` on `#0B1B2B` | 3.72:1 | large/UI only, never body text |
+| white on `#0B1B2B` | 17.41:1 | body text |
+| white on `#3A77B5` | 4.68:1 | filled slate may carry a label |
+
+The ticket keeps warm tan stock while the shell is near-black. That contrast is
+the point — the ticket must read as a physical object sitting on the UI, not as
+another dark panel.
+
+New `test/palette_test.dart` (14 tests) pins all of the above, including the
+FAILING pair: a future change that "brightens up the ticket" with the accent
+would ship unreadable text, and now breaks a test instead. Asserted at the
+SCHEME level rather than by building `ThemeData`, because `AppTheme._build` calls
+`GoogleFonts`, which cannot fetch a webfont under `flutter test`.
+
+Pre-existing and NOT introduced here: `cream on tomato` on the danger button is
+3.08:1 — large-text only. Left alone, flagged.
+
+`customer_app` **55 passing** (was 41). No existing test asserted on colour
+values, so the swap broke nothing.
+
+---
+
+## 2026-08-12 — Dark theme REVERSED: v2 is now end-to-end LIGHT
+
+### Why the redesign never showed up in testing
+
+Not a bug in the implementation. The APK on the test device was
+`Desktop/carevo-apks/carevo-customer-v3.apk`, built **2026-08-11 11:08** — about
+28 hours before any v2 source file was written. Verified by unzipping it: its
+`libapp.so` contains `PickupScreen` and `OutletsScreen` but **zero** occurrences
+of `TicketCard`. The debug APK in `build/` (2026-08-12 03:40) is equally stale;
+only the release APK built at 15:43 contained the work, and it was never copied
+to the distribution folder. Nothing was lost and nothing was broken — the build
+simply never reached the phone.
+
+### The dark shell is gone, not toggled away from
+
+Reviewed and rejected. `AppColors.v2` now holds the prototype's own light
+values; `AppTheme.light()` and `.dark()` both build at `Brightness.light` and
+`themeMode` is pinned to `ThemeMode.light`. The navy/cyan constants
+(`paperCenter`, `contrastDark`, `contrastVibrant`, `contrastSlate`) were deleted
+rather than left unreferenced.
+
+```
+paper   #FFF8F3   app shell (warm white, not pure white)
+surface #FFFFFF   cards
+brand   #53089B   wordmark + links (text-safe: 10.65:1 on the shell)
+purple  #6B2FB3   primary button FILL (white on it: 7.83:1)
+mint    #AAF2CA   accent FILL — never a text colour
+ink     #171512   every border and hard shadow
+ticket  #FAEEDA stock / #412402 ink   (12.39:1)
+```
+
+**Measured contrast decided where each colour is allowed:**
+
+| pair | ratio | rule |
+|---|---|---|
+| ink on shell | 16.34:1 | body text |
+| inkSoft `#4B4453` on shell | 8.87:1 | secondary text |
+| brand on shell | 10.65:1 | links, wordmark |
+| white on purple | 7.83:1 | primary button label |
+| ink on mint | 13.31:1 | mint chips carry dark labels |
+| ticket ink on stock | 12.39:1 | ticket body text |
+| ticket inkSoft `#7A5426` on stock | 5.86:1 | secondary ticket lines |
+| **mint on shell / on stock** | **1.23 / 1.13:1** | **FAILS — fill only, never type** |
+
+Ticket `inkSoft` is deliberately darker than the prototype's `#8A6A2E`, which
+measures 4.38:1 on the stock and would fail normal text.
+
+### Light theme means the Android resources too
+
+`values-night/styles.xml` still inherited `Theme.Black.NoTitleBar`, and
+`drawable-v21/launch_background.xml` used `?android:colorBackground`. On a phone
+with OS dark mode on, that painted a **black** launch window and a black window
+background behind a light app. Both now pin `@color/carevo_paper` (#FFF8F3), and
+`appBarTheme.systemOverlayStyle` states dark status-bar icons rather than
+letting the OEM shell infer them.
+
+### Frames built this pass
+
+Login, OTP, cart, checkout — the four the previous pass left unrestyled. The
+other eight frames were already built and only needed the palette to land.
+
+Checkout now opens with "Confirm order" and ends with the order summary printed
+as a **ticket**, so the object the customer approves is recognisably the one
+they will hold at the counter. The struck-through total and offer line have no
+prototype equivalent; they are existing behaviour, kept, and re-inked in ticket
+brown because the app's purple is not a ticket colour.
+
+### Deliberately NOT built
+
+- **Restricted-access gate (frame 04)** — deferred by explicit decision. No
+  schema scaffolded for it either.
+- **In-app OTP numeric keypad (frame 02)** — rejected. The system keyboard is
+  what carries SMS one-time-code autofill. The six OTP cells are a *rendering*
+  of one real `TextField` (transparent, stretched under them) that keeps
+  `AutofillHints.oneTimeCode`. Six separate fields would have broken autofill,
+  which is the thing being protected. Pinned by tests, including one asserting
+  no on-screen digit keys exist.
+- **Location drill-down (frame 03)** — blocked BY the gate exclusion, not an
+  oversight. Its middle level *is* the building list, and those rows carry the
+  restricted badge. `location_screen.dart` remains the two-level city/area
+  picker fed by `GET /customer/areas`.
+
+### Incidental fix this surfaced
+
+`GoogleAuthService` read `FirebaseAuth.instance` in its **constructor**, so
+merely providing the service crashed any widget test without an initialized
+Firebase app. Now resolved lazily at sign-in. Production path unchanged —
+`main()` initializes Firebase first.
+
+`ThemeToggleButton` deleted: it was still in the login app bar, doing nothing.
+
+### Tests
+
+`customer_app` **68 passing** (was 55). `palette_test.dart` rewritten for the
+light palette (18 tests, including the mint-as-text failure); new
+`v2_light_screens_test.dart` (10) covers the four restyled frames and pins both
+exclusions. Backend **118**, unchanged and unaffected.
+
+Theme assertions had to move from `test` to `testWidgets`: `AppTheme._build`
+calls `GoogleFonts`, which throws on the webfont fetch outside a widget binding.
+
+---
+
+## 2026-08-12 — Batch 2 UI/UX revision list (Tasks 1-9)
+
+Revert point tagged **`pre-batch2-redesign`** = `2604ddf5`, pushed. Recover with
+`git reset --hard pre-batch2-redesign`.
+
+### Splash is cream, and so is the window behind it
+
+`SplashScreen` was purple; it is now `AppColors.cream` (#F6EFE2) — the app's
+existing warm tone, no new hex. The white-on-purple text went to ink, which is
+the actual work: `c.onPrimary` is white and would have been invisible.
+
+A new Android colour `carevo_splash` paints the native launch window the same
+value, so launch hands over to the Flutter splash with no colour step.
+`carevo_paper` (#FFF8F3) still backs the app shell.
+
+### The location prompt was in-app, so it was resizable
+
+Answering the question the task asked first: **"Allow location" was a custom
+in-app NeoCard**, roughly half the screen, purple. The native OS dialog only
+appears *after* tapping it. So the panel is now a small `Near me` chip anchored
+top-right beside the header. The OS dialog is untouched and untouchable.
+
+### City selection: rows, always-search, alphabetical
+
+`AreaPicker` was chips, with a search field that appeared only above 8 cities.
+Now: one presentation at every size — a search field, then a full list of rows,
+each carrying the city name and its restaurant count, **sorted alphabetically
+ascending**. Sorting happens in the widget, not the endpoint: `/customer/areas`
+orders by outlet count for its own reasons and other callers may depend on it.
+
+**The premise that selection and navigation were the same action was wrong.**
+They were already decoupled — `onSelect` set state, and a separate button
+navigated. That is now pinned by a test rather than left as an accident.
+
+### Page headers render on one line
+
+New `PageHeader` widget: one line, scaled down to fit rather than wrapped.
+`Pick a\nspot.` and `Where are\nyou?` carried hard line breaks; both are gone.
+The Bevan-ascender fix that used to be copy-pasted per screen now lives inside
+the widget.
+
+**The "Shock Surgent" font could not be applied — it does not exist anywhere
+reachable.** Not in `design/` (which holds only the two prototypes, support.js
+and a thumbnail), not as any font file in the repo, not in the google_fonts
+catalogue, and not referenced in any source file. No substitute was guessed.
+When the file arrives it is a one-line change inside `PageHeader`.
+
+### Train arrival: wheels, not a clock dial
+
+`showTimePicker` replaced with `ArrivalTimePicker` — two scrolling columns and
+a band label that updates live as the hour scrolls. The label is what makes a
+mis-scroll obvious: 07:30 and 19:30 read identically at a glance and only one
+of them says "Evening".
+
+**ASSUMED band ranges — reasonable defaults, NOT confirmed:**
+
+```
+Morning    05:00-11:59      Evening   17:00-20:59
+Afternoon  12:00-16:59      Night     21:00-04:59  (wraps midnight)
+```
+
+Pinned by test so a correction is a deliberate edit with a visible diff. Wheel
+digits are `w300` — thinner, not smaller.
+
+Arrival time is now **mandatory in train mode**: it is the only timing signal
+that mode has (no GPS origin to infer from). Blocked with an inline message on
+the field plus a red border, not a silently disabled Pay button — a button that
+does nothing when tapped teaches people the app is broken.
+
+### "I'm leaving" has no purple left
+
+The button and the en-route card sat directly under the cream pickup ticket in
+the app's purple, reading as another app's button pasted on. Both now use the
+ticket's own stock and ink.
+
+### owner_app: a collected order lingers 30 minutes
+
+It used to vanish the instant staff tapped verify — `WHERE status NOT IN
+('COMPLETED',...)` — leaving no window to notice a mis-tap. `/pos/orders` now
+also returns COMPLETED orders whose `pickup_verified_at` is inside
+`CarevoService.COMPLETED_GRACE` (30 min), and `pickup_verified_at` is exposed
+on `OwnerOrderOut` so the row can label itself "Collected 12m ago".
+
+**The cutoff is SQL, not a client timer.** A timer would reset on every
+relaunch and resurrect rows that had aged out. A test rewinds the stored
+timestamp and expects the row to disappear with no client involved at all —
+only possible if the server owns the window. History and the admin log read
+their own queries and are untouched; a third test holds that line.
+
+### admin_app: phone_number was ALREADY there
+
+Verified rather than rebuilt, as asked. `<Field label="Contact phone">` is
+present in `onboard/page.tsx`, in state, validated, and submitted — landed in
+`8f76aa1f`, which is an ancestor of `origin/21_7`, so it is in the deployed
+build. Confirmed in the compiled bundle, not just the source. **No work needed.**
+
+### admin_app: new Restaurant tab
+
+`GET /admin/orders/by-restaurant` — orders grouped restaurant -> day -> time.
+No schema change: `customer_orders` + `outlets` already carry it, and the
+hierarchy is a GROUP BY over rows that exist. Same `get_current_super_admin`
+gate as every other admin route, asserted by test.
+
+**Windowed by days, not paginated.** Paging a tree can split one restaurant's
+days across two pages and render a group that looks complete but is not. The UI
+is a two-level accordion; `Panel` gained an optional `actions` slot for the
+7/30/90-day switch, omitted everywhere else so existing pages are unchanged.
+
+### An asyncpg trap worth remembering
+
+`CAST(:p AS interval)` makes asyncpg expect an interval and it rejects the
+string `'30 minutes'` outright — pass a `timedelta`. Cost two failing tests
+before it was obvious; it bit both new queries and the test helper.
+
+### Tests
+
+Backend **125** (was 118): +3 grace window, +4 Restaurant tab.
+customer_app **82** (was 68): +12 arrival picker, and `area_picker_test`
+rewritten for the row/always-search model the chip/threshold tests no longer
+described. owner_app **1** (unchanged).
+
+---
+
+## 2026-08-20 — Release .aab verified AD_ID-clean; Render keep-alive workflow
+
+Infra and verification only. No schema change, no app-code change, no migration.
+
+### The advertising-ID check had to be redone, not read off
+
+`com.google.android.gms.permission.AD_ID` is **absent** from the release build —
+but the first answer to that question was given against a merged manifest dated
+**2026-08-13**, while `android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java`
+had changed on **08-14**. That file is regenerated when the plugin set changes,
+so the manifest predated the current dependency graph and could not settle the
+question. AD_ID is exactly the permission that arrives transitively, without any
+edit to the app's own manifest, so a stale artifact is not evidence.
+
+Rebuilt clean (`flutter clean` — verified `build/` was gone before building —
+then `flutter build appbundle --release`, `bundleRelease` 225.9s, exit 0) and
+re-checked. Absent at **both** layers, which is the part worth keeping:
+
+- merged manifest (`processReleaseMainManifest/AndroidManifest.xml`, sha256
+  `38D2FBDF…`): no `ad_id`, `advertising`, `advertis`, or `gms.permission`.
+  13 `uses-permission` entries.
+- **the shipped `base/manifest/AndroidManifest.xml` extracted from inside the
+  `.aab` itself** — the intermediate is only the merger's input; the protobuf in
+  the bundle is what Play actually reads. Also clean.
+
+The shipped manifest carries four permissions the merged intermediate does not
+list as `<uses-permission>`: `BIND_JOB_SERVICE` and `DUMP` (declared on
+components), `c2dm.permission.SEND`, and
+`gms.auth.api.signin.permission.REVOCATION_NOTIFICATION` from Google Sign-In.
+All expected, none advertising-related. Anyone re-running this check should
+expect them rather than treat them as a finding.
+
+**The rebuilt `.aab` is byte-identical in size to the 08-13 one (58,882,493
+bytes, delta exactly 0)** — a reproducible build with no intervening source
+change, not a failed clean. sha256 `C85C5E1E24A93DE82CEF03A441508CE37859D58E9D2FDE8815DDDC361EAB166F`,
+built 2026-08-20 00:25:39, at
+`customer_app/build/app/outputs/bundle/release/app-release.aab`. Play Console
+upload is manual and was NOT performed.
+
+Build warnings, none fatal: `flutter_google_places_sdk_android` still applies
+the Kotlin Gradle Plugin (future Flutter versions will fail the build on this —
+a real deadline, not noise), Java source/target 8 obsolete, 31 packages held
+back by constraints.
+
+### Keep-alive: `.github/workflows/keep-alive.yml`
+
+Render's free plan sleeps a service after ~15 min idle. Measured the cold start
+directly rather than citing a figure: **42.6s** on a `GET /` that had gone cold.
+To a tester that is indistinguishable from a dead backend.
+
+Pings `GET https://gusto-pos-backend.onrender.com/` on `*/10 * * * *`.
+
+**Why `/` and not `/docs`**, which is the `healthCheckPath` in `render.yaml`:
+`root()` in `app/main.py` takes no `Depends(get_db)`, opens no session, and
+returns a static dict; `CORSMiddleware` is the only middleware in the stack, so
+there is no request-logging or event-sourcing interceptor to write a row. It is
+a pure read that cannot touch prod data at any frequency. `/docs` renders
+Swagger UI plus openapi.json for the same wake-up.
+
+**Two pings 5 min apart inside one run**, rather than trusting the cron. GitHub
+scheduled workflows are best-effort and run late under load — late enough to
+exceed a 15-minute idle timer, which would defeat the entire point. The in-job
+second ping makes the effective cadence ~5 min regardless of when the run lands.
+`--max-time 120` because a legitimate cold start takes ~40s and a short timeout
+would report a waking service as down. `concurrency: keep-alive` stops a delayed
+run stacking on the next one.
+
+Free because the repo is public (`adithya1102/pos_1st_cut`, verified PUBLIC), so
+Actions minutes are unmetered. On a private repo this would burn roughly 4,300
+minutes/month against a 2,000-minute free quota — it is only free here.
+
+**TEMPORARY, and it will not announce itself.** Delete it when the backend
+leaves the free tier or the review window closes. Two failure modes to know:
+GitHub disables scheduled workflows in a repo with no pushes for 60 days, and
+the job hard-fails on a non-2xx so a genuinely down backend is visible instead
+of being masked by a green tick.
+
+### Screenshot assets pruned (earlier the same day)
+
+`customer_app/assets/marketing/store_screenshots/`: `chrome2.0/`, `chromebook/`
+and `tab_7/` deleted, 16 files, keeping the 6 root phone shots. SHA-256 first
+established that `chrome2.0/` and `chromebook/` were byte-identical to each
+other while `tab_7/` was unique.
+
+**These were untracked AND ungitignored**, so git held no copy and the deletion
+had no undo path — 11 distinct images gone permanently. A backup was placed in
+the session scratchpad, which is temporary. With the tablet and Chromebook sets
+gone the listing serves phone form factors only; a configured tablet or
+Chromebook listing will show a missing-assets warning until new ones are
+supplied.
+
+### Repaired in passing
+
+`carevomd.md` line 741 had `color``` ` where a bare code fence belonged — a
+stray paste sitting uncommitted in the working tree, breaking the light-palette
+block's rendering. Not anyone's intended edit; corrected here.
+
+---
+
+## 2026-08-20 — Correction: the keep-alive ping was never firing
+
+### What the previous entry got wrong
+
+The entry immediately above states the keep-alive workflow "pings
+`GET https://gusto-pos-backend.onrender.com/` on `*/10 * * * *`". **It was not
+pinging anything.** At the time that entry was committed the workflow had never
+run and could not run.
+
+`.github/workflows/keep-alive.yml` was committed to `21_7` (`2ed5a645`). **A
+`schedule` trigger only fires from the repository's DEFAULT branch**, which here
+is `main`. GitHub had not registered the workflow at all: `gh workflow list
+--all` returned only `admin_app CI (Linux)`, and
+`GET contents/.github/workflows/keep-alive.yml?ref=main` was a **404**.
+`workflow_dispatch` was equally dead — that trigger also requires the file on the
+default branch, so there was not even a manual fallback.
+
+### Why this was easy to miss, and how to not miss it again
+
+`admin-ci.yml` lives on `21_7` and works fine, which makes putting a workflow on
+the working branch look proven. It works because it triggers on **`push`**, and
+push events DO run from any branch. `schedule` and `workflow_dispatch` do not.
+The precedent was real but did not generalise, which is the whole trap.
+
+**Do not treat "the file is committed" as "the workflow is live."** The check
+that actually settles it is `gh workflow list --all` — a workflow absent from
+that list is not registered no matter what is in the tree.
+
+### The fix
+
+`2ed5a645` cherry-picked onto `main` as **`ab2cc25a`**, pushed
+(`e6059ccf..ab2cc25a`). One file, content verified byte-identical to the `21_7`
+copy. Now confirmed live:
+
+- `gh workflow list --all` → `keep-alive (Render free tier)  active  338073584`
+- the file reads on `main` (3054 bytes) instead of 404
+- a `workflow_dispatch` run was accepted on `main`, which is itself proof, since
+  that trigger has the same default-branch requirement that was blocking it
+
+**`main` was genuinely dormant before this** — checked, not assumed: tip
+`e6059ccf` dated **2026-07-13** (~5 weeks stale), **zero** commits present on
+`main` and absent from `21_7` (it is fully contained; `21_7` is 68 ahead), no
+open PRs, no branch protection, and both `render.yaml` services deploy from
+`21_7`. Nothing on `main` could be disrupted.
+
+### The file now exists on BOTH branches — only main's copy fires
+
+`21_7`'s copy is inert and kept only so the branches do not diverge. **The
+deletion note in the previous entry now means two deletions, not one.** Removing
+it from `21_7` alone would leave the ping running from `main` with nothing in the
+working branch to show for it.
+
+### A repo trap worth recording: main cannot be checked out in place
+
+Switching the primary working tree to `main` was rejected as unsafe — 635 tracked
+files differ between the branches and the tree carries 16,639 uncommitted changes
+(mostly the deleted MAUI artifacts). The `.aab` itself was NOT at risk;
+`customer_app/.gitignore` line 33 (`/build/`) covers it, verified rather than
+assumed.
+
+A plain `git worktree add <path> main` then **failed outright** on Windows
+`MAX_PATH`: dozens of `error: unable to create file ... Filename too long` on
+`gusto_pos/GustoPOS/{bin,obj}/**` — the MAUI artifact paths
+(`...Microsoft.Windows.ApplicationModel.Background.UniversalBGTask.dll`,
+`...RecyclerView_OnChildAttachStateChangeListenerImplementor.java`) exceed 260
+chars under any non-trivial worktree root. The half-built worktree had to be
+force-removed and pruned.
+
+What worked, and what to reach for next time:
+
+```
+git worktree add --no-checkout <path> main
+git -C <path> sparse-checkout init --cone
+git -C <path> sparse-checkout set .github
+git -C <path> checkout
+```
+
+Only `.github` plus the root files materialise, so the 17,113-file checkout —
+and every long path in it — never happens. The primary tree was never touched:
+still on `21_7`, still 16,639 pending changes, throughout.
+
+---
+
+## 2026-08-20 — PROD DATA: 7 outlets renamed, menus replaced, owner logins reset
+
+**This entry records a change to live production data, not to schema or code.**
+No migration ran; no table was altered. Committed in one transaction against the
+prod Neon database (`ep-morning-meadow-ao6m0otk-pooler`).
+
+### Backup taken first, outside the repo
+
+`C:\Users\Adithya\Desktop\carevo-backups\prod-outlets-backup-20260820-205311.json`
+(33,153 bytes) — outlets 7, menus 7, categories 34, menu_items 19, users 8,
+organizations 7, plus the 17 `menu_item_id`s referenced by `customer_order_items`.
+Written, then re-read and re-parsed from disk before any write ran.
+
+**Deliberately outside the repo**: the `users` rows carry `hashed_password`, and
+this repo is public. Same reason `geocodes.json` and the one-off reset script live
+there too rather than under `demo2/`.
+
+### The 7 renames, with real coordinates
+
+| was | now | locality | city | lat, lng |
+|---|---|---|---|---|
+| Spice Route Kitchen | Annapoorna Tiffin Room | Koramangala | Bengaluru | 12.935737, 77.624081 |
+| Rudrarthi | The Brew House Café | Indiranagar | Bengaluru | 12.973291, 77.640467 |
+| Walk N Style | Meenakshi Bhavan | T Nagar | Chennai | 13.037829, 80.231836 |
+| Bistro | Chettinad Spice Corner | Adyar | Chennai | 13.006450, 80.257779 |
+| Vj | Golden Wok | Anna Nagar | Chennai | 13.088249, 80.207340 |
+| Kochi_test | Malabar Spice Kitchen | Kakkanad | Kochi | 10.016570, 76.342750 |
+| kolkata.roll | Bengal Rasoi | Salt Lake | Kolkata | 22.584789, 88.423172 |
+
+**Coordinates came from OpenStreetMap Nominatim, not from invention.** The
+project's own Maps key was tried first and refused: `REQUEST_DENIED — This API is
+not activated on your API project` for the Geocoding API (the key is scoped to
+Places/Distance Matrix). Nominatim needs no key; queries were rate-limited to
+1/sec per its usage policy and the resolved `display_name` for each is kept in
+`carevo-backups\geocodes.json` so any coordinate can be traced to what was asked.
+
+**Six of the seven had `latitude`/`longitude` NULL before this**, and all seven had
+`locality` NULL. So "Open in Maps" and GPS distance-sort were dead for those six
+and work now for the first time — this was not a cosmetic rename.
+
+### Menus: soft-delete, never hard-delete
+
+19 existing items across the 7 menus set to `is_active=false, is_available=false`;
+42 new items inserted (7 × 6). Post-state verified: 42 active, 19 inactive.
+
+**Hard-deleting would have orphaned real order history.** 17 of the 19 are
+referenced by `customer_order_items` across 80 real `customer_orders`. All 17 were
+re-counted as still present after the change. `customer_order_items` also carries
+`name_snap`/`price_snap`, so historical orders keep the old name and price
+regardless — but the FK still needs its row.
+
+**Existing categories reused, none created or removed**, per instruction. One
+consequence worth recording: Annapoorna Tiffin Room's menu has only three
+categories (Beverages, Mains, Starters) where the other six have five. **Kesari
+Bath therefore sits under Mains, not Desserts** — there is no Desserts category on
+that menu. That is a data-shape artifact, not a classification decision, and it is
+the thing to fix first if that menu ever looks wrong.
+
+`price_rules` is empty (0 rows) repo-wide, so items follow the existing
+`base_price` convention with `normal/ac/lounge_price` NULL — matching every row
+that was already there. `image_url` left NULL throughout: images are coming
+separately.
+
+### Credentials: a DELIBERATE weak-ish shared password, with a hard trigger
+
+Usernames `smith1`–`smith7` (in the table order above), with a single shared
+password for all seven. **The literal is deliberately NOT written here** — this
+file is committed to a public repo, and these are working credentials into a
+publicly reachable backend. It was delivered to the user in-session and is
+recorded nowhere in this repository. Hashed through
+`app.core.security.get_password_hash` — passlib `sha256_crypt`, the same call
+owner registration uses at `carevo_customer/service.py:1471`. **No new hashing
+path was introduced.** All 7 outlets already had exactly one linked user, so all
+7 were updated in place; none had to be created. Prior usernames (`spice_owner`,
+`smith@123`, `walknstyle_owner`, `bistro`, `Vijaya`, `adithyac`, `adithyaC`) no
+longer exist and no longer authenticate.
+
+**This is a known, accepted choice — not an accident, and not a default that
+slipped through.** It is scoped to seven dummy/test outlets with no real
+proprietor and no real revenue. An earlier plan for a four-letter password was
+rejected in favour of a longer one specifically because the backend is publicly
+reachable on Render and staff login is not gated by `CUSTOMER_AUTH_ENABLED`.
+
+**REPLACEMENT TRIGGER — event, not date:** these credentials must be replaced with
+real, non-trivial, per-owner secrets **the moment the first genuine restaurant
+owner account is created on this deployment.** Not "before launch", not "when we
+get to it", not on any calendar. The trigger is the existence of one real owner,
+because from that instant a shared known password sits in the same table as a
+real proprietor's, and every one of these seven is a working credential into a
+publicly reachable backend. Whoever creates that first real account owns this
+cleanup.
+
+### Verified against the live backend, not just the DB
+
+All 7 `POST /api/v1/auth/login` against
+`https://gusto-pos-backend.onrender.com` returned **HTTP 200 with a bearer token**
+— a DB write alone was not treated as proof. Two negative controls confirm the
+check is real rather than an endpoint that accepts anything: `smith1` + a wrong
+password → **401**, and the old `spice_owner` + the new password → **401**.
+
+`GET /api/v1/customer/outlets` returns 401 unauthenticated, as designed, so the
+customer-facing view of the rename was not verified from outside; the DB state was
+verified directly instead.
+
+### Tests
+
+Backend **125 passed**, 0 failed (unchanged). customer_app **82**, owner_app **1**
+— both unchanged. Nothing here touches code, so a moved count would itself have
+been the surprise.
+
+### Not committed
+
+Working tree only at time of writing, by instruction: this is a prod data change,
+and the commit decision was deliberately left with the user. The one-off script
+`reset_outlets.py` was moved OUT of the repo to `carevo-backups\` after running —
+it contains the plaintext password in a literal, and this repo is public.
+
+---
+
+## 2026-08-20 — TRACKED BUG (NOT FIXED): naive datetimes shift by the client's timezone
+
+**Open item. Deliberately left unfixed — do not "tidy" this in passing.** It was
+found while building the owner-queue rename filter and is unrelated to it;
+folding a model-layer datetime change into that work would have put a verified
+fix at risk for no reason.
+
+### What is wrong
+
+Every `created_at`/`updated_at` in `carevo_customer/model.py` (lines 46, 49, 83,
+107, 110, 142, 183) is declared `DateTime(timezone=True)` — a Postgres
+`timestamptz` — with `default=datetime.utcnow`, which returns a **naive**
+datetime. SQLAlchemy's asyncpg dialect localises a naive value using the
+**client machine's** timezone before binding it. So the instant written depends
+on where the process runs.
+
+Measured on an IST developer box: an order created at 16:56 UTC wall-clock was
+stored as **11:26 UTC** — 5h30m in the past.
+
+### It is CLIENT-side, which is the counter-intuitive part
+
+The obvious diagnosis is the database session timezone, and that diagnosis is
+WRONG — it was tried and disproved. With `carevo_test` set to `timezone = UTC`
+and `now()` returning correct UTC, `created_at` was **still** written 5h30m
+early. Anyone re-investigating should not spend time on the server setting.
+
+### Why production is currently correct
+
+Render runs its containers in UTC, so `datetime.utcnow()` is localised as UTC
+and the stored instant is right. Prod `timezone` is `GMT`, offset `00:00:00`,
+confirmed by query. **Prod data is not corrupt and needs no backfill.** The bug
+is latent: it produces wrong timestamps on any non-UTC machine, which today
+means every local dev run and anything a contributor runs outside UTC.
+
+### Blast radius if it ever fires in prod
+
+`customer_orders.created_at` now drives more than display: the owner queue's
+`RENAME_CUTOFF` filter, `COMPLETED_GRACE`, the train-mode due sweep, and the
+admin Restaurant tab's day buckets. A 5h30m shift would silently hide fresh
+orders from an owner's queue.
+
+### The correct fix — separate task, separate review
+
+At the **model layer**, not at the call sites and not in the database: replace
+`default=datetime.utcnow` with an explicitly UTC-aware default
+(`lambda: datetime.now(timezone.utc)`, or `server_default=func.now()` so the DB
+stamps it). Aware values bind unambiguously and the client's timezone stops
+mattering. Every one of the seven columns above should move together, with a
+test that asserts a written row's `created_at` is within seconds of `now()`
+while the process runs under a non-UTC `TZ`.
+
+### What was done instead, tonight, to keep the suite honest
+
+`CarevoService.RENAME_CUTOFF` reads `RENAME_CUTOFF_ISO`, defaulting to the real
+production instant, and `conftest.py` sets it to the epoch so the suite is not
+coupled to one production date. That is a test-isolation choice, **not** a
+workaround for this bug — the skew is still there on any non-UTC machine and
+still needs the model-layer fix.
+
+`carevo_test`'s default timezone was set to `UTC`
+(`ALTER DATABASE carevo_test SET timezone TO 'UTC'`). Kept deliberately: it does
+NOT touch the skew above, but it makes the test database match prod's `GMT`,
+which matters because `carevo_admin/service.py:840` buckets the Restaurant tab
+with `to_char(co.created_at, 'YYYY-MM-DD')` — and `to_char` on a `timestamptz`
+renders in the **session** timezone. Before the change the test DB bucketed days
+5h30m off from prod. The query's own comment already says "the DB's timezone
+handling decides the date", so aligning test with prod is the correct posture,
+not a partial fix.
+
+---
+
+## 2026-08-20 — Owner queue hides pre-rename orders; OTP diagnosed, NOT changed
+
+### Owner queue filter
+
+`list_active_orders` gained `AND created_at >= :rename_cutoff`. Effect measured
+on prod data: the owner-facing queue drops from 54 rows to 2, with Annapoorna
+Tiffin Room alone shedding 32 of the previous tenant's orders.
+
+**Two premises corrected while doing it.** owner_app has **no order-history view
+and no dashboard/summary view** — its only order call is `GET /pos/orders`. And
+that live queue was where old-identity orders actually surfaced, because 52 of
+them sit in non-terminal statuses (50 `CREATED`, 2 `PAID`) and so were never
+excluded by the existing status filter. There was no history query to change.
+
+Cosmetic only: 82 `customer_orders` and 88 `customer_order_items` untouched, and
+the admin log still shows everything — it reads its own queries in
+`carevo_admin/service.py` and `RENAME_CUTOFF` is referenced nowhere in them.
+`tests/test_api_rename_cutoff.py` (3 tests) pins the hiding AND the
+not-deleting, because a later "cleanup" that turned this into a DELETE would
+satisfy the hiding assertion alone.
+
+Cutoff `2026-08-20T15:40:32.960232+00:00`, taken from the rename transaction's
+own clock — the identical `created_at` on all 42 inserted `menu_items` — not the
+backup filename, which was 17 minutes earlier.
+
+### OTP: both mechanisms were already present
+
+Investigated, **nothing changed**. `autofillHints: [AutofillHints.oneTimeCode]`
+is present (`otp_screen.dart:256`), inside an `AutofillGroup`, on a real
+`TextField`, auto-submitting at six digits. Firebase auto-retrieval is enabled —
+`verificationCompleted` stores `_autoCredential` and `verifyOtp` prefers it.
+
+The actual cause of "feels slow" is neither: `AppConfig.forceRecaptchaFlow`
+defaults `true`, forcing the reCAPTCHA webview instead of Play Integrity. Added
+in `e5a1dacf` (2026-08-03) because the app was sideloaded and Play Integrity
+returned `17028`. Its own comment names the exit condition — "flip this off once
+the app ships on a Play track" — and that condition is now met.
+
+**Not flipped.** Play Integrity was still failing as recently as this evening
+(`INVALID_CERT_HASH 400`, `17093`), the fingerprint reached Firebase only hours
+ago, and the Play-signed path has never once been observed working. Stability
+must be demonstrated across several attempts before a flag governing every
+tester's sign-in changes.
+
+### Internal-testing artifact (versionCode 4)
+
+Built with `--dart-define=FORCE_RECAPTCHA_FLOW=false`. **The committed default in
+`app_config.dart` is deliberately still `true`** (`git diff` on that file is
+empty) — only this one artifact carries the flag off, so no other build changes
+behaviour.
+
+```
+app-release.aab   58,878,598 bytes   2026-08-20 22:41:53
+sha256 2FFD4E92BE5E9E80DAF87C0896D487AA6BB826C2371A6906287861F165F47DAE
+versionCode 4 / versionName 1.0.0
+```
+
+**A `--dart-define` cannot be verified statically** — it compiles into the AOT
+Dart snapshot. The only proof the flag took effect is behavioural: on the
+internal track, sign-in proceeds with no reCAPTCHA webview. Destined for the
+**internal testing** track specifically, so the 25 real testers on the closed
+track are untouched while this is verified.
+
+### Tests
+
+Backend **128** (was 125: +3 rename cutoff), customer_app **82**, owner_app **1**.
+
+---
+
+## 2026-08-21 — Admin city management: request wiring, direct add, rename
+
+**This commit contains the city work only.** The owner-queue rename filter, the
+OTP diagnosis and the timezone tracked-bug entries above describe changes that
+are still in the working tree, uncommitted, at the time this lands.
+
+### admin_app could not add a city at all; the capability already existed
+
+Investigated before building, and almost nothing needed building. Migration 013
+already provided `cities` (`status IN ('active','pending','rejected')`,
+`requested_by_outlet_id`, **unique index on `lower(name)`**),
+`RegisterIn.requested_city` with the `_exactly_one_city` validator, the pending
+INSERT with `ON CONFLICT (lower(name)) DO NOTHING`, and admin approve/reject.
+owner_app had driven it since day one via `_requestingNewCity`.
+
+Both onboarding forms post to the SAME `/register`. So this was a missing UI,
+not a missing capability. The tell: `RegisterOutletBody` in `admin_app/lib/api.ts`
+already carried a comment about "both-or-neither of city / requested_city"
+while never declaring the field.
+
+### Two paths, deliberately different, and that is the point
+
+- **owner_app (self-service): still gated.** `requested_city` lands `pending`
+  and is invisible in `/cities` until an admin approves. Untouched by this
+  commit — **no file under `owner_app/` was modified**, which is the concrete
+  proof rather than an assurance.
+- **admin_app: ungated.** New `POST /admin/cities` creates the city `active`
+  immediately. An admin IS the approval authority, so routing their entry
+  through a queue only they service is ceremony with no safety value.
+
+**A separate SUPER_ADMIN route rather than a flag on `/register`**, because
+`/register` is unauthenticated — a "create as active" parameter there would let
+any anonymous caller extend the canonical list. The admin form creates the city
+first, then registers against it by name, so it sends `city` and never
+`requested_city`.
+
+Reuse over duplicate: an existing name in any casing returns that row
+(`created: false`) instead of inserting. A pending/rejected name an admin asks
+for is promoted to active and audited.
+
+### Rename — and the thing that makes it non-trivial
+
+**`outlets.city` is a denormalised varchar, NOT a foreign key to `cities.id`.**
+Verified against the live schema, not assumed: `outlets` has exactly ONE foreign
+key and it is `organization_id`; there is no `city_id` column anywhere.
+
+So nothing cascades. Renaming the `cities` row alone would strand every outlet
+on the old spelling — a name no longer in the canonical list, making those
+outlets unselectable at signup and invisible to any name-based lookup.
+`PATCH /admin/cities/{id}` therefore rewrites `cities.name` **and** every
+matching `outlets.city` in one transaction, and returns `outlets_updated` so the
+UI can state the blast radius ("Renamed X to Y. N outlets updated.") instead of
+implying it. A test asserts the outlet moved and that zero rows keep the old
+name — that is what stops the UPDATE being "tidied away" later by someone who
+assumes a FK exists.
+
+**A collision is refused (409), never merged.** Pointing two cities' outlets at
+one row relocates real restaurants and cannot be undone by renaming back. The
+error names the other city and says to pick a distinct name. Case-only renames
+(`Kochi` -> `KOCHI`) still work: the clash check excludes the row itself.
+
+**Checked for existing split spellings before building — none.** All 7 outlets
+sit on Bengaluru/Chennai/Kochi/Kolkata, each present in `cities`, and no
+`lower(city)` group has more than one variant. Nothing was merged.
+
+### Tests
+
+New `test_api_admin_new_city.py` (4) and `test_api_admin_city_admin_ops.py` (6).
+Backend **138 collected**. customer_app **82**, owner_app **1** — re-run, not
+carried over, and unchanged because no file under either app was touched.
+
+admin_app has **no test framework** (no test script, no test dir; CI is
+`npm ci && npm run build`). Verified instead with `tsc --noEmit`, `eslint` and a
+full `next build`, all clean. Adding a React harness is its own decision and was
+not slipped in here.
+
+### Known failing test at time of this commit
+
+`test_api_restaurant_tab.py::test_the_window_excludes_older_orders` fails, and
+is UNRELATED to this work — it fails in isolation and that query touches neither
+`cities` nor `RENAME_CUTOFF`. `carevo_test` has accumulated 2,057 orders inside
+30 days against the query's `LIMIT 2000`, so the test's deliberately-backdated
+row falls off the truncated end. Fixed in the next commit rather than papered
+over by truncating the database.
+
+---
+
+## 2026-08-21 — Restaurant tab: the cap now announces itself, and scopes
+
+Fixes the failure recorded in the entry above. **The number was not raised** —
+that is the same bug with a later date on it.
+
+### What was actually wrong
+
+`LIMIT 2000` was applied in SILENCE, before grouping. Past the cap the tree
+dropped its oldest rows and still rendered as though complete — which is exactly
+the failure mode the endpoint's own docstring cites as its reason for refusing
+pagination ("a group that renders as complete but is not"). The cap reproduced
+the defect it was written to avoid.
+
+The test failure was the symptom: `carevo_test` crossed 2,057 orders in a
+30-day window, the deliberately-backdated row was the oldest, and newest-first
+ordering pushed it off the end. Prod is nowhere near 2000 yet, so this would
+have surfaced first as a silently short admin tree, not as an error.
+
+### Approach: keep the cap, report it (not pagination)
+
+Pagination was rejected for the same reason the original author rejected it — a
+tree and a page boundary fight, and page 2 can cut a restaurant's days in half.
+That reasoning still holds. An unbounded query on a growing table is a real
+hazard, so the cap stays and becomes honest instead:
+
+- the query asks for `limit + 1` rows; getting more than `limit` back PROVES
+  more exist. The spare row is discarded and `truncated` is set.
+- the response is now an envelope — `groups`, `truncated`, `cap`,
+  `returned_orders`, `window_days` — because a bare list has nowhere to say it
+  is incomplete.
+- the dashboard renders an amber banner naming the cap and suggesting a
+  narrower window, rather than quietly showing a short tree.
+
+### `outlet_id` scope — and why the test needed it
+
+New optional `outlet_id` filter. This is what makes the regression test immune
+to platform-wide volume: **a test asserting a specific order is present in the
+UNSCOPED feed is not testing windowing at all once volume passes the cap** — it
+is testing how many orders the database happens to hold. That is precisely how
+the previous test rotted, and raising the cap would have re-armed it.
+
+New tests are written against a cap the TEST chooses (`limit=1`), never the
+production default, so no future volume can reach them:
+
+- hitting the cap sets `truncated`, `returned_orders == cap`, and the tree's
+  counts sum to exactly the surviving rows
+- NOT hitting the cap leaves `truncated` false — the flag has to mean something,
+  it cannot simply always be true
+- `outlet_id` returns that outlet and no other
+
+### Deploy-order safety
+
+The response shape changed, and backend + dashboard deploy from the same branch
+but not atomically. `ordersByRestaurant` therefore accepts BOTH shapes: a bare
+array is normalised into an envelope with `truncated: false`. Either service can
+land first without the tab breaking in the gap.
+
+---
+
+## 2026-08-21 — Owner-queue rename cutoff: the code lands
+
+The entry "Owner queue hides pre-rename orders; OTP diagnosed, NOT changed"
+above described this work while it was still only in the working tree — the
+"Admin city management" entry says so explicitly. **The code is now committed.**
+Nothing about the behaviour changed in between; this entry exists so the log
+does not leave a described-but-absent change hanging.
+
+Three files: the `RENAME_CUTOFF` constant plus the `AND created_at >= ...` clause
+in `carevo_customer/service.py`, the `RENAME_CUTOFF_ISO` epoch default in
+`tests/conftest.py`, and `tests/test_api_rename_cutoff.py`.
+
+**Committed on its own, deliberately.** `carevo_customer/service.py` also holds
+`check_otp_rate_limit` / `request_otp` / `verify_otp`, and Firebase/OTP work is
+starting next. Leaving this uncommitted would have put an orders change and an
+auth change in one dirty file, separable afterwards only with care. No textual
+overlap existed — the cutoff sits at the class constant and the owner-queue
+query, the OTP helpers are ~1,500 lines away — so this is about keeping the two
+commits legible, not about avoiding a conflict.
+
+Suite at time of commit: backend **141 passed, 0 failed**, customer_app **82**,
+owner_app **1**.
+
+### Still uncommitted after this, and why
+
+- `customer_app/pubspec.yaml` (`1.0.0+1` -> `+4`) and `owner_app/pubspec.yaml`
+  (`+1` -> `+2`) — version bumps from tonight's builds. Held back pending
+  confirmation of which versionCodes actually reached Play, so the committed
+  baseline records reality rather than a guess.
+- `.claude/settings.local.json` — local tool permissions, not app behaviour.
+- `UI_REDESIGN_HANDOFF.md`, `design/`, `pdf/`,
+  `customer_app/assets/marketing/`, `play_store_icon_512.png` — untracked docs
+  and assets, each its own decision.
+- ~16,631 deleted MAUI `bin`/`obj` artifacts, tracked in git, from a disk
+  cleanup. Long-standing; whether that output belongs in the repo at all is
+  still open.
+
+**`customer_app/android/app/google-services.json` is GITIGNORED**
+(`customer_app/android/.gitignore:23`) and therefore not in any of this. The
+refreshed copy carrying the `fa681f7c...` fingerprint exists on one machine
+only. Correct for a public repo, but it means any other machine or CI builds
+against the OLD single-fingerprint config and the Firebase fix would appear not
+to work there. Worth knowing before the OTP work starts.
+
+---
+
+## 2026-08-21 — customer_app versionCode reconciled to what Play actually has
+
+`customer_app/pubspec.yaml` committed at **`1.0.0+2`**.
+
+### Why it moved DOWN from +4
+
+The working tree had drifted to `+4` across three local builds while the
+committed baseline still read `+1` — so the repo disagreed with the machine, and
+neither matched Play. Confirmed with the user: **only versionCode 2 was ever
+uploaded.** `+3` (built 2026-08-20 19:55) and `+4` (the internal-testing build
+with `--dart-define=FORCE_RECAPTCHA_FLOW=false`, built 22:41) were produced
+locally and never submitted.
+
+Independent corroboration for `+2` rather than taking it on trust: the test
+device carries `com.carevo.customer_app versionCode=2` with
+`installerPackageName=com.android.vending`, i.e. genuinely Play-installed.
+
+**The baseline records what Play has, not the high-water mark of local builds.**
+A pubspec sitting at `+4` when Play has `+2` invites the next release to be
+numbered from fiction — and Play rejects a re-upload at an existing versionCode
+while silently accepting a gap, so the failure mode is a confusing rejection
+later rather than an error now. `+3` and `+4` are free to be reused because Play
+never saw them.
+
+**Next release is `+3`.** The `.aab` currently on disk is the `+4` internal-
+testing artifact (sha256 `2FFD4E92...`); it is NOT the next upload and would
+have to be rebuilt at `+3` if that flag configuration is still wanted.
+
+### Immediately after: bumped to +3 for the next release
+
+`1.0.0+3` committed straight after the reconciliation above, so the two entries
+are not in tension — the invariant going forward is **"pubspec carries the
+versionCode the NEXT upload will use"**, and the `+2` step existed only to clear
+the `+4`-vs-`+1` drift before choosing that number. `+3` is reusable precisely
+because Play never received it.
+
+Committed rather than left dirty: an uncommitted bump is how the `+4` drift
+started, and the fix is an hour old.
+
+### owner_app deliberately NOT reconciled here (see below for the OTP work)
+
+`owner_app/pubspec.yaml` remains uncommitted at `1.0.0+2` (committed baseline
+`+1`). It was outside this task, and owner_app is not distributed through Play
+at all — the build on the test device was installed by
+`com.google.android.packageinstaller`, i.e. sideloaded. Its versionCode
+therefore has no Play constraint to reconcile against, and the bump is left as
+an open decision rather than swept in alongside a change made for a different
+reason.
+
+---
+
+## 2026-08-21 — Play Integrity enabled; three OTP entry fixes
+
+### FORCE_RECAPTCHA_FLOW default flipped to false
+
+The flag's own comment set the condition — "flip this off once the app ships on
+a Play track" — and it is met: the device build is
+`installerPackageName=com.android.vending`, genuinely Play-installed and
+therefore vouchable by Play Integrity.
+
+**Two causes, not one.** The original `17028` was a sideloading artefact. A
+second cause surfaced later: the Play App Signing certificate's SHA-1 was not
+registered in Firebase, so `/getProjectConfig` answered `INVALID_CERT_HASH 400`
+and phone auth died before any SMS was sent. Registering `FA:68:1F:7C:...`
+fixed that. Flipping the flag on the strength of the first cause alone would
+have been wrong.
+
+**Three successful sign-ins on the Play build before flipping**, spaced
+deliberately rather than run back to back: 01:31, 01:44 and 15:20 — the last
+after a 13.5-hour gap and a cold app start, so Play Integrity's token caches had
+long since expired and re-fetched.
+
+**Honest limit on that evidence: only 2 of the 3 were confirmed in logcat.** The
+device dropped mid-capture on the third and the buffer was lost. The behavioural
+result is near-conclusive anyway for this failure mode — `INVALID_CERT_HASH` /
+`17093` prevent the SMS from being sent at all, which was the original symptom,
+and an OTP was received and entered — but the log line itself was never seen and
+is not claimed.
+
+Restoring the reCAPTCHA path for a SIDELOADED build is still one flag:
+`--dart-define=FORCE_RECAPTCHA_FLOW=true`.
+
+### The three fixes
+
+1. **OTP cells moved toward the vertical middle.** They sat just under the
+   header — exactly where Android drops its incoming-SMS heads-up banner, so the
+   field was covered at the moment the code arrived. `LayoutBuilder` +
+   `ConstrainedBox(minHeight)` + `IntrinsicHeight` is what lets `Spacer` resolve
+   inside a `SingleChildScrollView`; without it a flex child has unbounded
+   height and throws. flex 3 above / 4 below lands the cells slightly above true
+   centre so the Verify button survives the raised keyboard, and the scroll view
+   stays so short screens scroll instead of overflowing.
+
+2. **A rejected code clears itself and refocuses.** The SnackBar was REPLACED by
+   a persistent inline error, not supplemented: once the field clears, a message
+   that vanishes after four seconds leaves an empty field and no explanation of
+   why. It dismisses on the next keypress so a stale rejection cannot hang over a
+   fresh code. The failure this prevents is specific — the field auto-submits at
+   six characters, so a half-corrected code fires another doomed attempt and
+   burns another try against the per-hour OTP rate limit.
+
+3. **Phone placeholder** `98765 43210` -> `Enter mobile number`. A realistic
+   number reads as a pre-filled value at a glance.
+
+**Error text is `ink`, not red.** The palette's only red is `AppColors.tomato` at
+~3.4:1 on the shell, already recorded here as large-text-only; body-sized red
+would have been an accessibility regression. Tomato is on the icon, the message
+carries weight instead of colour.
+
+### Build
+
+`1.0.0+3`, built with NO `--dart-define` — the committed default is the real
+configuration now, not a build-time override.
+
+```
+app-release.aab   58,892,562 bytes   2026-08-21 15:37:04
+sha256 6F8E12667A1A61D819E043D0C33BD795AD05318B7A0DBDA8214627C14BDF6B10
+versionCode 3 / versionName 1.0.0
+```
+
+**AD_ID regression check: absent**, 13 uses-permission, unchanged set. Worth
+recording HOW, because a naive scan misleads: a raw byte sweep of the bundle
+DOES hit `ad_id`/`advertis` in `classes.dex` and `libflutter.so`. Those are not
+the permission — the shipped `base/manifest/AndroidManifest.xml` is clean, the
+literal `com.google.android.gms.permission.AD_ID` is absent from every entry,
+and the dex hit resolves to the string **`thread_id`**. Expect those substring
+hits rather than treating them as a finding.
+
+Tests: customer_app **87** (82 unchanged + 5 new in `otp_entry_fixes_test.dart`).
+`flutter analyze` clean. Backend and owner_app untouched.
+
+### SmsRetrieverHelper timeout — INVESTIGATED, NOT FIXED
+
+`[SmsRetrieverHelper] Timed out waiting for SMS` fired in both logged attempts,
+so autofill is not working in practice and the code is typed by hand. Recorded
+as its own open item; no fix attempted, by instruction.
+
+It is **not** a missing permission — the SMS Retriever API deliberately requires
+none, and correctly there are none. It is also a DIFFERENT mechanism from
+`AutofillHints.oneTimeCode`, which goes through Android Autofill and the keyboard
+suggestion strip; the timeout is Firebase's Play-Services retriever specifically.
+
+The retriever matches an 11-character app hash appended to the SMS body, derived
+from package name + signing certificate, and Firebase generates that hash from
+the **SHA-256** of the registered certificate. If the Play App Signing SHA-256 is
+not registered, the SMS carries a hash that cannot match this build and the
+retriever waits until it times out — exactly the observed behaviour.
+
+**Unconfirmed, and `google-services.json` cannot settle it**: that file carries
+only SHA-1 by schema (all three entries are 40 chars), so its silence on SHA-256
+proves nothing. Check Firebase Console -> Project settings -> Your apps ->
+`com.carevo.customer_app` -> SHA certificate fingerprints for a SHA-256 entry
+matching the Play App Signing cert. From the signing-block extraction,
+`FA:68:1F:7C:...` has SHA-256
+`60:2E:02:D0:A0:1E:A1:32:DF:B8:03:4B:8C:52:F1:E7:8F:94:7D:42:B2:1A:6A:F5:AA:AD:0C:E9:D7:EE:8C:42`.
+
+If that is the cause it is **not fixable app-side** — a console registration, no
+code change — so flipping the flag will not have altered it either way.
+
+### Untested path
+
+**This build's sign-in has never been exercised.** All three successful attempts
+ran on versionCode 2, which used the reCAPTCHA flow. This is the first artifact
+that actually takes the Play Integrity path in production configuration — the
+thing those attempts justified but did not themselves test. Internal track and a
+real sign-in before Alpha.
+
+---
+
+## 2026-08-24 02:37 IST — Home/Discover split + 8 bug groups; sideload APK (UNCOMMITTED)
+
+customer_app only. Backend and owner_app untouched. **Nothing committed** —
+held at the user's instruction for a diff review before it lands.
+
+### Task 2 first: where location is actually consumed
+
+Ordered before any routing change, and it changed the answer. Consumers:
+`location_screen.dart:63` ("Near me" button), `checkout_screen.dart:133`
+("Use my location"), `pickup_screen.dart:112/:143` (departure ping; the 60s
+en-route timer passes `allowPrompt:false`). `outlets_screen.dart` reads NO
+location — it takes `lat`/`lng` as ctor params and forwards them.
+
+Two facts decided Task 3. **Distance is server-computed**
+(`carevo_customer/service.py:234 _haversine_km`, populated `:275`, sorted
+`:305`); with no lat/lng every outlet returns `distance_km: null`. And there
+are **no radius checks or restricted-building rules anywhere** —
+`outlets.geofence_radius_meters` exists in the schema but no customer_app code
+reads it.
+
+So location stays DEFERRED; Home never touches `LocationService`. The binding
+constraint is that the service raises at most one dialog per grant state, so
+whichever caller asks first spends it — Home would spend it on a screen with
+nothing to render from coordinates.
+
+### One root cause served two bug groups
+
+There was **no `WidgetsBindingObserver` anywhere in the app** and
+`CartState.restored` was never read. Both group E (cart) and half of group F
+(permissions) were the same gap: external state read once at launch, trusted
+forever. Added a single observer in `CareVoApp` — `flush()` the cart on pause,
+`syncFromDisk()` + `refreshPermission()` on resume. Cart writes are now a
+serialized queue with the payload encoded synchronously at mutation time, so a
+force-close cannot lose the last write and a queued write cannot clobber a
+later one.
+
+Group D was likewise one cause, not three: focus was never released. The IME
+staying up, surviving a back-navigation, and the caret still blinking are all
+the same focused node. `lib/widgets/focus_release.dart` holds both callers —
+`NeoTextField.onTapOutside` and a `FocusReleasingObserver` on the navigator.
+`onTapOutside` rather than a catch-all `GestureDetector` because it is
+delivered outside the gesture arena and cannot swallow taps meant for buttons.
+
+### Latent defect found and fixed en route
+
+`MenuScreen.initState` called `bindOutletIfSafe` synchronously, which
+`notifyListeners()` on `CartState` — whose provider sits above `MaterialApp`
+and has already built that frame. That is "setState() called during build", and
+it fired on **every menu open in debug**, pre-existing. Surfaced only because
+the new tests mount MenuScreen; existing tests never did. Deferred to a
+post-frame callback.
+
+### Reported as blocked, not faked
+
+`outlets` has **no hours columns** (checked every migration 001–021) and **no
+rush/busy/temporarily-closed signal**. `is_open` is a hardcoded `True` literal
+at `service.py:289`, so the OPEN pill and "Open now" chip currently assert
+nothing. `Outlet.opensAt/closesAt/hoursLabel` and the display are wired up
+against nullable fields and hide while null — they light up when a migration
+adds the columns. No hours were invented. The rush indicator was not built.
+
+Map + distance ADDED to the discovery list (`_DirectionsButton`); the checkout
+copy was KEPT rather than moved — it does a different job there (last
+wrong-branch check before money moves).
+
+### Build
+
+Sideload only, outside the Play versionCode lineage.
+`--dart-define=FORCE_RECAPTCHA_FLOW=true` overrides the committed default for
+this build ONLY; `app_config.dart` still reads `defaultValue: false` and
+`pubspec.yaml` is still `1.0.0+3` — both verified by an empty `git diff`.
+Play Integrity cannot vouch for a sideloaded install, so without the override
+phone auth dies at `17028` and no SMS is sent.
+
+```
+app-release.apk   57,890,940 bytes   2026-08-24 02:35:05 IST
+sha256 ea614131911d0017a12d6ee591963caf074df133c5e9f1cd4ab29df11c49f96c
+```
+
+Tests: customer_app **132** (87 unchanged + 45 new in
+`bugfix_batch_2026_08_24_test.dart`), backend **141**, owner_app **1**. All
+pass; `flutter analyze` clean. Backend suite hard-binds to local
+`carevo_test` — prod was never touched.
+
+---
+
+## 2026-08-24 11:59 IST — Mandatory name capture + hide fake OPEN badge (UNCOMMITTED)
+
+customer_app only. Folds into the SAME pending review as the 02:37 checkpoint
+today — that batch is also still uncommitted, so this is one diff, not two.
+
+### Task 2 — name on signup
+
+`AuthState` gained `pendingName`/`setPendingName()`, held from the login
+screen and applied via `PATCH /customer/me` right after `verifyOtp()` or
+`signInWithGoogle()` succeeds — awaited before `notifyListeners()`, so Home's
+first build already has it. **Only applied when the account is still
+nameless** (`_applyPendingName` no-ops if `customer.name` is non-empty): a
+returning customer types into the same required field every sign-in, and
+without that guard it would silently rename an account on every login rather
+than being a one-time collection.
+
+The auth endpoints (`VerifyOtpIn`/`FirebaseAuthIn`/`GoogleAuthIn`) don't and
+shouldn't take a name — everything they record comes from verified token
+claims. `PATCH /customer/me` already existed as the one self-editable-field
+route, so no backend change was needed.
+
+`LoginScreen` gained a required "How can we call you?" field, opened above
+the identifier field (friendliest question first). Both the identifier-driven
+CTA and the standalone Google button are gated on it — the Google button
+needed its own gate since it bypasses the identifier field entirely and would
+otherwise have been a hole straight past the requirement.
+
+### Task 3 — blocking prompt, one condition, no flag
+
+`NameCaptureScreen`, gated inside `HomeScreen.build()` on
+`AuthState.customer?.name` being empty — checked BEFORE the orders spinner,
+so a slow `/customer/orders` response can't delay it. Rendered IN PLACE OF
+Home (not pushed), with `PopScope(canPop: false)` and no AppBar/account
+action, so there's no way out except a name. Deliberately no local
+"already shown" flag: the absence of a name IS the condition, so it can't get
+stuck showing or stuck hidden — it stops being true, permanently server-side,
+the moment `NameCaptureScreen` saves.
+
+`customer == null` (not yet fetched) does NOT block — fails open rather than
+stalling an unrelated network hiccup into a false positive.
+
+### Task 4 — hide the fake OPEN badge
+
+Removed from `outlets_screen.dart`: the OPEN/CLOSED `_Pill`, the "Open now"
+filter chip (`_openOnly`), the `isOpen`-gated tap block, and the "Unavailable"
+trailing text — all four were downstream of the same hardcoded
+`is_open: True` at `carevo_customer/service.py:289`. The tap gate went too,
+deliberately beyond the literal "badge": leaving it would mean a customer
+sees no CLOSED indicator yet taps and nothing happens, for a reason the UI no
+longer explains. `Outlet.isOpen` stays in the model (round-trips through cart
+persistence) but nothing reads it for display or logic now.
+
+**Confirmed untouched**: `Outlet.hoursLabel`/`opensAt`/`closesAt` and the
+hours line on the outlet card — separate, still-nullable fields from the
+2026-08-24 02:37 batch, already hiding themselves until real data exists.
+Nothing here needed to change for them.
+
+### Tests
+
+64 tests in `bugfix_batch_2026_08_24_test.dart` (appended to the same file as
+the 02:37 batch, which had 45): empty-name rejection (identifier valid + no
+name, name-only, whitespace-only, Google
+button gated too), `AuthState`-level PATCH application (fresh nameless
+account gets it, existing name is never overwritten, logout clears a pending
+name), the blocking gate (appears once, un-dismissable via `PopScope`, a
+failed save keeps it up with a visible reason, submitting clears it and a
+pull-to-refresh does not resurrect it, a named account never sees it), and
+the OPEN badge (no OPEN/CLOSED text anywhere, no `chip_open`, card stays
+tappable with `is_open: false` fed in on purpose).
+
+Two of my own test-harness bugs found and fixed en route, not app bugs: a
+mock `PATCH /customer/me` that echoed the ORIGINAL name instead of the
+submitted one (made the "once, not repeatedly" test fail for the wrong
+reason); and a `MenuScreen` navigation assertion needing `pumpAndSettle()`
+instead of a fixed-duration `pump()` to clear the post-frame-callback +
+Future-completion chain.
+
+customer_app **151** passing (132 + 19 net new against the prior 132 baseline
+— the file grew from 45 to 64 tests, +19). Backend **141**, owner_app **1**,
+both re-run and unaffected — zero backend/owner_app files touched this pass.
+`flutter analyze` clean.
+
+**Session-hygiene note**: the dormant session file from the 2026-08-21 sign-in
+work (`5c63032e…`) showed a filesystem mtime bump to today during this run,
+but its byte size was unchanged (4,039,024 bytes, same as the prior
+checkpoint) and its content still ends mid-2026-08-21 — a metadata touch
+(indexing/AV/sync), not new writes. Single-agent confirmed by content, not
+just by the initial check.
+
+---
+
+## 2026-08-24 13:40 IST — Multi-city, sort bar, cart resume, item placeholders (UNCOMMITTED)
+
+Third batch today. Folds into the SAME pending review as the 02:37 and 11:59
+batches — none has landed.
+
+### First backend changes of the day
+
+The previous two batches were customer_app-only. This one needed three
+additive query changes, all in `carevo_customer`:
+
+1. **`list_outlets` takes a city LIST.** Was `lower(city) = lower(:city)`, a
+   single equality match; now `lower(city) = ANY(CAST(:cities AS varchar[]))`.
+   One bound parameter, no interpolation, works for one city or ten. The
+   controller's `city` param became `Optional[list[str]] = Query(None)`, so
+   `?city=A&city=B` is the union and a single `?city=X` still behaves exactly
+   as before.
+2. **`created_at` added to the outlet payload.** Real column, always existed,
+   simply was not being sent. Backs the Newest sort.
+3. **`get_menu` stopped filtering `is_available = true`.** `is_active` still
+   filters (deletion is not sold-out). Sold-out items now arrive flagged so
+   the app can render them as placeholders.
+
+**Deploy dependency, flagged:** the app points at the deployed Render backend
+(`AppConfig.baseUrl`). Until these are deployed, multi-city returns only the
+LAST city, Newest has no data to sort on, and no unavailable items arrive.
+None of it fails loudly — it just under-delivers — so this needs to be said
+rather than discovered.
+
+### A latent client bug found on the way
+
+`ApiClient._uri` did `qp[k] = v.toString()`, which would have sent
+`city=[Bengaluru, Chennai]` — one literal, nonexistent city — and returned
+the wrong outlets silently. Now `Iterable` values become repeated params.
+
+### Sort bar: three real, seven declared
+
+`lib/models/outlet_sort.dart` holds the options AND their ordering rules, so
+"what does this sort do" and "does this sort work" cannot drift. Nearest
+(distance), Newest (`created_at`), Best Offers (`offer_count`) work. The other
+seven each carry a `blockedBy` string naming the missing signal — ratings
+table, order-volume aggregates, outlet-level price index, reviews table,
+per-customer personalisation. None exists.
+
+They are rendered greyed with a **"Coming soon"** caption and are inert three
+independent ways: no `onTap` passed, wrapped in `IgnorePointer`, and
+`_selectSort` refuses them even if called directly. Greying alone reads as
+"temporarily broken"; the words are what distinguish "not built yet".
+
+### Task 3 — verified, and it HAD been missed
+
+`AreaPicker`'s search box is a raw `TextField` (it needs the clear-button
+suffix), so it never picked up the `onTapOutside` default added to
+`NeoTextField` last batch — the one input in the app still holding focus on a
+tap-away. Applied the SAME shared `releaseFocus()`, not a second mechanism.
+The route-transition half was already covered by `FocusReleasingObserver`.
+
+### Zero cities selected → CTA disabled
+
+Chosen over defaulting-to-all: with a default, ticking none and ticking every
+box do the same thing, so nothing on screen explains what the boxes are for.
+"Near me" already covers "just show me things".
+
+### Blocked, and NOT faked
+
+**Restaurant-closed state** — not built, per instruction. Still needs real
+hours/open-status data; `outlets` has no hours columns and `is_open` remains
+hardcoded `true`. Same reason the OPEN badge was removed last batch. The
+ITEM-level placeholder that WAS built is a different thing: `is_available` is
+real data the owner app already toggles.
+
+### Order-history alignment
+
+Reused the group-A pattern rather than inventing one: a shared `TicketValue`
+slot (`minWidth: 116`, right-aligned) used by the price row AND by
+`TicketRow`, which previously used different geometry. Caught mid-fix that
+swapping `Spacer()` for a fixed gap left the row packing LEFT — the label
+needed `Expanded`, not `Flexible`, to push the slot flush right.
+
+### Tests
+
+customer_app **186** (153 + 33 new in `ui_batch_2026_08_24b_test.dart`),
+backend **147** (+6: multi-city union, single-city still narrows,
+case-insensitivity, no-param, `created_at` present). owner_app **1**. All
+pass; `flutter analyze` clean.
+
+One pre-existing backend test was rewritten rather than deleted:
+`test_menu_hides_unavailable_items` -> `..._returns_unavailable_items_flagged_not_hidden`,
+plus a new `test_menu_still_hides_INACTIVE_items` pinning that `is_active` did
+NOT come along for the ride.
+
+Three customer_app tests were updated for deliberate behaviour changes
+(`chip_nearest` -> `sort_nearest`; Home's active-order ticket -> compact link;
+AreaPicker `onSelect`/`selected:String?` -> `onToggle`/`selected:Set<String>`
+with `Semantics.checked` replacing `.selected`).
+
+### Session-hygiene note
+
+The other session file (`5c63032e…`) GREW today — 4,039,024 -> 4,047,179
+bytes. Inspected rather than assumed: the new entries are 3 `user` records (a
+`/model` command echo) and 1 auto-generated `away_summary`, with **zero
+assistant turns and zero tool calls**, and no working-tree file was modified
+in the preceding 30 minutes. A second terminal is open on this project but has
+done no work.
+
+---
+
+## 2026-08-24 16:20 IST — Backend changes COMMITTED and pushed (520794cd)
+
+First commit of the day. Backend only — the customer_app changes from all
+three of today's batches remain uncommitted, held for a dedicated review.
+
+### Committed: 520794cd on 21_7
+
+Five files, 181 insertions / 21 deletions:
+
+```
+app/modules/carevo_customer/controller.py   (city param -> list)
+app/modules/carevo_customer/schema.py       (OutletOut.created_at)
+app/modules/carevo_customer/service.py      (the three query changes)
+tests/test_api_orders.py                    (rewritten + new is_active test)
+tests/test_api_outlet_locality.py           (5 new city-filter tests)
+```
+
+Pushed 37bbf4d0..520794cd after a fast-forward check
+(`git merge-base --is-ancestor origin/21_7 HEAD`), then re-fetched and
+confirmed local HEAD == origin/21_7.
+
+### No Checkpoint A — VERIFIED, not assumed
+
+Checked three ways before staging:
+
+* `git status -- migrations/` empty — no migration added or modified.
+* No ORM model file touched.
+* Grepping ADDED lines under `app/` for DDL and writes
+  (CREATE/ALTER/DROP/ADD COLUMN/INSERT/UPDATE/DELETE/TRUNCATE) returns
+  nothing; the only SQL verbs the diff adds under `app/` are SELECT, FROM,
+  WHERE and JOIN.
+
+The UPDATE/INSERT hits in the raw diff are all in `tests/`, which conftest
+hard-binds to the local `carevo_test` database. Pure read-query logic, so no
+schema approval gate applied.
+
+### Staging hygiene
+
+Staged the five paths explicitly rather than `git add -A`. Verified afterwards
+that `.env`, `.claude/settings.local.json` and every `customer_app/` file were
+still unstaged.
+
+### Session check
+
+Automated: the other session file was byte-identical (4,047,179) to the
+previous check, last real content entry 12:53:37 IST, and its only 2026-08-24
+entries remain 3 `user` + 1 `system` with zero assistant turns. File evidence
+only proves nothing was WRITTEN, so Adi was asked to eyeball the other
+terminal directly before the push; he confirmed all other Claude CLI sessions
+are closed.
+
+### Deploy verification in progress
+
+Render auto-deploys 21_7. Push acceptance is NOT deploy proof, so the live
+backend is being polled on two unauthenticated signals visible in
+`/openapi.json`: the `city` parameter turning into an array, and
+`OutletOut.created_at` appearing. Immediately after the push both were still
+OLD (`city` a plain string, no `created_at`) — recorded here because it is the
+baseline that makes the flip meaningful.
+
+---
+
+### Deploy CONFIRMED live — 16:23:53 IST
+
+Baseline immediately after the push was OLD; polled `/openapi.json` every 20s
+and it flipped on attempt 6, ~4 minutes after the push:
+
+```
+16:22:05 OLD ... 16:23:29 OLD    16:23:53 NEW
+```
+
+Live schema now reads, straight from the running process:
+
+```
+city              anyOf[ array<string>, null ]   (was: anyOf[ string, null ])
+OutletOut.created_at  anyOf[ date-time, null ]   (was: absent)
+```
+
+FastAPI generates that from the deployed function signature at import time, so
+`type: array` cannot appear unless `Optional[list[str]] = Query(None)` is what
+is actually running. This is the deployed code describing itself, not an
+inference from the push succeeding.
+
+**What could NOT be proven, and why.** An authenticated end-to-end multi-city
+request against prod is not possible: `/customer/outlets` requires a customer
+token, and `CUSTOMER_AUTH_ENABLED` is false on prod —
+`POST /customer/auth/request-otp` answers `503 Customer login is disabled on
+this deployment`. Getting a token would need both a prod env change and a prod
+customer row, neither of which is in scope here. The union/narrowing/
+case-insensitivity BEHAVIOUR is proven instead by the five new tests in
+`test_api_outlet_locality.py`, which run against a real Postgres on this exact
+commit. Recorded so nobody later reads "deploy confirmed" as "multi-city
+exercised end-to-end on prod".
+
+There is also no version/SHA endpoint on the service (root returns only
+`{"status":"active"}`), so the schema flip is the available deploy signal.
+
+### APK rebuilt against the live backend
+
+```
+app-release.apk   57,923,568 bytes   2026-08-24 16:24:55 IST
+sha256 33f40a9c2688cd357d346d947675c3757857360df9662d9b33659a25d3998791
+```
+
+`--dart-define=FORCE_RECAPTCHA_FLOW=true` as every sideload build (Play
+Integrity cannot vouch for a sideloaded install). `pubspec.yaml` still
+`1.0.0+3` and `app_config.dart` still `defaultValue: false` — both confirmed by
+an empty `git diff`. Replaces the 12:06 APK (`1569f7f4…`), which predated the
+name-field, OPEN-badge and this batch's work.
+
+Built in parallel with the deploy poll rather than after it: the APK's only tie
+to the backend is the base-URL constant, which did not change, so the binary is
+identical either way.
+
+Backend tree is now clean. All customer_app changes from today's three batches
+remain uncommitted and held for a dedicated review pass.
+
+---
+
+## 2026-08-25 11:41 IST — is_new_account backend fix DEPLOYED (b984bd69)
+
+Second backend commit. Client half stays uncommitted with the other pending
+batches, by instruction.
+
+### The bug this unblocks
+
+A name typed on the sign-in screen is applied afterwards via
+`PATCH /customer/me`, guarded by "only if the stored name is empty" — which
+existed to stop that field acting as a rename control for returning customers.
+
+That guard silently broke Google SIGNUP. `verify_google_token` creates the row
+with `name` already set from the Firebase `name` claim (the Google profile
+name), so the app saw a non-empty name and discarded what had just been typed.
+The greeting then showed the Google profile name — and because the sign-in
+field is mandatory, the customer was made to type a name that was thrown away.
+
+"Name is empty" cannot separate that from a name deliberately set in Profile;
+both are just a non-empty string in the response. Hence a real signal rather
+than loosening the guard.
+
+### Committed: b984bd69 on 21_7
+
+Three files, 39 insertions / 7 deletions:
+
+```
+app/modules/carevo_customer/controller.py  (both auth routes pass it through)
+app/modules/carevo_customer/schema.py      (VerifyOtpOut.is_new_account)
+app/modules/carevo_customer/service.py     (verify_*_token -> (customer, created))
+```
+
+Pushed 520794cd..b984bd69 after `git merge-base --is-ancestor`, then re-fetched
+and confirmed local HEAD == origin/21_7.
+
+### No Checkpoint A — verified literally, not assumed
+
+* `git status -- migrations/` — empty.
+* No ORM model file touched.
+* Added lines under `app/` grepped for DDL, writes, `Column(` and
+  `mapped_column` — nothing.
+* Added lines grepped for SQL keywords — 5 hits on `from`, ALL of them prose
+  inside comments and docstrings, verified by printing them. Zero actual SQL.
+
+Computed-field-only: two return signatures became `tuple[Customer, bool]`, one
+local flag, one Pydantic field with a default, two controllers passing it on.
+
+### Deploy CONFIRMED live — 11:41:16 IST
+
+Baseline captured BEFORE the push (`is_new_account` absent), then polled every
+20s; flipped on attempt 8, ~4 minutes after the push.
+
+```
+VerifyOtpOut properties
+  BEFORE: ['access_token', 'token_type', 'customer']
+  AFTER : ['access_token', 'token_type', 'customer', 'is_new_account']
+  ADDED : ['is_new_account']   REMOVED: none
+
+  is_new_account: {"type":"boolean","default":false}
+  required BEFORE == required AFTER == ['access_token','customer']
+```
+
+`required` is unchanged and the field carries `default: false`, so this is
+purely additive — an older client that ignores it is unaffected, and one that
+reads it from an older deploy gets the previous conservative behaviour rather
+than starting to overwrite names.
+
+### Still not exercised end to end
+
+Same limit as the multi-city deploy: `/auth/google` needs a real Firebase
+token and prod `CUSTOMER_AUTH_ENABLED` is false, so the flag's runtime value
+cannot be observed on prod. What IS proven is the deployed contract (the
+schema is generated from the running signatures) plus the client-side
+behaviour, pinned by 4 tests in `bugfix_batch_2026_08_24_test.dart` — one of
+which goes red if the guard is reverted, while the three that protect the
+returning-customer case stay green.
+
+Backend tests: **147**, unchanged — none of them cover `/auth/google` or
+`/auth/firebase`, which require Firebase. Recorded as a fact about coverage,
+not a proposal.
+
+---
+
+## 2026-08-25 12:22 IST — Google displayName seeding removed (6df95351)
+
+Third backend commit. Client login redesign stays uncommitted, by instruction.
+
+### Committed: 6df95351 on 21_7
+
+One file, 17 insertions / 7 deletions, all inside `verify_google_token`:
+
+```
+app/modules/carevo_customer/service.py
+```
+
+Pushed b984bd69..6df95351 after `git merge-base --is-ancestor`, re-fetched,
+local HEAD == origin/21_7 confirmed. Backend tree clean afterwards.
+
+`customers.name` now has exactly ONE writer: `PATCH /customer/me`. The Firebase
+`name` claim is unpacked as `_google_display_name` and discarded; the
+`Customer(...)` constructor no longer takes `name=`, and the
+`if name and not customer.name` backfill is deleted.
+
+This supersedes the ARBITRATION added in b984bd69 rather than replacing it:
+`is_new_account` is still used, but now only to decide whether to SHOW the name
+screen, not to referee between two writers. Removing the second writer is the
+smaller system.
+
+Existing rows are untouched — this stops future writes, it does not rewrite
+history. A Google account already carrying a display name keeps it until its
+owner changes it in Account -> Your name.
+
+### No Checkpoint A — verified literally
+
+* `git status -- migrations/` — empty.
+* No ORM model and no Pydantic schema file modified.
+* Diff grepped in BOTH directions for DDL, `Column(`, `mapped_column` — nothing.
+* Scope: the three hunks sit at lines 208-260; `verify_google_token` spans
+  182-261 (next def at 262), so every hunk is inside it.
+  `verify_firebase_token` (133-181) is untouched.
+
+### Deploy NOT confirmed — and openapi cannot confirm it
+
+Unlike the previous two deploys, there is no observable signal available:
+
+* `/openapi.json` is byte-identical before and after (sha256 `2c5a151b…`), which
+  is EXPECTED — no signature or model changed — and therefore carries zero
+  information about whether the deploy landed.
+* There is no version/commit/health endpoint (root returns `{"status":"active"}`).
+
+What WOULD confirm it: a fresh Google signup, then reading `customers.name` for
+that new row BEFORE the app issues `PATCH /customer/me`. Empty = live.
+
+### CORRECTION to earlier entries in this log
+
+Previous entries said the Google path could not be exercised on prod because
+`CUSTOMER_AUTH_ENABLED=false`. **That is wrong for `/auth/google`.** Probed
+directly:
+
+```
+POST /customer/auth/google  -> 401 {"detail":"Malformed Firebase token"}
+POST /customer/auth/request-otp -> 503 {"detail":"Customer login is disabled..."}
+```
+
+`/auth/google` and `/auth/firebase` deliberately SKIP the
+`_require_customer_auth_enabled()` gate — the controller docstrings say so —
+because they verify against Google's public keys rather than trusting the
+client. The real blocker is only that a valid Firebase ID token cannot be
+minted from a shell.
+
+Practical consequence: this IS exercisable on a device today. The installed
+11:46 APK reaches `/auth/google` on prod, so a real Google signup with a fresh
+account would confirm the behaviour — no config change needed.
+
+---
+
+## 2026-08-25 — Cart storage scoped to the customer (UNCOMMITTED, batch 6)
+
+customer_app only. Backend, owner_app and admin_app untouched — zero files
+modified in any of them. Folds into the SAME pending review as the five batches
+already queued.
+
+### The bug
+
+`carevo_cart_v1` was ONE global `SharedPreferences` key
+(`cart_state.dart:40`, pre-change). Logout cleared the session token
+(`auth_state.dart:166`) and nothing else, so the next account to sign in on the
+device inherited the previous customer's basket, the outlet it was bound to, and
+the "Continue where you left off" banner naming that restaurant. Reproduced
+before fixing: a brand-new account with zero orders landed on the FIRST-RUN home
+screen carrying `2 items from Meenakshi Bhavan`.
+
+It leaked through memory AND disk: the `CartState` instance is built in `main()`
+above `MaterialApp`, so it outlives a logout that only swaps the navigator
+stack, and the blob outlives the process.
+
+### Scoping the store, not patching the call sites
+
+The key is now `carevo_cart_v1_<customer id>`, with `carevo_cart_v1_guest` for
+logged-out. `customers.id` (`Customer.id`, `models/customer.dart:18`) is the
+scope — the same identifier the API authorises against.
+
+Clearing the cart inside `logout()` was rejected: it fixes the paths that go
+through logout and misses the ones that do not, and the diagnostic found two
+that do not — a **Google sign-in over a live session**
+(`auth_state.dart:139-160`) and **401 session loss**
+(`_onSessionLost`, `auth_state.dart:21-25`), which fires from a background
+request with no screen mounted. All five identity-change paths do share one
+thing: they assign `AuthState._customer` and notify. New
+`state/cart_identity_sync.dart` binds there — a single listener, so a future
+auth flow is covered the day it is written.
+
+`CartState.setIdentity` flushes queued writes BEFORE switching scope, and
+`_persist()` now captures its KEY synchronously alongside the payload.
+Without that, a write queued moments before a switch lands under the incoming
+customer's identity — the same leak by a slower route. Pinned by its own test.
+
+`CartIdentitySync` serialises re-scopes rather than firing them in parallel: one
+auth call notifies several times (`AuthState` toggles `busy` around assigning the
+customer), and two concurrent `setIdentity` calls can both pass its
+already-on-this-scope guard, since it awaits a flush before assigning.
+
+**A null customer is not "guest".** On a cold start with a restored token the
+customer is null until `/customer/me` returns — the session exists, its identity
+is merely unresolved. Treating that as a sign-out would blank a basket that is
+about to be restored, so an authenticated-but-unresolved session is left alone.
+
+### Guest cart: DISCARDED at sign-in, never merged
+
+Stated because it must not be left undefined. A merge is the same
+identity-boundary crossing this fix exists to stop: on a shared device it hands
+whoever signs in next the previous person's items — the reported bug in a new
+costume. A prompt was rejected too: it puts a question to the customer that the
+app is in a better position to answer, at the worst possible moment. Nothing
+durable is lost (a cart is one outlet's items, re-validated at checkout anyway),
+and the guest state is currently unreachable in practice — the splash routes an
+unauthenticated launch straight to login and every catalog endpoint requires a
+customer token. The guest blob is deleted when a real identity takes over, so it
+cannot linger for the next logged-out person.
+
+### The legacy blob is deleted, not migrated
+
+A device upgrading from a pre-scoping build has a `carevo_cart_v1` that records
+no owner. It is removed at `restore()`. Adopting an unattributable basket into
+whoever opens the app next IS the bug. Cost: a customer upgrading mid-basket
+loses those items once.
+
+### Tests
+
+New `test/cart_identity_scope_test.dart`, 14 tests: the key scheme (3), the five
+identity paths as five isolated tests, the two-account reproduction from the
+diagnostic (including a widget test asserting B's Home has no resume banner and
+no trace of A's outlet), A getting A's own cart back, the guest policy (2), and
+the in-flight-write boundary.
+
+customer_app **228** (was 214), owner_app **1**, backend **147** untouched and
+not re-run — no backend file was modified. `flutter analyze` clean.
+
+**Revert proof, both halves independently:**
+
+* un-scope the key (`storageKeyFor` returns one shared key) → **10 of 14 fail**
+* disable the sync (`CartIdentitySync.start()` returns early) → **12 of 14 fail**,
+  including all five identity paths and the Home widget test
+
+13 of the 14 fail under one revert or the other. The one that fails under
+neither is the legacy-blob test, which pins a third behaviour neither revert
+touched.
+
+Files: `lib/state/cart_state.dart`, `lib/main.dart`,
+new `lib/state/cart_identity_sync.dart`, new `test/cart_identity_scope_test.dart`.
+
+---
+
+## 2026-08-25 16:59 IST — Sideload APK built from the six pending batches
+
+Build only — no source change, nothing committed. Built from the working tree
+carrying all six uncommitted customer_app batches (filter/card-size, location
+permission ×3, login redesign, name-capture gating, guard removal, and the
+cart-identity scoping above).
+
+```
+app-release.apk   57,923,608 bytes   2026-08-25 16:59:39 IST
+sha256 4EC201A2993F401851FD15B9D3CBF6935BF938AFDD27115BDE4956D5DCD32F96
+sha1   45DE9C0A3AF081C3041093B653DE8210EB966DB0  (matches the .sha1 sidecar)
+```
+
+`--dart-define=FORCE_RECAPTCHA_FLOW=true`, as every sideload build: Play
+Integrity cannot vouch for a sideloaded install, so without the override phone
+auth dies at `17028` and no SMS is sent. **The committed default is untouched** —
+`app_config.dart` still reads `defaultValue: false` and `pubspec.yaml` is still
+`1.0.0+3`, both confirmed by an empty `git diff` before AND after the build. Only
+this artifact carries the flag.
+
+Replaces the 12:30:32 APK (`F57837FE…`, 57,890,840 bytes), which predated the
+cart-identity work. Gradle `assembleRelease` 70.1s, exit 0.
+
+**The override cannot be verified statically** — a `--dart-define` compiles into
+the AOT Dart snapshot. The only proof it took effect is behavioural: sign-in
+raises the reCAPTCHA webview and an SMS arrives.
+
+Build warnings, none fatal and all pre-existing: `flutter_google_places_sdk_android`
+still applies the Kotlin Gradle Plugin, 32 packages held back by constraints,
+MaterialIcons tree-shaken 1,645,184 → 9,360 bytes.
+
+Outside the Play versionCode lineage — this is a sideload artifact, not an
+upload candidate.
+
+---
+
+## 2026-08-25 — BACKFILL: three backend commits landed without their log entries
+
+**Flagged as backfilled, not contemporaneous.** Recorded here so the gap is
+visible rather than silently closed.
+
+The standing rule (2026-08-11) is that every commit carries its own `carevomd.md`
+entry *inside that commit*. Three backend commits broke it:
+
+| Commit | Pushed | What it did |
+|---|---|---|
+| `520794cd` | 08-24 16:20 | Multi-city outlet filter (`lower(city) = ANY(...)`, one bound param), `OutletOut.created_at` added to back the Newest sort, and `get_menu` stopped filtering `is_available` so sold-out items arrive flagged instead of vanishing. 5 files, 181+/21−. Deploy confirmed 16:23:53 by the `/openapi.json` schema flip. |
+| `b984bd69` | 08-25 11:41 | `is_new_account` returned from both auth routes, so a name typed at signup could win over a Google profile name. 3 files, 39+/7−. Deploy confirmed 11:41:16, purely additive (`default: false`, `required` unchanged). |
+| `6df95351` | 08-25 12:22 | Stopped seeding `customers.name` from the Google `name` claim — `PATCH /customer/me` is now the ONLY writer. 1 file, 17+/7−. Deploy NOT confirmable: `/openapi.json` is byte-identical because no signature changed, and there is no version endpoint. |
+
+The fuller entries for all three DO exist above in this file — they were written
+after each push rather than included in it, and have been sitting uncommitted
+ever since. They land with the commit this entry belongs to. So the record is
+complete from here on; it simply was not complete *at the time*, and no future
+reader should infer from the file's contents that it was.
+
+Root cause worth keeping: the entries were written at the end of each deploy
+verification, by which point the commit had already been made and pushed. The
+rule only works if the entry is written BEFORE staging, not after pushing.
+
+---
+
+## 2026-08-25 — customer_app: six batches land
+
+One commit, six batches of work built across 2026-08-24 and 08-25 and held at
+the user's instruction for a single diff review. Backend, owner_app and
+admin_app are untouched — zero files modified in any of them.
+
+The per-batch entries above stay as the detailed record; this entry is what the
+commit itself carries.
+
+### What is in it
+
+1. **Filter button + card size** — the outlet list's sort/filter affordance and
+   card geometry. `outlet_sort.dart` holds the options AND their ordering rules
+   so "what does this sort do" and "does it work" cannot drift; three sorts are
+   real (Nearest, Newest, Best Offers) and seven carry a `blockedBy` string
+   naming the missing signal, rendered greyed with "Coming soon" and inert three
+   independent ways. No rating or review data exists to fake them from.
+2. **Location permission ×3** — a dedicated permission dialog, an on-resume
+   re-check so a grant made in system Settings is noticed without a restart, and
+   the checkout "Use my location" path. `LocationService` still raises at most
+   one prompt per grant state, and no automatic caller may spend it.
+3. **Login redesign** — the identifier field and OTP entry reworked; the
+   email/phone auto-detect was removed rather than reshaped.
+4. **Name-capture gating** — `post_auth_router.dart` is now THE single post-auth
+   decision point: a signup goes to `NameCaptureScreen`, a returning sign-in
+   goes to Home. This replaced a second gate inside `HomeScreen.build` that
+   fired on "name is empty" — two gates on two conditions is how someone gets
+   asked twice. A legacy account with no name deliberately is NOT trapped.
+5. **Guard removal** — the client half of `6df95351`. `is_new_account` now
+   decides only whether to SHOW the name screen; it no longer referees between
+   two writers of `customers.name`, because the second writer is gone.
+6. **Cart identity scoping** — `carevo_cart_v1` was ONE global key, so a logout
+   that cleared only the session token left the next account to sign in holding
+   the previous customer's basket, outlet, and "Continue where you left off"
+   banner. The key is now `carevo_cart_v1_<customer id>`, with a separate
+   `guest` scope; `CartIdentitySync` re-scopes on every identity change from a
+   single listener on `AuthState`, because two of the five paths
+   (Google-over-a-live-session, 401 session loss) never reach `logout()` at all.
+
+### Verified against
+
+```
+app-release.apk   57,923,608 bytes   2026-08-25 16:59:39 IST
+sha256 4EC201A2993F401851FD15B9D3CBF6935BF938AFDD27115BDE4956D5DCD32F96
+```
+
+Built with `--dart-define=FORCE_RECAPTCHA_FLOW=true` (sideload; Play Integrity
+cannot vouch for a sideloaded install). `pubspec.yaml` stays `1.0.0+3` and
+`app_config.dart` stays `defaultValue: false` — both confirmed by an empty
+`git diff` before and after the build, so only that artifact carries the flag.
+It is outside the Play versionCode lineage and is not an upload candidate.
+
+### Device testing — Adi, first-hand, 2026-08-25
+
+**Adi installed the `4EC201A2…` APK on his own phone and ran the cart-isolation
+checks himself. This section is his first-hand observation, recorded as his, and
+is deliberately kept separate from the machine-verified evidence below** — the
+agent writing this file had no device attached at any point (`adb devices` empty
+on every check) and watched none of it happen.
+
+What he confirmed working:
+
+* **Fresh-account isolation.** Account A adds to cart at an outlet, logs out,
+  signs up as a brand-new account B. B shows **no resume banner, no leftover
+  cart items, and no reference to A's outlet.**
+* **Google account switch with NO logout step.** Switched from account A
+  straight to a different Google account without logging out first. Same result
+  — the cart re-scoped correctly, nothing leaked.
+
+That second one is the important one, and it is why the fix binds to
+`AuthState`'s customer rather than to `logout()`: it is the path a
+clear-the-cart-on-logout repair would have missed entirely, and it has now been
+exercised on a real device rather than only in a test harness.
+
+### Machine-verified, separately
+
+Batch 6 carries 14 tests: all five identity-change paths in isolation, the
+two-account reproduction (including a widget test asserting B's Home carries no
+resume banner and no trace of A's outlet), the guest-cart policy, and the
+in-flight-write boundary — plus two independent reverts, one un-scoping the key
+(10 of 14 fail) and one disabling the sync (12 of 14 fail).
+
+### Tests at time of commit
+
+customer_app **228 passed, 0 failed** (was 186 before these batches began).
+owner_app **1**. Backend **147**, not re-run — no backend file is in this commit.
+`flutter analyze` clean.
+
+### Deliberately NOT in this commit
+
+`owner_app/pubspec.yaml` (`+1` → `+2`), held back since the 08-21 decision:
+owner_app is sideloaded, not distributed through Play, so its versionCode has no
+Play constraint to reconcile against and the bump is its own decision.
+`.claude/settings.local.json` (local tool permissions), `.env` (untracked and
+gitignored), `UI_REDESIGN_HANDOFF.md`, `design/`, `pdf/`, the loose gif/mp4/jpeg
+files at the repo root, and the ~16,631 deleted MAUI `bin`/`obj` artifacts.
+
+Per the standing rule, this entry cannot cite its own commit hash — amending the
+entry in changes it. Take the live hash from the push.
+
+---
+
+## 2026-08-26 15:25 IST — PRE-RESTART SNAPSHOT (known-good baseline)
+
+Recorded deliberately before a planned machine restart, so the next session's
+re-orientation check has something exact to diff against rather than
+reconstructing the tree from memory. **Nothing was committed, built or changed
+to produce this entry** — it is a reading of the tree, not a change to it.
+
+### Git position
+
+```
+branch          21_7
+HEAD            70871cf6  feat(customer_app): six UI/UX batches + per-customer cart scoping
+origin/21_7     70871cf6      (0 ahead, 0 behind — fully pushed)
+index           EMPTY — nothing staged
+tracked files   17,639
+```
+
+No merge/rebase/cherry-pick in progress; no `index.lock`.
+
+### Uncommitted tree — what SHOULD be there on next boot
+
+**The walking-footer batch (5 files) — the only real work in flight:**
+
+```
+ M customer_app/lib/screens/home_screen.dart      (footer at the bottom of both Home variants)
+ M customer_app/pubspec.yaml                      (assets: block ONLY; version untouched at 1.0.0+3)
+?? customer_app/assets/animation/final_walk.gif   (3,356,566 bytes)
+?? customer_app/lib/widgets/walking_footer.dart
+?? customer_app/test/walking_footer_test.dart
+```
+
+**Two long-standing modified files, both deliberately held back:**
+
+```
+ M .claude/settings.local.json   local tool permissions, never staged
+ M owner_app/pubspec.yaml        +1 -> +2, held since the 2026-08-21 decision:
+                                 owner_app is sideloaded, not on Play, so its
+                                 versionCode has no Play constraint to reconcile
+```
+
+**Long-standing untracked docs and assets (18):** `UI_REDESIGN_HANDOFF.md`;
+`design/` (4: `.thumbnail`, two `.dc.html` prototypes, `support.js`); `pdf/` (3);
+`customer_app/assets/icon/play_store_icon_512.png`;
+`customer_app/assets/marketing/` (7: feature graphic + 6 store screenshots);
+and at the repo root `final_walk.gif`, `walk.gif`, `guy_walking.jpeg`,
+`generate_a_gif_and_video_of_th.mp4`.
+
+**Plus 16,631 deleted MAUI `bin`/`obj` artifacts** under `gusto_pos/GustoPOS` and
+`gusto_pos/GustoWaiter`, from the 2026-08-12 disk cleanup. Long-standing;
+restorable with `git checkout` or by rebuilding.
+
+**`gusto_pos/backend` and `admin_app` are COMPLETELY clean — 0 entries each.**
+
+### Open item carried into the next session
+
+Phone OTP sign-in fails on the `D64B37E0…` sideload. Root cause was captured in
+logcat at 00:06:27 on 2026-08-26 and is NOT what earlier entries assumed: the Keystore
+cannot load Firebase Auth's Tink master key
+(`FirebearCryptoHelper: Keystore cannot load the key with ID: firebear_master_key_id.…`),
+so `RecaptchaActivity` cancels before rendering, the SDK explicitly "calls
+backend without app verification", and the backend refuses with 17093 — which
+surfaces as the user-visible "missing a valid app identifier". The dart-define
+worked: `RecaptchaActivity` only runs on the forced path, and the app's own
+`Could not force reCAPTCHA flow` never fired. So the fault is device-local
+crypto, not SHA fingerprints, Firebase console config, or the backend.
+
+Capture: `scratchpad/logcat_auth_20260826-0003.log`, failure chain at lines
+3735-3747. **Scratchpad is session-temporary and will not survive the restart** —
+the chain is quoted above precisely because that file is about to disappear.
+
+Device: Nothing A142P, Android 16, stock (`user` / `release-keys`), Play Services
+26.32.34, `remote_provisioning.strongbox.rkp_only=1`. Wireless ADB was at
+`192.168.1.4:45311`; that port is reassigned every time Wireless debugging is
+toggled, so it will need re-reading off the phone next time.
+
+### Note on this entry itself
+
+Appending it makes `carevomd.md` show as ` M` — so on next boot the expected
+count is **6 modified files, not 5**. That is this entry, and nothing else.
+
+---
+
+## 2026-08-26 16:47 IST — CORRECTION to the 15:25 snapshot's counts (labels only)
+
+The entry directly above is **correct in every file it names and wrong in two of
+the numbers it labels them with**. Read on restart, its file-level enumeration
+matched the tree exactly — path for path, plus HEAD `70871cf6`, 17,639 tracked,
+16,631 MAUI deletions, empty index, backend and `admin_app` clean, and
+`final_walk.gif` byte-exact at 3,356,566. Nothing was lost or altered across the
+restart. **Only the arithmetic in the prose was wrong.** Per the append-only rule
+the original text is left untouched; this entry supersedes its two counts.
+
+### What was mislabeled
+
+```
+"6 modified files, not 5"          ->  5 modified          (entry, closing note)
+"untracked docs and assets (18)"   ->  20 long-standing    (entry, body)
+"22 untracked"                     ->  23 untracked        (carried into the
+                                                            re-orientation brief)
+```
+
+The `(18)` is contradicted by the entry's own list on the same lines, which
+enumerates 20: `UI_REDESIGN_HANDOFF.md` (1) + `design/` (4) + `pdf/` (3) +
+`play_store_icon_512.png` (1) + `assets/marketing/` (7) + 4 repo-root media
+files. Trust that list, not its label.
+
+### Correct decomposition
+
+```
+MODIFIED = 5
+  2   walking-footer batch    home_screen.dart, customer_app/pubspec.yaml
+  1   carevomd.md             the snapshot entry itself
+  2   held back               .claude/settings.local.json, owner_app/pubspec.yaml
+
+UNTRACKED = 23
+  3   walking-footer batch    assets/animation/final_walk.gif,
+                              lib/widgets/walking_footer.dart,
+                              test/walking_footer_test.dart
+ 20   long-standing           as enumerated above
+
+TOTAL porcelain -uall = 16,659  =  16,631 deleted + 5 modified + 23 untracked
+```
+
+### Root cause of both bad numbers
+
+A double-count of the same three files. The walking-footer batch is **5 files,
+but only 2 of them are modified** — the other 3 are new and therefore untracked.
+Counting all 5 as modified inflates the modified total (5 + carevomd + 2 held
+back = 8 by that reading; the entry's own "6" is a partial version of the same
+slip) and drops those 3 out of the untracked total. Whenever this log quotes a
+batch size, check whether the files are `M` or `??` before adding it to either
+column.
+
+Nothing was committed, built, or changed to produce this entry — like the one
+above it, it is a correction to the record, not to the tree.
+
+---
+
+## 2026-08-26 18:12 IST — Walking footer: letter overlay dropped, plain loop kept
+
+The initial-on-the-shirt overlay is **abandoned**. `WalkingFooter` now draws the
+walk cycle and nothing else — no text, no `Stack`, no per-frame position table,
+and no read of `customer.name` or `AuthState` at all. 336 lines down to 155.
+
+### Why — a design decision, not a bug fix
+
+On-device the letter sat wrong. The code was then checked and **found correct**:
+
+* frame 0's table entry `Offset(0.43616, 0.45343)` is 34.3% of figure height,
+  inside the 22%-44% chest band, and all 70 entries land in-band (32.9%-34.7%);
+* frame 0 is not an outlier — its wrap-neighbour steps are 3.49px (56th pct)
+  and 5.24px (94th pct, only the 4th largest of 70), on the same smooth trace;
+* re-measuring the GIF from scratch reproduced the shipped table (y correlation
+  0.836, vertical travel 16.25px measured vs 16.2px documented);
+* the widget's index default before decode is 0, which is genuinely the first
+  decoded frame's index — the assumed value and the real one agree;
+* rendering frame 0 with the letter position marked puts it mid-torso.
+
+So the reported misposition was never reproduced off-device and **its root cause
+was never found**. The overlay was dropped rather than chased: it is decoration,
+and it was not worth more time than it had already taken. Recording this plainly
+because the deleted table was correct work — if the letter is ever wanted back,
+start from the fact that the measurements were sound and the fault lay somewhere
+downstream of them, not in the table.
+
+One real defect was found on the way and is now moot: the letter was drawn
+whenever a name existed but the figure only once `_image` was non-null, so
+during the pre-decode window the letter floated with no man behind it.
+
+### Also changed
+
+The inter-frame `Future.delayed` is now a cancellable `Timer` + `Completer`,
+released in `dispose()`. It previously kept ticking up to 70ms after the widget
+was gone — harmless in the app, fatal to a widget test ("a Timer is still
+pending after the widget tree was disposed"). Pre-existing, not introduced here.
+
+### Tests
+
+15 letter/table tests deleted, 11 written: first frame renders, the box holds
+its size before decode so Home does not jump, the animation advances, it loops
+(stepped 75 frames past the 70-frame clip), dispose mid-playback is clean, it
+renders with no provider in the tree, it draws no `Text`, and the sizing rules
+hold at 320/400/800/90. Suite 243 -> 239, all passing, `flutter analyze` clean.
+
+These decode the **real GIF** — with the letter gone the frame index is no
+longer observable from outside, so the old test seam went with it. Note for
+whoever touches them: playback starts in `initState`, so its timer lives in the
+test's fake-async zone and only moves when the clock is pumped. Waiting in real
+time will not advance it.
+
+`shirt_stability.py`, which `walking_footer.dart` used to cite for regenerating
+the table, never existed in the repo — it lived in a scratchpad that a restart
+destroyed. That reference is gone with the table.
+
+---
+
+## 2026-08-26 19:30 IST — Owner-side pickup by code + a cross-outlet auth hole
+
+Staff can now type the customer's pickup code at the counter, see the order,
+and confirm the handover. **UNCOMMITTED — holding at Checkpoint B.**
+
+### The security finding (fixed here, not deferred)
+
+`POST /pos/orders/verify-pickup` was **not outlet-scoped**. The controller bound
+the staff dependency as `_staff` and never used it; the service resolved the
+`order_id` straight from the request body:
+
+```python
+res = await db.execute(select(CustomerOrder).where(CustomerOrder.id == order_id))
+if not order: raise HTTPException(404)      # no outlet check at all
+```
+
+So any authenticated staff account, at any outlet, could complete any order in
+the system given its id and code — including another restaurant's. Now
+`verify_pickup` takes the caller's `outlet_id` and 404s on a mismatch, the same
+way `mark_order_paid_by_staff` always has. The 404 is deliberately identical to
+"no such order" so it cannot be used to probe which ids exist elsewhere.
+Regression test: `test_verify_pickup_rejects_another_outlets_order`.
+
+By contrast the order FEED was already correct — `list_active_orders` has always
+been `WHERE outlet_id = :oid` via `_require_outlet(staff)`.
+
+### The pickup code, as it already exists (unchanged)
+
+Six characters from the alphabet `23456789` — digits only, no `0/O` or `1/I/l`,
+so it is unambiguous read aloud and typable on a numeric keypad. Generated in
+`_generate_pickup_code` at the PAID transition, stored on
+`customer_orders.pickup_code` (`String(8)`, nullable — null until payment).
+Unique among an outlet's LIVE orders only (`status NOT IN
+('COMPLETED','CANCELLED','ABANDONED')`), never globally: 8^6 = 262k, retried 30
+times. Codes free up on expiry — `_expire_stale_pickups` abandons anything
+untouched for `PICKUP_TTL_MINUTES` (45).
+
+**No second identifier was introduced.** The lookup matches this same code.
+
+### What was built
+
+`POST /pos/orders/lookup-pickup` — read-only, takes a code and nothing else,
+scoped to the caller's own outlet in the WHERE clause, matched against
+`_LIVE_STATUSES` only. Returns `found:false` at HTTP 200 rather than 404, so the
+app can tell "no such code" from "the request failed". A locked order is
+returned but flagged, so the lookup cannot be used to walk round the 3-attempt
+lockout.
+
+Lookup and confirm are two calls on purpose. A matched code shows the items and
+waits; `Confirm pickup` then calls the existing `verify-pickup`, giving the same
+transition every completed order already uses (`COMPLETED` +
+`pickup_verified_at` + `PICKUP_VERIFIED`). Auto-completing on match would let a
+mistyped-but-valid code close someone else's order with nothing to notice it
+by — and the items list is exactly what staff notice with.
+
+App side: `PickupLookupCard` above the queue on the Orders tab (outside its
+loading/error branches — staff need it with a customer in front of them even
+when the feed is mid-refresh). Editing the field after a match clears the
+result, so what is on screen always belongs to the code in the box.
+
+### Worth knowing
+
+The code-first lookup has no per-order attempt limit, because a wrong code
+matches no row to count against. The confirm path still counts and still locks
+at 3. The actor is authenticated staff already scoped to their own outlet, who
+can see the same orders in their queue, so this is not a new exposure — but it
+is a different shape from the per-order box and is recorded rather than assumed
+harmless.
+
+### Tests and builds
+
+Backend 147 -> 158, owner_app 1 -> 12, customer_app 239 unchanged. All green,
+`flutter analyze` clean in both apps. Release APKs rebuilt from this tree:
+customer_app 58.4MB (upload-key signed), owner_app 51.1MB (debug-signed — it is
+sideloaded, not on Play). The customer APK carries the walk GIF at its exact
+3,356,566 bytes.
+
+---
+
+## 2026-08-26 21:20 IST — Walking footer PUSHED (7357763d) + pickup batch re-verified
+
+Two things: the walking-footer commit reached `origin/21_7`, and the pickup batch's
+19:30 test numbers were re-earned from scratch rather than trusted across a
+shutdown. **The pickup batch itself is still UNCOMMITTED, still at Checkpoint B.**
+
+### The push — and the hash rule finally satisfied
+
+```
+e5b43192..7357763d  21_7 -> 21_7
+HEAD == origin/21_7 == 7357763d12104c90f548ce792c0de7f0b4a71ee1
+git branch -r --contains 7357763d  ->  origin/21_7
+```
+
+This entry **can** cite `7357763d` where the 18:12 entry could not. The standing
+rule is that an entry cannot name its own commit, because amending the entry in
+changes the hash. That rule does not apply here: `7357763d` was already sealed
+and pushed before this text existed, so naming it changes nothing.
+
+The commit carries 6 files, 438 insertions: `walking_footer.dart` (155),
+`walking_footer_test.dart` (214), `assets/animation/final_walk.gif` (3,356,566
+bytes), `home_screen.dart` (+5), `customer_app/pubspec.yaml` (+6), and the 18:12
+log entry itself (+58). Committed 18:14:45 IST — i.e. **before** the shutdown,
+not lost to it.
+
+Worth recording plainly: between 18:14 and this push the commit existed **only on
+this laptop**. The re-orientation brief written after the restart still believed
+`e5b43192` was the tip and the footer work was uncommitted. It was neither. A
+commit is not durable until `git branch -r --contains` names a remote — local
+`git log` looking healthy is not the same claim, and that gap is exactly what a
+shutdown is positioned to exploit.
+
+### Re-verification of the pickup batch, post-shutdown
+
+The 19:30 entry's counts were **re-run, not carried over**, on the principle that
+a test result describes the moment it ran and a restart is not nothing:
+
+```
+backend      158 passed in 127.48s      (logged 158  — match)
+owner_app     12 passed                 (logged  12  — match)
+customer_app 239 passed                 (logged 239  — match)
+```
+
+All three match. No drift.
+
+### The cross-outlet fix, re-read rather than recalled
+
+Confirmed still in place at three levels, unchanged since 19:30:
+
+* `carevo_pos/controller.py:49` binds `staff: User = Depends(get_current_staff)`
+  — the name no longer starts with an underscore, which is the whole tell: the
+  hole was a parameter bound and then never read.
+* `controller.py:60` passes `_require_outlet(staff)` as `verify_pickup`'s fourth
+  argument, so the outlet reaches the service instead of dying in the signature.
+  `_require_outlet` (`:21-24`) 403s a staff account with no `outlet_id` rather
+  than passing `None` down.
+* `carevo_customer/service.py:1245` is where it actually bites:
+  `if not order or str(order.outlet_id) != str(outlet_id): raise HTTPException(404)`.
+  Same 404 for "wrong outlet" as for "no such order", deliberately, so the route
+  cannot be used to probe which order ids exist elsewhere.
+
+A repo-wide grep for `_staff` in the POS controller returns **no unused
+bindings** — every one of its ~20 staff dependencies is now read. Regression
+cover: `test_verify_pickup_rejects_another_outlets_order`
+(`tests/test_api_pickup_lookup.py:158`), one of that file's 11, all passing.
+
+Checking all three levels was the point. The controller alone only proves the
+outlet was *passed*; line 1245 is the only line that proves it is *enforced*.
+
+### State at the time of writing
+
+`origin/21_7` = `7357763d`, 0 ahead / 0 behind, index empty. Uncommitted: 9
+modified + 23 untracked + 16,631 long-standing MAUI deletions. Of those, the
+pickup batch is 9 files — 6 `M` (3 backend, 3 owner_app) and 3 `??`
+(`test_api_pickup_lookup.py`, `pickup_lookup_card.dart`, `pickup_lookup_test.dart`).
+Per the 16:47 counting lesson, that split is stated rather than the batch size
+alone. The rest is `carevomd.md` (this entry), plus the two long-standing
+held-back files (`.claude/settings.local.json`, `owner_app/pubspec.yaml` `+1`->`+2`)
+and 20 long-standing untracked docs/assets.
+
+Nothing was committed to produce this entry. The push above was the only write to
+the repo, and it moved a ref — it did not touch the working tree.
+
+---
+
+## 2026-08-26 21:27 IST — CORRECTION to the 19:30 entry: `flutter analyze` was NOT clean
+
+The 19:30 entry states "All green, `flutter analyze` clean in both apps." **That
+is false for `owner_app` and was false when written.** Per the append-only rule
+— the same one the 16:47 counting correction followed — the original text stays
+untouched; this entry supersedes that clause. `customer_app` is genuinely clean
+(`No issues found!`); only the owner_app half of the claim is wrong.
+
+### What analyze actually reports
+
+```
+customer_app   No issues found!      exit 0
+owner_app      21 issues found       exit 1   <- 21 info, 0 warnings, 0 errors
+```
+
+```
+11  offer_service.dart   use_null_aware_elements
+ 8  menu_service.dart    use_null_aware_elements
+ 2  dish_row.dart        unnecessary_underscores
+```
+
+### These are pre-existing, and that is proven rather than assumed
+
+All three files return empty from both `git status` and `git diff HEAD`, so they
+are byte-identical to `7357763d` — the commit **already pushed to `origin/21_7`**.
+The lints are on the published tree right now; the pickup batch neither
+introduced nor inherited responsibility for them.
+
+### The pickup batch itself IS analyzer-clean
+
+Grepping the analyze output for each of the batch's five owner_app files —
+`orders_screen`, `order_service`, `orders_state`, `pickup_lookup_card`,
+`pickup_lookup_test` — returns **0 hits each**. Zero issues introduced. That is
+the ground on which this batch is being committed: not "analyze is clean", which
+is untrue, but "the batch adds nothing to it", which is checked.
+
+The 21 lints are deliberately **not** fixed here. Doing so would mean editing
+three files this batch has no other reason to touch, widening a diff that carries
+a security fix into an unrelated lint sweep. They are left as known debt.
+
+### Why this correction exists at all
+
+The 19:30 claim was carried forward once already, into a Checkpoint B report, as
+"clean — but carried over, not re-earned." Re-running it rather than trusting it
+is what exposed it. The lesson is the same shape as the 16:47 one: **this log's
+own prior entries are evidence, not verification.** A `flutter analyze` result
+describes the tree at the second it ran, and "all green" is the single easiest
+claim in this file to repeat without re-earning. Re-run it before quoting it.
+
+---
+
+## 2026-08-26 21:40 IST — Pickup misses now capped per outlet (folded into the same commit)
+
+The "known gap: no per-order attempt limit" recorded at 19:30 is **closed**, and
+the fix was **amended into `36ebee90` rather than committed on top** — it belongs
+to the same feature and that commit had not been pushed, so there was still a
+choice about what the history should say. The batch is now one commit again under
+a new hash.
+
+### The gap was in two routes, not one
+
+19:30 recorded it against `lookup-pickup`. Re-reading found the identical shape in
+`verify-pickup`, which the 19:30 entry did not mention:
+
+```
+lookup-pickup   code matches no live order at this outlet   -> found:false
+verify-pickup   order_id resolves to nothing at this outlet -> 404
+```
+
+Neither lands on an order row, so **neither is counted by the per-order 3-strike
+lockout** — that counter increments `customer_orders.failed_attempts`, which
+requires an order to have been resolved first. Both branches were therefore free
+to repeat without limit against an 8^6 (262k) code space. `verify-pickup`'s 404 is
+the more pointed of the two: it is exactly the branch the cross-outlet fix created,
+so an id-enumerating caller now lives there.
+
+Both are capped by one limiter. Fixing only the route named at 19:30 would have
+left the other half of the same hole open.
+
+### What was added
+
+`PICKUP_MISS_LIMIT` (10) consecutive misses per outlet within
+`PICKUP_MISS_WINDOW_SECONDS` (300), then **429 with `Retry-After`** and a
+`retry_after_seconds` in the body. Retry-After is computed from the OLDEST hit in
+the window, since that is the moment a slot actually frees.
+
+Keyed **per outlet**, and that is load-bearing: a global counter would turn one
+restaurant's fumbling into a denial of service against every other outlet on the
+deployment. `test_the_cap_is_scoped_per_outlet` pins it.
+
+**A hit clears the run** — the cap is on CONSECUTIVE misses. Real staff mistype
+between real handovers, and a counter serving a queue must not be locked out by
+scattered typos. The check runs BEFORE any DB work, so a throttled request costs
+no query.
+
+The per-order 3-strike lockout is untouched and still owns the found-order-wrong-code
+case. The two deliberately do not double-count: a wrong code on a RESOLVED order
+drains the order's three attempts and none of the outlet's budget.
+
+### No new infrastructure
+
+This reuses the existing hand-rolled pattern — a module-level
+`defaultdict(list)` of timestamps beside `_otp_hits` and `_register_hits`, which
+have guarded the OTP and self-signup paths all along. No library was added;
+`requirements.txt` is unchanged, and there is still no `slowapi` and no
+middleware anywhere in this backend.
+
+### Single-instance assumption, stated rather than assumed
+
+`render.yaml` declares `plan: free`, which on Render cannot scale beyond one
+instance, so an in-memory counter is correct today. **This is read off the
+blueprint, and this file's own 2026-08-05 lesson is that the Render DASHBOARD
+overrides the blueprint** (see the `CUSTOMER_AUTH_ENABLED` note) — the live plan
+was not probed and cannot be confirmed from the repo.
+
+The exposure if that is ever wrong is bounded and worth writing down: with N
+instances the effective cap becomes N x 10 per window, degrading the limit rather
+than breaking correctness. It never produces a false lockout. And the assumption
+is not new — `_otp_hits` has carried exactly the same one in production since
+CareVo Skip shipped. If the service is ever scaled, all three limiters need Redis
+together; none of them is the odd one out.
+
+### Tests
+
+Backend **158 -> 164**. `test_api_pickup_lookup.py` 11 -> 17: the cap trips, the
+429 carries a usable Retry-After, a hit clears the run, the cap is per-outlet, the
+verify-pickup 404 shares it, and the 3-strike path does not drain it.
+
+Proved load-bearing rather than assumed: re-running with
+`PICKUP_MISS_WINDOW_SECONDS=0` (which disables the cap without touching code)
+fails **exactly the 4 tests that assert a 429** and leaves the other 13 green,
+including the two that assert the limiter must NOT fire.
+
+One test was rewritten mid-review. It asserted the outlet's key was absent from
+the limiter dict — which would have passed just as well if the key were merely
+spelled differently. It now spends the whole budget afterwards instead, which can
+only succeed if those attempts really cost nothing.
+
+---
+
+## 2026-08-27 00:02 IST — owner_app versionCode: the 08-21 hold is RESOLVED
+
+`owner_app/pubspec.yaml` `1.0.0+1 -> 1.0.0+2`, committed alone as **`4540c34b`**.
+The build-name stays `1.0.0`; only the build-number moves. This closes the item
+that has been listed as "held back" in every tree snapshot since 2026-08-21.
+
+### It was not an orphaned bump
+
+Worth recording, because the working-tree entry looked for weeks like a stray
+edit nobody could account for. `+1` was the **`flutter create` default**, set in
+`9a7cea79` (2026-07-22) when owner_app was scaffolded, and never touched since —
+so every owner_app change in the five weeks after it shipped under versionCode 1.
+
+```
+19  commits touching owner_app/lib/**   since 9a7cea79
+21  commits touching owner_app/**       since 9a7cea79
+85  files, +4531/-220                   cumulative owner_app diff
+```
+
+The most recent is `f2d786c0`, this session's pickup-by-code batch.
+
+One trap for anyone re-deriving this: `2971e8c2` is the last commit that touched
+`owner_app/pubspec.yaml`, so a `git log -- owner_app/pubspec.yaml` makes it look
+like the baseline. It is not — `2971e8c2` only added the `firebase_*`
+dependencies and left the version line alone. Ask when the VERSION LINE last
+changed (`git log -S`), not when the file last changed; here the two differ by 14
+commits.
+
+`android/app/build.gradle.kts:42` reads `versionCode = flutter.versionCode`, so
+the bump moves the real APK versionCode rather than being cosmetic.
+
+### The APK has NOT been rebuilt
+
+**The owner_app APK currently installed anywhere still reports versionCode 1.**
+A pubspec edit only reaches an artifact through the next `flutter build`; the
+51.1MB debug-signed APK from the 19:30 session predates this commit and is
+unchanged by it. Anyone checking the bump by reading it off a device will see 1
+and be right to.
+
+### Why it was held so long, and why that ends here
+
+The 2026-08-21 decision kept it out of feature commits: owner_app is sideloaded,
+not distributed through Play, so its versionCode has **no Play upload constraint
+to reconcile against** — nothing forces it up, which is exactly why it never went
+up on its own. That makes it a deliberate call rather than bookkeeping a feature
+commit should make silently, and it is why this is its own one-line commit with
+the reasoning attached instead of a line buried in `f2d786c0`.
+
+The flip side, now visible: an unconstrained versionCode does not drift upward by
+itself. Nineteen commits of real change accumulated under a single number. If
+owner_app APKs are ever to be told apart in the field, the bump has to be someone's
+explicit habit at build time — there is no Play upload to fail and remind anyone.
+
+---
+
+## 2026-08-27 00:08 IST — owner_app APK rebuilt; versionCode 2 now in an artifact
+
+Follow-up to the entry directly above, which says "The APK has NOT been rebuilt."
+**That is now stale** — a build exists. Per the append-only rule the original text
+stands; this supersedes that section only.
+
+```
+path        owner_app/build/app/outputs/flutter-apk/app-release.apk
+size        53,546,875 bytes  (51.1 MB)
+timestamp   2026-08-27 00:06:56 IST
+sha256      ec62fbae14494cdf5222d6218c6ac1461aefc11ea970184326d983ea010b81fb
+```
+
+### versionCode 2 read out of the APK, not off the source
+
+```
+aapt dump badging ->
+package: name='com.carevo.owner_app' versionCode='2' versionName='1.0.0'
+sdkVersion:'24'  targetSdkVersion:'36'  application-label:'CareVo Owner'
+```
+
+This is the point of the whole exercise: `pubspec.yaml` saying `+2` proves only
+that the source says `+2`. The chain from there to the artifact runs through
+`android/app/build.gradle.kts:42` (`versionCode = flutter.versionCode`), and the
+only way to know it held is to ask the built file. It did.
+
+### Identical size to the 19:30 APK, different artifact
+
+Both read 51.1 MB. They are **not the same build**, and size is not what
+separates them:
+
+```
+19:30 build   versionCode 1   predates f2d786c0 — no pickup-by-code at all
+this build    versionCode 2   ec62fbae14494cdf5222d6218c6ac1461aefc11ea970184326d983ea010b81fb
+```
+
+The earlier one was cut before the pickup batch was committed, so it lacks
+`PickupLookupCard` and the Orders-tab wiring entirely — a difference of hundreds
+of lines that rounds away completely at MB precision. **Compare the SHA-256, or
+read the versionCode; never the size.** The 19:30 entry quotes "owner_app 51.1MB"
+with no hash, which is exactly the citation that cannot distinguish these two.
+
+### Build inputs, recorded so this is reproducible
+
+Plain `flutter build apk --release`, no dart-defines. `FORCE_RECAPTCHA_FLOW` was
+checked and deliberately **not** passed: it exists only in
+`customer_app/lib/config/app_config.dart` and gates Firebase phone-OTP reCAPTCHA.
+owner_app authenticates staff by username/password and has no phone-OTP path, so
+the flag would set a key nothing reads. owner_app's own dart-defines
+(`CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_UPLOAD_PRESET`) both have working defaults.
+`maps.properties` and `google-services.json` were present, so the Maps key and FCM
+config were injected normally.
+
+Signed `C=US, O=Android, CN=Android Debug` — debug-signed by design, not an
+oversight: `build.gradle.kts:52` sets the release type to the debug signing config
+with a standing TODO. Same reason the versionCode was unconstrained in the first
+place — owner_app is sideloaded, never uploaded to Play.
+
+Built from a clean tree at `68f87edb` (0 ahead, 0 behind), and the build left it
+clean — outputs are gitignored, so nothing here changes the repo.
+
+---
+
+## 2026-08-27 00:16 IST — customer_app APK rebuilt: plain walking footer, no letter
+
+First customer_app build since the letter overlay was dropped at 18:12. The
+footer in this artifact is the walk cycle and nothing else.
+
+```
+path        customer_app/build/app/outputs/flutter-apk/app-release.apk
+size        61,280,387 bytes  (58.4 MB)
+timestamp   2026-08-27 00:16:02 IST
+sha256      2b28a1f74e97997379c09ec9870b33426c76187fc91a677925fa194479987ee2
+```
+
+Read out of the artifact, not asserted from source:
+
+```
+package: name='com.carevo.customer_app' versionCode='3' versionName='1.0.0'
+sdkVersion:'24'  targetSdkVersion:'36'
+V2 Signer DN: CN=CareVo, OU=CareVo, O=CareVo, L=Bengaluru, ST=Karnataka, C=IN
+assets/flutter_assets/assets/animation/final_walk.gif   3,356,566 bytes
+```
+
+Upload-key signed, unlike owner_app's debug-signed build. The walk GIF is
+bundled at its exact documented byte count.
+
+### THREE artifacts now share versionCode 3
+
+This is the trap from the owner_app entry, worse. `pubspec.yaml` has been
+`1.0.0+3` since before 08-25 and nothing forces it up, so:
+
+```
+4EC201A2…  2026-08-25 16:59  vC 3  letter overlay still present
+2b28a1f7…  2026-08-27 00:16  vC 3  letter GONE, plain loop
+```
+
+Both are sideloads outside the Play versionCode lineage, both carry
+`FORCE_RECAPTCHA_FLOW=true`, both report versionCode 3, and they differ by the
+entire 18:12 change. **A device cannot tell these apart, and neither can this
+log except by SHA-256.** If a customer_app APK is ever handed to anyone,
+record its hash in the same breath as its size — "58.4MB, vC 3" identifies
+nothing.
+
+### The flag is in the artifact only
+
+Built `--dart-define=FORCE_RECAPTCHA_FLOW=true`, the same sideload override as
+the 08-25 build: Play Integrity cannot vouch for a non-Play install. `git diff`
+on `pubspec.yaml` and `app_config.dart` is empty after the build — pubspec stays
+`1.0.0+3`, `app_config.dart` stays `defaultValue: false` — so only this file
+carries the forced path, exactly as on 08-25.
+
+Correcting a premise that came in with the request: **no earlier build in this
+session used this flag.** Tonight's only other build was owner_app, which does
+not have it at all (customer_app-only; owner_app authenticates staff by
+username/password and has no phone-OTP path). The flag's precedent is the 08-25
+session, not this one.
+
+### Reproducibility
+
+Built from a clean tree at `cc2ae7ac`. `walking_footer.dart` is 155 lines and
+greps clean of `letter|initial|shirt|Offset(|Stack|Text(|customer.name|
+AuthState|table`, with an empty `git diff HEAD` — so what built is exactly what
+`7357763d` committed, not a working-copy variant.
+
+The 8 untracked files under `customer_app/` are NOT build inputs:
+`pubspec.yaml:60-64` declares exactly one asset, `assets/animation/final_walk.gif`,
+with a comment that `assets/icon` and `assets/marketing` are store-listing inputs
+which must not ship. So this APK is reproducible from a clean clone despite
+those files being absent from git.
+
+### Expect the OTP failure to persist
+
+This build is unlikely to fix phone sign-in. The 08-26 logcat traced that to a
+device-local Keystore/Tink fault (`firebear_master_key_id` will not load), which
+sits DOWNSTREAM of this flag — on 08-25 the flag demonstrably worked and
+`RecaptchaActivity` still cancelled before rendering. Recording the expectation
+in advance so that if it does fail again, that is confirmation rather than a
+fresh mystery.
+
+---
+
+## 2026-08-27 00:53 IST — "Item ₹0" on the pickup screen: a field-name mismatch (7783c43f)
+
+Every line item on the customer pickup screen rendered as **"Item ₹0"** while
+the order total directly above it stayed correct. Committed as `7783c43f`.
+
+### The data was never wrong — checked before touching any code
+
+Read-only queries against **prod** (`ep-morning-meadow-ao6m0otk`, confirmed
+against AGENT_GUARDRAILS §1 before connecting; SELECTs only):
+
+```
+customer_order_items   123 lines   zero_price 0   null_price 0   ₹1–₹350
+customer_orders        103 orders  zero_total 0   null_total 0   ₹1–₹3020
+menu_items              61 items   zero_base  0   null_base  0
+```
+
+There is also a structural proof that made the query a confirmation rather than
+a discovery: `price_snap` and `total_amount` are computed from the **same
+`price` variable in the same loop** (`carevo_customer/service.py:476-486`). A
+correct total sitting above ₹0 lines is arithmetically impossible from the data
+side. It could only ever have been a read error.
+
+### The bug
+
+`OrderItemLine.fromJson` asked for `line_total`/`total` and `name`/
+`menu_item_name`. **The API emits none of those four.**
+`GET /customer/orders/{id}` is `response_model=OrderOut`, whose items are
+`OrderItemOut` (`schema.py:232-239`): `name_snap`, `price_snap`, `quantity`.
+No pydantic aliases anywhere in that file, so those are the literal wire names
+— and `grep name_snap|price_snap customer_app/lib/` returned **zero hits**.
+
+The price half was the reported symptom; the name half was the same two lines
+and had not been reported. Both were fixed together.
+
+### The fix
+
+`unitPrice` is the parsed field and `lineTotal` is a **derived getter**
+(`unitPrice * quantity`), so the two cannot disagree. `price_snap` is per-unit
+— the server multiplies by quantity itself when summing — so a straight rename
+to `lineTotal` would have under-charged every line with quantity > 1. This is
+also the shape `CartItem` already uses on the pre-order side, so both halves of
+the app now model price identically.
+
+**The alternative-name chains were removed deliberately, and that is the real
+lesson.** A chain like `line_total ?? total ?? 0` converts a wrong key into a
+plausible ₹0 instead of a loud failure — which is exactly how a field name that
+never existed survived to a release. Two single-key defaults remain, each for a
+reason that was checked rather than assumed: `name_snap` is nullable in both
+schema and column, so `?? 'Item'` covers a genuine server state; `price_snap`
+is non-null in both, so its `?? 0` is defensive against a malformed response
+only. **Do not add a second candidate key to either.** If a key is wrong, the
+correct outcome is that it is obvious.
+
+`total_amount` was untouched: no line of the diff mentions it and
+`pickup_screen.dart` is unmodified.
+
+### The discount, found by a test that failed for the right reason
+
+The end-to-end test was first written asserting the prod order's lines would
+sum to its total. **It failed, and the test was right.**
+
+```
+order 316d3097-…-cbc7b4   sum_of_lines 300.00   total_amount 285.00
+                          discount_amount 15.00   coupon_id NULL
+9 of 103 prod orders have lines != total
+```
+
+The ₹15 gap is a real `discount_amount`. The arithmetic assumption was wrong,
+not the parser — so the number was corrected from prod rather than adjusted to
+make the test pass. It now pins the gap deliberately, and a second test covers
+the undiscounted majority (94 of 103) where the two do agree. Any future change
+that starts deriving the order total from line items will fail there.
+
+**This is the same order behind both original bug reports, and it is the source
+of the "CBC7B4" hash** investigated in the earlier mission — its UUID tail is
+literally `cbc7b4`. The two symptoms and the mystery identifier were one row all
+along, which is worth remembering next time three separate-looking reports
+arrive together.
+
+### Incidental, recorded but NOT acted on
+
+`customer_orders` has **no `original_amount` column** in prod — a query
+selecting it fails with `UndefinedColumnError`. The value is derived
+server-side, despite schema comments citing "migration 016". Nothing is broken
+by this; it is noted because the next person to write a query against that
+table will hit it.
+
+### owner_app is not affected
+
+Its `OwnerOrderLineOut` (`schema.py:449-452`) and `OrderLineItem`
+(`owner_app/lib/models/order.dart:2-22`) carry `id`, `name`, `quantity` and no
+price field at all. A sweep of every `₹` in owner_app found the only
+order-surface currency to be `order_card.dart:74`, the order total, which
+parses correctly and is never zero in prod. **owner_app shows no per-item price
+rather than showing ₹0** — there was nothing there to fix.
+
+### Tests
+
+customer_app **239 -> 254**. The 15 new tests in
+`test/order_item_price_mapping_test.dart` cover `price_snap × quantity` across
+quantities 1/2/3/5/10/99 and decimals, names reading `name_snap`, the total
+still reading `total_amount`, and guards that payloads carrying contradictory
+`line_total: 999` / `name: 'WRONG'` are ignored.
+
+Revert-proved: restoring the old parser fails **11 of the 15**; the 4 that
+survive are the ones that do not depend on field names. `flutter analyze` clean.
+
+---
+
+## 2026-08-27 01:44 IST — A collected order came back on screen (89b04d6c)
+
+Reported from the counter: entering a pickup code for a NEW order showed the
+**previous, already-collected order's** panel and status text. Fixed in
+`89b04d6c`, owner_app only.
+
+### The backend was never involved
+
+Worth stating first, because "wrong order shown" reads like a server bug.
+`/pos/orders/lookup-pickup` filters by code **and** `status = ANY(live)`
+(`service.py:1401`, `_LIVE_STATUSES` at `:53`), with no "most recent order"
+fallback of any kind. A COMPLETED order is unreachable by any code. And since
+`_generate_pickup_code` (`:789-805`) only guarantees uniqueness among an
+outlet's LIVE orders, a new order can legitimately be issued the exact code a
+finished one had — even then the lookup resolves unambiguously to the new one,
+because the old is excluded by status.
+
+### Root cause: hidden by a phase, not actually gone
+
+`_confirm()` succeeded, set `_phase = done`, cleared the text field, and **left
+`_match` holding the finished order**. Nothing displayed it, but only because
+the build guard reads:
+
+```dart
+if (_match != null && _phase != _Phase.done) ... // the order panel
+```
+
+The order was hidden by the PHASE. The value was still there. `_find()`'s
+empty-code early return then set `_phase = failed` without touching `_match` —
+which re-opened that guard on the completed order.
+
+Two conditions had to coincide, which is why it looked intermittent: a
+confirmation first, then `Find` pressed **before typing**. That second one is
+not an odd thing to do — confirming clears the box, so it looks ready for the
+next code.
+
+The general shape is worth carrying: **a value kept alive and suppressed by a
+condition is not the same as a value cleared.** Any new phase added to that
+enum would have inherited the trap.
+
+### The fix, and why BOTH halves are kept
+
+* `_confirm()` success clears the match — the source. The done screen renders
+  only the success banner and never `_match`, so nothing on screen changes.
+* The empty-code branch of `_find()` clears it too — the reachable path.
+
+New `_clearMatch()` helper, now used at all four sites. `_match`, `_locked` and
+`_matchedCode` describe ONE order; clearing `_match` alone would leave the
+other two stale, which is the same class of bug one size smaller.
+
+### Revert-proof — and the prediction going in was wrong
+
+The brief expected reverting the empty-code line to turn the repro red. It does
+not. All three combinations were run:
+
+```
+revert confirm-success clear only  ->  16/16 PASS
+revert empty-code clear only       ->  16/16 PASS
+revert BOTH                        ->  2 FAIL (the repro + repeated-press)
+```
+
+**Either fix alone closes the defect** — they are independently sufficient and
+mutually redundant here. Once the source-clear is in place, no UI path reaches
+the empty-code branch with a populated `_match` at all (any edit that empties
+the field fires `onChanged` -> `_reset()` first), so the second is genuinely
+defence-in-depth rather than the fix.
+
+Both were kept on an explicit decision, not by omission. Recorded plainly so
+nobody later reads one of them as load-bearing, measures it, and deletes the
+other on the strength of a green suite.
+
+The important half of that matrix is the last line: with both out, the tests
+fail on exactly the reported symptom. They are not vacuous.
+
+### Tests
+
+owner_app **12 -> 17**. A new two-order fixture — A "Masala Dosa" on `234567`,
+B "Idli Sambar" on `876543` — with **deliberately different items**, because
+with a single-order fixture "showed order B" and "never cleared order A" render
+identically and no assertion can separate them.
+
+Covers: an empty Find after confirming shows no panel; it holds across three
+repeated presses; the next code shows its own order; the previous order is
+already gone while the next lookup is in flight; and a second submission cannot
+start while one is in flight (button and field both disabled, exactly one
+request sent).
+
+`flutter analyze` unchanged at 21 pre-existing info lints, **none** in either
+file touched here.
+
+---
+
+## 2026-08-27 02:23 IST — DIAGNOSTIC: order-history scoping + the stale-order backlog
+
+Two questions asked together: is owner_app's order history outlet-scoped, and
+how much of the order data is stale test noise. Read-only throughout — nothing
+was written, changed or deleted.
+
+### There is no order-history tab in owner_app
+
+owner_app has exactly three tabs (`home_screen.dart:66`): `_DishesTab`,
+`OrdersScreen`, `OffersScreen`. A grep for `history` across `owner_app/lib/`
+returns nothing.
+
+All three of its order-reading paths are outlet-scoped by the same mechanism:
+
+```
+/pos/orders                 list_active_orders(db, _require_outlet(staff))
+                            -> WHERE outlet_id = :oid          service.py:1813
+/pos/orders/lookup-pickup   WHERE outlet_id = :oid in the SQL
+/pos/orders/verify-pickup   outlet check at service.py:1314    (since f2d786c0)
+```
+
+**Cross-outlet data cannot appear in owner_app.** There is no second code path.
+
+What looks like "history" there is the Orders tab itself: `list_active_orders`
+deliberately keeps COMPLETED orders for `COMPLETED_GRACE` (30 min) after
+`pickup_verified_at`, so collected orders linger marked "collected Nm ago".
+Still outlet-scoped.
+
+**A genuinely cross-outlet order log DOES exist — in admin_app, not owner_app.**
+`carevo_admin.list_orders` (`carevo_admin/service.py:729`) is documented as "One
+row per order, across every outlet" and has no outlet predicate at all. It is
+reachable only via `/admin/orders`, gated by `get_current_super_admin`
+(`carevo_admin/controller.py:134`) — staff JWT plus the SUPER_ADMIN role. That
+is deliberate for an admin tool. **If cross-outlet orders are ever reported as
+visible, that is the surface to check; owner_app cannot produce it.**
+
+### Nothing is stuck in a live status
+
+```
+status      total  last24h  older24h  older5d   oldest       newest
+CREATED        60        0        60       57   2026-07-29   2026-08-24
+ABANDONED      25        0        25       22   2026-07-29   2026-08-23
+COMPLETED      17        3        14       14   2026-07-29   2026-08-26
+CANCELLED       3        0         3        3   2026-08-10   2026-08-10
+                                                              total 105
+```
+
+A direct check returns `active_total 0` — **zero orders in PAID/RECEIVED/
+PREPARING/READY at any age.** The 45-minute TTL sweep is doing its job; the
+earlier worry about orders lingering live is not visible in the data.
+
+### The backlog is 60 UNPAID orders, and nothing sweeps them
+
+All 60 CREATED rows are `payment_status = PENDING`, all 60 have a
+`payment_transactions` row — so checkout was started and never completed. No
+payment means no pickup code was ever issued. Oldest 2026-07-29; 57 older than
+five days; 10 from July, 50 from August.
+
+**`_expire_stale_pickups` filters `status = ANY(:live)` and CREATED is NOT in
+`_LIVE_STATUSES`**, so unpaid checkouts accumulate indefinitely while paid ones
+auto-abandon after 45 minutes. That asymmetry is the whole reason the backlog
+exists, and it is worth knowing before anyone reads 60 rows as a bug.
+
+### They do NOT read as "pending" on the customer side
+
+`OrderHistoryEntry.isActive` (`customer_service.dart:36-38`) is
+`{PAID, RECEIVED, PREPARING, READY}` — CREATED is excluded, so
+`home_screen.dart:250` counts **zero** active orders for every account. The 60
+appear in history as PAST entries, because `list_my_orders` applies no status
+filter at all (LIMIT 50, newest first).
+
+```
+who          orders  active  created_unpaid  completed  abandoned   span
+Adithya          29       0              18          4          7   Jul29–Aug11
+Adithya C        17       0              10          3          3   Aug5 –Aug17
+Adi              15       0               9          5          1   Aug5 –Aug26
+(no name)        10       0               6          1          3   Jul29–Aug21
+```
+
+Three similarly-named accounts hold 61 of the 105 orders between them.
+
+### Two visibility gates keep almost all of it off owner_app
+
+```
+105 orders  |  80 hidden by RENAME_CUTOFF (pre 2026-08-20 15:40Z)  |  25 after
+```
+
+Simulating the live queue's exact predicate, owner_app currently returns **11
+rows across five outlets** — Chettinad Spice Corner 5, Annapoorna Tiffin Room 2,
+Bengal Rasoi 2, Meenakshi Bhavan 1, Malabar Spice Kitchen 1. So the backlog is
+largely invisible to staff already.
+
+### Deliberately NOT concluded
+
+Nothing here is classified as safe to delete. The age spread alone does not
+separate genuine abandoned checkouts from test noise — the three same-named
+accounts and the 2026-07-29 start hint at it, but nothing in the data proves
+which is which, and a `(no name)` account with 10 orders is exactly the kind of
+row that looks like noise and might not be.
+
+---
+
+## 2026-08-27 03:24 IST — Tried to DELETE 61 test orders; the DB said no (eeb8f076)
+
+One connected episode: a hard delete was planned, approved, attempted, and
+**refused by the database itself**. The result is a hide, not a delete — and
+that is the correct outcome, not a fallback.
+
+### What was planned and approved
+
+Three development accounts held 61 leftover orders, mostly abandoned checkouts:
+
+```
+3ecd3a0c-…fd5fc4  Adithya    phone +919499956612   29 orders
+8a1f7d2f-…1613c2  Adithya C  narayanadithya462@…   17 orders
+ce91fb40-…787e39  Adi        phone +916374304790   15 orders
+```
+
+Only the middle one is verifiably Adi's (it is the session's own email); the
+two phone accounts could not be confirmed as his from the data, and that was
+flagged before approval. A `(no name)` account with 10 orders and 24 days of
+activity was deliberately EXCLUDED as probably a real person.
+
+Checkpoint A presented DELETE statements in FK dependency order, with a
+983KB pre-delete export written to `C:\Users\Adithya\carevo_backups\`
+(outside git, durable — not the scratchpad, which a restart has already
+destroyed once this session). Approved.
+
+### The database refused, and rolled back cleanly
+
+```
+DELETE FROM prediction_log …
+  -> asyncpg RaiseError: "append-only table prediction_log: DELETE is not permitted"
+  -> ROLLED BACK, zero rows touched
+```
+
+Every count identical afterwards: 105 orders, 61 for the three accounts, 362
+order_events, 785 prediction_log. The transaction was atomic, so there was no
+partial state to repair.
+
+The guards:
+
+```
+order_events     order_events_immutable      BEFORE DELETE, BEFORE UPDATE
+prediction_log   prediction_log_immutable    BEFORE DELETE, BEFORE UPDATE
+```
+
+`order_twin` and `order_outcome` carry no such trigger and would have deleted
+had they been reached. They weren't — the first statement aborted the batch.
+
+### LESSON: check triggers, not just foreign keys
+
+**The Checkpoint A analysis mapped `information_schema` foreign keys and
+delete rules but never queried `information_schema.triggers`.** SQL was
+presented as ready to run when two of its five statements were guaranteed to
+fail. The blast-radius numbers were right; the executability was not. Nothing
+was harmed because Postgres refused, not because the prep caught it.
+
+**Before any future delete-scoped Checkpoint A, query
+`information_schema.triggers` for every table in the plan** — a `BEFORE DELETE`
+trigger is invisible to FK analysis and will abort the whole transaction on
+the first statement it guards. FK rules tell you what CASCADES; triggers tell
+you what is *permitted at all*.
+
+Also worth knowing for any future migration runner: **asyncpg prepares each
+statement, so a multi-statement SQL string fails at prepare time.** Migration
+022 failed on its first apply for exactly this and landed nothing; splitting
+on `;` and executing individually worked. `bootstrap_test_db.py` already knew
+this; an ad-hoc runner did not.
+
+### The pivot: hide, don't delete
+
+`order_events` and `prediction_log` are append-only *by design* — the
+prediction engine is event-sourced and those rows ARE the record. So hiding is
+not a soft-delete compromise here; it is the only thing the schema permits.
+
+**Migration 022 — `customers.history_cutoff_at`, nullable timestamptz.** Orders
+created before it are omitted from `GET /customer/orders`. NULL — every other
+account — means no cutoff, so the column is inert until set.
+
+Chosen over a flag on `customer_orders` because it writes **3 rows instead of
+61** and stays 3 however many orders exist, and because **these accounts are
+still in use for testing** — a per-order flag would need re-applying after
+every new test order or the history refills. It also mirrors
+`CarevoService.RENAME_CUTOFF`, which already does this shape for owner_app's
+queue. Trade-off recorded in the migration file: strictly chronological, so it
+cannot hide one order while showing an older one.
+
+### What actually changed, and what did not
+
+```
+migration 022 applied to prod, UPDATE customers rowcount=3
+orders total            105 -> 105   UNCHANGED
+the 3 accounts' orders   61 ->  61   UNCHANGED
+hidden per account       29 / 17 / 15 = 61, still-visible 0
+customers with a cutoff    3    without (untouched)  30
+```
+
+**Scope is ONE read.** owner_app's queue, the admin order log, the prediction
+engine and every row are untouched — pinned by a test rather than asserted: an
+order hidden from its customer is still in the staff queue, because staff must
+be able to hand over an order whose customer cut their own history.
+
+**`GET /customer/orders/{order_id}` is deliberately NOT filtered.** A direct
+link still resolves a hidden order. That was the agreed scope — the list, not
+the detail route — and is recorded here so it reads as a decision rather than
+an oversight.
+
+### Tests
+
+Backend **164 -> 171**. The 7 new tests in `test_api_history_cutoff.py` pin
+both halves — the hiding AND the not-deleting — because a future "cleanup"
+that turned this into a DELETE would satisfy the first alone. That is the same
+reasoning `test_api_rename_cutoff.py` records for the owner-side cutoff.
+
+Revert-proved: removing the SQL clause fails 4 of 7; the 3 that survive are
+the ones asserting the filter must NOT fire.
+
+The local `carevo_test` DB needed rebuilding to pick up 022 (`migrations
+applied: 22`). It is a throwaway local database, which exists precisely
+because these same append-only triggers make prod teardown impossible.
+
+---
+
+## 2026-08-27 03:51 IST — CORRECTION: the direct-id hole is closed (6ffcf950)
+
+The entry directly above states that `GET /customer/orders/{order_id}`
+"is deliberately NOT filtered" and that "a direct link still resolves a hidden
+order". **That is no longer true.** Per the append-only rule the original text
+stands; this supersedes that clause only. Everything else in it still holds.
+
+### The hole
+
+Migration 022's cutoff was applied in `list_my_orders` and nowhere else, so the
+three retired accounts' orders vanished from the history LIST while a direct
+link returned them in full — items, totals, pickup code, everything.
+
+It was scoped that way on purpose and recorded as a decision rather than an
+oversight, which was the right call at the time. It was still a hole.
+
+**This is the same shape as the cross-outlet `verify-pickup` bug from earlier
+tonight**, and worth naming as a recurring pattern rather than two incidents:
+in both cases the filter existed and was correct — it was simply applied to one
+of the paths that reach the data. Not a missing feature; a feature applied
+where someone happened to look. When a rule is added to a query, the question
+to ask is "what else reads this row", not "does this query now behave".
+
+### The fix
+
+`get_order` performs the same cutoff check and refuses with **404**, using a
+`detail` string byte-identical to "no such order". A 403 would confirm the id
+exists; 404 tells the caller nothing. Same reasoning as verify-pickup's
+cross-outlet refusal.
+
+Placed in the shared service, not the one controller — which deliberately also
+covers its second caller, **`POST /customer/payment/simulate`**. An order
+retired from view should not be payable either, and filtering in the controller
+would have recreated the exact "one path guarded, one not" problem this commit
+exists to close. `PAYMENT_GATEWAY=stub` is set on prod, so that route is live
+rather than dev-only.
+
+**Noted, NOT fixed:** the ownership check above still returns **403** for
+another customer's order, which does confirm that id exists. Pre-existing, and
+outside this scope — but it is the same information-leak shape the 404 avoids,
+so it is written down rather than left to be rediscovered.
+
+### Verified on prod, and the mid-deploy catch made it conclusive
+
+The first probe landed BETWEEN the two deploys, which is a better proof than a
+single check:
+
+```
+list endpoint, cutoff account   HTTP 200  orders=0   <- eeb8f076 already live
+target order by direct id       HTTP 200             <- 6ffcf950 not yet
+```
+
+That rules out "404 for some unrelated reason" — the probe demonstrably
+returned 200 for the very order it later refused. It flipped 45s later:
+
+```
+[03:50:02] +  0s  HTTP 200
+[03:50:47] + 45s  HTTP 404
+```
+
+Final state on prod:
+
+```
+hidden order by direct id      404  {'detail': 'Order not found'}
+nonexistent uuid               404  {'detail': 'Order not found'}
+identical response?            True
+CONTROL order (no cutoff)      200
+list: cutoff account           200  orders=0
+list: control account          200  orders=10
+```
+
+The control matters as much as the target: an account with
+`history_cutoff_at IS NULL` still resolves its own order by direct id and still
+lists 10. This is a selective filter, not a broken endpoint — a distinction
+three zeroes on their own could not make.
+
+### Tests
+
+Backend **171 -> 176**. Five new, including one that compares the hidden-order
+response byte-for-byte against a random nonexistent uuid, so a future refactor
+back to 403 fails here rather than silently reintroducing the leak.
+
+Revert-proved: removing the three-line check fails exactly those 3 tests, the
+other 9 stay green.
+
+Still no data deleted. All 61 orders remain exactly where they were; clearing
+`history_cutoff_at` restores both read paths instantly.
+
+---
+
+## 2026-08-28 14:02 IST — DIAGNOSTIC: Google-login "network error", and there is no radius
+
+Two investigations, no code changed. **No device was reachable** (`adb devices`
+empty over USB and wireless), so there is no logcat here — this is static
+reading plus live probing of the API, and the places that leaves genuine
+uncertainty are marked.
+
+---
+
+### 1. The Google-login "network error" is almost certainly the 20s timeout
+
+**There are TWO different "network error" strings, and the last word tells them
+apart.** That distinction is the whole diagnosis, so it is worth keeping:
+
+```
+google_auth_service.dart:142  "Network error: unable to reach FIREBASE."
+                              <- FirebaseAuthException('network-request-failed')
+api_client.dart:131           "Network error: unable to reach SERVER. ($e)"
+                              <- ANY exception from the HTTP call
+```
+
+The reported wording is "unable to reach **server**", which is step 4 of the
+flow — `_api.post('/customer/auth/google')` at `google_auth_service.dart:87-90`,
+the CareVo backend, reached only AFTER Google and Firebase have both already
+succeeded.
+
+**The mechanism, from this project's own measurements:**
+
+```
+AppConfig.requestTimeout      20 seconds     app_config.dart:93
+Render free-plan cold start   42.36 seconds  measured 2026-08-27 03:30 (GET /docs)
+retry / backoff               NONE           single attempt, api_client.dart:126-132
+```
+
+The first request after the backend spins down **cannot** succeed: the timeout
+fires at 20s against a service that needs 42s to wake. `_send`'s `catch (e)`
+then rewrites the `TimeoutException` into "unable to reach server."
+
+The backend itself is healthy — probed live: HTTP 422 in 0.17s for a short
+token, HTTP 401 "Malformed Firebase token" in 0.12s for a length-valid one.
+Fast, warm, correctly rejecting. **Nothing is wrong with the endpoint; the
+client gives up before a cold one can answer.**
+
+#### Ruled out: this is NOT the Nothing-phone Keystore fault
+
+That fault lives at steps 2-3 (`signInWithCredential` / `getIdToken`) and can
+only ever produce the "...reach **Firebase**" string or a raw
+`FirebaseAuthException` message. It can never produce "...reach **server**". It
+was also traced to a Nothing A142P, whereas the handset attached on 08-27 was an
+LGE LM-K610IM on Android 10 — a different device entirely.
+
+**On the wording alone these are distinct faults.** Caveat kept honest: this
+rests on the exact on-screen text, which was reported rather than captured. A
+logcat or a screenshot would settle it; neither exists.
+
+#### A second, separable problem: the catch is unconditional
+
+`api_client.dart:130` is a bare `catch (e)`. A `TimeoutException`, a
+`SocketException`, a TLS failure, a `FormatException` on a malformed body, or a
+plain client-side bug **all** surface as "Network error: unable to reach
+server." The message asserts a diagnosis the code has not actually made, and it
+is why a cold start and a genuine outage are indistinguishable to whoever is
+holding the phone.
+
+#### FIREBASE_ENABLED: the blueprint is wrong about prod, again
+
+The live 401 proves `FIREBASE_ENABLED` is **true** on prod — a false value would
+have returned 501 "Firebase authentication is not enabled on this deployment"
+(`service.py:210-214`). **`render.yaml:56` declares `"false"`.**
+
+This is the same trap as `CUSTOMER_AUTH_ENABLED`, documented at
+`render.yaml:33-40`: Render applies blueprint `envVars` at creation/sync, a
+dashboard value wins for an existing key, and ordinary git auto-deploys do not
+re-apply them. (The `NEXT_PUBLIC_*` build-cache problem in AGENT_GUARDRAILS §6
+is a THIRD variant of "the repo does not describe the running service", though
+its mechanism is build-time baking rather than dashboard precedence — worth not
+conflating the two.)
+
+**One thing is different and worse this time: the direction is inverted.**
+Previously the blueprint said `true` while the dashboard safely held `false`.
+Here the blueprint says `false` while prod actually runs `true` — the file
+UNDERSTATES what is enabled on a publicly reachable deploy. Not a hole in
+itself (both Firebase routes verify tokens against Google's public keys and take
+nothing on the client's word), but anyone reading `render.yaml` to answer "is
+Firebase auth live?" gets the wrong answer.
+
+**Rule, for the third time: probe the endpoint. Never read posture off the
+blueprint.**
+
+---
+
+### 2. There is no radius. Anywhere.
+
+**Server-side (`service.py:293-309`) the entire WHERE clause is:**
+
+```sql
+WHERE is_visible = true AND deactivated_at IS NULL
+  AND (cities IS NULL OR cardinality(cities) = 0 OR lower(city) = ANY(cities))
+```
+
+No distance predicate. No LIMIT. The only geographic narrowing is the **city
+filter, which is a string match, not a radius.**
+
+**Distance is computed AFTER the query**, in Python — `_haversine_km` per row
+(`service.py:324`), then `out.sort(...)` nulls-last (`service.py:357`). It is a
+post-hoc annotation used purely for ordering and **can never exclude a row**.
+
+**Client-side there is no cap either.** Grepping
+`radius|withinKm|maxDistance|distanceKm` across `customer_app/lib/` returns only
+`borderRadius` styling plus display/sort use of `distanceKm`.
+`OutletSort.nearest` (`outlet_sort.dart:113`) sorts; it does not filter.
+
+**Confirmed empirically against prod — every outlet is returned from any origin
+on Earth:**
+
+```
+origin = Bengaluru   7 outlets   5.0 km  -> 1566.2 km   (Indiranagar -> Kolkata)
+origin = New Delhi   7 outlets   1308.2  -> 2069.9 km
+origin = London      7 outlets   7965.1  -> 8216.5 km
+origin = none        7 outlets   all distance_km = null
+```
+
+From Bengaluru the list runs Indiranagar 5.0 km, Koramangala 5.1, Chennai
+283-289, Kochi 355.8, **Kolkata 1566.2** — all seven, every time. Outlets in
+entirely different cities are returned today and merely sink to the bottom.
+
+#### Two things that matter before building a toggle
+
+* **Nothing needs unbuilding.** There is no existing cap to reconcile with. A
+  radius would be a NEW predicate, and it belongs in the SQL WHERE — filtering
+  in the Python post-pass would still fetch every row and only hide them.
+* **City filter and radius overlap, and can disagree.** With
+  `?city=Bengaluru` plus a 5 km radius, the Koramangala outlet at 5.1 km is in
+  the right city and outside the radius. Which wins is **a product decision, not
+  a technical one**, and it should be decided before either is implemented
+  rather than discovered from whichever clause happens to run last.
+
+Also noted in passing: **`is_open` is hardcoded `true`** for every outlet
+(`service.py:328`). It is not real data, which matters if a distance control is
+meant to sit next to an "open now" one.
+
+---
+
+## 2026-08-28 19:27 IST — Train is offered only where there is rail (f15cc825)
+
+The transport-mode chip row on checkout was static: six modes, identical for
+every outlet in every city. Train is now conditional on the outlet's city
+having rail. The other five — walk, bike, car, auto, bus — stay unconditional,
+because walking, cycling and road transport exist everywhere.
+
+### Why Train specifically
+
+It is the only mode that carries **no GPS origin and no speed**. The customer
+STATES an arrival time and the server takes it as given (`usesDeclaredArrival`,
+migration 020's addendum). Offering it where there is no rail collects a
+declared arrival for a journey that cannot happen — and that number goes
+straight into the timing engine. **The failure would surface as food cooked for
+a train that was never coming, not as an error anyone could see.**
+
+### `city` became a real field
+
+`outlets.city` was already SELECTed in `list_outlets` and then **dropped before
+serialising**, so a client's only route to the city was splitting `address`
+("{locality}, {city}") on the last comma. That breaks for outlets predating
+migration 012, where `address` IS the bare city and there is nothing to split.
+Keying behaviour off a display string is precisely how that kind of thing
+silently breaks later.
+
+Additive, and **checked rather than assumed**: `Outlet` has no `==`, no
+`hashCode`, no `copyWith`; every test fixture builds via `fromJson` with named
+keys; `OutletOut` is consumed by one route; no schema in that file sets
+`extra='forbid'`.
+
+**One catch worth remembering: `city` also had to go into `Outlet.toJson`.**
+`CartState` persists an outlet snapshot through that round trip, so omitting it
+would have silently lost Train whenever a restored cart reopened — invisible in
+any test that only exercised a fresh fetch. There is now a test for exactly
+that round trip.
+
+### The config, and its safe default
+
+`customer_app/lib/config/city_transport.dart`, keyed **lower()-cased and
+trimmed** to match the `lower(city)` comparison `list_outlets` already uses —
+`outlets.city` is free text with no constraint, so nothing in the schema keeps
+capitalisation consistent.
+
+Seeded with the four live cities, all genuinely rail-served: Chennai (suburban
++ metro), Bengaluru (Namma Metro), Kolkata (metro + suburban), Kochi (metro
+since 2017).
+
+**A city NOT in the config shows no Train. That is the deliberate safe default,
+not an oversight** — a new city can enter `outlets` through a signup with no
+code change, and must not silently start offering a mode nobody has checked.
+Two caveats are written into the file rather than left to be discovered: it is
+a CITY-level answer (Kakkanad itself is not metro-served yet, though Kochi has
+rail), and it ships in the app, so enabling a new city needs a release. If that
+becomes a real constraint the honest fix is a server-supplied flag, not a
+longer list.
+
+### The guard
+
+`_modesFor()` filters the chip row. `_effectiveMode()` additionally guards the
+payload and the arrival picker. A stale Train selection is **not reachable
+through the UI today** — Train can only be picked from a list that already
+excluded it — but it is guarded anyway because the failure would be silent and
+would land in the prediction engine as a train order from a city with no
+trains. Invisible until someone read the data months later.
+
+The prediction engine needed no change: `MODE_SPEED_MPS` and `_GMAPS_MODE` both
+hold five modes and have never held `train`, which runs through the separate
+declared-arrival path.
+
+### Deploy BEFORE build — the sequencing mattered here
+
+This is the first change tonight where building the app first would have been
+actively wrong. Until the backend ships, `city` is absent from responses,
+`hasTrainAccess` returns false, and an app build would hide Train **everywhere,
+including Chennai**.
+
+So the backend deploy was confirmed first, and the poll caught the transition
+rather than just observing the end state:
+
+```
+[14:27:06] + 44s  attempt 1  city field: absent
+[14:27:46] + 84s  attempt 2  city field: absent
+[14:28:26] +124s  attempt 3  city field: absent
+[14:29:07] +165s  attempt 4  city field: PRESENT
+```
+
+Three consecutive `absent` readings before the flip is what makes it
+conclusive — the probe demonstrably reported the pre-deploy state before
+reporting the post-deploy one, so a PRESENT reading cannot be an artefact of
+the probe itself.
+
+All 7 outlets returned a discrete `city`, and **every value matches a lookup
+key exactly**, so no outlet is excluded by a spelling mismatch:
+
+```
+Annapoorna Tiffin Room  Bengaluru     Golden Wok             Chennai
+The Brew House Cafe     Bengaluru     Malabar Spice Kitchen  Kochi
+Meenakshi Bhavan        Chennai       Bengal Rasoi           Kolkata
+Chettinad Spice Corner  Chennai
+```
+
+### Tests
+
+customer_app **254 -> 266**, backend **176 unchanged** (`city` is serialisation
+only). All five unconditional modes are asserted present in EVERY widget case,
+so a filter that over-reached would fail rather than pass quietly.
+
+Revert-proved: restoring `TransportMode.values` at the render site fails
+exactly the 2 tests asserting Train is absent. `flutter analyze` clean.
+
+### The APK — built, NOT installed
+
+```
+sha256      cdda8277a3c592b476e70a8d65fb2f0cc3112981d53fee67b33492c56b9a6a27
+size        61,280,387 bytes (58.4 MB)
+timestamp   2026-08-28 14:30:48 IST
+versionCode 3, upload-key signed (CN=CareVo)
+```
+
+Verified as a real rebuild rather than trusted: 95.4s build time (against 9.3s
+for the no-op rebuild on 08-27), and `bengaluru`/`chennai`/`kolkata`/`kochi` all
+present as string literals in the compiled `libapp.so`.
+
+**The phone still has `adcb62d5…`, the pre-Train build.** Four customer_app
+artifacts now share size 61,280,387 and versionCode 3 — the SHA-256 is the only
+thing that tells them apart, so check the hash rather than the version before
+concluding anything about what a device is running.
+
+---
+
+## 2026-09-02 20:51 IST — Live in-app new-order alert + the outlet name in the app bar
+
+Two things asked for so that several test phones running owner_app at once can
+be told apart, and so that a paid order arriving is noticed without anyone
+staring at the Orders tab. Both landed client-side only: **no migration, no
+backend change, and nothing in the Firebase/PUSH_ENABLED path was touched.**
+
+### FINDING FIRST: `/ws/pos/{outlet_id}` is NOT wired into owner_app
+
+This was checked before anything was built, because the task's shape depended
+on the answer. It is **NOT BUILT**, on both sides of the wire:
+
+- **No client.** `owner_app/lib` contains zero WebSocket code — grep for
+  `WebSocket|web_socket|websocket|ws/pos` across the whole of `lib/` returns
+  nothing, and `owner_app/pubspec.yaml:30-57` has no `web_socket_channel`
+  dependency (deps are provider, http, shared_preferences, image_picker,
+  firebase_core, firebase_messaging). For contrast, customer_app DOES have a
+  real WS client at `customer_app/lib/services/order_notify_service.dart:22`
+  (`WebSocketChannel? _channel`), so this is an owner_app gap, not a
+  project-wide absence.
+- **Nor was owner_app polling on a timer.** Before this change `OrdersState`
+  had no `Timer` at all: the queue refreshed only on mount
+  (`home_screen.dart` initState) and on pull-to-refresh
+  (`orders_screen.dart:57`). An order landing while the app sat open was
+  invisible until someone pulled down.
+
+The endpoint itself does exist server-side —
+`gusto_pos/backend/app/modules/websocket/router.py:26` (`@router.websocket
+("/pos/{outlet_id}")`), mounted at `app/main.py:92`. But wiring a client to it
+would still not have delivered this feature, because **nothing broadcasts a new
+Skip order to it.** Every `manager.notify_pos(...)` call in the backend sends
+`{"type": "table_update"}` for the dine-in table flow
+(`orders/service.py:200,298,342`, `tables/service.py:92,117`). The CareVo Skip
+paid-order path is `carevo_customer/controller.py:466`, and it fires
+`PushService.notify_outlet_new_order` — FCM only, no WS broadcast.
+
+So the WS route would have required a backend change to carry anything. The
+task allowed "existing WebSocket connection **or** in-app polling"; polling is
+the branch that needs neither a new dependency nor a server edit, so that is
+what was built.
+
+### What was built
+
+**`lib/services/alert_feedback.dart`** (new). Chime + buzz via Flutter's own
+`SystemSound.play(alert)` and `HapticFeedback.heavyImpact()`. No new package,
+no asset, no per-platform setup; both no-op on hardware that cannot do them,
+which is the "if the device supports it" behaviour asked for. Nothing here
+touches Firebase.
+
+**`lib/state/orders_state.dart`.** Foreground polling every 15s
+(`defaultPollInterval`, overridable for tests), plus arrival detection:
+
+- `NewOrderAlert` carries the order itself, so the banner NAMES what arrived,
+  plus `alsoArrived` so a busy minute does not collapse into one alert.
+- A **baseline** is taken on the first successful load. The queue already on the
+  counter at sign-in is not news — without this, opening the app chimes once per
+  waiting order, which trains staff to ignore the sound that matters.
+- `_announced` remembers ids, so a 15s poll re-reading the same rows does not
+  re-fire. Only paid, not-yet-collected orders count.
+- `load(silent:)` — a background poll no longer flashes the spinner, and yields
+  if a request is already in flight (a cold Render call can outlive the
+  interval). A staff-initiated load is never skipped: several actions end in
+  `await load()` and rely on it running.
+- `reset()` for logout. OrdersState is a singleton that outlives a session, so
+  without it the next outlet on the same phone would inherit the previous one's
+  rows AND its announced-ids — alerted about the wrong orders, silent about its
+  own.
+
+**`lib/screens/home_screen.dart`.** Listens for the alert, plays the feedback,
+shows a snackbar naming the order (`#881111 — 3 items, ₹240`, "+N more just in"
+when several land together) with a `View` action that jumps to the Orders tab.
+Polling follows the app lifecycle via `WidgetsBindingObserver`: stopped when
+backgrounded, resumed with a silent catch-up load. On resume the catch-up is
+deliberately SILENT — an order that arrived while the phone was in a pocket is
+on screen immediately, but it is no longer "just arrived" by the time anyone
+looks at it.
+
+**Delivery to a backgrounded or closed app is explicitly NOT part of this.**
+That is the push path and it was left alone on purpose; the decision is still
+open.
+
+**App bar title** is now the outlet name (bold) over the section label. Read
+from `HomeState.outlet.locationName`, which `GET /pos/outlet` already returns
+(`OwnerOutletOut`, `carevo_customer/schema.py:387-391`) and HomeState already
+fetches on mount — **no new backend call was added.** When that load fails the
+title falls back to the section alone rather than a placeholder: a name that is
+not the account's is exactly the mistake this exists to prevent.
+
+### A latent dispose bug, fixed on the way
+
+`HomeScreen.dispose` was already doing `context.read<StaffPushService>()`, which
+is an ancestor lookup on a deactivated element. Adding a second one for
+OrdersState made it fire — "Looking up a deactivated widget's ancestor is
+unsafe" — in every new widget test. Both are now captured in
+`didChangeDependencies` and used from fields, so the pre-existing case is fixed
+too.
+
+### Tests
+
+owner_app **23 -> 41**, all passing. `flutter analyze` reports nothing on any
+touched file (the 21 remaining `info` lints are pre-existing, in
+menu_service/offer_service/dish_row).
+
+`test/new_order_alert_test.dart` (13) — seven drive OrdersState directly over a
+MockClient whose feed CHANGES between polls, so the arrival rule is asserted
+rather than the screen: sign-in queue silent, later arrival alerts, same order
+never twice across four polls, several-at-once counted not collapsed, unpaid
+does not alert until paid, `reset()` clears the baseline, and a failed poll does
+not re-announce the survivors on recovery. Six drive the real HomeScreen: banner
+names the order, `View` switches tab, "+1 more" for a double arrival, and — the
+one that matters most — sound and vibration asserted at the **platform channel**
+(`SystemSound.play` / `HapticFeedback.vibrate` on `SystemChannels.platform`),
+not through a fake, which would only have proved the app calls its own wrapper.
+
+`test/outlet_name_test.dart` (5) — name present and correct in the AppBar,
+survives a tab switch, two different accounts render differently (torn down
+between mounts, or the reused providers would test nothing), and a failed outlet
+load shows NO name rather than a fake one.
+
+Both files unmount at the end of every test. That is not tidiness: flutter_test
+fails on a live timer at teardown, so it doubles as the assertion that
+`dispose()` actually stops the poll.
+
+### Not verified
+
+Nothing was run on a device this session — no APK built, no phone installed.
+The chime and the buzz are asserted at the channel boundary, which proves the
+app makes the calls, not that a particular handset makes a noise.
+
+---
+
+## 2026-09-03 02:10 IST — Cancelled payments get "Try Payment Again" instead of a dead pickup ticket
+
+Checkout's post-payment navigation, customer_app. **Client-side only: no
+backend change, no migration, and the OTP screen was not touched.**
+
+### The reported symptom was not quite the bug
+
+Reported as "failed payments land on a broken OTP screen". There is no OTP
+screen in the payment flow at all — `OtpScreen` is phone-login only
+(`login_screen.dart:85` is its sole caller). What a failure landed on was
+`PickupScreen`, whose code card renders a lock and "Appears after payment"
+when unpaid (`pickup_screen.dart:721-730`). A big empty six-character box is
+what was being read as an OTP screen.
+
+Nor did the success path go anywhere else: `checkout_screen.dart:396` was ONE
+unconditional `pushReplacement` to PickupScreen for verified and failed alike,
+differing only in an advisory `paymentHint` string.
+
+### The actual defect: a navigation-stack dead end
+
+`pushReplacement` removed CheckoutScreen from the stack. PickupScreen has no
+back button straight from checkout (`automaticallyImplyLeading: fromHistory`,
+`:250`), and its only control is "Order more" → `pushAndRemoveUntil(HomeScreen,
+(route) => false)` (`:412-426`). So a customer who dismissed the sheet had an
+empty code box, no back, and one button that nuked the stack to Home.
+
+The cart was never the problem — it survives. `cart.clear()` exists in exactly
+two places (`payment_processing_screen.dart:61`, stub success; and
+`pickup_screen.dart:218-220`, only on an observed PAID). The items were still
+there; there was simply no route back to them short of outlet → menu → cart →
+checkout.
+
+### What made this non-trivial, and why the obvious fix was wrong
+
+The old behaviour was DELIBERATE, documented at `checkout_screen.dart:383-395`.
+Cashfree's `onVerify`/`onError` fire on the device and are not authoritative
+(`cashfree_service.dart:39-49`); only the webhook moves an order to PAID
+(`carevo_customer/controller.py:451-466`). `onError` fires when the customer
+cancels — but ALSO when a genuine payment's confirmation is lost coming back
+from a UPI app.
+
+So routing every failure straight to a retry button would have created a
+**double-charge path**: pay → confirmation lost → retry → first webhook lands →
+charged twice. That is worse than the bug being fixed.
+
+New `PaymentOutcomeScreen` therefore confirms before it accuses:
+
+1. Poll the order for a 12s grace window. Webhook lands → hand off to
+   PickupScreen, retry never shown.
+2. Only once the server has had its chance and still says unpaid → "Try
+   Payment Again".
+
+Retry reopens the SAME order on the SAME session id. `payment_session_id` is
+minted only inside `create_order` (`service.py:617`, returned `:650`) and there
+is no re-issue endpoint, so reusing it is both necessary and correct — and it
+is why this needed no backend work. Checkout is `push`ed under rather than
+replaced, so "Back to my order" is a plain pop onto the intact basket. An
+"I was charged — check status" hatch covers the rare case the grace window
+misses.
+
+Success path unchanged: verified still goes straight to PickupScreen.
+
+### Mode note: this bug is NOT reachable in the current deployment
+
+`PAYMENT_GATEWAY=stub` in both `gusto_pos/backend/.env:11` and
+`render.yaml:51-52`. The two modes diverge at `checkout_screen.dart:353`
+(`order.payment.isCashfree`) BEFORE the broken code — stub early-returns into
+`PaymentProcessingScreen`, which already had its own retry, and has no sheet to
+cancel. The fix only becomes live when the backend flips to `cashfree`. No app
+rebuild is needed for that: the app branches on the response, not a build flag.
+
+Caveat recorded honestly: `render.yaml` is the blueprint, and this project has
+already been bitten by the Render dashboard diverging from it (the
+CUSTOMER_AUTH_ENABLED lesson). No endpoint exposes the gateway, so the live
+value was not probed. The definitive check is `payment.gateway` in a real
+create-order response.
+
+### Tests
+
+customer_app **285 -> 300**, all passing, `flutter analyze` clean.
+
+13 of the 15 drive `PaymentOutcomeScreen` directly over a MockClient whose
+reported `payment_status` changes between polls — which is what a late webhook
+looks like from the app's side. Covered: no retry button before the server
+answers; a late webhook reaching pickup without ever showing retry; retry
+offered only after the window; a dead network still reaching retry rather than
+hanging; retry reopening the same order+session (asserted against a recorded
+call log, not a screenshot); a "verified" retry still deferring to the server;
+a second cancellation returning to retry; a missing session refusing rather
+than opening an empty sheet; and the cart never being cleared.
+
+The other 2 drive the real CheckoutScreen through both outcomes. Those exist
+because the first 13 would ALL still pass against the unfixed code —
+**revert-proved**: restoring the single-pushReplacement version fails exactly
+one test ("a DISMISSED sheet lands on the retry screen, not pickup") while the
+success-path test keeps passing, so the pair is neither blind nor
+over-constrained.
+
+### Not verified
+
+Nothing was run on a device. The Cashfree sheet is faked in tests, and the real
+path cannot be exercised end-to-end while `PAYMENT_GATEWAY=stub` — so real SDK
+cancel behaviour remains unconfirmed. Worth walking in sandbox before this
+reaches customers.
+
+### APK note from the same session
+
+Two customer_app debug APKs were built an hour apart and BOTH are named
+`app-debug.apk`; the second overwrote the first. `65fd4466…` (148,865,024 B)
+contains this fix; `af7aee2d…` (191,382,038 B) is true HEAD a8b2ab5e and does
+NOT — verified by string-searching `kernel_blob.bin`, not assumed. versionCode
+does not distinguish them; check the hash.
+
+---
+
+## 2026-09-03 11:35 IST — "I've picked this up" gets a real server record + OrderOut exposes departed/arrived/picked_up (migration 023)
+
+Backend-only. Gives the customer's pickup acknowledgment a durable server
+record — it was an on-device flag with zero server trace — and exposes all
+three customer pickup-journey acks on the order-status response so the app can
+eventually be server-sourced instead of trusting local persistence alone.
+
+### The shape decision: event, not a column
+
+`CUSTOMER_PICKED_UP` is recorded as a row in the EXISTING append-only
+`order_events` log (migration 006), written by the new endpoint via the same
+`write_event` path `CUSTOMER_DEPARTED`/`CUSTOMER_ARRIVED` already use. Chosen
+over a boolean/timestamp column on `customer_orders` on the merits:
+
+- **Consistency** — DEPARTED, ARRIVED and staff PICKUP_VERIFIED are all events;
+  the customer ack is the same category of fact, so OrderOut now reads all
+  three through ONE mechanism.
+- **Correctness** — "the customer said they picked it up at time T" is an
+  immutable historical fact; `order_events` is append-only (006's BEFORE
+  UPDATE/DELETE trigger enforces it). A boolean could be flipped back — wrong.
+- **Richness** — the event carries occurred_at / actor_type=customer /
+  source=tap, feeding the event stream. A bare boolean would not.
+
+A column's one upside (no join) did not outweigh splitting the read path in two
+and making an immutable fact mutable. Consequence: the "picked up" record needs
+NO DDL — the event type is a new string, rows are written at runtime.
+
+### What changed
+
+- `events.py` — new `CUSTOMER_PICKED_UP` constant. NOT the same as
+  `PICKUP_VERIFIED` (staff confirming the code, the only real completion).
+- `service.py` — `record_picked_up` (mirrors record_departed/arrived: owned-
+  order check, idempotent via `_has_event`, one append-only event, commit;
+  moves NO order status) and `pickup_progress` (one query returning the three
+  booleans for OrderOut).
+- `controller.py` — new endpoint `POST /api/v1/customer/orders/{id}/picked-up`
+  → EventAck (no body, the tap is the whole signal); `get_order` now includes
+  the three flags.
+- `schema.py` — OrderOut gains `departed`/`arrived`/`picked_up` bool (default
+  False). Additive; unknown-field-tolerant clients are unaffected.
+- **Migration 023** — adds `ix_oe_order_type ON order_events(order_id,
+  event_type)`, supporting both the `_has_event` idempotency guard and the new
+  OrderOut existence checks. Additive, idempotent, reversible; changes no
+  existing column/index/trigger/endpoint. PROD NOTE in the file: on the large
+  append-only table, build it `CONCURRENTLY` (outside a transaction) to avoid
+  locking writes; the portable plain form is used so the test bootstrap can run
+  the file directly.
+
+### The client was deliberately NOT touched
+
+customer_app is unchanged by this. Consuming these fields (restoring travel/ack
+state from the server instead of local persistence) is a separate follow-up, so
+the two can be reviewed independently.
+
+### Tests
+
+New `tests/test_api_picked_up.py` (8): records one event + OrderOut shows
+picked_up; idempotent (one row, "already acknowledged"); moves no status;
+owner-only (403 for a second real customer, nothing recorded); 404 unknown
+order; OrderOut flags default False; reflect departed+arrived after those
+endpoints; all three true together. Backend suite **185 -> 193**, all passing.
+Migration applies cleanly to a fresh test DB (23 applied, 0 skipped; index
+verified present).
+
+---
+
+## 2026-09-03 — Home's "1 order in progress" opens the ORDER, not the list
+
+### The bug, verified rather than assumed
+
+`home_screen.dart` built two rows and handed them the SAME callback:
+
+```dart
+_ActiveOrdersLink(count: active.length, onTap: onHistory),   // "1 order in progress"
+NeoCard(key: Key('home_history_shortcut'), onTap: onHistory) // "Order history"
+```
+
+`_openHistory` pushes `OrderHistoryScreen`. So the two rows were literal
+duplicates — the top one advertised a live order and delivered a list. A
+customer at a counter tapping it for their pickup code had to find and tap the
+order again, which is the three-taps-deep problem the active-order surfaces
+were added to remove. The third button, "Find restaurants near you"
+(`home_find_restaurants`), pushes `LocationScreen` and was never in question.
+
+### MORE THAN ONE ORDER CAN BE IN PROGRESS
+
+Checked, not assumed. `OrderHistoryEntry.isActive` is
+`{PAID, RECEIVED, PREPARING, READY}` and the backend
+(`CarevoService.list_my_orders`) applies no concurrency cap — just
+`ORDER BY created_at DESC LIMIT :limit`. Both existing surfaces already handle
+plurals: Home's own greeting says "You have N orders in progress", and the
+outlets banner renders one `ActiveOrderCard` per order after an explicit fix
+for exactly this ("collapsing several codes behind a count made the common
+multi-order case the slowest").
+
+So "the active order" is not always singular, and the fix does not pretend it
+is:
+
+* **one active order** → straight to `PickupScreen` for that order
+* **several** → unchanged, still `OrderHistoryScreen`, which floats the active
+  ones to the top and opens the same pickup screen per row
+
+No newest/nearest heuristic was invented. If the multi-order case should stop
+costing the extra tap, the in-vocabulary fix is a sheet of `ActiveOrderCard`s —
+the same widget the outlets banner stacks — not a guess about which order the
+customer means. Left as a proposal, not built.
+
+### What changed
+
+`customer_app/lib/screens/home_screen.dart`
+
+* `_openPickup(OrderHistoryEntry)` — the same push `ActiveOrderCard` makes from
+  the outlets banner, down to `fromHistory: true` (back button; "Order more"
+  does not detonate the nav stack). Reloads on return, since the order may have
+  been collected in there.
+* `_ReturningHome` takes `onTrackOrder` and picks the destination by count.
+* `_ActiveOrdersLink` trailing text now follows the destination: "Track order"
+  for one, "View order history" for several. It was hard-coded to the history
+  wording while both cases went there; leaving it would have made the row lie.
+
+"Order history" and the Discover CTA are untouched.
+
+### Tests
+
+New `test/home_active_order_routing_test.dart` (5), asserting destinations
+rather than wiring: one active order lands on `PickupScreen` with the right
+`orderId`, its code visible and `fromHistory` true; the ACTIVE order is opened
+when a collected one also exists (a fixture where blindly taking `orders.first`
+would fail); "Order history" still reaches `OrderHistoryScreen` and NOT
+`PickupScreen`; two live orders still reach the list; and the label matches the
+route.
+
+One assertion updated in `bugfix_batch_2026_08_24_test.dart` — it expected
+"View order history" on the single-order row, which is now "Track order".
+
+`flutter test` — **320 passed, 0 failed**. `flutter analyze` on the touched
+files — clean.
+
+Not committed, not pushed, not run on a device.
+
+---
+
+## 2026-09-03 11:47 IST — Inline payment-retry on the pickup screen + durable pickup-status (persistence/resume)
+
+customer_app. Two changes committed TOGETHER because they cannot be cleanly
+separated: both rewrite the same interleaved hunks of pickup_screen.dart
+(initState, dispose, the imports, the state-field block). Splitting them would
+mean carving individual hunks apart and would leave an intermediate
+pickup_screen.dart that does not compile — an artificial split, so they are one
+commit.
+
+### Change 1 — inline payment-retry (was a separate PaymentOutcomeScreen)
+
+A dismissed/cancelled Cashfree sheet used to pushReplacement to PickupScreen and
+strand the customer on a pickup ticket with no code and no way back. The earlier
+fix added a separate PaymentOutcomeScreen; this merges that logic INLINE onto
+PickupScreen so both checkout outcomes go to the one screen, which is now
+state-aware:
+- checkout_screen.dart routes verified AND dismissed to PickupScreen (state via
+  awaitingPayment / paymentOrder / paymentReason).
+- pickup_screen.dart gains the confirming → retry inline states (_PayPhase,
+  _startConfirming with the ported 12s grace / 3s poll, _tryAgain reusing the
+  SAME order + payment session, _ConfirmingSection / _RetrySection replacing the
+  code card in place). A dismissed sheet confirms with the server for a grace
+  window before ever offering "Try Payment Again" — so a lost confirmation is
+  not turned into a double charge.
+- payment_outcome_screen.dart DELETED; its keys/logic live on PickupScreen now.
+
+### Change 2 — durable pickup-status (persistence + resume re-poll)
+
+The travel flags ("I'm leaving"/"I've arrived") and the pickup ack ("I've picked
+this up") were in-memory only and reset on every rebuild; the pickup code was
+server-sourced but a resumed screen waited up to a poll interval to refresh.
+- _PickupUiStore persists departed/arrived/picked_up per order (SharedPreferences,
+  keyed by orderId), restored in initState, cleared on COMPLETED.
+- PickupScreen is now a WidgetsBindingObserver; on resume it re-polls
+  immediately, so a webhook that landed while backgrounded shows the code at once.
+- This is the local-persistence half; the server-sourced half (consuming the new
+  OrderOut departed/arrived/picked_up from migration 023) is a later follow-up.
+
+### Tests
+
+- payment_retry_test.dart REWRITTEN to drive PickupScreen's inline states (was
+  PaymentOutcomeScreen): grace window, late webhook resolves to code, retry
+  reuses the same session, second failure returns to retry, cart preserved, plus
+  two wiring tests that fail if checkout stops distinguishing the outcomes.
+- pickup_persistence_test.dart NEW: departed/ack restore, arrived round-trip
+  across a reopen, completion clears the record, resume forces an immediate
+  re-fetch, and a full walk (leaving → resume mid-flow → arrived → picked up →
+  kill + reopen).
+- Full customer_app suite: 320 passing.
+
+---
+
+## 2026-09-03 11:49 IST — Offers-filter "Show all restaurants" button + its test (and the greeting test)
+
+customer_app. Adds the offers-filter button code and the test that covers both
+it and the greeting banding.
+
+- outlets_screen.dart: the offers-only empty state matched zero restaurants
+  because the filter WORKED, not because anything failed — so the button now
+  reads "Show all restaurants" (clears the filters) instead of the misleading
+  "Try again". Scoped via a retryLabel param on _ErrorState defaulting to "Try
+  again", so the genuine load-failure case is unchanged.
+- greeting_and_offers_filter_test.dart (new): the greeting bands (midnight is
+  NOT "Good morning"; morning 05-11, afternoon 12-16, evening otherwise) and the
+  offers-filter button ("Show all restaurants" on a zero-match, still "Try
+  again" on a real load failure, tapping clears the filter).
+
+The GREETING source (greetingFor in home_screen.dart) landed earlier in
+810a12c4; this commit adds its test coverage. The BUTTON source
+(outlets_screen.dart) had NOT been committed yet, so it ships here WITH its test
+rather than orphaning the test — same code-and-tests-together discipline as the
+other commits. Full customer_app suite: 320 passing.
+
+---
+
+## 2026-09-06 — Manual "Ready" button on the testing dashboard (uncommitted)
+
+### Task 1 — what advance_status actually accepts
+
+`CarevoService.advance_status(db, order_id, target=None)`
+(`carevo_customer/service.py:1382`). With an explicit target the ONLY validation
+is membership:
+
+```python
+if target:
+    new_status = target.upper()
+    if new_status not in _PROGRESSION:      # ["RECEIVED","PREPARING","READY"]
+        raise HTTPException(400, "Invalid target status")
+```
+
+So `target="READY"` is accepted — already exercised in-tree by
+`test_ready_hides_both`. Progression order confirmed by `_STAGE_RANK` in the
+testing service: CREATED 0 → PAID 1 → RECEIVED 2 → PREPARING 3 → READY 4 →
+COMPLETED 5. `_PROGRESSION` is the *driveable* subset of that, not a
+contradiction of it.
+
+**The one thing that is NOT true of this path:** with an explicit target,
+advance_status never reads the order's current status. There is no from→to
+legality check. PREPARING→READY is valid, but so is PAID→READY. That breaks the
+assumption the existing docstring states for Approve/Reject — "a stale button …
+is refused by the server" — because Approve is self-guarding only by virtue of
+passing NO target (the server computes the next stage and cannot skip), and
+Reject is guarded by `reject_order`'s own `REJECTABLE_STATUSES`. Ready has
+neither, so the gate is enforced at the call site in `TestingService.ready_order`
+(409). It gates; it does not re-implement the transition.
+
+Approve hidden at PREPARING: confirmed, `_APPROVABLE_STATUSES = {CREATED, PAID,
+RECEIVED}`. Ready picks up exactly where Approve stops, so no row shows both.
+
+Auto-pickup on this path: confirmed by construction, not just by test. The hook
+is *inside* advance_status (`if new_status == "READY": maybe_auto_pickup(...)`),
+below the commit and independent of how `new_status` was derived — so the manual
+button chains into it identically to the poller. No new logic added.
+
+### New route, not a parameterised /approve
+
+`POST /api/v1/testing/orders/{id}/ready`. A target parameter on `/approve` was
+rejected because `approve_order` deliberately calls `advance_status` with no
+target; accepting a client-named stage would convert Approve from "advance one
+stage, server decides" into "client names the stage" and delete the very
+property that makes Approve unable to skip the kitchen. A separate route also
+keeps one gating constant and one proxy per action.
+
+### Changed
+
+* `testing_dashboard/service.py` — `_READYABLE_STATUSES = {"PREPARING"}`,
+  `can_ready` in the orders payload, `ready_order()` (404 unknown, 409 wrong
+  state, else advance_status with target READY).
+* `testing_dashboard/controller.py` — the route, on the same key-gated router.
+* `dashboard_app/main.py` — `/api/orders/{id}/ready` proxy, key attached
+  server-side as with the others.
+* `dashboard_app/templates/dashboard.html` — `readyOrder()` + a button gated on
+  `o.can_ready`.
+
+Untouched, as required: `pickup_code` exposure, `OrderOut`, `PickupScreen`.
+
+### Tests — 269 backend + 19 dashboard_app, all passing
+
+Backend +8: `can_ready` true only at PREPARING (checked at PAID, RECEIVED,
+PREPARING, READY, and that `can_approve` is False in the same row);
+PREPARING→READY through the endpoint; **roster order reaching READY via the
+button still auto-picks-up** (COMPLETED + a real `PICKUP_VERIFIED` event, so it
+went through verify_pickup rather than a shortcut); non-roster stops at READY
+with no pickup event; a PAID order is refused 409 and stays PAID (the guard
+above — without it this test would show a stage skip); 404; 401 without the key.
+
+OTP is asserted as an **equality against the value captured beforehand**, in both
+the API row and the DB column — a regression that regenerated or blanked the
+code would pass a mere "field still present" check.
+
+dashboard_app +4: `/ready` proxies to the backend's own `/ready` with the key;
+needs a session; leaks nothing; and the template still gates the button on
+`o.can_ready` and renders the OTP cell from `o.pickup_code`.
+
+Not committed, not pushed. Not exercised against a live backend or a browser.
+
+---
+
+## 2026-09-06 — Dashboard: four manual actions, flat list, day filter (uncommitted)
+
+Follow-on from the same day's ABANDONED diagnosis, which found the `testers`
+roster EMPTY in prod — so auto-advance and auto-pickup have never fired there
+and every order is driven by hand. This makes the dashboard the primary control
+surface and removes its last dependence on the roster.
+
+### Delivered — verify_pickup, not a status write
+
+`POST /api/v1/testing/orders/{id}/deliver` calls
+`CarevoService.verify_pickup(db, order.id, order.pickup_code, order.outlet_id)`
+— byte-for-byte what `maybe_auto_pickup` already does, and what the owner_app
+counter scan does. COMPLETED, `PICKUP_VERIFIED`, the customer broadcast and the
+prediction outcome all happen because verify_pickup did them.
+
+`can_deliver` = `status in _LIVE_STATUSES` **and** a pickup_code exists.
+`_LIVE_STATUSES` is IMPORTED from carevo_customer.service, not copied — it is
+the same set verify_pickup itself tests, so the button and the endpoint cannot
+drift.
+
+**Why the gate is server-side, and it matters more here than for Ready:**
+verify_pickup treats a wrong code OR a non-live status as a FAILED ATTEMPT —
+`failed_attempts += 1`, and `is_locked = True` on the third, after which the
+order raises 423 forever. An ungated stale button would permanently brick real
+orders. There is a test that a refused Deliver costs zero attempts.
+
+### Flat list + day filter
+
+`active_orders` is now flat across all outlets, `ORDER BY created_at DESC`, and
+filtered to one IST calendar day (`day=YYYY-MM-DD`, default today IST). The page
+no longer groups by outlet; `outlet_name` became a column. The page does NOT
+re-sort — re-deriving "newest" client-side would be a second definition free to
+disagree with the server's.
+
+Gotcha worth remembering: `CAST(:day AS date)` makes asyncpg infer the bind as a
+`date`, so passing the 'YYYY-MM-DD' **string** fails with
+`'str' object has no attribute 'toordinal'`. Bind `date.fromisoformat(day)`.
+
+Still non-terminal-only, so an older day shows what is STILL live from that day,
+not a history of it. Given the 86 abandoned orders found earlier, an old day
+will usually look empty — flagged to the user, not silently widened.
+
+### OTP after Delivered — the assumption was wrong
+
+Traced, not assumed. `pickup_screen.dart:457` `status?.isCompleted`, straight
+from polling; `_PickupCodeCard` renders `completed` at :904-933. The OTP does
+**NOT** disappear. It stays on screen, struck through (`TextDecoration
+.lineThrough`), label flips PICKUP CODE -> COLLECTED, plus a COLLECTED stamp —
+deliberate: "kept as a record, but it can no longer be used". Identical for all
+three completion paths because the screen only ever sees the polled status.
+Zero client changes needed. Tests assert the strike-through, with a READY
+control proving the difference is the status.
+
+### Tests — backend 284, dashboard_app 27, customer_app 332; 0 failures
+
+Backend +15: flat newest-first interleaved across two outlets (a second outlet
+is inserted so clustering-by-restaurant would fail); day filter subset both
+ways; default day = today IST; malformed day -> 422; can_deliver over exactly
+_LIVE_STATUSES and false without a code; deliver -> COMPLETED + PICKUP_VERIFIED
++ pickup_verified_at; drops off the list; from READY; **refused Deliver costs no
+failed attempt**; 404; 401. Plus a `TestNoRosterDependency` class that DELETEs
+all testers and forces `AUTO_ADVANCE_ROSTER_ORDERS=False`, then drives
+Approve -> Approve -> Ready -> Delivered end to end and asserts READY did not
+self-complete.
+
+dashboard_app +8, customer_app +2.
+
+Not committed, not pushed. Not exercised against a live backend or a browser.
+
+---
+
+## 2026-09-06 (later) — The day view shows the whole day (uncommitted)
+
+Reverses the "drops off the list" behaviour deliberately kept in the previous
+entry, now that the day filter exists to make it safe.
+
+### The query change
+
+`TestingService.active_orders`, one clause deleted:
+
+```sql
+-- before
+WHERE co.status NOT IN ('COMPLETED','CANCELLED','ABANDONED')
+  AND (co.created_at AT TIME ZONE 'Asia/Kolkata')::date = CAST(:day AS date)
+
+-- after
+WHERE (co.created_at AT TIME ZONE 'Asia/Kolkata')::date = CAST(:day AS date)
+```
+
+The day is now the whole filter. `ORDER BY co.created_at DESC` unchanged. Same
+rule on every day — today included — rather than special-casing past days.
+
+Why it matters beyond tidiness: past the 45-minute pickup TTL, a past day under
+the old filter showed *nothing*, and an order swept to ABANDONED vanished from
+the one surface being watched. That is how the 86 lost orders diagnosed earlier
+today became invisible.
+
+### Actions on finished rows
+
+No new gate needed and none added. `_APPROVABLE_STATUSES`, `_READYABLE_STATUSES`
+and `_DELIVERABLE_STATUSES` (= `_LIVE_STATUSES`) and
+`CarevoService.REJECTABLE_STATUSES` contain no terminal status, so all four
+can_* flags are already False for COMPLETED/CANCELLED/ABANDONED. Verified by
+test rather than by reading.
+
+### UI
+
+`.pill.COMPLETED` and `.pill.CANCELLED/.ABANDONED` added — deliberately dimmer
+than the live pills so done vs in-play reads at a glance. `tr.done .otp` strikes
+the spent code through, mirroring the customer's own ticket. Count line is now
+"N orders · M still active". The client-side `DONE` list is presentation ONLY —
+a test asserts buttons still come solely from the server's can_* flags, so a
+status missing from that list could never surface a live button on a dead order.
+
+### Tests — backend 288, dashboard_app 30; 0 failures
+
+Two existing tests INVERTED on purpose (they asserted the old disappearance):
+rejected and delivered orders now stay on their day as CANCELLED/COMPLETED with
+all four flags False.
+
+New backend +4: a past day returns COMPLETED + ABANDONED + CANCELLED + PREPARING
+together, still newest-first across the mixed set; today shows finished orders
+too (no "today = live only" regression); each terminal status offers no actions;
+an empty day is `[]`, not an error. dashboard_app +3 on the presentation.
+
+Not committed, not pushed. Not exercised against a live backend or a browser.
+
+---
+
+## 2026-09-06 (later still) — One-time backlog cleanup: 11 live orders delivered
+
+DATA OPERATION against prod Neon. No code changed, nothing committed.
+
+### Target set
+
+11 orders in PAID/RECEIVED/PREPARING/READY (8 PREPARING, 2 READY, 1 RECEIVED).
+All had a pickup_code, none locked, all payment_status=PAID. The 98 CREATED
+orders were excluded as instructed and untouched, as were 86 ABANDONED / 35
+COMPLETED / 3 CANCELLED.
+
+### The TTL collision — reported BEFORE executing, user authorised the fix
+
+9 of the 11 were already past the 45-minute TTL. `verify_pickup`'s FIRST action
+is `_expire_stale_pickups(order_id=...)`, and the ABANDONED early-return at
+service.py:1545 fires before the code is even compared — so running the brief
+verbatim would have produced **2 COMPLETED and 9 ABANDONED**, the opposite of
+the intent. Stopped and asked; user chose "refresh updated_at, then verify".
+
+Per order: `UPDATE customer_orders SET updated_at = now()` (committed) to put it
+back inside the window, then the real
+`CarevoService.verify_pickup(db, id, own pickup_code, outlet_id)`. Fresh session
+per order so one failure could not poison the next. No retries.
+
+### Result — 11/11, zero skipped, zero failed
+
+Every one verified afterwards: status COMPLETED, `pickup_verified_at` set, and
+exactly one `PICKUP_VERIFIED` event — proof it went through the real
+verification and not a status write. PICKUP_VERIFIED total 34 -> 45.
+No target ended locked or with failed_attempts > 0.
+
+Re-query: **0 orders remain in PAID/RECEIVED/PREPARING/READY.**
+Status mix now: CREATED 98, ABANDONED 86, COMPLETED 46 (was 35), CANCELLED 3.
+
+### Notes for next time
+
+* No customer push landed: COMPLETED does map to "Picked up — Enjoy!", but all
+  11 customers have `fcm_token = NULL`. Checked before executing, not assumed.
+* No lockout risk existed: the ABANDONED early-return does not call
+  `record_pickup_miss`, so failures on this path cannot burn an outlet's budget.
+* The 98 CREATED orders are still there and are NOT reachable by this cleanup —
+  they were never paid, have no pickup_code, and the TTL sweeper ignores them
+  (CREATED is not in `_LIVE_STATUSES`). They will sit there indefinitely.
+
+---
+
+## 2026-09-06 (final) — 98 unpaid CREATED orders cancelled
+
+DATA OPERATION against prod Neon. No code changed, nothing committed. Completes
+the backlog cleanup started with the 11 live orders earlier the same day.
+
+### Diagnosis first (Task 1), then explicit user go-ahead
+
+98 orders in CREATED, all `payment_status='PENDING'`. Three independent probes
+agreed none was ever paid: 0 with a non-PENDING payment_status, 0 with a
+pickup_code, 0 with a successful payment transaction (all 98 gateway txns sit at
+status='CREATED').
+
+11 tables carry an FK to customer_orders. These 98 held: customer_order_items
+136, payment_transactions 98, order_events 92 (across 88 orders),
+promotion_redemptions 3. `order_events.order_id` is ON DELETE NO ACTION and the
+table carries `order_events_immutable` (BEFORE DELETE **OR UPDATE**) plus
+`order_events_no_truncate` — so deletion was impossible and cancellation was the
+only route. Confirmed, not assumed.
+
+### Why NO ORDER_REJECTED event was written
+
+1. Nothing reads it. Written only by `reject_order`; no production query, report
+   or dashboard consumes it — the only readers in the repo are two tests.
+2. The invariant already did not hold: of the 3 pre-existing CANCELLED orders,
+   only ONE had an ORDER_REJECTED event.
+3. Writing it would be actively WRONG. Per reject_order's own docstring the event
+   means "a human saying no to money already taken — the only one of the three
+   that obliges a refund". These were never paid, and order_events is immutable,
+   so the false claim could never be corrected.
+
+User confirmed: cancel without the event.
+
+### Risks reported before executing (all still open, none blocking)
+
+* **A late webhook can resurrect a cancelled order.** `mark_paid` guards ONLY on
+  `payment_status == 'PAID'` — it never checks `order.status` and sets
+  `status='PAID'` unconditionally (service.py:1064-1067). Same exposure exists
+  for reject_order's own cancellations, so this write is no worse. All 98 still
+  have a pending gateway txn.
+* **4 CREATED orders carried staff-tap events** (3x ORDER_READY, 1x
+  ITEM_UNAVAILABLE, all Annapoorna, actor=staff/tap) — staff acted in owner_app
+  on unpaid orders without the status ever moving. Pre-existing quirk.
+* **3 promotion redemptions are never released on cancel** (₹20/₹32/₹19, two
+  against a per-customer cap of 1). No code path exists to release them.
+* `_APPROVABLE_STATUSES` includes CREATED, so the dashboard's Approve button was
+  appearing on unpaid orders. Cancelling removed that footgun.
+
+### Execution + result — 98/98, 0 skipped, 0 failed
+
+Per order, individually logged: `UPDATE customer_orders SET status='CANCELLED',
+updated_at=now() WHERE id=$1 AND status='CREATED' AND payment_status='PENDING'`.
+The guard means a late settlement between read and write would match zero rows
+and leave that order alone rather than clobber it.
+
+Verified independently afterwards: all 98 CANCELLED, none gained a pickup_code,
+none had payment_status change; dependent rows intact (items 136, events 92,
+txns 98, redemptions 3 — unchanged); **zero events written by the operation**;
+ORDER_REJECTED still 1 DB-wide.
+
+Delta across every status: CREATED 98 -> 0, CANCELLED 3 -> 101. ABANDONED 86 and
+COMPLETED 46 both unchanged. Total orders 233 before and after.
+
+Prod now has **0 orders in CREATED and 0 in PAID/RECEIVED/PREPARING/READY** —
+the backlog is fully cleared and every new order is driven manually from the
+dashboard. The 98 share an `updated_at` fingerprint of 2026-09-06 15:16:02-10Z,
+which is the only in-DB marker of this operation (no event was written).
+
+---
+
+## 2026-09-06 (final) — mark_paid can no longer resurrect a finished order
+
+Closes the gap flagged during the two cleanups earlier today. CODE change, not
+data. Not committed.
+
+### Task 1 — the exact gap
+
+`mark_paid` had TWO early returns and NEITHER looked at `order.status`:
+
+```python
+if gateway_payment_id: ... if existing: return   # dedupe on the PAYMENT id
+if order.payment_status == "PAID": return        # dedupe on the PAYMENT status
+...
+order.payment_status = "PAID"
+order.status = "PAID"                            # unconditional
+```
+
+Both key on the payment, never the order. So any order whose payment had not
+settled could be driven to PAID from ANY status, minting a pickup code.
+
+Prod exposure at the time: the 98 freshly-cancelled orders (all
+payment_status=PENDING, all still holding a pending gateway txn) plus the 7
+PENDING ABANDONED ones. The ~180 terminal orders that WERE paid were already
+protected by the second return — which is also why COMPLETED retries are the
+common case and must stay silent.
+
+### Task 2 — the guard, and why it is THIRD
+
+`_TERMINAL_STATUSES = {CANCELLED, COMPLETED, ABANDONED, PICKED_UP}` added to
+carevo_customer/service.py. The check sits AFTER both idempotency returns, which
+is load-bearing: a duplicate webhook with a known payment id still short-circuits
+on the first, and a retry against an already-PAID order still returns on the
+second — including when it has since been COMPLETED. Only an order that is
+finished AND unpaid reaches the guard, which is exactly the resurrection case.
+
+Refusal RETURNS THE ORDER UNCHANGED and logs `logger.warning("mark_paid
+REFUSED: ...")` with order id, status, gateway_payment_id, method and raw
+payload. It does not raise: the webhook caller must answer the gateway 200 or it
+retries forever.
+
+Two consequences handled:
+* **webhook** (controller.py) — after mark_paid it now checks
+  `payment_status != "PAID"` and returns early with `applied: False`. Without
+  this it would still run auto_receive and push the OUTLET about a new order,
+  leaking the resurrection through the side effects even though the status held.
+* **`mark_order_paid_by_staff`** — raises 409 instead. The two callers need
+  opposite things from a refusal: the gateway needs a 200, a human who just
+  tapped "mark paid" needs to be TOLD it did not happen.
+
+### Task 3 — CREATED is no longer approvable
+
+`_APPROVABLE_STATUSES` {CREATED, PAID, RECEIVED} -> {PAID, RECEIVED}. Searched
+first: no caller, test or flow relied on approving a CREATED order (every
+existing `can_approve is True` assertion uses the PAID fixture).
+
+Hiding the flag was NOT enough — `approve_order` had no state gate at all, and
+`advance_status` maps CREATED straight to RECEIVED, so the route would still
+push an unpaid order into the kitchen. Added the 409 gate in `approve_order`,
+same discipline as ready_order/deliver_order: the flag decides what is SHOWN,
+the gate decides what is ALLOWED.
+
+### Tests — backend 301 (+13), dashboard_app 30; 0 failures
+
+New `tests/test_api_payment_resurrection.py` (11): each of CANCELLED/COMPLETED/
+ABANDONED refused, unchanged, no pickup code minted, warning logged carrying the
+order id + claimed payment id (asserted via caplog, so "not silent" is pinned);
+no payment_transaction is marked PAID either; staff tap gets 409.
+Idempotency half: repeat webhook on a PAID order unchanged and does NOT re-mint
+the code; a COMPLETED order's retry does not trip the guard and logs NO warning;
+duplicate gateway_payment_id still short-circuits; an ordinary unpaid order
+still pays normally.
+
++2 in test_api_testing_actions.py: can_approve False for CREATED, and the
+endpoint 409s while leaving the order in CREATED.
+
+NOTE: caplog needs the logging plugin, so these fail under `-p no:logging`.
+
+---
+
+## 2026-09-07 — Autofilled phone numbers were silently corrupted
+
+### Task 1 — normalisation already existed and was already correct
+
+`normalisePhone` (login_screen.dart:20) has been there all along, and both
+readers go through it — `_valid` (:68) and `_submitPhone` (:78). No second path:
+the OTP resend uses `auth.pendingPhone`, the already-normalised value.
+
+So the raw string was NOT sent as-is. The function was fine. **It was being
+handed input that had already been destroyed.**
+
+### The actual bug — the field, not the function
+
+```dart
+maxLength: 10,
+inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+```
+
+Autofill delivers the whole string in ONE edit. "+91 98765 43210" ->
+digitsOnly strips the plus and spaces -> "919876543210" -> maxLength truncates
+to the FIRST ten -> **"9198765432"**.
+
+That is a well-formed 10-digit number, so normalisePhone accepted it and
+returned +919198765432. The OTP went to a real but WRONG person, and nothing on
+screen looked wrong. This is the "+9198765432" case from the report — it is the
+OUTPUT of the corruption, not something a user typed.
+
+### The fix
+
+Field now preserves what normalisePhone needs: `maxLength: 18` and
+`FilteringTextInputFormatter.allow(RegExp(r'[0-9+\s\-()]'))`. Letters are still
+refused at the field.
+
+normalisePhone hardened too:
+* strips EVERY non-digit (`\D`), not the old hand-listed `[\s\-().]` — a stray
+  letter used to survive into the length check and fail a good number;
+* captures `hadPlus` BEFORE reducing to digits. This is the one bit that cannot
+  be recovered afterwards and it decides the nastiest case: `+9198765432` has a
+  plus, so 91 is a country code WHATEVER the length, leaving 8 subscriber
+  digits -> invalid. The identical digits WITHOUT a plus (`9198765432`) are a
+  legitimate number. Same digits, opposite verdict, because the input said
+  something different;
+* over-long input keeps the LAST ten — a garbled prefix corrupts the front,
+  never the subscriber number at the end.
+
+### Tests — 360 passing (+22), 0 failures
+
+New `test/phone_normalisation_test.dart`. Nine accepted forms, the truncation
+case, the without-plus counterpart, five too-short forms, junk-stripping, and
+last-ten fallback.
+
+Crucially it is NOT only a pure-function test — those would all have passed
+throughout the bug, since the function was never wrong. Four widget tests drive
+a real TextField the way autofill does, including one that **rebuilds the OLD
+`maxLength: 10` + digitsOnly config and asserts it produces "9198765432"** — so
+the regression is demonstrated, not just asserted away.
+
+Not exercised on a device with real autofill — the tests reproduce autofill's
+defining behaviour (whole string in a single edit), which is the mechanism that
+broke it, but providers vary in what they hand over.
+
+---
+
+## 2026-09-07 — Menu price sort shipped; Recommended hidden
+
+Acting on the sort/rating data audit from the same day. Built only what has a
+backing signal; nothing was faked.
+
+### Interpretation
+
+"The three that work" read as the audit's own buildable list: **Nearest**,
+**Best Offer**, **menu-item price**. The first two were ALREADY live on the
+restaurant list (OutletSort.nearest / .bestOffers) and needed no work — so the
+only genuinely unbuilt item was the in-restaurant price sort.
+
+### Built
+
+`MenuSort` enum in menu_screen.dart — `featured` (default, the restaurant's own
+order), `priceLowHigh`, `priceHighLow`. Sorts on `MenuItem.basePrice`, the exact
+figure MenuItemCard renders, so what the customer sorts by is what they read;
+zone tiers (normal/ac/lounge) are resolved server-side so no second price can
+disagree. `apply` copies rather than sorts in place, so Featured can always be
+returned to. Filter runs BEFORE sort — ordering must be over what is shown, or
+"cheapest" names an item that is not on screen.
+
+Rendered as chips in the existing veg-filter row, separated by a divider: two
+different questions ("which items?" / "in what order?").
+
+**No rating sort**, in the menu or the list: `menu_items` has no rating column
+and the schema has no ratings table at all. A test pins MenuSort to exactly
+three values so a future addition has to confront that.
+
+### Hidden
+
+`OutletSort.hidden` flag added; `recommended` is the only one set. The class doc
+argues for SHOWING blocked options ("Most Reviewed" tells you reviews are
+intended) — Recommended is the exception because it promises a personalisation
+judgement with no data and no opt-in behind it. Value KEPT rather than deleted:
+`blockedBy` is the record of why it does not exist, and deleting the constant
+would break anything that persisted the name. Sheet now iterates
+`OutletSort.visible`.
+
+### Three EXISTING tests updated — they encoded the old policy
+
+Not incidental churn; the policy deliberately changed:
+* filter_dropdown_and_card_size: "sheet with ALL ten options" -> every VISIBLE
+  option, plus an explicit assertion Recommended is absent;
+* ui_batch_2026_08_24b: "all ten options are reachable" -> same treatment;
+* ui_batch_2026_08_24b: "seven are not [available]" -> six, since Recommended
+  left comingSoon.
+
+The enabled three are unchanged in all of them.
+
+### Tests — 375 passing (+15 new), 0 failures
+
+New `test/menu_sort_and_hidden_recommended_test.dart`: both price directions,
+featured preserved, no-mutation, tied prices, empty menu, MenuSort has exactly
+three values with no rating; Recommended hidden and the ONLY hidden one, absent
+from visible/comingSoon but kept in values with its reason; Nearest nulls-last;
+Best Offers by count; enabled == the three backed options; and a blocked option
+leaves order untouched rather than faking one.
+
+Not exercised on a device — the chip row's layout on a narrow screen is worth
+an eyeball.
+
+---
+
+## 2026-09-07 — Checkout keyboard dismissal (coupon field)
+
+### The reported bug did not exist; a real one did
+
+Brief was a "PhonePe/UPI keypad" on the payment page that wouldn't dismiss, and
+a "lock page" error. Traced all of it — none of that exists:
+
+* **No phone-number keypad on checkout.** Every `keyboardType` in lib/ is
+  exactly two: `TextInputType.phone` at login_screen.dart:174 and
+  `TextInputType.number` at otp_screen.dart:318. Neither is on checkout.
+* **No custom keypad anywhere, deliberately.** otp_screen.dart:19-21 records
+  rejecting one (it forfeits SMS autofill), and v2_light_screens_test.dart:138
+  actively asserts none is rendered.
+* **No "lock page".** Grepping `lock` returns only `Icons.lock_outline` —
+  decorative padlocks on the cart button and checkout's "pay securely" card.
+* The UPI/PhonePe entry being described is inside the **Cashfree Drop-in native
+  sheet** (checkout_screen.dart:369) — Flutter cannot intercept its keyboard,
+  back button or outside taps at all.
+
+No crash was found and none was invented. What WAS found: the checkout coupon
+field is a raw `TextField` (it needs the label + prefix-icon decoration) rather
+than a `NeoTextField`, so it missed every dismissal behaviour NeoTextField
+already carries — no `onTapOutside`, no `textInputAction`, no `onSubmitted`.
+All three of the requested behaviours were genuinely broken there.
+
+### Fixed
+
+* **confirm key** — `TextInputAction.done` + `onSubmitted: releaseFocus`. "Done"
+  not "Next": last field on the screen, and the coupon is validated server-side
+  at order creation, so the key's only job is putting the keyboard away.
+* **back button** — `PopScope(canPop: !_couponFocus.hasFocus)`, releasing focus
+  when it consumes the pop. Android already drops the IME on back, but the field
+  KEPT focus, so the caret went on blinking and the NEXT back popped checkout
+  out from under someone mid-coupon.
+* **tap outside** — `onTapOutside: releaseFocus`, reusing the existing helper
+  rather than a screen-level GestureDetector, which neo_text_field.dart:79-82
+  warns swallows taps meant for buttons underneath.
+
+Order/cart/payment state untouched, so checkout stays exactly resumable.
+
+Build note: extracting `_buildScaffold` lost Dart's null promotion on `outlet`
+across the parameter boundary — two `outlet!` needed where `blocked` already
+guarantees non-null.
+
+### Tests
+
+`test/checkout_keyboard_dismissal_test.dart` (6). Two things make them mean
+something: the tests push checkout onto a REAL base route, because with it as
+`home:` back can never succeed and "back doesn't leave checkout" would pass for
+the wrong reason; and focus is read from the FIELD'S own node, since
+`FocusManager.primaryFocus` falls back to the enclosing scope and reports focus
+on a screen nobody has touched. Also covers the counterpart — a second back,
+keyboard down, DOES leave — so consuming back cannot trap the customer.
+
+375 passing, 0 failures. Not exercised on a device.
+
+---
+
+## 2026-09-07 — Cold-start retry, nearby-latency profiling, error layer
+
+### Task 1 — root cause CONFIRMED, and it is not the suspected auth race
+
+The suspected cause (orders fired before the token loaded) is **ruled out**:
+`main.dart:40` does `await api.loadToken()` BEFORE `runApp`, and
+`Firebase.initializeApp()` is awaited above it. Splash then waits 900ms before
+pushing Home. The token cannot be unready.
+
+The real mechanism, measured not guessed:
+
+* backend is Render **free plan** (`render.yaml:10`), which sleeps a service
+  after 15 min idle;
+* a genuinely cold free-plan service **took 32.4s**; the same call warm took
+  **0.27s** (probed carevo-admin-dashboard, idle all day, then immediately
+  again);
+* `AppConfig.requestTimeout` is **20s**, and ApiClient had **no retry**;
+* so a cold open times out -> `catch (_)` -> "Could not reach the server."
+  (home_screen.dart), and a manual retry seconds later succeeds because the
+  server has finished booting. Exactly the reported signature.
+
+### Task 2 — fix
+
+`ApiClient.get` now retries ONCE on `NetworkException` with
+`AppConfig.coldRetryTimeout` (60s). **GET only** — retrying a POST could place
+a second order for a request that succeeded and lost its reply. A 4xx/5xx is
+NOT retried (the server answered).
+
+`_send` now throws `NetworkException(cause)` instead of flattening the error
+into `'Network error: unable to reach server. ($e)'` — that string both leaked
+a raw TimeoutException to the screen AND destroyed the type the classifier
+needs to tell offline from timeout.
+
+**This is mitigation, not a cure.** The real fix is a backend that does not
+sleep — paid instance or a keep-warm ping.
+
+### Task 3 — nearby latency: the API is NOT the slow part
+
+EXPLAIN ANALYZE against prod:
+* outlets query: **Seq Scan, 0.038 ms**, 1 buffer, 6 visible rows. An index
+  would be pointless — Postgres correctly prefers a seq scan at 8 rows.
+* offer summary: **0.101 ms**, one HashAggregate. Already batched —
+  `offer_summary_by_outlet` is explicitly anti-N+1. **No N+1 anywhere.**
+* total DB work ~0.14 ms; payload is 6 rows, ~3KB.
+
+What IS slow: **six full-size Cloudinary originals** fetched per card into a
+~76px box, via raw `Image.network` with no disk cache (no cached_network_image
+dependency). Plus the same cold start as Task 1.
+
+### Task 4 — fix
+
+`cdnThumbnail()` rewrites Cloudinary delivery URLs to
+`w_200,h_200,c_fill,q_auto,f_auto`, so the CDN resizes and picks WebP/AVIF.
+Pure string function, no new dependency. Anything not a recognisable Cloudinary
+URL passes through untouched — it can only make an image cheaper, never
+missing. Persistent disk caching deliberately NOT added: that is a dependency
+decision, and the profiling did not call for it.
+
+### Task 5/6 — error layer, wired into Home + Outlets
+
+`AppError.from(Object)` classifies into offline / timeout / server / request /
+empty / unknown with the exact specified copy; `technical` is kept for
+`logTo()` (debug builds only) and never rendered. `ErrorStateView` (full-screen)
+and `ErrorBanner` (inline, when content is already shown) render it. `empty`
+carries no Try Again — the request worked.
+
+Removed `_HomeErrorBanner`, which hand-wrote its own wording and appended the
+raw exception ("Couldn't load your orders. $message").
+
+### Tests — 397 passing (+22 new), 0 failures
+
+One EXISTING test updated: greeting_and_offers_filter expected the button label
+'Try again'; the shared component uses 'Try Again' per spec. Intent unchanged,
+and strengthened to assert the 500 now classifies as the server category.
+
+Committed. Not exercised on a device.
+
+---
+
+## 2026-09-07 (later) — Discover is skipped; the city picker moves onto the list
+
+### The route
+
+"Find restaurants near you" on Home now pushes OutletsScreen directly.
+It used to push LocationScreen (Discover), which asked "where are you?"
+and pushed OutletsScreen with the answer — a full stop in front of the
+thing just asked for. Both CTA call sites go through one `_openDiscover`,
+so it was one change.
+
+LocationScreen is UNTOUCHED and still builds; nothing routes to it.
+`git diff` on location_screen.dart and area_picker.dart is empty.
+
+### What the list had to grow
+
+* `autoLocate`, defaulting to FALSE. That default is load-bearing: 11
+  existing test sites build `const OutletsScreen()` and several of their
+  provider trees have no LocationService, so an unconditional arrival
+  prompt would have thrown in some and opened a sheet over others.
+  Only the Home CTA opts in.
+* Arrival flow reuses the EXISTING outcome handling from
+  `_setRadiusMode`/`_selectSort` — settings dialog for deniedForever, a
+  one-line SnackBar otherwise. Granted takes the radius path; every
+  refusal opens the city picker.
+* `OutletsScreen.nearestCity` — city of the closest outlet carrying a
+  `distance_km`. This is the stand-in for a reverse geocode and is
+  deliberately not one: no dependency, no extra request, and the answer
+  is always a city the picker can offer because it came off an outlet
+  that exists. Outlets with a null distance are SKIPPED, not treated as
+  zero — that field is null for every row when the request had no
+  origin, so nulls-first would "detect" whatever came back first.
+* `_CityPickerSheet` wraps the existing AreaPicker unchanged, holds a
+  DRAFT selection (ticking three cities must not be three refetches),
+  and caches areas on the parent.
+* `_applyCities` mirrors `_setRadiusMode`: cities replace the radius.
+  lat/lng SURVIVE — an origin is not a filter, and dropping it would
+  lose distance_km and silently break the Nearest sort.
+
+### Backend: nothing needed
+
+`list_outlets` already took `city: Optional[list[str]]` and returned the
+union via `lower(city) = ANY(...)`; OutletsScreen already accepted a
+`Set<String>`. The multi-select conversion was done in an earlier pass.
+
+### Label strings kept
+
+`In A & B` / `In N cities` / `Closest to you` / `All restaurants` are
+unchanged — ui_batch_2026_08_24b asserts the first. Only `Near {city}`
+is new.
+
+### Tests — 419 passing (+22), 0 failures
+
+One real bug found by the new tests: the added chevron pushed
+'In Bengaluru & Chennai' 2.2px past a 350px phone. The label is now
+Flexible + ellipsis, which it needed anyway.
+
+---
+
+## 2026-09-07 (later still) — OutletsScreen is one scroll region, search pinned
+
+### Before
+
+A Column of five fixed children over an `Expanded(ListView)`: header,
+active-order strip, search row, result count and offers chip all held
+their space permanently; only the cards scrolled. Two consequences,
+both now removed rather than mitigated:
+
+* the active-order strip was capped at 38% of the viewport around an
+  internally-scrolling ListView, because every pixel it took came out
+  of the list's — three concurrent orders squeezed the restaurant list
+  to almost nothing;
+* the RefreshIndicator wrapped only the SUCCESS branch, so pulling did
+  nothing in the error, empty and filtered-to-nothing states — the
+  three a customer would most want to refresh from.
+
+### After
+
+One `CustomScrollView` with `AlwaysScrollableScrollPhysics`, one
+RefreshIndicator around all of it, and the search row pinned via
+`SliverPersistentHeader`.
+
+NOT SliverAppBar: that is an app bar — leading/title/actions layout,
+toolbar semantics, back-button handling — and this Scaffold already has
+a real AppBar ('Nearby'). A second would put two toolbars on one screen
+and announce itself as one to a screen reader. SliverPersistentHeader is
+the primitive underneath: pinning, nothing else.
+
+Sliver order is UNCHANGED from the old Column, so the screen reads
+identically at rest; the field just stops scrolling away.
+
+Delegate extent is stated in parts (62 row + 3 shadow + 6 headroom + 12
+padding) because a delegate must declare its height before its child is
+laid out. The row is `Align`ed to the top rather than stretched, so a
+mismatch shows as space, not a RenderFlex overflow. Guessing 56 (copied
+from _FilterButton's comment) was 3px short and broke 81 tests.
+
+Placeholders are `SliverFillRemaining(hasScrollBody: false)`, and
+ErrorStateView gained a `scrollable` flag (default true, unchanged
+standalone) set false inside the sliver — its own SingleChildScrollView
+would otherwise win the drag and the RefreshIndicator would never fire.
+
+### Three real bugs found on the way, all pre-existing
+
+1. Stale closure: `shouldRebuild` does not compare callbacks, so
+   `onFilterTap: () => _openSortSheet(all)` kept the empty first-frame
+   list forever — every sort looked distance-less and asked for a
+   location it did not need. Now reads a `_loaded` field at tap time.
+2. `setState(() => _future = _load())` returns the assigned Future out
+   of the closure, which setState asserts on. Unreachable while the
+   only RefreshIndicator sat in the success branch. Block body now.
+3. Unhandled async error: setState only SCHEDULES a rebuild, so a
+   request rejecting before that frame had no listener — pull-to-refresh
+   against a down backend reported an unhandled zone error. `_load` now
+   attaches an observing catchError; the builder still gets the error.
+
+### Known trade-off
+
+The result count is no longer pinned — it scrolls with the content. That
+follows from pinning exactly one thing, but partly undoes its original
+reason for being under the field (visible while typing, above the
+keyboard). Recorded in a test rather than papered over. If it should
+ride along, it belongs inside the header delegate.
+
+### Tests — 440 passing (+19), 0 failures
+
+---
+
+## 2026-09-07 (evening) — The position fix is bounded
+
+### Found by running it, not by reading it
+
+Ran the app on the Pixel 7 emulator against a local backend (prod Neon
+DB, read-only) to check the new outlet screen. Everything verified —
+Home goes straight to the list, the picker auto-opens on refusal,
+`?city=Bengaluru&city=Chennai` goes out as repeated params, the search
+bar pins while everything else scrolls, pull-to-refresh preserves the
+filter, zero Flutter exceptions.
+
+But the location chip spinner ran for about a minute. Cause:
+`Geolocator.getCurrentPosition` was called with NO time limit. A grant
+is permission to ask, not a guarantee of an answer — the emulator had
+no GPS source, so nothing below ever completed and the spinner had no
+end state.
+
+### Fix
+
+`LocationService.fixTimeout = 15s`, applied twice at the same deadline:
+
+* `timeLimit:` in LocationSettings — geolocator's own, the one that
+  matters in production, because it lets the platform tear down the
+  native listener rather than leaving it running behind an abandoned
+  Future;
+* a Dart `.timeout()` — because `timeLimit` is honoured per platform
+  implementation, so one that ignores it reintroduces the exact hang.
+  This bound is ours and cannot be ignored.
+
+Either throws TimeoutException, which the ALREADY PRESENT `catch (_)`
+turns into `LocationOutcome.error`. No new outcome, no new branch;
+every caller's "could not get your location" path applies unchanged.
+
+15s and not 10 because timing out is not free — the customer loses the
+auto-detected city and picks one by hand. A slow-but-real fix is worth
+waiting for. Tolerable only because the arrival flow has the list
+loaded behind the spinner: nothing is blocked, only the chip is busy.
+
+Constant lives in LocationService, not AppConfig — it bounds a sensor,
+not a request.
+
+### Tests — 444 passing (+4), 0 failures
+
+The fake's `hangOnPosition` returns a Completer future that never
+completes and DELIBERATELY ignores timeLimit. A fake that honoured it
+would only prove geolocator works; hanging proves the bound is ours.
+Covers: resolves to error just after the deadline (and is still pending
+one second before it), is not recorded as a refusal, does not latch the
+in-flight de-dup, and opens the city picker on the outlet list.
+
+Not exercised on a device — the emulator still runs the pre-fix build.
+
+---
+
+## 2026-09-08 — Forgot password was a dead end at both ends
+
+### Diagnosis
+
+owner_app's flow was wired correctly and reached the right route
+(`POST /api/v1/auth/password/forgot`, mounted at main.py:138). Nothing
+was wrong with the request. Two things downstream made it useless.
+
+**1. No mail transport existed.** `AccountService._deliver`
+(account/service.py) had a flag check and nothing behind it: with
+`EMAIL_ENABLED` false it logged "EMAIL SKIPPED"; with it TRUE it logged
+`"EMAIL_ENABLED=true but no transport is implemented"` and returned
+`"skipped"` anyway. There was no branch that sent. A token was minted
+and committed on every request and no owner ever received one — and the
+endpoint answered "we've sent reset instructions" each time.
+
+**2. Nothing could redeem a token.** `POST /auth/password/reset` existed
+server-side (account/controller.py:84) and had NO caller anywhere in
+owner_app. Grepping the app for "reset" found only copy strings. So even
+a delivered code had nowhere to be typed.
+
+Either alone breaks it; both together meant no owner could ever recover
+an account by email, on any deploy, however the config was set.
+
+### Fix
+
+* `_deliver` speaks SMTP — stdlib `smtplib` + `EmailMessage` over
+  `asyncio.to_thread`, so no dependency was added to a constrained
+  free-tier image and the single uvicorn loop is not blocked on a remote
+  mail server. Returns `sent` | `skipped` | `failed` and NEVER raises.
+* Config: `EMAIL_SMTP_HOST/PORT/USER/PASSWORD/STARTTLS/TIMEOUT`.
+  `email_configured()` requires the flag AND a host — `EMAIL_ENABLED`
+  alone was precisely the trap the old code fell into.
+* **Commit before send.** Delivery used to be awaited BEFORE
+  `db.commit()`, so a throwing transport rolled back the very token it
+  was carrying and the owner got a 500. Same reorder in `set_email`.
+* **New: ResetPasswordScreen.** Redeems the code by TYPING it. A tapped
+  link would need a web landing page or deep-link association; neither
+  exists, and a typed code needs neither. Reached from "I have a code"
+  on the forgot panel.
+* **It stops claiming sends it cannot make.** `email_configured` is a
+  property of the DEPLOY, identical for every username, so it is safe on
+  a public endpoint. When false the panel says so and routes to the
+  admin queue instead of promising mail.
+
+`maybePop` rather than a fixed two-level pop: the old draft assumed a
+stack shape the screen cannot see and threw when opened as a first route.
+
+### Known, NOT fixed — deliberate
+
+The endpoint's docstring claimed it "cannot be used to enumerate
+accounts". That is false and was false before this change: `email_hint`
+is non-null only for a real account with an address, and
+`needs_admin_help` distinguishes a real account without one. A caller CAN
+tell an existing username from an invented one. Closing it means dropping
+the masked hint — which is a deliberate UX affordance (which inbox do I
+check?), so removing it is a product call, not a code fix. The docstrings
+now describe the real behaviour instead of asserting the opposite.
+
+### Tests — backend 314 (+13), owner_app 58 (+13)
+
+Backend 21 failures, unchanged from baseline and identical in
+distribution (test_api_testing_actions / testing_dashboard /
+promotions_account / owner_queue_paid_gate) — all pre-existing and
+unrelated.
+
+The SMTP conversation is stubbed at `_send_smtp_blocking`, not at
+`_deliver`, so the real gate/to_thread/failure handling stays in the
+path. Covers: the mail reaches a transport at all (the assertion that
+failed before the fix), the code it carries redeems, the owner can then
+actually sign in and the old password is dead, single-use, expiry, and a
+dead mail server leaving the token intact. App side: the code is POSTed
+to /auth/password/reset (nothing called it before), an unconfigured
+server offers no code entry, and a configured one offers it EVEN WITH A
+NULL HINT — hiding it there would have leaked which usernames are real.
+
+---
+
+## 2026-09-08 — Orders is the landing tab; Menu moves to the centre
+
+### Before
+
+`home_screen.dart`: `_index = 0` was Menu & Outlet, and the bar read
+Menu(0), Orders(1), Offers(2). The app opened on the dish editor.
+
+### After
+
+Orders(0), Menu(1), Offers(2), landing on Orders. Orders is the only
+time-critical tab — a queue of paying customers — so it is what a
+picked-up phone should show. Menu takes the centre slot, reachable by
+thumb from either side and the tab the owner returns to most while
+editing dishes.
+
+### The part that was actually risky
+
+The index was a bare integer at SIX sites: the initial value, the push-tap
+jump, the snackbar "View" jump, the app-bar outlet-visibility toggle, the
+FAB switch and the destination list. Reordering by hand means finding all
+six, and a missed one puts a control on the wrong tab rather than failing
+loudly — "Add dish" would simply have appeared on Orders.
+
+Replaced with `_ordersTab` / `_menuTab` / `_offersTab`, so the order is
+decided in one place, and added tests asserting each per-tab control
+(dish FAB, offer FAB, visibility switch) is on ITS tab and absent from
+the landing tab.
+
+### Tests — 65 (+7), 0 failures
+
+New `home_navigation_test.dart`: opens on Orders, Menu is the centre
+destination (asserted both as the literal list and positionally),
+selectedIndex tracks taps, every tab shows its own section title, and the
+three per-tab controls moved with their tabs.
+
+Four existing tests hardcoded the old landing tab and were updated, not
+weakened:
+
+* `new_order_alert_test` "the banner jumps to the Orders tab" now
+  switches to Menu FIRST — with Orders as the default the assertion would
+  have passed while "View" did nothing at all.
+* Two alert assertions were scoped to the banner. Orders being visible
+  means the card underneath carries the same id and total, so unscoped
+  finders matched twice and could have passed on the card alone.
+* `outlet_name_test` × 3: landing section is now Orders; the tab-switch
+  test targets `NavigationDestination` rather than bare text, since the
+  section label and tab label are the same word on the current tab.
+
+---
+
+## 2026-09-08 — "Use current location" on outlet settings
+
+Customers sort outlets by distance. `outlets.latitude/longitude` existed
+in the schema (and in the customer app's sort) but the owner had no way
+to set them — the pin could only be filled by hand in the database.
+
+### Reuse, not reimplementation
+
+`owner_app/lib/services/location_service.dart` is a BYTE-IDENTICAL copy
+of customer_app's file (`diff` clean), and `geolocator` is pinned to the
+same `^13.0.2`. That file already carries hard-won behaviour: the
+one-prompt latch, the `userInitiated` bypass for a deliberate tap, the
+doubled 15s bound on the position fix, and the deniedForever/settings
+hand-off. Rewriting it would have meant re-learning all four.
+
+Registered app-wide in main.dart, as customer_app registers it — the
+latch is app-wide bookkeeping and a per-screen instance would reset it
+and re-raise the OS dialog.
+
+Manifest gains ACCESS_FINE_LOCATION + ACCESS_COARSE_LOCATION.
+FOREGROUND ONLY, matching customer_app: no background permission, since
+the only caller is a button the owner is looking at when they tap it.
+
+### Backend
+
+New `PATCH /pos/outlet/location`, alongside the existing `/outlet/hours`
+and `/outlet/image` setters and following their pattern exactly: no
+outlet_id parameter (scoped to the caller's own account, so one owner
+cannot move another's pin onto their street and hijack the distance
+sort), and it returns the FULL `_load_owner_outlet` shape so moving the
+pin does not blank the hours.
+
+`latitude`/`longitude` added to that shared loader — cast to float,
+since DECIMAL comes out of the driver as Decimal and would not survive
+JSON encoding. Both coordinates are required: half a pair would leave a
+pin at (lat, 0), a real point in the Gulf of Guinea that the sort would
+happily use. Range is checked at the schema edge and again in the
+service.
+
+No migration — the columns already exist.
+
+### UI
+
+Saved the instant a fix lands, not behind a Save: the owner is standing
+in the restaurant when they tap, and a second step is a second chance to
+get it wrong. Each failure outcome gets its own words — location off,
+refused, blocked, no fix — because they are four different problems with
+four different next actions. A permanent refusal offers app settings
+rather than a retry the OS would silently swallow.
+
+### Tests — backend 328 (+14), owner_app 75 (+10)
+
+Backend failures still 21, and the failing SET is byte-identical to the
+pre-change baseline.
+
+Geolocator is faked by swapping `GeolocatorPlatform.instance`, the same
+way customer_app fakes it, so the REAL service stays in the test. Covers
+the pin reaching the endpoint, an already-pinned outlet offering
+"Update", a second tap after a denial re-asking, neither control
+clobbering the other, and every no-fix path saving nothing. Backend
+covers scoping (a second outlet stays untouched), out-of-range refusal,
+and both-coordinates-required.
+
+Test-only wrinkle worth remembering: the location block sits below the
+fold in a lazy ListView (so `find.byKey` returns NOTHING, not something
+off-screen — scroll first), and the result SnackBar sits directly over
+the button, so a second tap needs it timed out first.
+
+---
+
+## 2026-09-08 — OCR menu import (BUILT, NOT COMMITTED — awaiting review)
+
+Held back from commit deliberately: it adds a heavy backend dependency to
+a constrained free-tier service, and that is the reviewer's call.
+
+### Sub-task A — what already existed
+
+**Creation path to reuse:** `POST /api/v1/pos/menu-items` →
+`CarevoService.create_menu_item` (carevo_pos/controller.py:168). owner_app
+already calls it via `MenuService.createItem` → `HomeState.createDish`.
+Approved candidates go through exactly this. No parallel creation route
+was built, so ownership scoping, category validation and the returned
+item shape keep one implementation.
+
+**Categories are not a problem.** Signup seeds a v1 menu plus
+DEFAULT_CATEGORIES (Starters/Mains/Sides/Desserts/Beverages,
+carevo_customer/service.py:51,2113-2125), so `CreateMenuItemIn`'s required
+`category_id` always has a real value even on a brand-new restaurant.
+
+**No migration. Candidates are not persisted.** They are derived data with
+a lifetime of one sitting — shoot, review, approve — and the source of
+truth is the photograph, which the owner still has; re-running OCR
+reproduces the list. A table would buy only "resume a half-finished review
+after killing the app", and would cost a migration, a cleanup policy for
+rows that are garbage the moment they are approved, and another
+outlet-scoped surface to get wrong. Adding persistence later is purely
+additive; starting with a table and removing it is not. The APPROVED
+output is of course persisted — by the existing menu-items path.
+
+### Sub-task B — backend
+
+`rapidocr-onnxruntime==1.4.4`, LEFT COMMENTED OUT in requirements.txt.
+
+MEASURED (linux x86_64 / py3.11, not estimated):
+  * 124 MB of wheels; **346 MB installed**
+  * OpenCV is 182 MB of that (opencv_python.libs 106 + cv2 76)
+  * models ~15 MB, BUNDLED in the wheel — nothing fetched at runtime
+  * onnxruntime holds a few hundred MB RSS during inference
+
+Render free tier is 512 MB and the app already sits ~150 MB. Enabling
+this there is likely an OOM kill during inference, not a slow response.
+
+Gated by `OCR_ENABLED` and imported LAZILY, following the PUSH_ENABLED /
+EMAIL_ENABLED pattern. VERIFIED: with the rapidocr import blocked
+entirely, `app.main` still imports, both routes still mount, and
+`ocr_available()` returns False.
+
+`POST /pos/menu-import/ocr` (≤10 images, 8 MB each, 120s deadline) and
+`GET /pos/menu-import/status`. Inference runs via `asyncio.to_thread` —
+it is CPU-bound and would otherwise stall the whole event loop.
+
+Two details that were not obvious: OCR spans are regrouped into LINES by
+vertical position before parsing (name and price are separate spans, and
+the heuristic's core rule is "the price is at the end of the line"), and
+EXIF orientation is applied (a portrait phone photo is stored rotated and
+OCRs to nothing).
+
+### Sub-task C — owner_app
+
+Empty state on the Menu tab leads with "Take or upload photo", capped at
+10, downscaled to 2000px before upload. It asks `/status` first and falls
+back to the plain "Add a dish manually" state when the server has no OCR.
+
+Review screen: every row editable (name + price), checkbox each, and the
+four bulk actions. Rows arrive PRE-SELECTED — the common case is "most of
+this is right", and ticking twenty correct rows defeats the point.
+Approve and Reject are deliberately unequal in weight: approving writes to
+the live menu, rejecting only shortens a list that was never saved.
+
+### Sub-task D — tests. Backend 363 (+35), owner_app 93 (+18)
+
+Backend failures still 21, failing set byte-identical to baseline.
+
+Parser tests are pure and import no OCR, so the suite runs on a machine
+without the dependency — the state requirements.txt ships in. One test
+exercises the REAL engine and skips itself when the package is absent.
+
+Verified end-to-end against real RapidOCR on a rendered menu: all six
+dishes read, "Rs. 120" / "₹ 260" / "1,250" / "320.50" / "40/-" all parsed,
+"Chicken 65" kept its number in the NAME, and the heading and phone number
+were dropped.
+
+**A real bug the tests caught:** `_rejectSelected` built its kept-list
+from `_candidates` before `_replaceAll` synced the text controllers, so it
+captured pre-edit copies — an in-flight rename silently reverted on every
+reject. The sync now happens before the snapshot.
+
+---

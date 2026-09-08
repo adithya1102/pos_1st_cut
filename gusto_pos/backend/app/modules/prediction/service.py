@@ -51,6 +51,66 @@ LASTMILE_S = 90                       # §12.3
 TRAVEL_RESIDUAL_SIGMA_S = 240         # travel_bias default residual_sigma_s
 HAVERSINE_SIGMA_INFLATE = 2.0         # FR-P4
 
+# --- train mode (addendum Item 1) -------------------------------------------
+# Leg A is the customer's OWN stated arrival time. There is no rail API and no
+# timetable behind it, so σ must reflect self-reported human data, not a
+# punctual-train assumption:
+#   * people round to the nearest 5-10 min when typing a time
+#   * they state the SCHEDULED arrival, not the actual one
+#   * Indian suburban rail routinely runs several minutes late
+#   * the walk from platform to gate is inside neither leg
+# 900s (15 min) is therefore the floor, not a best guess — deliberately wider
+# than haversine's inflated residual (240×2 = 480s), because a wrong guess here
+# means food cooked too early and sitting. Tunable, not magic: raise it if
+# promise_kept rate for train orders comes in low.
+TRAIN_DECLARED_SIGMA_S = 900
+
+# Platform -> restaurant door. Per-outlet override lives in outlet_config under
+# `train_last_mile_seconds`; this is the fallback when an outlet has no row,
+# which is every outlet today (the table is empty). 8 min covers a typical
+# station-adjacent walk without pretending to know the specific outlet.
+TRAIN_LAST_MILE_DEFAULT_S = 480
+TRAIN_LAST_MILE_CONFIG_KEY = "train_last_mile_seconds"
+
+# Subtracted from declared arrival when deciding WHEN to tell the kitchen to
+# start, on top of the prep estimate. Absorbs: staff not looking at the tablet
+# the instant it buzzes, and the prep estimate itself being optimistic. Errs
+# toward telling them early — food ready slightly ahead beats a customer whose
+# train arrived on time waiting at the counter.
+KITCHEN_NOTIFY_SAFETY_BUFFER_S = 300
+
+# --- cold-start JIT fallback (addendum Item 2) — SHADOW MODE ONLY ------------
+# Fires only when BOTH hold: the outlet has too little history to trust its
+# timing (trusted_order_count < COLD_START_TRUST_ORDERS) AND the order contains
+# something that degrades fast (hold tolerance < COLD_START_JIT_HOLD_TRIGGER_S).
+#
+# NOTHING ACTS ON THIS. It writes order_twin.scheduled_prep_start_at /
+# latest_safe_start_at and emits PREP_SCHEDULED. No code path reads those
+# columns or that event to decide when a kitchen starts cooking — verified by
+# search across the backend and all three clients. mark_paid still emits its
+# inferred ORDER_ACCEPTED/PREP_STARTED exactly as before, and the departure
+# window stays behind the existing 300-order graduation gate in carevo_admin.
+#
+# THE BUFFER IS NOT A NEW NUMBER, AND IT IS PER-STATION. The master
+# timing-engine doc (§11.3/§11.4) is not in this repo — searched again, still
+# absent — so the buffer comes from STATION_DEFAULTS above, which is this
+# codebase's actual "pool defaults" table: station -> (base_prep_s,
+# occupancy_s, hold_tolerance_s). The buffer is that third element for the
+# order's BINDING station, read through the same tuple-unpack idiom
+# _resolve_item uses, with STATION_DEFAULTS["other"] as the fallback.
+#
+# Per-station rather than one flat number because a fryer (240s) and a tandoor
+# (900s) do not tolerate the same wait, and the binding station is already
+# computed for the event payload. See _jit_station_buffer_s below.
+#
+# The trigger below is DELIBERATELY NOT station-specific. It is a hard
+# threshold from the spec, not a pool default: below 300s of hold tolerance the
+# cold-start timing error (±BASE_SIGMA_S) is LARGER than the window the food can
+# sit in, which is precisely when "start whenever" ruins the dish. That
+# reasoning is about cold-start uncertainty, which is a property of the OUTLET's
+# missing history, not of any station.
+COLD_START_JIT_HOLD_TRIGGER_S = BASE_SIGMA_S    # 300
+
 COST_ALPHA = 3.0                      # §14.2 customer-wait weight
 COST_GAMMA = 15.0                     # §14.2 quality-failure weight
 COST_BETA_BASE = 1.0
@@ -163,6 +223,22 @@ def _resolve_item(station, base_prep, occupancy, hold_tol):
     return st, base, occ, hold
 
 
+def _jit_station_buffer_s(station) -> int:
+    """Cold-start JIT buffer for a station (addendum Item 2).
+
+    The pool default hold tolerance — STATION_DEFAULTS' third element, the same
+    `d_hold` _resolve_item falls back to. Read by tuple unpack rather than an
+    index literal so it stays correct if the tuple ever gains a field.
+
+    `station` is the order's BINDING station (the one that sets μ_ready). None —
+    an order touching no station at all — falls back to "other", matching
+    _resolve_item's treatment of a missing station.
+    """
+    _d_base, _d_occ, d_hold = STATION_DEFAULTS.get(
+        station or "other", STATION_DEFAULTS["other"])
+    return d_hold
+
+
 class PredictionService:
     # ------------------------------ Load (§13) -----------------------------
     @staticmethod
@@ -228,9 +304,28 @@ class PredictionService:
         outlet_state["_hold_tolerance_s"] = hold_tol if hold_tol is not None else 900
 
         stations = set(station_occ) | set(station_batch) | set(backlog)
-        max_station = max(
-            (backlog.get(s, 0) + station_occ.get(s, 0) + station_batch.get(s, 0)
-             for s in stations), default=0)
+        per_station = {
+            s: backlog.get(s, 0) + station_occ.get(s, 0) + station_batch.get(s, 0)
+            for s in stations
+        }
+        max_station = max(per_station.values(), default=0)
+
+        # Station dimension for the PREP_SCHEDULED payload (addendum Item 2).
+        # Stashed on outlet_state, the same way _hold_tolerance_s already is,
+        # because this function's contract is to return (mu, sigma, version).
+        #
+        # order_twin stays ORDER-level: it has one scheduled_prep_start_at
+        # column, not one per station. That mismatch is a known modelling gap —
+        # μ_ready assumes every station starts simultaneously, with no stagger.
+        # Carrying the per-station breakdown in the EVENT payload is what makes
+        # the gap measurable from logged data before anyone builds real
+        # per-station scheduling on top of an order-level column.
+        outlet_state["_station_load_s"] = {k: round(v) for k, v in per_station.items()}
+        # The station that actually sets μ — the one a stagger model would have
+        # to schedule first. None when the order touches no station at all.
+        outlet_state["_binding_station"] = (
+            max(per_station, key=per_station.get) if per_station else None)
+
         mu = outlet_state["acceptance_lag_s"] + max_station + unattended_tail
 
         sigma = float(BASE_SIGMA_S)
@@ -258,16 +353,68 @@ class PredictionService:
         return float(mu), float(sigma), "haversine_fallback"
 
     @staticmethod
-    async def predict_travel(db, outlet_id, origin_lat, origin_lng, outlet_lat, outlet_lng, mode):
+    async def train_last_mile_seconds(db, outlet_id) -> float:
+        """Platform -> door constant for this outlet.
+
+        Reads outlet_config (the existing per-outlet key/value table) rather
+        than adding a column. A missing row is the NORMAL case today — the
+        table is empty — so it resolves to the documented default rather than
+        raising. A non-numeric value is also treated as absent: a typo in a
+        config row must not take down travel prediction.
+        """
+        try:
+            # SAVEPOINT, not a bare try/except. A failed statement aborts the
+            # whole Postgres transaction, so swallowing the error here would
+            # leave the caller's session poisoned — every later query in the
+            # same request would then fail with MissingGreenlet, far from the
+            # cause. begin_nested() confines the damage to this read.
+            async with db.begin_nested():
+                raw = await db.scalar(text("""
+                    SELECT config_value FROM outlet_config
+                    WHERE outlet_id = :o AND config_key = :k
+                """), {"o": str(outlet_id), "k": TRAIN_LAST_MILE_CONFIG_KEY})
+            if raw is not None:
+                return float(raw)
+        except Exception:
+            pass
+        return float(TRAIN_LAST_MILE_DEFAULT_S)
+
+    @staticmethod
+    async def predict_travel(db, outlet_id, origin_lat, origin_lng, outlet_lat,
+                             outlet_lng, mode, declared_arrival_at=None):
         """Step 6 travel ETA. When MAPS_SERVER_KEY is set, use the Google Distance
         Matrix API, cached in travel_cache on (origin_geohash6, outlet_id, mode,
         quarter_hour). Haversine is ALWAYS the fallback on no-key / no-origin /
         timeout / non-OK / quota / any exception (FR-P4 — never removed).
 
         Returns (mu_seconds, sigma_seconds, source), source one of
-        maps_live | maps_cached | haversine_fallback.
+        maps_live | maps_cached | haversine_fallback | customer_declared.
         """
         from app.core.config import settings
+
+        # --- train (addendum Item 1) --------------------------------------
+        # Handled FIRST and returned early: none of the machinery below
+        # applies. Leg A is not a distance problem — it is a time the customer
+        # typed in — so there is no origin to geocode, nothing to ask Maps, and
+        # nothing worth caching. Every other mode's branch is untouched.
+        #
+        # `customer_declared`, not `train_schedule`: naming it after a
+        # timetable would imply an external source we do not have and would
+        # make this number look more trustworthy than it is.
+        if (mode or "").lower() == "train":
+            last_mile = await PredictionService.train_last_mile_seconds(db, outlet_id)
+            declared = declared_arrival_at
+            if declared is None:
+                # Train selected but no arrival time stored — cannot honour the
+                # mode. Fall through to the normal path rather than invent a
+                # number; the caller still gets a usable (if wider) estimate.
+                return PredictionService._haversine_travel(
+                    origin_lat, origin_lng, outlet_lat, outlet_lng, mode)
+            secs_to_arrival = max(
+                0.0, (declared - datetime.now(timezone.utc)).total_seconds())
+            return (float(secs_to_arrival + last_mile),
+                    float(TRAIN_DECLARED_SIGMA_S),
+                    "customer_declared")
 
         fallback = PredictionService._haversine_travel(
             origin_lat, origin_lng, outlet_lat, outlet_lng, mode)
@@ -358,6 +505,7 @@ class PredictionService:
 
         o = (await db.execute(text("""
             SELECT co.id, co.outlet_id, co.status, co.transport_mode,
+                   co.declared_arrival_at,
                    co.origin_lat, co.origin_lng, o.latitude AS olat, o.longitude AS olng
             FROM customer_orders co JOIN outlets o ON o.id = co.outlet_id
             WHERE co.id = :id
@@ -387,7 +535,8 @@ class PredictionService:
             db, order_id, o.outlet_id, backlog, outlet_state)
         hold_tol = outlet_state["_hold_tolerance_s"]
         mu_travel, sigma_travel, tsrc = await PredictionService.predict_travel(
-            db, o.outlet_id, o.origin_lat, o.origin_lng, o.olat, o.olng, o.transport_mode)
+            db, o.outlet_id, o.origin_lat, o.origin_lng, o.olat, o.olng,
+            o.transport_mode, declared_arrival_at=o.declared_arrival_at)
 
         now = datetime.now(timezone.utc)
         d_start, d_end, bucket, cost, buckets = PredictionService.decide_departure(
@@ -470,6 +619,89 @@ class PredictionService:
                    "mu": round(mu) if mu is not None else None,
                    "sig": round(sig) if sig is not None else None,
                    "f": json.dumps(inputs), "out": json.dumps(out)})
+
+        # ---- cold-start JIT fallback (addendum Item 2), SHADOW MODE ONLY ----
+        # Gate: too little history to trust the timing AND the food cannot sit.
+        # This conjunction exists nowhere else in the repo; either half alone is
+        # not enough. A cold outlet serving cold-tolerant food (hold 1800s) does
+        # not need JIT, and a well-calibrated outlet does not need a fallback.
+        cold_start = outlet_state["trusted_order_count"] < COLD_START_TRUST_ORDERS
+        fragile = hold_tol < COLD_START_JIT_HOLD_TRIGGER_S
+        if cold_start and fragile:
+            # Work backwards from when the customer actually gets here.
+            #
+            #   start at S  ->  food ready at S + mu_ready
+            #   ready before arrival -> it sits (must be <= hold_tol or quality fails)
+            #   ready after arrival  -> the customer waits
+            #
+            # so the latest start that still avoids making them wait is
+            # arrival - mu_ready, and anything earlier than that must not sit
+            # longer than the food tolerates.
+            ready_just_in_time = arrival_p50 - timedelta(seconds=mu_ready)
+
+            # Buffer from the BINDING station's pool default, not a flat number:
+            # a fryer (240s) and a tandoor (900s) do not tolerate the same wait.
+            binding_station = outlet_state.get("_binding_station")
+            station_buffer_s = _jit_station_buffer_s(binding_station)
+
+            # Still capped by THIS order's own hold tolerance, never applied
+            # blindly. Whichever of the two is tighter wins: the station default
+            # is a pool-level expectation, hold_tol is what this specific dish
+            # actually tolerates, and scheduling a start that guarantees the dish
+            # sits past either one is the failure this path exists to prevent.
+            effective_buffer_s = min(station_buffer_s, hold_tol)
+            scheduled_prep_start_at = ready_just_in_time - timedelta(seconds=effective_buffer_s)
+            # Never schedule a start in the past; a kitchen cannot act on it and
+            # a negative lead time would poison any future analysis of this data.
+            scheduled_prep_start_at = max(scheduled_prep_start_at, now)
+            # Latest start that still meets arrival. Clamped so it can never
+            # precede the scheduled start when mu_ready already exceeds the time
+            # remaining (a late-placed order), which would otherwise log an
+            # impossible window.
+            latest_safe_start_at = max(ready_just_in_time, scheduled_prep_start_at)
+
+            # Separate UPDATE rather than folding these into the INSERT above:
+            # orders that do NOT meet the gate must leave both columns untouched,
+            # so the non-gated path stays byte-identical to its previous behaviour.
+            await db.execute(text("""
+                UPDATE order_twin
+                SET scheduled_prep_start_at = :sched, latest_safe_start_at = :latest
+                WHERE order_id = :id
+            """), {"sched": scheduled_prep_start_at,
+                   "latest": latest_safe_start_at, "id": str(order_id)})
+
+            # First PREP_SCHEDULED write site in the repo. Emitted once per
+            # order, mirroring PROMISE_ISSUED below — refresh_twin runs on every
+            # status read, and re-emitting would turn the append-only event log
+            # into a poll log.
+            already_sched = (await db.execute(text(
+                "SELECT 1 FROM order_events WHERE order_id=:o "
+                "AND event_type='PREP_SCHEDULED' LIMIT 1"
+            ), {"o": str(order_id)})).first()
+            if not already_sched:
+                await pe.write_event(
+                    db, order_id, pe.PREP_SCHEDULED, actor_type="system",
+                    source="system", outlet_id=o.outlet_id,
+                    payload={
+                        "scheduled_prep_start_at": scheduled_prep_start_at.isoformat(),
+                        "latest_safe_start_at": latest_safe_start_at.isoformat(),
+                        "mu_ready_s": round(mu_ready),
+                        "hold_tolerance_s": hold_tol,
+                        "effective_buffer_s": round(effective_buffer_s),
+                        # Both inputs to the cap, so which one bound is
+                        # recoverable from the log without re-deriving it.
+                        "station_buffer_s": station_buffer_s,
+                        "trusted_order_count": outlet_state["trusted_order_count"],
+                        "reason": "cold_start_jit",
+                        # Station dimension (Task 3). order_twin is order-level;
+                        # the payload is where the per-station shape is kept so
+                        # the stagger gap can be measured before it is modelled.
+                        "binding_station": binding_station,
+                        "station_load_s": outlet_state.get("_station_load_s", {}),
+                        # Explicit, so nobody later mistakes a logged schedule
+                        # for something the kitchen was actually told to do.
+                        "shadow_mode": True,
+                    })
 
         # FR-E4 / FR-M1: PROMISE_ISSUED once (revisions = Step 7, held).
         already = (await db.execute(text(

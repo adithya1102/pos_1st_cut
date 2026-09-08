@@ -20,6 +20,11 @@ pluginManagement {
 plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
     id("com.android.application") version "9.0.1" apply false
+    // Reads android/app/google-services.json (Firebase project carevo-pos) and
+    // generates the resources firebase_core needs at runtime. Same version
+    // customer_app already uses — a version skew between the two apps in one
+    // Firebase project is a needless way to hit different SDK behaviour.
+    id("com.google.gms.google-services") version "4.5.0" apply false
     id("org.jetbrains.kotlin.android") version "2.3.20" apply false
 }
 

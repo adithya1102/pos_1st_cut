@@ -36,6 +36,7 @@ class OutletCreate(BaseModel):
     organization_id: UUID
     location_name: str
     city: Optional[str] = None
+    phone_number: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     geofence_radius_meters: int = 100
@@ -44,6 +45,7 @@ class OutletCreate(BaseModel):
 class OutletUpdate(BaseModel):
     location_name: Optional[str] = None
     city: Optional[str] = None
+    phone_number: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     geofence_radius_meters: Optional[int] = None
@@ -54,6 +56,7 @@ class OutletRead(BaseModel):
     organization_id: UUID
     location_name: str
     city: Optional[str]
+    phone_number: Optional[str] = None
     latitude: Optional[float]
     longitude: Optional[float]
     geofence_radius_meters: int

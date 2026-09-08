@@ -25,13 +25,21 @@ services:
         sync: false
 
       # --- Auth posture for a publicly reachable deploy ---
-      # TEMPORARY TEST-WINDOW SETTING — value is "true" to let 2-3 known testers
-      # log in via customer_app with stub OTP 000000. While true, the OTP path is
-      # an OPEN login for ANYONE who has the URL/APK (any phone + 000000 works and
-      # creates a Customer row). REVERT to "false" the moment the test window ends,
-      # before the APK reaches real testers/strangers. Staff login is unaffected.
+      # Keep "false". While true the customer OTP path is an OPEN login for
+      # ANYONE holding the URL/APK: OTP_STUB_MODE accepts any phone plus the
+      # static stub code 000000 and creates a Customer row. Staff/owner login is
+      # unaffected either way.
+      #
+      # NOTE (2026-08-05): this value does NOT drive the running service. Render
+      # applies blueprint envVars at creation/sync; a value set in the dashboard
+      # wins for an existing key, and ordinary git auto-deploys do not re-apply
+      # them. The dashboard has held "false" throughout — confirmed both by
+      # probing /api/v1/customer/auth/request-otp (503) and by reading the
+      # Environment tab. The earlier flip to "true" therefore never took effect.
+      # To actually change auth posture, change it in the Render dashboard and
+      # verify by probing the endpoint — never infer it from this file.
       - key: CUSTOMER_AUTH_ENABLED
-        value: "true"
+        value: "false"
 
       - key: ALGORITHM
         value: HS256

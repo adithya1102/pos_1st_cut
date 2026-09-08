@@ -44,7 +44,7 @@ export default function LoginPage() {
         className="w-full max-w-sm space-y-4 rounded border border-slate-200 bg-white p-6"
       >
         <div>
-          <h1 className="text-lg font-semibold">CareVo Admin</h1>
+          <h1 className="text-lg font-semibold">Gusto Admin</h1>
           <p className="mt-1 text-sm text-slate-500">
             Sign in with your staff account.
           </p>

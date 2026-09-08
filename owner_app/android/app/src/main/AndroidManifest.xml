@@ -1,6 +1,29 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- REQUIRED. Without this the app cannot open a socket at all and EVERY
+         request fails with a SocketException before it leaves the device.
+         Flutter's debug/ and profile/ overlay manifests declare it for you,
+         which is why debug builds worked while the release build could not
+         reach the backend on any screen — login included. It must be declared
+         HERE to be present in a release APK. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Lets the HTTP layer tell "device is offline" apart from "server is
+         unreachable" when reporting a failure to the owner. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- Android 13+ (API 33) requires this before a notification can be shown.
+         Without it FirebaseMessaging.requestPermission() returns denied and the
+         outlet silently never hears about a new paid order — which, with no
+         Accept gate, is the only signal staff get in time to reject one. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- "Use current location" on the outlet settings screen, which pins the
+         restaurant's coordinates for the customer app's distance sort.
+         FOREGROUND ONLY, matching customer_app: no ACCESS_BACKGROUND_LOCATION,
+         because the only caller is a button the owner taps while looking at
+         it. Coarse is declared alongside fine so a device that grants only
+         approximate location still yields a usable pin. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <application
-        android:label="owner_app"
+        android:label="Gusto Owner"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <!-- Google Maps / Places SDK key, injected from local.properties via

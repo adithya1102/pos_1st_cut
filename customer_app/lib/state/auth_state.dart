@@ -1,19 +1,56 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../models/customer.dart';
 import '../services/api_client.dart';
+import '../services/google_auth_service.dart';
 import '../services/otp_auth_service.dart';
+import '../services/push_service.dart';
 
-/// Holds session state and drives the OTP login flow through
-/// [OtpAuthService] (currently the backend-backed stub).
+/// Holds session state and drives the two login flows: phone OTP through
+/// [OtpAuthService], and Google through [GoogleAuthService].
 class AuthState extends ChangeNotifier {
-  AuthState(this._api, this._otp);
+  AuthState(this._api, this._otp, this._google, this._push) {
+    // A 401 anywhere clears the token inside ApiClient. Without this, the
+    // cached Customer would survive it and screens reading the session copy
+    // would still show a name for a session that no longer exists.
+    _api.authFailures.addListener(_onSessionLost);
+  }
+
+  void _onSessionLost() {
+    _customer = null;
+    _error = null;
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _api.authFailures.removeListener(_onSessionLost);
+    super.dispose();
+  }
 
   final ApiClient _api;
   final OtpAuthService _otp;
+  final GoogleAuthService _google;
+  final PushService _push;
 
   Customer? _customer;
   Customer? get customer => _customer;
+
+  /// Register for push AFTER authentication, since the backend stores the
+  /// token against the signed-in customer. Not awaited — a permission prompt
+  /// must never gate getting into the app.
+  void _registerPush() {
+    unawaited(_push.registerAfterLogin());
+  }
+
+  /// Replace the cached customer after a profile edit, so screens reading the
+  /// session copy don't show a stale name until the next sign-in.
+  void setCustomer(Customer customer) {
+    _customer = customer;
+    notifyListeners();
+  }
 
   bool get isAuthenticated => _api.isAuthenticated;
 
@@ -25,6 +62,28 @@ class AuthState extends ChangeNotifier {
 
   String _pendingPhone = '';
   String get pendingPhone => _pendingPhone;
+
+  /// Whether the most recent successful sign-in CREATED the account.
+  ///
+  /// Read straight after [verifyOtp] / [signInWithGoogle] by `routeAfterAuth`,
+  /// which sends a signup to the name screen and a returning sign-in to Home.
+  ///
+  /// ## What this replaced
+  ///
+  /// There used to be a `_pendingName` held from the login screen and applied
+  /// afterwards by `_applyPendingName`, guarded by "apply only if the account
+  /// is new or has no name". All of it is gone, because the login screen no
+  /// longer collects a name — nothing can populate that field, so the guard had
+  /// nothing left to guard.
+  ///
+  /// That guard existed only to decide whether a typed name should beat a name
+  /// the identity provider supplied. Asking for the name AFTER signup removes
+  /// the contest entirely: the only account that is ever asked is one that has
+  /// just been created, and the answer goes straight to
+  /// `PATCH /customer/me`. There is no second writer to arbitrate against, so
+  /// there is no arbitration.
+  bool _lastSignInWasNewAccount = false;
+  bool get lastSignInWasNewAccount => _lastSignInWasNewAccount;
 
   String? _requestId;
   String? get requestId => _requestId;
@@ -60,6 +119,8 @@ class AuthState extends ChangeNotifier {
     try {
       final result = await _otp.verifyOtp(_pendingPhone, otp);
       _customer = result.customer;
+      _lastSignInWasNewAccount = result.isNewAccount;
+      _registerPush();
       notifyListeners();
       return true;
     } on ApiException catch (e) {
@@ -73,10 +134,44 @@ class AuthState extends ChangeNotifier {
     }
   }
 
+  /// Google sign-in. Returns false on failure AND on a plain cancel — the
+  /// caller distinguishes them by whether [error] was set.
+  Future<bool> signInWithGoogle() async {
+    _error = null;
+    _setBusy(true);
+    try {
+      final result = await _google.signIn();
+      // null == the user dismissed the picker: no error to show.
+      if (result == null) return false;
+      _customer = result.customer;
+      _lastSignInWasNewAccount = result.isNewAccount;
+      _registerPush();
+      notifyListeners();
+      return true;
+    } on ApiException catch (e) {
+      _error = e.message;
+      return false;
+    } catch (e) {
+      _error = 'Could not sign in with Google. Please try again.';
+      return false;
+    } finally {
+      _setBusy(false);
+    }
+  }
+
   Future<void> logout() async {
+    // Clear the device token BEFORE dropping the session token — unregistering
+    // is an authenticated call, so it has to happen while still signed in.
+    await _push.unregister();
     await _api.clearToken();
+    // Drop the cached Google account too, so the next sign-in shows the picker
+    // instead of silently reusing whoever was signed in before.
+    await _google.signOut();
     _customer = null;
     _pendingPhone = '';
+    // Cleared so a stale "was a signup" cannot route the NEXT sign-in on this
+    // device into the name screen.
+    _lastSignInWasNewAccount = false;
     _requestId = null;
     notifyListeners();
   }

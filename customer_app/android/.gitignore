@@ -13,3 +13,11 @@ key.properties
 **/*.keystore
 **/*.jks
 /maps.properties
+
+# Firebase config for project carevo-pos. Holds the Android API key, which is
+# currently unrestricted — it authorises billable phone-auth SMS from any origin,
+# not just this app — and this repo is public. Same posture as maps.properties.
+# Fetch per machine: Firebase console -> Project settings -> Your apps ->
+# com.carevo.customer_app -> google-services.json, into android/app/.
+# The Gradle google-services plugin fails the build if it is missing.
+/app/google-services.json

@@ -8,6 +8,9 @@ class Outlet(Base):
     __tablename__ = "outlets"
     location_name: Mapped[str] = mapped_column(String(100), nullable=False)
     city: Mapped[str | None] = mapped_column(String(50))
+    # Contact number captured at owner self-signup (migration 009). Nullable:
+    # outlets created before it have none, and the field stays optional at signup.
+    phone_number: Mapped[str | None] = mapped_column(String(20))
     latitude: Mapped[float | None] = mapped_column(DECIMAL(10, 8))
     longitude: Mapped[float | None] = mapped_column(DECIMAL(11, 8))
     geofence_radius_meters: Mapped[int] = mapped_column(Integer, default=100)

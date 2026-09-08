@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import HTTPException
@@ -20,11 +22,54 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.users.model import User
+# Reused rather than reimplemented — one haversine in the codebase, so the
+# admin log and the customer's distance sort can never disagree.
+from app.modules.carevo_customer.service import CarevoService
+
+# ---------------------------------------------------------------------------
+# Activity heuristic (NOT a churn model, NOT a prediction).
+#
+# This is a fixed recency bucket: days since the customer's last PAID order,
+# compared against two constants. It has no training data, no features beyond
+# recency, and no probability output — it cannot say a customer WILL churn, only
+# that they have not ordered in N days. Deliberately kept this dumb: the order
+# volume here is far too low for a fitted model to mean anything, and a fake
+# confidence score would be worse than an honest one.
+#
+# Thresholds are arbitrary-but-reasonable for food ordering; change freely.
+ACTIVITY_ACTIVE_MAX_DAYS = 14      # ordered within 2 weeks
+ACTIVITY_AT_RISK_MAX_DAYS = 30     # 14-30 days
+# Beyond 30 days -> "Churned". Never ordered -> "No orders".
 
 # outlets.verification_status lifecycle
 PENDING = "pending_verification"
 ACTIVE = "active"
 REJECTED = "rejected"
+
+
+def _days_since(last_order_at) -> Optional[int]:
+    """Whole days since [last_order_at]. None when the customer never ordered."""
+    if last_order_at is None:
+        return None
+    ts = last_order_at
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return max((datetime.now(timezone.utc) - ts).days, 0)
+
+
+def _activity(last_order_at) -> str:
+    """Bucket a customer by order recency. A HEURISTIC LABEL, not a prediction.
+
+    Returns one of: "No orders" | "Active" | "At Risk" | "Churned".
+    """
+    days = _days_since(last_order_at)
+    if days is None:
+        return "No orders"
+    if days <= ACTIVITY_ACTIVE_MAX_DAYS:
+        return "Active"
+    if days <= ACTIVITY_AT_RISK_MAX_DAYS:
+        return "At Risk"
+    return "Churned"
 
 
 class AdminService:
@@ -68,12 +113,29 @@ class AdminService:
                 detail=f"Invalid status. Must be one of: {[PENDING, ACTIVE, REJECTED]}",
             )
         rows = (await db.execute(text("""
-            SELECT o.id, o.location_name, o.city, o.organization_id,
+            SELECT o.id, o.location_name, o.city, o.locality, o.phone_number,
+                   o.organization_id,
                    org.name AS organization_name,
                    o.verification_status, o.is_visible, o.created_at,
-                   o.deactivated_at
+                   o.deactivated_at,
+                   -- Owner account username, so support can recover a login for
+                   -- someone who has forgotten BOTH username and password.
+                   -- /auth/password/forgot already works on a username; the only
+                   -- missing piece was admin having any way to find it.
+                   --
+                   -- Read-only, from the existing outlets -> users relation. An
+                   -- outlet can have several staff rows, so this takes the
+                   -- earliest active one — the account created at registration,
+                   -- i.e. the owner — rather than an arbitrary row.
+                   owner.username AS owner_username
             FROM outlets o
             LEFT JOIN organizations org ON org.id = o.organization_id
+            LEFT JOIN LATERAL (
+                SELECT u.username FROM users u
+                WHERE u.outlet_id = o.id AND u.is_active = true
+                ORDER BY u.created_at ASC NULLS LAST
+                LIMIT 1
+            ) owner ON true
             -- CAST is required: with a NULL bind, Postgres cannot infer the
             -- parameter's type from `:status IS NULL` alone and aborts the
             -- statement with AmbiguousParameterError.
@@ -90,12 +152,15 @@ class AdminService:
                 "id": r.id,
                 "location_name": r.location_name,
                 "city": r.city,
+                "locality": r.locality,
+                "phone_number": r.phone_number,
                 "organization_id": r.organization_id,
                 "organization_name": r.organization_name,
                 "verification_status": r.verification_status,
                 "is_visible": bool(r.is_visible),
                 "created_at": r.created_at,
                 "deactivated_at": r.deactivated_at,
+                "owner_username": r.owner_username,
                 "is_deactivated": r.deactivated_at is not None,
             }
             for r in rows
@@ -168,7 +233,8 @@ class AdminService:
         reason: Optional[str],
     ) -> dict:
         current = (await db.execute(text(
-            "SELECT id, verification_status FROM outlets WHERE id = :oid"
+            "SELECT id, verification_status, location_name, city, locality "
+            "FROM outlets WHERE id = :oid"
         ), {"oid": str(outlet_id)})).first()
         if not current:
             raise HTTPException(status_code=404, detail="Outlet not found")
@@ -179,6 +245,56 @@ class AdminService:
                 status_code=409,
                 detail=f"Outlet is already '{target_status}'",
             )
+
+        # Duplicate guard: refuse to approve a second outlet with the same
+        # name in the same area of the same city.
+        #
+        # WHY AT APPROVAL AND NOT AT SIGNUP: signup is unauthenticated and
+        # self-service, so blocking there tells an anonymous caller exactly
+        # which restaurants exist and where — and it would also block the
+        # legitimate case of an owner re-registering after a rejection.
+        # Approval is the point where a human is already looking, and it is
+        # the gate that actually matters: nothing is visible to customers
+        # until it passes.
+        #
+        # Compared against ACTIVE, non-deactivated outlets only. Pending rows
+        # are not conflicts — two duplicates can sit in the queue together and
+        # the first one approved is what makes the second a collision.
+        # Rejected and deactivated rows are not live, so they must not block a
+        # real restaurant from taking the name back.
+        #
+        # Case- and whitespace-insensitive on all three parts: "MG Road" and
+        # "mg road " are the same place, and a comparison that misses that is
+        # a guard in name only.
+        if target_status == ACTIVE:
+            clash = (await db.execute(text("""
+                SELECT id, verification_status FROM outlets
+                WHERE id <> :oid
+                  AND verification_status = 'active'
+                  AND deactivated_at IS NULL
+                  AND lower(btrim(location_name)) = lower(btrim(CAST(:name AS varchar)))
+                  AND lower(btrim(COALESCE(city, ''))) = lower(btrim(COALESCE(CAST(:city AS varchar), '')))
+                  AND lower(btrim(COALESCE(locality, ''))) = lower(btrim(COALESCE(CAST(:locality AS varchar), '')))
+                LIMIT 1
+            """), {
+                "oid": str(outlet_id),
+                "name": current.location_name,
+                "city": current.city,
+                "locality": current.locality,
+            })).first()
+            if clash:
+                where = ", ".join(
+                    p for p in (current.locality, current.city) if p
+                ) or "that city"
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"An active outlet named '{current.location_name}' already "
+                        f"exists in {where}. Approving this one would give customers "
+                        f"two identical entries. Ask the owner for a distinguishing "
+                        f"name or the correct locality, then approve."
+                    ),
+                )
 
         row = (await db.execute(text("""
             UPDATE outlets SET verification_status = :s
@@ -281,6 +397,116 @@ class AdminService:
             "is_locked": bool(row[1]),
             "failed_attempts": row[2],
         }
+
+    # ------------------------- customer directory --------------------------
+    @staticmethod
+    async def list_customers(db: AsyncSession, limit: int = 200) -> list[dict]:
+        """Read-only customer directory across ALL outlets.
+
+        Order count is a LEFT JOIN aggregate so customers who signed in but
+        never ordered still appear (count 0) — they are exactly the rows worth
+        seeing. No PII beyond the phone number and email the customer signed in
+        with, and no write path: this endpoint is deliberately GET-only.
+
+        Since migration 008 either identifier can be NULL: phone-only customers
+        (OTP) have no email, Google-only customers have no phone. Both columns
+        are surfaced so a row is never blank in both.
+        """
+        # Aggregates are computed in SQL rather than per-customer round trips:
+        # one pass over PAID orders for the money/recency figures, plus two
+        # DISTINCT ON pre-aggregates for the "most X" columns. Only PAID orders
+        # count - an abandoned basket is not a purchase and must not inflate
+        # lifetime value or make a lapsed customer look active.
+        rows = (await db.execute(text("""
+            WITH paid AS (
+                SELECT co.id, co.customer_id, co.outlet_id, co.total_amount,
+                       co.created_at
+                FROM customer_orders co
+                WHERE co.payment_status = 'PAID'
+            ),
+            money AS (
+                SELECT customer_id,
+                       count(*)               AS paid_order_count,
+                       sum(total_amount)      AS total_order_value,
+                       max(created_at)        AS last_order_at
+                FROM paid GROUP BY customer_id
+            ),
+            top_dish AS (
+                SELECT DISTINCT ON (p.customer_id)
+                       p.customer_id, coi.name_snap AS dish_name,
+                       sum(coi.quantity) AS qty
+                FROM paid p
+                JOIN customer_order_items coi ON coi.customer_order_id = p.id
+                WHERE coi.name_snap IS NOT NULL
+                GROUP BY p.customer_id, coi.name_snap
+                ORDER BY p.customer_id, qty DESC, coi.name_snap
+            ),
+            top_outlet AS (
+                SELECT DISTINCT ON (p.customer_id)
+                       p.customer_id, o.location_name AS outlet_name,
+                       count(*) AS visits
+                FROM paid p
+                LEFT JOIN outlets o ON o.id = p.outlet_id
+                GROUP BY p.customer_id, o.location_name
+                ORDER BY p.customer_id, visits DESC, o.location_name
+            )
+            SELECT c.id, c.phone_number, c.email, c.name, c.created_at,
+                   c.points_balance, c.premium_until,
+                   count(co.id)                       AS order_count,
+                   COALESCE(m.total_order_value, 0)   AS total_order_value,
+                   m.last_order_at,
+                   td.dish_name                       AS top_dish,
+                   tou.outlet_name                    AS top_outlet
+            FROM customers c
+            LEFT JOIN customer_orders co ON co.customer_id = c.id
+            LEFT JOIN money      m   ON m.customer_id   = c.id
+            LEFT JOIN top_dish   td  ON td.customer_id  = c.id
+            LEFT JOIN top_outlet tou ON tou.customer_id = c.id
+            -- Hide deleted accounts. A deleted customer is anonymised in place
+            -- rather than removed (customer_orders.customer_id is RESTRICT), so
+            -- the row survives to hold order history together. It holds no
+            -- personal data any more and is not a person an admin can act on,
+            -- so listing it would be noise at best and misleading at worst.
+            -- The tombstone lives in google_uid — see DELETED_UID_PREFIX.
+            WHERE c.google_uid IS NULL OR c.google_uid NOT LIKE 'deleted:%'
+            GROUP BY c.id, c.phone_number, c.email, c.name, c.created_at,
+                     c.points_balance, c.premium_until,
+                     m.total_order_value, m.last_order_at, td.dish_name,
+                     tou.outlet_name
+            ORDER BY c.created_at DESC NULLS LAST
+            LIMIT :limit
+        """), {"limit": limit})).fetchall()
+        now = datetime.now(timezone.utc)
+
+        def _plan(premium_until) -> str:
+            # Derived, never stored — mirrors CarevoService._plan_label so the
+            # admin view and the customer's own view can never disagree.
+            if premium_until is None:
+                return "Free"
+            if premium_until.tzinfo is None:
+                premium_until = premium_until.replace(tzinfo=timezone.utc)
+            return "Premium" if premium_until > now else "Free"
+
+        return [
+            {
+                "id": r.id,
+                "phone_number": r.phone_number,
+                "email": r.email,
+                "name": r.name,
+                "order_count": r.order_count or 0,
+                "created_at": r.created_at,
+                "points_balance": float(r.points_balance or 0),
+                "premium_until": r.premium_until,
+                "plan": _plan(r.premium_until),
+                "total_order_value": float(r.total_order_value or 0),
+                "top_dish": r.top_dish,
+                "top_outlet": r.top_outlet,
+                "last_order_at": r.last_order_at,
+                "days_since_last_order": _days_since(r.last_order_at),
+                "activity_status": _activity(r.last_order_at),
+            }
+            for r in rows
+        ]
 
     # ---------------- prediction engine (shadow-mode observability) --------
     # Read-only windows onto the PE tables from migration 006. Raw SQL, no ORM,
@@ -498,6 +724,226 @@ class AdminService:
             "outcome": outcome_out,
         }
 
+    # ------------------------------ orders ---------------------------------
+    @staticmethod
+    async def list_orders(db: AsyncSession, *, limit: int = 50,
+                          offset: int = 0) -> dict:
+        """One row per order, across every outlet. Read-only.
+
+        PAGINATED, not capped-and-truncated: the customer directory's
+        `LIMIT 200` silently hides row 201, which is survivable for a directory
+        but not for an order log that grows with every sale. Returns `total` so
+        the caller can page rather than guess.
+
+        Composed as one query plus one items fetch — the same two-pass shape
+        list_my_orders uses — rather than a row-per-item join that would need
+        de-duplicating in Python.
+        """
+        total = await db.scalar(text("SELECT count(*) FROM customer_orders")) or 0
+
+        rows = (await db.execute(text("""
+            SELECT co.id, co.pickup_code, co.status, co.payment_status,
+                   co.total_amount, co.discount_amount, co.created_at,
+                   co.origin_lat, co.origin_lng,
+                   c.name  AS customer_name,
+                   c.phone_number AS customer_phone,
+                   c.email AS customer_email,
+                   o.location_name AS outlet_name,
+                   o.latitude  AS outlet_lat,
+                   o.longitude AS outlet_lng,
+                   p.label AS promotion_label,
+                   p.code  AS promotion_code,
+                   pr.discount_amount AS promotion_discount
+            FROM customer_orders co
+            LEFT JOIN customers c ON c.id = co.customer_id
+            LEFT JOIN outlets   o ON o.id = co.outlet_id
+            -- promotion_redemptions is the ledger; promotions carries the name.
+            -- LEFT JOINed because most orders have no promotion, and an INNER
+            -- join would silently drop them from the log entirely.
+            LEFT JOIN promotion_redemptions pr ON pr.order_id = co.id
+            LEFT JOIN promotions p ON p.id = pr.promotion_id
+            ORDER BY co.created_at DESC NULLS LAST
+            LIMIT :limit OFFSET :offset
+        """), {"limit": limit, "offset": offset})).fetchall()
+
+        ids = [str(r.id) for r in rows]
+        by_order: dict = defaultdict(list)
+        if ids:
+            for it in (await db.execute(text("""
+                SELECT customer_order_id, name_snap, quantity
+                FROM customer_order_items
+                WHERE customer_order_id = ANY(:ids)
+                ORDER BY name_snap
+            """), {"ids": ids})).fetchall():
+                by_order[str(it.customer_order_id)].append(
+                    {"name": it.name_snap, "quantity": it.quantity})
+
+        out = []
+        for r in rows:
+            # Distance is only meaningful when the customer actually shared an
+            # origin. Returning null (rendered "—") rather than 0 or the outlet
+            # coordinates keeps "we don't know" distinguishable from "nearby".
+            distance = None
+            if (r.origin_lat is not None and r.origin_lng is not None
+                    and r.outlet_lat is not None and r.outlet_lng is not None):
+                distance = CarevoService._haversine_km(
+                    float(r.origin_lat), float(r.origin_lng),
+                    float(r.outlet_lat), float(r.outlet_lng))
+
+            out.append({
+                "order_id": r.id,
+                "pickup_code": r.pickup_code,
+                "status": r.status,
+                "payment_status": r.payment_status,
+                "created_at": r.created_at,
+                "customer_name": r.customer_name,
+                "customer_phone": r.customer_phone,
+                "customer_email": r.customer_email,
+                "outlet_name": r.outlet_name,
+                "items": by_order.get(str(r.id), []),
+                "total_amount": float(r.total_amount or 0),
+                "discount_amount": float(r.discount_amount or 0),
+                "promotion_label": r.promotion_label,
+                "promotion_code": r.promotion_code,
+                "promotion_discount": (float(r.promotion_discount)
+                                       if r.promotion_discount is not None else None),
+                "distance_km": distance,
+            })
+        return {"total": int(total), "limit": limit, "offset": offset, "orders": out}
+
+    # ------------------ Restaurant tab: restaurant -> day -> time -----------
+    @staticmethod
+    async def list_orders_by_restaurant(
+        db: AsyncSession, *, days: int = 30, limit: int = 2000,
+        outlet_id: Optional[uuid.UUID] = None,
+    ) -> dict:
+        """Orders grouped restaurant -> day -> time. Read-only, no new schema.
+
+        `customer_orders.outlet_id` and `outlets` already carry everything this
+        needs; the hierarchy is a GROUP BY over rows that exist, not a
+        data-model change.
+
+        Windowed to the last `days` days rather than paginated. Pagination and
+        a tree fight each other — page 2 of a flat list can cut a restaurant's
+        days in half, leaving a group that renders as complete but is not. A
+        time window slices along a boundary the reader already understands.
+
+        Grouping happens in SQL for the day bucket (so the DB's timezone handling
+        decides the date, consistently with every other query here) and in Python
+        for the nesting, which keeps the ordering rules readable in one place.
+
+        **`limit` is a safety cap, and its truncation is now REPORTED.** It used
+        to be applied silently, which was the same defect the paragraph above
+        rejects pagination for: past the cap the tree rendered as complete while
+        missing its oldest rows, and nothing said so. Raising the number would
+        only move the date at which that resumes. So the query asks for
+        `limit + 1` rows: getting more than `limit` back proves more exist, the
+        extra row is discarded, and `truncated` says so — the caller can then
+        narrow `days` or scope to one outlet rather than trusting a short tree.
+
+        `outlet_id` scopes to a single restaurant. That makes a caller's view
+        independent of platform-wide volume — the property the regression test
+        relies on, since a test asserting against the unscoped feed would start
+        failing the day total orders crossed the cap.
+        """
+        days = max(1, min(days, 365))
+        limit = max(1, min(limit, 5000))
+
+        rows = (await db.execute(text("""
+            SELECT co.id, co.status, co.payment_status, co.pickup_code,
+                   co.total_amount, co.created_at,
+                   to_char(co.created_at, 'YYYY-MM-DD') AS day,
+                   to_char(co.created_at, 'HH24:MI')    AS at_time,
+                   co.outlet_id,
+                   o.location_name AS outlet_name,
+                   o.city          AS city,
+                   o.locality      AS locality,
+                   (SELECT coalesce(sum(i.quantity), 0)
+                      FROM customer_order_items i
+                     WHERE i.customer_order_id = co.id) AS item_count
+            FROM customer_orders co
+            LEFT JOIN outlets o ON o.id = co.outlet_id
+            WHERE co.created_at >= now() - CAST(:window AS interval)
+              AND (CAST(:oid AS uuid) IS NULL OR co.outlet_id = CAST(:oid AS uuid))
+            ORDER BY co.created_at DESC
+            LIMIT :lim
+        """), {
+            # timedelta, not a string — asyncpg maps it to interval directly.
+            "window": timedelta(days=days),
+            # One more than asked for, purely to detect that more exist.
+            "lim": limit + 1,
+            "oid": str(outlet_id) if outlet_id else None,
+        })).fetchall()
+
+        truncated = len(rows) > limit
+        if truncated:
+            rows = rows[:limit]
+
+        # Insertion order is already newest-first from the query, and dicts
+        # preserve it — so restaurants come out ordered by their most recent
+        # order, and days within a restaurant likewise, with no re-sorting.
+        groups: dict = {}
+        for r in rows:
+            key = str(r.outlet_id) if r.outlet_id else "__unassigned__"
+            g = groups.get(key)
+            if g is None:
+                g = {
+                    "outlet_id": r.outlet_id,
+                    "outlet_name": r.outlet_name,
+                    "city": r.city,
+                    "locality": r.locality,
+                    "order_count": 0,
+                    "total_amount": 0.0,
+                    "_days": {},
+                }
+                groups[key] = g
+
+            amount = float(r.total_amount or 0)
+            g["order_count"] += 1
+            g["total_amount"] += amount
+
+            day = g["_days"].get(r.day)
+            if day is None:
+                day = {"day": r.day, "order_count": 0,
+                       "total_amount": 0.0, "orders": []}
+                g["_days"][r.day] = day
+            day["order_count"] += 1
+            day["total_amount"] += amount
+            day["orders"].append({
+                "order_id": r.id,
+                "time": r.at_time,
+                "created_at": r.created_at,
+                "status": r.status,
+                "payment_status": r.payment_status,
+                "pickup_code": r.pickup_code,
+                "total_amount": amount,
+                "item_count": int(r.item_count or 0),
+            })
+
+        return {
+            "groups": [
+                {
+                    "outlet_id": g["outlet_id"],
+                    "outlet_name": g["outlet_name"],
+                    "city": g["city"],
+                    "locality": g["locality"],
+                    "order_count": g["order_count"],
+                    "total_amount": round(g["total_amount"], 2),
+                    "days": [
+                        {**d, "total_amount": round(d["total_amount"], 2)}
+                        for d in g["_days"].values()
+                    ],
+                }
+                for g in groups.values()
+            ],
+            # Metadata, not decoration: `truncated` is the difference between a
+            # short tree that is the whole truth and one that merely looks like it.
+            "truncated": truncated,
+            "cap": limit,
+            "returned_orders": len(rows),
+            "window_days": days,
+        }
+
     # --------------------------- audit log ---------------------------------
     @staticmethod
     async def list_audit_logs(db: AsyncSession, limit: int = 100) -> list[dict]:
@@ -520,3 +966,214 @@ class AdminService:
             }
             for r in rows
         ]
+
+    # ------------------------- cities (migration 013) -----------------------
+    # New-city requests reuse the outlet-verification pattern rather than
+    # introducing a second queue: a pending row, an admin decision, and one
+    # admin_audit_logs entry written in the SAME transaction as the change.
+    @staticmethod
+    async def list_cities(
+        db: AsyncSession, status_filter: Optional[str] = None
+    ) -> list[dict]:
+        """All cities, optionally filtered. Pending first — that is the work queue."""
+        if status_filter is not None and status_filter not in ("active", "pending", "rejected"):
+            raise HTTPException(
+                status_code=422,
+                detail="Invalid status. Must be one of: ['active', 'pending', 'rejected']",
+            )
+        rows = (await db.execute(text("""
+            SELECT c.id, c.name, c.status, c.created_at, c.decided_at,
+                   c.requested_by_outlet_id,
+                   o.location_name AS requested_by_outlet_name
+            FROM cities c
+            LEFT JOIN outlets o ON o.id = c.requested_by_outlet_id
+            WHERE (CAST(:status AS varchar) IS NULL
+                   OR c.status = CAST(:status AS varchar))
+            ORDER BY
+                CASE c.status WHEN 'pending' THEN 0 ELSE 1 END,
+                c.name
+        """), {"status": status_filter})).fetchall()
+        return [
+            {
+                "id": r.id,
+                "name": r.name,
+                "status": r.status,
+                "created_at": r.created_at,
+                "decided_at": r.decided_at,
+                "requested_by_outlet_id": r.requested_by_outlet_id,
+                "requested_by_outlet_name": r.requested_by_outlet_name,
+            }
+            for r in rows
+        ]
+
+    @staticmethod
+    async def decide_city(
+        db: AsyncSession, actor: User, city_id: uuid.UUID, target_status: str
+    ) -> dict:
+        """Approve (-> active) or reject a requested city.
+
+        Approving makes the name selectable for every FUTURE signup. It does not
+        touch `outlets.city` on the requesting outlet: that row already carries
+        the name, and rewriting outlet data from an admin decision would be a
+        surprising side effect of what reads as a list edit.
+        """
+        if target_status not in ("active", "rejected"):
+            raise HTTPException(
+                status_code=422, detail="target_status must be 'active' or 'rejected'"
+            )
+
+        current = (await db.execute(text(
+            "SELECT id, name, status FROM cities WHERE id = :cid"
+        ), {"cid": str(city_id)})).first()
+        if not current:
+            raise HTTPException(status_code=404, detail="City not found")
+        if current.status == target_status:
+            raise HTTPException(
+                status_code=409, detail=f"City is already '{target_status}'"
+            )
+
+        row = (await db.execute(text("""
+            UPDATE cities SET status = :s, decided_at = now()
+            WHERE id = :cid
+            RETURNING id, name, status, decided_at
+        """), {"s": target_status, "cid": str(city_id)})).first()
+
+        await AdminService._audit(
+            db, actor,
+            action=("city.approve" if target_status == "active" else "city.reject"),
+            target_type="city", target_id=city_id,
+            detail={"name": current.name, "from": current.status, "to": target_status},
+        )
+        await db.commit()
+        return {
+            "id": row[0], "name": row[1], "status": row[2], "decided_at": row[3],
+        }
+
+    @staticmethod
+    async def create_active_city(db: AsyncSession, actor: User, name: str) -> dict:
+        """Admin adds a city that goes live immediately.
+
+        Deliberately NOT the owner path. An owner's `requested_city` lands as
+        'pending' because a self-service caller must not be able to extend the
+        canonical list unilaterally — that gate is what stops
+        "Bangalore"/"Bengaluru" style drift. An admin is the approval authority,
+        so making them file a request and then approve their own request is
+        ceremony with no safety value.
+
+        Reuse over duplicate: if the name already exists in ANY casing, that row
+        is returned rather than a second one created. `cities` has a unique index
+        on lower(name), so inserting would fail anyway — this turns a 500 into
+        the outcome the caller actually wanted.
+        """
+        clean = (name or "").strip()
+        if len(clean) < 2:
+            raise HTTPException(status_code=422, detail="City name is too short.")
+
+        existing = (await db.execute(text(
+            "SELECT id, name, status FROM cities WHERE lower(name) = lower(:n)"
+        ), {"n": clean})).first()
+
+        if existing:
+            # A previously rejected or still-pending name asked for by an admin
+            # is a decision to accept it; promote rather than silently returning
+            # a row the onboarding form cannot then select.
+            if existing.status != "active":
+                await db.execute(text(
+                    "UPDATE cities SET status = 'active', decided_at = now() WHERE id = :cid"
+                ), {"cid": str(existing.id)})
+                await AdminService._audit(
+                    db, actor, action="city.activate",
+                    target_type="city", target_id=existing.id,
+                    detail={"name": existing.name, "from": existing.status, "to": "active"},
+                )
+                await db.commit()
+            return {
+                "id": existing.id, "name": existing.name, "status": "active",
+                "created": False,
+            }
+
+        row = (await db.execute(text("""
+            INSERT INTO cities (id, name, status, created_at, decided_at)
+            VALUES (gen_random_uuid(), :n, 'active', now(), now())
+            RETURNING id, name, status
+        """), {"n": clean})).first()
+
+        await AdminService._audit(
+            db, actor, action="city.create",
+            target_type="city", target_id=row[0],
+            detail={"name": clean, "status": "active"},
+        )
+        await db.commit()
+        return {"id": row[0], "name": row[1], "status": row[2], "created": True}
+
+    @staticmethod
+    async def rename_city(
+        db: AsyncSession, actor: User, city_id: uuid.UUID, new_name: str
+    ) -> dict:
+        """Rename a city and carry every outlet that referenced it.
+
+        **`outlets.city` is a denormalised varchar, not a FK to `cities.id`** —
+        verified against the live schema: `outlets` has exactly one foreign key
+        and it is `organization_id`. So nothing cascades. Renaming the `cities`
+        row alone would leave every outlet holding the OLD spelling, which is
+        absent from the canonical list — those outlets would then be unselectable
+        at signup and invisible to any lookup that joins on the name. The UPDATE
+        of `outlets.city` below is what makes the rename honest, and it runs in
+        the same transaction so the two can never disagree.
+
+        A collision is REFUSED, never merged. Pointing two cities' outlets at one
+        row is a data merge: it cannot be undone by renaming back, and it silently
+        relocates real restaurants. That needs its own deliberate operation with
+        its own confirmation, not a side effect of an edit box.
+        """
+        clean = (new_name or "").strip()
+        if len(clean) < 2:
+            raise HTTPException(status_code=422, detail="City name is too short.")
+
+        current = (await db.execute(text(
+            "SELECT id, name, status FROM cities WHERE id = :cid"
+        ), {"cid": str(city_id)})).first()
+        if not current:
+            raise HTTPException(status_code=404, detail="City not found")
+
+        clash = (await db.execute(text(
+            "SELECT id, name, status FROM cities "
+            "WHERE lower(name) = lower(:n) AND id <> :cid"
+        ), {"n": clean, "cid": str(city_id)})).first()
+        if clash:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"'{clash.name}' already exists as a separate city "
+                    f"({clash.status}). Renaming '{current.name}' onto it would "
+                    "merge two cities' outlets, which is a separate operation — "
+                    "rename to a distinct name instead."
+                ),
+            )
+
+        # Case-only change (Kochi -> KOCHI) is a legitimate rename and must not
+        # be blocked by the clash check above; it is excluded by `id <> :cid`.
+        outlets_updated = 0
+        if clean != current.name:
+            res = await db.execute(text(
+                "UPDATE outlets SET city = :new WHERE lower(city) = lower(:old)"
+            ), {"new": clean, "old": current.name})
+            outlets_updated = res.rowcount or 0
+
+            await db.execute(text("UPDATE cities SET name = :n WHERE id = :cid"),
+                             {"n": clean, "cid": str(city_id)})
+
+            await AdminService._audit(
+                db, actor, action="city.rename",
+                target_type="city", target_id=city_id,
+                detail={
+                    "from": current.name, "to": clean,
+                    "outlets_updated": outlets_updated,
+                },
+            )
+            await db.commit()
+
+        return {
+            "id": current.id, "name": clean, "previous_name": current.name,
+            "status": current.status, "outlets_updated": outlets_updated,
+        }

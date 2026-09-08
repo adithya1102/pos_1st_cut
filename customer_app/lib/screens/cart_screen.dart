@@ -4,13 +4,14 @@ import 'package:provider/provider.dart';
 import '../models/cart_item.dart';
 import '../state/cart_state.dart';
 import '../theme/app_colors.dart';
+import '../theme/app_theme.dart';
 import '../theme/widgets/neo_button.dart';
 import '../theme/widgets/neo_card.dart';
 import '../theme/widgets/neo_text_field.dart';
 import '../widgets/price_text.dart';
-import '../widgets/theme_toggle_button.dart';
 import '../widgets/veg_badge.dart';
 import 'checkout_screen.dart';
+import '../widgets/account_button.dart';
 
 /// Step 7: cart review. Prominent SELF PICKUP callout, NO delivery option.
 class CartScreen extends StatefulWidget {
@@ -38,9 +39,7 @@ class _CartScreenState extends State<CartScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Your Cart'),
-        actions: const [
-          Padding(padding: EdgeInsets.only(right: 16), child: ThemeToggleButton()),
-        ],
+        actions: careVoActions(),
       ),
       bottomNavigationBar: cart.isEmpty
           ? null
@@ -61,11 +60,19 @@ class _CartScreenState extends State<CartScreen> {
             : ListView(
                 padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
                 children: [
+                  Text('Your order', style: textTheme.headlineSmall),
+                  const SizedBox(height: 5),
+                  Text(
+                    [
+                      cart.outlet?.name,
+                      cart.outlet?.locality,
+                    ].whereType<String>().where((s) => s.isNotEmpty).join(' · '),
+                    style: textTheme.titleSmall?.copyWith(color: AppColors.brand),
+                  ),
+                  const SizedBox(height: 16),
                   // SELF PICKUP callout — the signature, prominent element.
                   _SelfPickupCallout(outletName: cart.outlet?.name ?? 'the outlet'),
                   const SizedBox(height: 20),
-                  Text('Items', style: textTheme.headlineSmall),
-                  const SizedBox(height: 12),
                   for (final line in cart.items) ...[
                     _CartLineCard(line: line),
                     const SizedBox(height: 12),
@@ -80,12 +87,11 @@ class _CartScreenState extends State<CartScreen> {
                   ),
                   const SizedBox(height: 20),
                   _BillSummary(subtotal: cart.subtotal),
-                  const SizedBox(height: 12),
-                  Center(
-                    child: Text(
-                      'No delivery fees — you pick it up yourself.',
-                      style: textTheme.bodySmall?.copyWith(color: c.inkSoft),
-                    ),
+                  const SizedBox(height: 14),
+                  Text(
+                    'Pickup only. You collect at the counter — no delivery, '
+                    'no wait.',
+                    style: textTheme.bodyMedium?.copyWith(color: c.inkSoft),
                   ),
                 ],
               ),
@@ -144,6 +150,42 @@ class _CartLineCard extends StatelessWidget {
   const _CartLineCard({required this.line});
   final CartItem line;
 
+  /// Confirm before a line leaves the cart.
+  ///
+  /// Removal is the one cart action with no undo — quantity changes can be
+  /// reversed with the opposite button, but a removed line takes its
+  /// customisations and its note with it, and rebuilding those means going back
+  /// into the dish screen and re-picking every option.
+  ///
+  /// Named rather than described ("Remove Paneer Tikka?") so a mis-tap on the
+  /// wrong card is obvious from the dialog itself, which is the likeliest way
+  /// to reach this by accident.
+  Future<bool> _confirmRemove(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        key: const Key('confirm_remove_line'),
+        title: Text('Remove ${line.item.name}?'),
+        content: const Text('It will be taken out of your cart.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text('Keep it'),
+          ),
+          TextButton(
+            key: const Key('confirm_remove_line_ok'),
+            onPressed: () => Navigator.pop(c, true),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(c).colorScheme.error,
+            ),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
+  }
+
   @override
   Widget build(BuildContext context) {
     final cart = context.read<CartState>();
@@ -159,8 +201,19 @@ class _CartLineCard extends StatelessWidget {
             children: [
               VegBadge(isVeg: line.item.isVeg),
               const SizedBox(width: 8),
-              Expanded(child: Text(line.item.name, style: textTheme.titleMedium)),
-              PriceText(line.lineTotal),
+              Expanded(
+                child: Text(
+                  line.item.name,
+                  style: textTheme.titleMedium,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Fixed-width cell: a line total of ₹90 and one of ₹1,290 leave
+              // the name exactly the same room, so the name's wrap point does
+              // not move as quantities change.
+              PriceSlot(line.lineTotal),
             ],
           ),
           if (line.selectedOptions.isNotEmpty) ...[
@@ -178,7 +231,19 @@ class _CartLineCard extends StatelessWidget {
           const SizedBox(height: 12),
           Row(
             children: [
-              _MiniButton(icon: Icons.remove, onTap: () => cart.decrement(line.lineId)),
+              _MiniButton(
+                icon: Icons.remove,
+                // Decrementing the last one IS a removal, so it asks too.
+                // Confirming only the Remove button would leave the identical
+                // outcome reachable, silently, one tap away — and "minus" on a
+                // quantity of 1 is an easier mis-tap than the labelled button.
+                onTap: () async {
+                  if (line.quantity <= 1) {
+                    if (!await _confirmRemove(context)) return;
+                  }
+                  cart.decrement(line.lineId);
+                },
+              ),
               SizedBox(
                 width: 44,
                 child: Center(
@@ -188,7 +253,10 @@ class _CartLineCard extends StatelessWidget {
               _MiniButton(icon: Icons.add, onTap: () => cart.increment(line.lineId)),
               const Spacer(),
               TextButton.icon(
-                onPressed: () => cart.removeLine(line.lineId),
+                key: Key('remove_line_${line.lineId}'),
+                onPressed: () async {
+                  if (await _confirmRemove(context)) cart.removeLine(line.lineId);
+                },
                 icon: Icon(Icons.delete_outline, size: 18, color: c.inkSoft),
                 label: Text('Remove',
                     style: textTheme.bodyMedium?.copyWith(color: c.inkSoft)),
@@ -231,30 +299,61 @@ class _BillSummary extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     final textTheme = Theme.of(context).textTheme;
-    Widget row(String label, double value, {bool bold = false}) => Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
+
+    Widget row(String label, double value) => Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(label,
-                  style: bold ? textTheme.titleMedium : textTheme.bodyLarge),
+                  style: textTheme.bodyLarge?.copyWith(color: c.inkSoft)),
               PriceText(value,
-                  style: bold ? textTheme.titleLarge : textTheme.bodyLarge),
+                  style: textTheme.bodyLarge?.copyWith(color: c.inkSoft)),
             ],
           ),
         );
 
+    // Zero padding on the card: the mint "To pay" band has to run edge to edge
+    // inside the border, the way the prototype draws it. Clipped locally rather
+    // than by NeoCard, which must keep letting a child's hard shadow overhang.
     return NeoCard(
-      child: Column(
-        children: [
-          row('Subtotal', subtotal),
-          row('Taxes & charges', 0),
-          const SizedBox(height: 4),
-          const Divider(thickness: 2),
-          const SizedBox(height: 4),
-          row('Total', subtotal, bold: true),
-        ],
+      padding: EdgeInsets.zero,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(AppTheme.radius - 3),
+        child: Column(
+          children: [
+            row('Item total', subtotal),
+            Container(height: 2, color: c.surfaceAlt),
+            row('Taxes & fees', 0),
+            Container(height: 2, color: c.border),
+            Container(
+              width: double.infinity,
+              color: c.accent,
+              padding: const EdgeInsets.all(14),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'To pay',
+                    style: textTheme.titleLarge?.copyWith(
+                      color: c.onAccent,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  PriceText(
+                    subtotal,
+                    style: textTheme.titleLarge?.copyWith(
+                      color: c.onAccent,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -286,7 +385,7 @@ class _CheckoutBar extends StatelessWidget {
             const SizedBox(width: 16),
             Expanded(
               child: NeoButton(
-                label: 'Checkout',
+                label: 'Continue to payment',
                 icon: Icons.lock_outline,
                 onPressed: onCheckout,
               ),

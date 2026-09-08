@@ -16,7 +16,7 @@ from app.modules.carevo_admin.deps import get_current_super_admin
 from app.modules.carevo_admin.service import AdminService, PENDING
 from app.modules.users.model import User
 
-router = APIRouter(prefix="/admin", tags=["CareVo Admin — Platform"])
+router = APIRouter(prefix="/admin", tags=["Gusto Admin — Platform"])
 
 
 @router.get("/me", response_model=s.AdminMeOut)
@@ -114,6 +114,124 @@ async def unlock_order(
     db: AsyncSession = Depends(get_db),
 ):
     return await AdminService.unlock_order(db, admin, order_id)
+
+
+# --------------------------- customer directory ----------------------------
+@router.get("/customers", response_model=list[s.CustomerDirectoryOut])
+async def list_customers(
+    limit: int = Query(200, ge=1, le=1000),
+    _admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await AdminService.list_customers(db, limit=limit)
+
+
+# ------------------------------ orders -------------------------------------
+@router.get("/orders", response_model=s.AdminOrderPageOut)
+async def list_orders(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    _admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Every order across every outlet, newest first.
+
+    Paginated rather than capped. The customer directory takes a bare `limit`
+    and silently drops everything past it — tolerable for a directory, not for
+    an order log that grows with each sale, so this returns `total` and an
+    `offset` the caller can page with.
+
+    Deliberately GET-only and separate from /admin/customers: this is an order
+    log, and the customer directory's columns are left exactly as they were.
+    """
+    return await AdminService.list_orders(db, limit=limit, offset=offset)
+
+
+@router.get("/orders/by-restaurant", response_model=s.RestaurantTabOut)
+async def list_orders_by_restaurant(
+    days: int = Query(30, ge=1, le=365),
+    limit: int = Query(2000, ge=1, le=5000),
+    outlet_id: Optional[uuid.UUID] = Query(None),
+    _admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Orders grouped restaurant -> day -> time, for the Restaurant tab.
+
+    A different VIEW of the same rows /admin/orders returns — no new table and
+    no new column. Same SUPER_ADMIN gate as every other route in this module.
+
+    Windowed (`days`) rather than paginated: paging a tree can split one
+    restaurant's days across two pages, producing a group that looks complete
+    and is not. `limit` remains a safety cap, but the response now reports
+    `truncated` when it bites, so a short tree is never mistaken for a complete
+    one. `outlet_id` scopes to a single restaurant.
+    """
+    return await AdminService.list_orders_by_restaurant(
+        db, days=days, limit=limit, outlet_id=outlet_id
+    )
+
+
+# ------------------------------ cities -------------------------------------
+# Same shape as the outlet verification queue above, deliberately: pending rows
+# listed, then approve/reject, each writing an admin_audit_logs entry.
+@router.get("/cities", response_model=list[s.AdminCityOut])
+async def list_cities(
+    status: Optional[str] = Query(None),
+    _admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await AdminService.list_cities(db, status)
+
+
+@router.post("/cities/{city_id}/approve", response_model=s.CityDecisionOut)
+async def approve_city(
+    city_id: uuid.UUID,
+    admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Make a requested city selectable for future signups."""
+    return await AdminService.decide_city(db, admin, city_id, "active")
+
+
+@router.post("/cities/{city_id}/reject", response_model=s.CityDecisionOut)
+async def reject_city(
+    city_id: uuid.UUID,
+    admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await AdminService.decide_city(db, admin, city_id, "rejected")
+
+
+@router.post("/cities", response_model=s.CityCreateOut, status_code=201)
+async def create_city(
+    payload: s.CityCreateIn,
+    admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add a city that is immediately selectable.
+
+    SUPER_ADMIN only, and deliberately a separate route from the public
+    `/register` rather than a bypass flag on it: `/register` is
+    unauthenticated, so a "skip the pending gate" parameter there would be an
+    open privilege escalation. owner_app's `requested_city` path is untouched
+    and still lands as 'pending'.
+    """
+    return await AdminService.create_active_city(db, admin, payload.name)
+
+
+@router.patch("/cities/{city_id}", response_model=s.CityRenameOut)
+async def rename_city(
+    city_id: uuid.UUID,
+    payload: s.CityRenameIn,
+    admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Rename in place, carrying every outlet that holds the old spelling.
+
+    409 on a case-insensitive collision with a different city: that would be a
+    merge, not a rename, and merges do not happen as a side effect of an edit.
+    """
+    return await AdminService.rename_city(db, admin, city_id, payload.name)
 
 
 # -------------------- prediction engine (shadow mode) ----------------------

@@ -10,8 +10,8 @@ import '../theme/widgets/neo_button.dart';
 import '../theme/widgets/neo_card.dart';
 import '../theme/widgets/neo_text_field.dart';
 import '../widgets/price_text.dart';
-import '../widgets/theme_toggle_button.dart';
 import '../widgets/veg_badge.dart';
+import '../widgets/account_button.dart';
 
 /// Step 6: dish detail + customization (modifiers, quantity, notes).
 class DishDetailScreen extends StatefulWidget {
@@ -113,9 +113,7 @@ class _DishDetailScreenState extends State<DishDetailScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Customise'),
-        actions: const [
-          Padding(padding: EdgeInsets.only(right: 16), child: ThemeToggleButton()),
-        ],
+        actions: careVoActions(),
       ),
       bottomNavigationBar: SafeArea(
         top: false,

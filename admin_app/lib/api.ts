@@ -71,6 +71,13 @@ export const api = {
       method: "POST",
       body: body === undefined ? undefined : JSON.stringify(body),
     }),
+  // PATCH is how a campaign is edited AND how it is switched on/off — the
+  // backend audits the toggle distinctly, so no separate verb is needed here.
+  patch: <T,>(path: string, body?: unknown) =>
+    request<T>(path, {
+      method: "PATCH",
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }),
 };
 
 /** Staff login. Form-encoded on purpose — the endpoint is OAuth2PasswordRequestForm. */
@@ -103,6 +110,12 @@ export interface Outlet {
   id: string;
   location_name: string;
   city: string | null;
+  /** Area within the city (migration 012). Null for outlets created before it;
+   *  required at signup from now on. Shown next to the name because it is half
+   *  of the key the approval duplicate guard rejects on. */
+  locality: string | null;
+  // Null for every outlet created before migration 009 added the column.
+  phone_number: string | null;
   organization_id: string | null;
   organization_name: string | null;
   verification_status: VerificationStatus;
@@ -110,6 +123,9 @@ export interface Outlet {
   created_at: string | null;
   deactivated_at: string | null;
   is_deactivated: boolean;
+  /** Owner's login username, for support recovering a forgotten login.
+   *  Read-only; no password material is ever exposed. */
+  owner_username: string | null;
 }
 
 export interface LockedOrder {
@@ -121,6 +137,192 @@ export interface LockedOrder {
   total_amount: number;
   customer_phone: string | null;
   created_at: string | null;
+}
+
+/** One row of the read-only customer directory. `name` is usually null —
+ *  sign-in only ever captures a verified phone number. */
+// phone_number and email are both nullable since migration 008: OTP customers
+// have no email, Google customers have no phone. At least one is always set.
+export interface CustomerRow {
+  id: string;
+  phone_number: string | null;
+  email: string | null;
+  name: string | null;
+  order_count: number;
+  created_at: string | null;
+  // Loyalty + plan (migration 010). plan is derived server-side from
+  // premium_until; premium_until is null for everyone who never had a trial.
+  points_balance: number;
+  premium_until: string | null;
+  plan: string;
+  // Order stats, from PAID orders only.
+  total_order_value: number;
+  top_dish: string | null;
+  top_outlet: string | null;
+  last_order_at: string | null;
+  days_since_last_order: number | null;
+  /** HEURISTIC recency bucket, not a churn prediction. See backend service.py. */
+  activity_status: "No orders" | "Active" | "At Risk" | "Churned" | string;
+}
+
+/** Result of an admin adding a city directly. */
+export interface CityCreateResult {
+  id: string;
+  name: string;
+  status: string;
+  /** False when an existing row was reused (case-insensitive) instead of a new
+   *  one created. Not an error — the city the caller wanted now exists. */
+  created: boolean;
+}
+
+/** Result of renaming a city. */
+export interface CityRenameResult {
+  id: string;
+  name: string;
+  previous_name: string;
+  status: string;
+  /** outlets.city is a denormalised varchar, not a FK — the rename rewrites
+   *  those rows explicitly, and this is how many it touched. */
+  outlets_updated: number;
+}
+
+/** A city in the canonical list (migration 013). */
+export interface City {
+  id: string;
+  name: string;
+  status: "active" | "pending" | "rejected" | string;
+  created_at: string | null;
+  decided_at: string | null;
+  /** Which outlet's signup requested it; null for seeded/admin-added rows. */
+  requested_by_outlet_id: string | null;
+  requested_by_outlet_name: string | null;
+}
+
+// -------------------------- promotions (migration 016) ----------------------
+
+/** Who pays. Derived from nothing else — `scope` IS the funding decision.
+ *  The admin dashboard only ever creates CAREVO_CAMPAIGN rows; RESTAURANT_OFFER
+ *  appears in this union only because the two share a table and a type. */
+export type PromotionScope = "CAREVO_CAMPAIGN" | "RESTAURANT_OFFER";
+export type DiscountType = "PERCENT" | "FLAT";
+
+export interface Promotion {
+  id: string;
+  code: string | null;
+  label: string;
+  scope: PromotionScope;
+  /** Null = platform-wide. Set = campaign aimed at one restaurant. */
+  outlet_id: string | null;
+  outlet_name: string | null;
+  discount_type: DiscountType;
+  discount_value: number;
+  max_discount_amount: number | null;
+  min_order_value: number | null;
+  creator_name: string | null;
+  max_redemptions_total: number | null;
+  max_redemptions_per_customer: number;
+  is_active: boolean;
+  created_by_user_id: string | null;
+  created_at: string | null;
+  /** V1 analytics: a count, nothing more. */
+  redemption_count: number;
+  /** Server-rendered one-liner, so the dashboard and the customer app never
+   *  word the same campaign differently. */
+  benefit_text: string;
+}
+
+export interface PromotionCreateBody {
+  label: string;
+  code?: string | null;
+  outlet_id?: string | null;
+  discount_type: DiscountType;
+  discount_value: number;
+  max_discount_amount?: number | null;
+  min_order_value?: number | null;
+  creator_name?: string | null;
+  max_redemptions_total?: number | null;
+  max_redemptions_per_customer?: number;
+  is_active?: boolean;
+}
+
+/** One order in the admin log (GET /admin/orders). Separate from CustomerRow
+ *  on purpose — the Customers directory is per-person, this is per-order, and
+ *  its columns are left untouched. */
+export interface AdminOrderItem {
+  name: string | null;
+  quantity: number;
+}
+
+export interface AdminOrder {
+  order_id: string;
+  pickup_code: string | null;
+  status: string;
+  payment_status: string | null;
+  created_at: string | null;
+  customer_name: string | null;
+  customer_phone: string | null;
+  customer_email: string | null;
+  outlet_name: string | null;
+  items: AdminOrderItem[];
+  total_amount: number;
+  discount_amount: number;
+  promotion_label: string | null;
+  promotion_code: string | null;
+  promotion_discount: number | null;
+  /** Null when the customer never shared an origin — render "—", not 0. */
+  distance_km: number | null;
+}
+
+export interface AdminOrderPage {
+  total: number;
+  limit: number;
+  offset: number;
+  orders: AdminOrder[];
+}
+
+/** Restaurant tab (GET /admin/orders/by-restaurant): the same orders as
+ *  /admin/orders, grouped restaurant -> day -> time. A view, not new data —
+ *  no schema backs this beyond customer_orders + outlets. */
+export interface RestaurantOrder {
+  order_id: string;
+  /** Local wall-clock "HH:MM" — the "time" level of the grouping. */
+  time: string;
+  created_at: string | null;
+  status: string;
+  payment_status: string | null;
+  pickup_code: string | null;
+  total_amount: number;
+  item_count: number;
+}
+
+export interface RestaurantDay {
+  /** ISO "YYYY-MM-DD". */
+  day: string;
+  order_count: number;
+  total_amount: number;
+  orders: RestaurantOrder[];
+}
+
+export interface RestaurantGroup {
+  outlet_id: string | null;
+  outlet_name: string | null;
+  city: string | null;
+  locality: string | null;
+  order_count: number;
+  total_amount: number;
+  days: RestaurantDay[];
+}
+
+/** Restaurant tab envelope. The metadata is the point: `truncated` is what
+ *  distinguishes a short tree that is the whole truth from one that only looks
+ *  like it. */
+export interface RestaurantTab {
+  groups: RestaurantGroup[];
+  /** More orders matched the window than the server's cap returned. */
+  truncated: boolean;
+  cap: number;
+  returned_orders: number;
+  window_days: number;
 }
 
 export interface AuditLog {
@@ -255,8 +457,69 @@ export const adminApi = {
   lockedOrders: () => api.get<LockedOrder[]>("/api/v1/admin/orders/locked"),
   unlockOrder: (id: string) => api.post(`/api/v1/admin/orders/${id}/unlock`),
 
+  customers: (limit = 200) =>
+    api.get<CustomerRow[]>(`/api/v1/admin/customers?limit=${limit}`),
+
+  cities: (status?: string) =>
+    api.get<City[]>(
+      `/api/v1/admin/cities${status ? `?status=${encodeURIComponent(status)}` : ""}`,
+    ),
+  approveCity: (id: string) =>
+    api.post<City>(`/api/v1/admin/cities/${id}/approve`, {}),
+  rejectCity: (id: string) =>
+    api.post<City>(`/api/v1/admin/cities/${id}/reject`, {}),
+
+  /** Admin-added city, live immediately — no pending gate, because the admin
+   *  is the approval authority. Reuses an existing row (case-insensitive)
+   *  rather than failing. owner_app's self-service path is unchanged. */
+  createCity: (name: string) =>
+    api.post<CityCreateResult>("/api/v1/admin/cities", { name }),
+
+  /** Rename in place. 409 if the new name collides case-insensitively with a
+   *  DIFFERENT city — that would be a merge, not a rename. */
+  renameCity: (id: string, name: string) =>
+    api.patch<CityRenameResult>(`/api/v1/admin/cities/${id}`, { name }),
+
+  orders: (limit = 50, offset = 0) =>
+    api.get<AdminOrderPage>(`/api/v1/admin/orders?limit=${limit}&offset=${offset}`),
+
+  // Windowed by days rather than paginated: paging a tree can split one
+  // restaurant's days across two pages, producing a group that looks complete
+  // and is not.
+  // `limit` is a safety cap on the server, and the response now REPORTS when it
+  // bit — a short tree used to be indistinguishable from a complete one.
+  // Tolerates the old bare-array shape too, so backend and dashboard can deploy
+  // in either order without the tab breaking in the gap.
+  ordersByRestaurant: (days = 30, outletId?: string) =>
+    api
+      .get<RestaurantTab | RestaurantGroup[]>(
+        `/api/v1/admin/orders/by-restaurant?days=${days}` +
+          (outletId ? `&outlet_id=${encodeURIComponent(outletId)}` : ""),
+      )
+      .then<RestaurantTab>((res) =>
+        Array.isArray(res)
+          ? {
+              groups: res,
+              truncated: false,
+              cap: 0,
+              returned_orders: 0,
+              window_days: days,
+            }
+          : res,
+      ),
+
   auditLogs: (limit = 100) =>
     api.get<AuditLog[]>(`/api/v1/admin/audit-logs?limit=${limit}`),
+
+  // CareVo Campaigns (migration 016). CareVo-funded and CareVo-created; the
+  // restaurants' own offers live in owner_app and are never listed here.
+  promotions: () => api.get<Promotion[]>("/api/v1/admin/promotions"),
+  createPromotion: (body: PromotionCreateBody) =>
+    api.post<Promotion>("/api/v1/admin/promotions", body),
+  updatePromotion: (id: string, body: Partial<PromotionCreateBody>) =>
+    api.patch<Promotion>(`/api/v1/admin/promotions/${id}`, body),
+  setPromotionActive: (id: string, is_active: boolean) =>
+    api.patch<Promotion>(`/api/v1/admin/promotions/${id}`, { is_active }),
 
   // Prediction engine (shadow-mode observability, read-only).
   predictionOverview: () =>
@@ -276,7 +539,23 @@ export const adminApi = {
 
 export interface RegisterOutletBody {
   restaurant_name: string;
+  /** Must be an already-approved city. The server rejects both-or-neither of
+   *  city / requested_city, so exactly one is sent. */
   city?: string | null;
+  /** A city not yet on the canonical list. The server records it in `cities`
+   *  as status='pending' for admin approval (migration 013) and the outlet
+   *  carries the name meanwhile. Mutually exclusive with `city` — RegisterIn's
+   *  _exactly_one_city validator rejects both-or-neither with a 422. */
+  requested_city?: string | null;
+  /** Area within the city (migration 012). REQUIRED server-side — a body
+   *  without it is rejected 422, which is what this form used to do. */
+  locality: string;
+  /** Required server-side: admins had no reliable way to reach an outlet
+   *  during verification without it. */
+  phone_number: string;
+  /** Required server-side (migration 015) — it is what makes the owner's
+   *  forgot-password flow possible. */
+  email: string;
   latitude?: number | null;
   longitude?: number | null;
   username: string;

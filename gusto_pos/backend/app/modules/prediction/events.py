@@ -27,11 +27,35 @@ ORDER_READY = "ORDER_READY"
 CUSTOMER_DEPARTED = "CUSTOMER_DEPARTED"
 LOCATION_PING = "LOCATION_PING"
 CUSTOMER_ARRIVED = "CUSTOMER_ARRIVED"
+# The customer's own "I've picked this up" acknowledgment (migration 023).
+# NOT the same as PICKUP_VERIFIED, which is STAFF confirming the pickup code and
+# is the authoritative completion. This is the customer quietening their own
+# screen — actor_type=customer, source=tap — and moves no order status. It
+# exists so that ack can survive a reinstall/new device instead of living only
+# in on-device storage. Sits BEFORE PICKUP_VERIFIED here only for reading order;
+# either can occur without the other.
+CUSTOMER_PICKED_UP = "CUSTOMER_PICKED_UP"
 PICKUP_VERIFIED = "PICKUP_VERIFIED"
 WAIT_FEEDBACK = "WAIT_FEEDBACK"
 LOAD_SNAPSHOT = "LOAD_SNAPSHOT"
 ORDER_ABANDONED = "ORDER_ABANDONED"
 ITEM_UNAVAILABLE = "ITEM_UNAVAILABLE"
+# Gateway reported the payment did not succeed (failed, dropped, cancelled).
+# Distinct from ORDER_ABANDONED, which means the TTL sweeper expired an unpaid
+# order — nobody tried to pay. Here somebody tried and it did not go through.
+PAYMENT_FAILED = "PAYMENT_FAILED"
+# Staff explicitly refused a PAID order. Distinct from ORDER_ABANDONED (TTL)
+# and from PAYMENT_FAILED (gateway): this one is a human decision, and it is
+# the only one of the three that obliges a refund.
+ORDER_REJECTED = "ORDER_REJECTED"
+# Train orders (addendum Item 1): the kitchen has been PUSHED that it is time
+# to start this order, computed back from the customer's declared arrival.
+#
+# Purely a notification. It does NOT set PREP_STARTED and does not move the
+# order's status — whether staff act on it is their call, exactly like any
+# other push. Distinct from PREP_SCHEDULED, which is Item 2's shadow-mode
+# event and is not emitted by this path at all.
+KITCHEN_START_NOTIFIED = "KITCHEN_START_NOTIFIED"
 
 # actor_type ∈ {customer, staff, system}; source ∈ {tap, geofence, system, inferred}
 

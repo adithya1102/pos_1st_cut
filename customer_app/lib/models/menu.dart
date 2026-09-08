@@ -77,6 +77,24 @@ class MenuItem {
       customizations: CustomizationGroup.listFrom(json['customizations']),
     );
   }
+
+  /// Minimal snapshot for the persisted cart. Customization *groups* are
+  /// intentionally dropped — a restored cart line keeps the options the
+  /// customer already chose (on the CartItem), and the cart screen offers no
+  /// line editor that would need the full group definitions back.
+  Map<String, dynamic> toCartSnapshotJson() => {
+        'id': id,
+        'name': name,
+        'base_price': basePrice,
+        'is_veg': isVeg,
+        'is_available': isAvailable,
+        'prep_time_minutes': prepTimeMinutes,
+        'image_url': imageUrl,
+        'tags': tags,
+      };
+
+  factory MenuItem.fromCartSnapshotJson(Map<String, dynamic> json) =>
+      MenuItem.fromJson({...json, 'customizations': const []});
 }
 
 /// A group of choices, e.g. "Size" -> Regular / Large.
