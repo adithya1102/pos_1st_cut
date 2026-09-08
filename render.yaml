@@ -48,10 +48,47 @@ services:
       - key: OTP_RATE_LIMIT_PER_HOUR
         value: "5"
 
+      # Payment gateway. PAYMENT_GATEWAY is the ONLY selector — get_gateway()
+      # returns CashfreeGateway for "cashfree" and StubRazorpayGateway for
+      # anything else, including a typo.
+      #
+      # This said "stub" from the blueprint's first commit (d15b7578) and was
+      # never revisited. INCIDENT 2026-09-08: tapping Pay created the order but
+      # never opened the Cashfree sheet. Not a crash — the stub returns a
+      # razorpay-shaped session, so `order.payment.isCashfree` is false and
+      # checkout_screen.dart takes its early-return stub branch before
+      # openCheckout() is ever reached. Confirmed against the live DB: the ten
+      # most recent payment_transactions rows all recorded gateway='razorpay'.
+      #
+      # As with CUSTOMER_AUTH_ENABLED and FIREBASE_ENABLED above, changing this
+      # file does NOT change the running service — set it in the Render
+      # dashboard. Verify by placing one order and reading back:
+      #   SELECT gateway FROM payment_transactions ORDER BY created_at DESC;
+      # 'cashfree' = live. 'razorpay' = still on the stub.
+      #
+      # PAYMENT_GATEWAY_SHAPE is REMOVED, not corrected. get_gateway() ignores
+      # it — its own docstring calls it "a legacy alias" and records that the
+      # factory once read SHAPE while /payment/simulate read PAYMENT_GATEWAY,
+      # "which is how you end up with a 'real gateway' deploy still serving
+      # stub orders". Leaving a second, ignored knob named after a gateway is
+      # what made this incident readable as configured-for-razorpay.
       - key: PAYMENT_GATEWAY
-        value: stub
-      - key: PAYMENT_GATEWAY_SHAPE
-        value: razorpay
+        value: cashfree
+
+      # REQUIRED once PAYMENT_GATEWAY=cashfree. The factory refuses to start an
+      # order without them rather than silently falling back to stub, so
+      # flipping the selector WITHOUT these set turns checkout into a hard
+      # failure instead of a wrong-but-working stub. Set both in the dashboard
+      # before flipping. CASHFREE_ENV defaults to "sandbox" in config.py —
+      # production is an explicit opt-in, so it must be set too for real money.
+      - key: CASHFREE_APP_ID
+        sync: false
+      - key: CASHFREE_SECRET_KEY
+        sync: false
+      - key: CASHFREE_ENV
+        sync: false
+      - key: CASHFREE_NOTIFY_URL
+        sync: false
       # Firebase phone-OTP and Google sign-in. TRUE in production: both
       # /customer/auth/firebase and /customer/auth/google raise 501
       # "Firebase authentication is not enabled on this deployment" when this
