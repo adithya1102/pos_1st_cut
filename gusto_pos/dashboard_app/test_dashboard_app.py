@@ -333,3 +333,70 @@ class TestKeyNeverReachesBrowser:
         assert KEY not in r.text
         # And the outbound call to the backend still carried the key.
         assert _env_and_backend[-1].get("x-testing-key") == KEY
+
+
+class TestTheRefreshLoopCannotOverlapItself:
+    """The auto-refresh must not start a round while one is still in flight.
+
+    It used to be `setInterval(() => { if (!editing) refreshAll(); }, 15000)`.
+    A round fans out to THREE backend calls, and the backend is on Render's
+    free plan where a cold start takes ~45s — so three ticks landed before the
+    first replied and a single tab could hold nine requests open. The interval
+    never asked whether the previous round had finished.
+
+    These are STRUCTURAL assertions on the served page, matching how the rest
+    of this file tests the template. They are not a browser run: what they pin
+    is that the page cannot express the overlapping shape, because the fix is
+    the control flow itself — one await chain, with the next timer armed only
+    after the current round settles.
+    """
+
+    def _page(self):
+        c = _client(); _login(c)
+        return c.get("/").text
+
+    def test_no_fixed_interval_drives_the_refresh(self):
+        page = self._page()
+        # The CALL, not the word: the comment above the loop names setInterval
+        # to explain what it replaced, and that mention must stay allowed.
+        assert "setInterval(" not in page, (
+            "a fixed interval fires regardless of whether the previous round "
+            "finished — that is exactly the overlap this removes"
+        )
+
+    def test_the_next_round_is_scheduled_only_after_the_previous_awaits(self):
+        page = self._page()
+        assert "await refreshAll()" in page, (
+            "the round must be awaited; calling it un-awaited reintroduces the "
+            "overlap under a different function name"
+        )
+        assert "setTimeout(refreshLoop, 15000)" in page
+
+    def test_the_await_comes_before_the_reschedule(self):
+        # Ordering is the whole guarantee. Scheduling first and awaiting after
+        # would still overlap, and would still contain both strings above.
+        page = self._page()
+        assert page.index("await refreshAll()") < page.index(
+            "setTimeout(refreshLoop, 15000)"
+        ), "the next round must be armed AFTER the current one settles"
+
+    def test_a_failed_round_still_reschedules(self):
+        # A throw escaping the loop would stop it forever and freeze the page
+        # silently, which is worse than a stale read. The reschedule therefore
+        # sits outside the try.
+        page = self._page()
+        loop = page[page.index("async function refreshLoop"):]
+        loop = loop[: loop.index("setTimeout(refreshLoop, 15000)")]
+        assert "try {" in loop and "catch" in loop, \
+            "the awaited round must be wrapped so a throw cannot kill the loop"
+
+    def test_an_open_edit_still_skips_the_round_but_keeps_the_cadence(self):
+        # Behaviour preserved from the setInterval version: an in-progress
+        # label edit must not be clobbered, but the loop must resume by itself.
+        page = self._page()
+        assert "if (!editing)" in page
+        loop = page[page.index("async function refreshLoop"):]
+        skip = loop.index("if (!editing)")
+        arm = loop.index("setTimeout(refreshLoop, 15000)")
+        assert skip < arm, \
+            "the edit check must guard the round, not the rescheduling"

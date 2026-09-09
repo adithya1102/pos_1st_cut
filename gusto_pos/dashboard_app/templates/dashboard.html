@@ -298,8 +298,35 @@
     }
 
     document.getElementById('day').value = istToday();
-    refreshAll();
-    setInterval(() => { if (!editing) refreshAll(); }, 15000);
+
+    // Self-scheduling, NOT setInterval.
+    //
+    // refreshAll() fans out to THREE backend calls (/api/outlets, /api/orders,
+    // /api/compliance), and the backend is on Render's free plan — a cold one
+    // takes ~45s to answer. A fixed 15s interval kept firing into that: three
+    // ticks would land before the first round replied, so one tab could sit on
+    // nine in-flight requests, and every extra tab multiplied it. The timer had
+    // no idea whether the previous round had finished, because it never asked.
+    //
+    // Awaiting the round before scheduling the next one makes overlap
+    // structurally impossible rather than unlikely: there is exactly one chain,
+    // and the next setTimeout is not armed until the current await has settled.
+    // The 15s is therefore now a GAP BETWEEN rounds, not a period — a slow
+    // round delays the next one instead of stacking on top of it.
+    (async function refreshLoop() {
+      // A round is skipped while a label edit is open, exactly as before, but
+      // the cadence continues so the loop resumes on its own afterwards.
+      if (!editing) {
+        try {
+          await refreshAll();
+        } catch (_) {
+          // refreshAll already reports failures in the status line. Swallowed
+          // here only so a throw can never escape and kill the loop — that
+          // would freeze the page silently, which is worse than a stale read.
+        }
+      }
+      setTimeout(refreshLoop, 15000);
+    })();
   </script>
 </body>
 </html>
