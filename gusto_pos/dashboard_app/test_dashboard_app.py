@@ -400,3 +400,63 @@ class TestTheRefreshLoopCannotOverlapItself:
         arm = loop.index("setTimeout(refreshLoop, 15000)")
         assert skip < arm, \
             "the edit check must guard the round, not the rescheduling"
+
+
+class TestReadsRetryTransientFailures:
+    """A cold backend or a moment of edge throttling should not surface as an
+    error the user has to act on — the page should just wait and try again.
+
+    Structural assertions on the served page, as elsewhere in this file. The
+    behaviour was verified separately by lifting the real api() out of the
+    template and driving it with a stubbed fetch (429->200, persistent 429,
+    5xx, 4xx, 2xx, POST, 401), with the pre-retry api() through the same
+    harness as a control. What is pinned here is the shape that made those
+    outcomes possible, so it cannot be quietly undone.
+    """
+
+    def _page(self):
+        c = _client(); _login(c)
+        return c.get("/").text
+
+    def test_there_is_a_retry_budget_with_two_backoff_delays(self):
+        page = self._page()
+        assert "READ_RETRY_DELAYS = [3000, 8000]" in page, \
+            "two retries, backing off — not a single immediate re-fire"
+
+    def test_only_429_and_5xx_are_treated_as_transient(self):
+        # A 4xx is the server rejecting the request itself. Repeating it gets
+        # the same answer more slowly and buries the real cause in noise.
+        page = self._page()
+        assert "res.status === 429 || res.status >= 500" in page
+
+    def test_mutating_calls_are_excluded_from_retry(self):
+        # THE safety property. Every action on this page — approve, ready,
+        # reject, deliver, saveLabel — goes through the same api() helper, and
+        # a 5xx does not mean the server did nothing.
+        page = self._page()
+        assert "const isRead = !opts.method || opts.method.toUpperCase() === 'GET'" in page
+        assert "const delays = isRead ? READ_RETRY_DELAYS : []" in page, \
+            "a non-read must get an EMPTY budget, not a shorter one"
+
+    def test_deliver_specifically_must_not_retry_a_429(self):
+        # deliver runs the real verify_pickup, which answers 429 once an
+        # outlet's pickup-miss cap is spent. Retrying would spend more of the
+        # same budget and could lock the outlet out for other staff.
+        page = self._page()
+        assert "/deliver" in page and "method: 'POST'" in page, \
+            "deliver must remain a POST so isRead excludes it from retry"
+
+    def test_401_is_never_retried(self):
+        # The session is gone; waiting does not bring it back.
+        page = self._page()
+        i401 = page.index("res.status === 401")
+        itransient = page.index("const transient =")
+        assert i401 < itransient, \
+            "the 401 redirect must short-circuit before the retry decision"
+
+    def test_the_error_only_surfaces_after_the_budget_is_spent(self):
+        page = self._page()
+        block = page[page.index("for (let attempt = 0"):page.index("const esc =")]
+        assert "await sleep(delays[attempt])" in block and "continue;" in block
+        assert block.index("continue;") < block.index("throw new Error(path"), \
+            "the retry must be attempted before the throw that shows the error"
