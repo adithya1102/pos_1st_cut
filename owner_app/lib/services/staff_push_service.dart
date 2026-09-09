@@ -1,3 +1,4 @@
+import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 
@@ -9,6 +10,52 @@ class StaffPushKind {
   /// Addendum Item 1: "start this one now", derived from a train order's
   /// declared arrival. Purely a prompt — it moves no status.
   static const trainStartDue = 'TRAIN_START_DUE';
+}
+
+/// Handles a staff push that arrives while the app is backgrounded or killed.
+///
+/// ## What this does NOT do
+///
+/// It does not make the notification appear, and it is not what lets staff find
+/// out about an order while the tablet is asleep. The backend sends a
+/// `notification` block alongside its `data` (PushService._transmit), and
+/// Android draws that from the system tray without running any Dart. Removing
+/// this function would not silence a single alert.
+///
+/// What it buys is the one hook that can see the `data` half while the app is
+/// not running.
+///
+/// ## Why it looks the way it does
+///
+/// FCM runs this in a SEPARATE ISOLATE with its own memory. Nothing built in
+/// `main()` exists here — no providers, no OrdersState, no ApiClient, no
+/// Firebase app. Hence:
+///
+///   * `@pragma('vm:entry-point')`, or tree-shaking drops it from release
+///     builds and the callback silently never fires — a failure that cannot be
+///     reproduced in debug;
+///   * top-level, not a method, because the entry point is resolved by name
+///     across the isolate boundary;
+///   * `Firebase.initializeApp()` again, since this isolate has no app yet, and
+///     wrapped for the same reason main() wraps it: a tablet without Play
+///     Services must still run the restaurant.
+///
+/// It deliberately does NOT touch OrdersState or try to raise the in-app
+/// NewOrderAlert. That state lives in the UI isolate and is unreachable from
+/// here; more importantly the alert is already driven by the order poll, so
+/// reaching across would be the double-notification this app has to avoid.
+@pragma('vm:entry-point')
+Future<void> staffBackgroundHandler(RemoteMessage message) async {
+  try {
+    await Firebase.initializeApp();
+  } catch (_) {
+    // No Play Services / no Firebase app: nothing to do but return quietly.
+    return;
+  }
+  if (kDebugMode) {
+    debugPrint('[staff-push/bg] ${message.data['kind']} '
+        'order=${message.data['order_id']}');
+  }
 }
 
 /// FCM registration for the signed-in STAFF user (migration 017).

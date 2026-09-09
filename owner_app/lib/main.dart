@@ -1,4 +1,5 @@
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -30,6 +31,16 @@ Future<void> main() async {
   // to run the restaurant — it just won't get order notifications.
   try {
     await Firebase.initializeApp();
+
+    // Registered BEFORE runApp, and only after init succeeded: FCM binds the
+    // background entry point during plugin startup, so a handler attached
+    // later is not there when the process is spawned cold to deliver a
+    // message.
+    //
+    // This does not control whether backgrounded alerts appear — the backend
+    // sends a `notification` block and Android draws that itself. It is the
+    // hook for the `data` half. See staffBackgroundHandler.
+    FirebaseMessaging.onBackgroundMessage(staffBackgroundHandler);
   } catch (e) {
     if (kDebugMode) debugPrint('Firebase init failed (push disabled): $e');
   }

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -34,6 +35,15 @@ Future<void> main() async {
   // Required before FirebaseAuth.instance is touched.
   if (AppConfig.useFirebaseAuth) {
     await Firebase.initializeApp();
+
+    // Registered BEFORE runApp: FCM binds the background entry point during
+    // plugin startup, and a handler attached later is not there when the
+    // process is spawned cold to deliver a message.
+    //
+    // This does not control whether backgrounded notifications appear — the
+    // backend sends a `notification` block and Android draws that itself. It
+    // is the hook for the `data` half. See customerBackgroundHandler.
+    FirebaseMessaging.onBackgroundMessage(customerBackgroundHandler);
   }
 
   // Build the single API client and restore any persisted token.

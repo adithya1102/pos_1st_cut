@@ -1,9 +1,47 @@
 import 'dart:io' show Platform;
 
+import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 
 import 'api_client.dart';
+
+/// Handles a push that arrives while the app is backgrounded or killed.
+///
+/// ## What this does NOT do
+///
+/// It does not make the notification appear. The backend sends a `notification`
+/// block alongside its `data` (see PushService._transmit), and Android renders
+/// that from the system tray without running any Dart at all. Deleting this
+/// function would not stop a single notification from being shown.
+///
+/// What it buys is a place to react to the `data` half while the app is not
+/// running — the only hook where that is possible.
+///
+/// ## Why it looks the way it does
+///
+/// FCM runs this in a SEPARATE ISOLATE with its own memory. Nothing built in
+/// `main()` exists here: no providers, no ApiClient, no Firebase app. Hence:
+///
+///   * `@pragma('vm:entry-point')`, or tree-shaking removes it from release
+///     builds and the callback silently never fires — a bug that cannot be
+///     reproduced in debug;
+///   * top-level, not a method or closure, because the entry point is looked
+///     up by name across the isolate boundary;
+///   * `Firebase.initializeApp()` again, since this isolate has no app yet.
+///
+/// Deliberately does almost nothing else. Work here competes with a process
+/// Android is trying to keep cheap, and anything touching app state would be
+/// writing to an isolate that the UI cannot see. The app re-reads its data on
+/// resume anyway, which is the correct place for it.
+@pragma('vm:entry-point')
+Future<void> customerBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+  if (kDebugMode) {
+    debugPrint('[push/bg] ${message.data['kind']} '
+        'order=${message.data['order_id']}');
+  }
+}
 
 /// Firebase Cloud Messaging registration for the signed-in customer.
 ///
