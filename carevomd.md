@@ -5648,3 +5648,42 @@ captured pre-edit copies — an in-flight rename silently reverted on every
 reject. The sync now happens before the snapshot.
 
 ---
+
+## 2026-09-09 — Restoring 92 files a "chore" commit deleted
+
+`4f67785f "chore: update project files"` deleted 129 files and added
+none. Confirmed with the author as accidental.
+
+The merge that followed (`35b4c7dc`) happened to bring 37 of them back,
+which is why the damage looked smaller than it was — a plain replay of
+`4f67785f`'s diff would have been wrong in both directions. The restore
+set was computed as the files still absent at HEAD relative to
+`87a6a48a`: **92 files**.
+
+### What was gone
+
+8 owner_app source files — `menu_service.dart`, `menu_item.dart`,
+`category.dart`, `dish_row.dart`, `dish_edit_screen.dart`,
+`cloudinary_service.dart`, `notify_section.dart`, `verify_box.dart` —
+plus the Windows/macOS/Linux runners, the web icons, the iOS and macOS
+asset catalogs, and `scripts/`.
+
+They did not move; there was no `MenuService` anywhere in owner_app at
+HEAD. Ten surviving files still imported them, so `flutter analyze`
+reported **27 errors** and `flutter build apk` could not run at all.
+This was the state of `origin/21_7`, so any fresh clone was broken.
+
+### What was deliberately KEPT
+
+`4f67785f` also modified `.claude/settings.local.json` (an expanded
+permission allowlist). That is a real change, not collateral, so it was
+left exactly as it is. The two later commits (`3e4670f3`, `24c9c3e2`)
+touch only `render.yaml` and were untouched.
+
+### Verified after
+
+`flutter analyze` 0 errors (from 27; the 21 remaining are the same
+pre-existing `info` lints). owner_app 93/93 tests pass — the same count
+as before the deletion, so nothing was silently lost.
+
+---
