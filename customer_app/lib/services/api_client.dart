@@ -43,6 +43,15 @@ class AuthExpiredException extends ApiException {
   AuthExpiredException(super.message) : super(statusCode: 401);
 }
 
+/// Mints a fresh CareVo session token from whatever identity the app still
+/// holds, or returns null when that identity is genuinely gone.
+///
+/// A callback rather than a direct dependency so [ApiClient] never imports
+/// Firebase: the client stays constructible in tests and in any context with
+/// no Firebase app initialised. See `session_refresher.dart` for the real one
+/// and `main.dart` for the wiring.
+typedef SessionRefresher = Future<String?> Function();
+
 /// Thin HTTP wrapper that behaves like an interceptor: it holds the bearer
 /// token, attaches it to every request, and centralizes JSON decoding.
 class ApiClient {
@@ -52,6 +61,19 @@ class ApiClient {
 
   final http.Client _client;
   String? _token;
+
+  /// Set once at startup. NULL means "no way to refresh", and every 401 then
+  /// behaves exactly as it did before this existed — which is what keeps the
+  /// existing tests honest rather than accidentally passing.
+  SessionRefresher? sessionRefresher;
+
+  /// The one in-flight refresh, so concurrent 401s share it.
+  ///
+  /// Home alone fires several requests at once, and they expire together
+  /// because they carry the same token. Without this each would mint its own
+  /// Firebase token and its own exchange — a burst of identical logins, with
+  /// the last write deciding which token survives.
+  Future<bool>? _refreshInFlight;
 
   /// Bumped every time a request is rejected as unauthenticated. The app root
   /// listens and routes to login; AuthState listens and drops its cached
@@ -166,7 +188,58 @@ class ApiClient {
         .timeout(AppConfig.requestTimeout));
   }
 
-  Future<dynamic> _send(Future<http.Response> Function() run) async {
+  /// POST that will NOT try to refresh the session on a 401.
+  ///
+  /// Exists for the exchange call itself: refreshing in order to refresh is a
+  /// loop. The exchange endpoints are unauthenticated anyway, so a 401 from
+  /// one of them means the identity really is dead.
+  Future<dynamic> postWithoutRefresh(String path, {Object? body}) {
+    return _send(
+      () => _client
+          .post(_uri(path), headers: _headers(), body: jsonEncode(body ?? {}))
+          .timeout(AppConfig.requestTimeout),
+      allowRefresh: false,
+    );
+  }
+
+  /// Mint a new session, collapsing concurrent callers onto one attempt.
+  ///
+  /// Same shape as LocationService's in-flight guard, and for the same reason.
+  Future<bool> _refreshSession() {
+    final pending = _refreshInFlight;
+    if (pending != null) return pending;
+
+    late final Future<bool> call;
+    call = _doRefresh().whenComplete(() {
+      if (identical(_refreshInFlight, call)) _refreshInFlight = null;
+    });
+    _refreshInFlight = call;
+    return call;
+  }
+
+  Future<bool> _doRefresh() async {
+    final refresher = sessionRefresher;
+    if (refresher == null) return false;
+    try {
+      final fresh = await refresher();
+      if (fresh == null || fresh.isEmpty) return false;
+      await setToken(fresh);
+      return true;
+    } catch (e) {
+      // A refresh that throws is a refresh that failed. Swallowed so the
+      // caller falls through to the ordinary expiry path rather than showing
+      // a Firebase error to someone who only asked to see their orders.
+      if (kDebugMode) debugPrint('session refresh failed: $e');
+      return false;
+    }
+  }
+
+  /// [allowRefresh] false on the retry, so one 401 can cost at most one
+  /// refresh and one replay — never a loop.
+  Future<dynamic> _send(
+    Future<http.Response> Function() run, {
+    bool allowRefresh = true,
+  }) async {
     http.Response res;
     try {
       res = await run();
@@ -197,6 +270,26 @@ class ApiClient {
     // the session is perfectly valid — clearing it there would sign people out
     // for a permission error they could not have avoided.
     if (res.statusCode == 401) {
+      // BEFORE giving up: the CareVo token lives 24h and has no refresh of its
+      // own, but the Firebase session behind it persists indefinitely. So an
+      // expired token usually means "this JWT aged out", not "this person is
+      // logged out" — and the old code could not tell those apart, which is
+      // why people were signed out roughly daily.
+      //
+      // Replaying `run()` is safe for EVERY verb, not just GET. A 401 comes
+      // from get_current_customer, a FastAPI dependency that only decodes the
+      // JWT and SELECTs the customer; it raises before the handler body runs,
+      // so nothing was processed and there is nothing to double-apply. That is
+      // checked, not assumed — see deps.py.
+      //
+      // `run()` rebuilds its headers when called, so the replay picks up the
+      // token setToken() just wrote, with no plumbing.
+      if (allowRefresh && sessionRefresher != null) {
+        if (await _refreshSession()) {
+          return _send(run, allowRefresh: false);
+        }
+      }
+
       await clearToken();
       authFailures.value++;
       throw AuthExpiredException(

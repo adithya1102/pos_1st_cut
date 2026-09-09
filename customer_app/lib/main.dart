@@ -17,6 +17,7 @@ import 'services/otp_auth_service.dart';
 import 'services/payment_service.dart';
 import 'services/places_service.dart';
 import 'services/push_service.dart';
+import 'services/session_refresher.dart';
 import 'state/auth_state.dart';
 import 'widgets/focus_release.dart';
 import 'state/cart_identity_sync.dart';
@@ -38,6 +39,19 @@ Future<void> main() async {
   // Build the single API client and restore any persisted token.
   final api = ApiClient();
   await api.loadToken();
+
+  // Let an expired CareVo token renew itself from the Firebase session that
+  // outlives it, instead of bouncing the customer to login every 24h. Wired
+  // ONLY when Firebase is the auth path — under the stub the exchange
+  // endpoints are not what issued the token, so there is nothing to renew from
+  // and the old expiry behaviour is exactly right.
+  //
+  // Injected here rather than imported inside ApiClient so the client keeps no
+  // Firebase dependency: it stays constructible in tests, where a null
+  // refresher preserves the pre-existing logout path unchanged.
+  if (AppConfig.useFirebaseAuth) {
+    api.sessionRefresher = () => refreshCareVoSession(api);
+  }
 
   // Restore the persisted cart before the first frame, so a relaunch shows the
   // basket immediately rather than flashing an empty one. `restore()` adopts
