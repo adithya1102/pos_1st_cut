@@ -206,8 +206,19 @@ export interface City {
    *  "metro" makes the Metro option appear at checkout in customer_app —
    *  on already-installed phones, with no release. */
   city_type: CityType | null;
-  has_metro: boolean;
-  has_train: boolean;
+  /** Per-mode ON/OFF grid (migration 030). Keys are whatever the catalog
+   *  holds, so a ninth mode appears here with no frontend change. */
+  modes: Record<string, boolean>;
+}
+
+/** One row of the mode catalog. The dashboard renders a checkbox per entry
+ *  rather than a hardcoded list, which is what makes a new mode zero-work. */
+export interface TransportModeDef {
+  code: string;
+  label: string;
+  uses_declared_arrival: boolean;
+  default_enabled: boolean;
+  sort_order: number;
 }
 
 /** metro = has an urban metro/rapid-transit system. The rest are size bands. */
@@ -217,8 +228,15 @@ export interface CityTransportResult {
   id: string;
   name: string;
   city_type: CityType;
-  has_metro: boolean;
-  has_train: boolean;
+  modes: Record<string, boolean>;
+}
+
+export interface CityModeResult {
+  id: string;
+  name: string;
+  mode_code: string;
+  enabled: boolean;
+  modes: Record<string, boolean>;
 }
 
 // -------------------------- promotions (migration 016) ----------------------
@@ -509,13 +527,19 @@ export const adminApi = {
    *  not reset a rail flag someone set last week, which is why neither is
    *  defaulted here — an explicit `undefined` is dropped by JSON.stringify and
    *  the server reads that as "unchanged". */
-  setCityTransport: (
-    id: string,
-    patch: { city_type?: CityType; has_train?: boolean },
-  ) =>
-    api.put<CityTransportResult>(
-      `/api/v1/admin/cities/${id}/transport`,
-      patch,
+  setCityTransport: (id: string, patch: { city_type?: CityType }) =>
+    api.put<CityTransportResult>(`/api/v1/admin/cities/${id}/transport`, patch),
+
+  /** The mode catalog (migration 030). Drives how many checkboxes render. */
+  transportModes: () =>
+    api.get<TransportModeDef[]>("/api/v1/admin/transport-modes"),
+
+  /** Toggle ONE mode for ONE city. Per-tick saves, so two admins editing
+   *  different modes cannot clobber each other with a stale whole-grid PUT. */
+  setCityMode: (id: string, modeCode: string, enabled: boolean) =>
+    api.put<CityModeResult>(
+      `/api/v1/admin/cities/${id}/modes/${encodeURIComponent(modeCode)}`,
+      { enabled },
     ),
 
   orders: (limit = 50, offset = 0) =>

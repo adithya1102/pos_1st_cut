@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { City, CityType, adminApi } from "@/lib/api";
+import { City, TransportModeDef, adminApi } from "@/lib/api";
 import {
   Button,
   EmptyRow,
@@ -22,6 +22,9 @@ import {
  */
 export default function CitiesPage() {
   const [cities, setCities] = useState<City[] | null>(null);
+  // The mode CATALOG. The grid renders one checkbox per entry, so adding a
+  // ninth mode server-side needs no change here at all.
+  const [modeDefs, setModeDefs] = useState<TransportModeDef[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -40,6 +43,9 @@ export default function CitiesPage() {
 
   useEffect(() => {
     load();
+    // Failure is non-fatal: an empty catalog renders no mode columns, which
+    // reads as "not configured yet" rather than taking the page down.
+    adminApi.transportModes().then(setModeDefs, () => setModeDefs([]));
   }, [load]);
 
   // Rename is inline rather than a modal: it edits one short string, and the
@@ -94,58 +100,39 @@ export default function CitiesPage() {
   };
 
   /**
-   * Transport profile (migration 029).
+   * Toggle ONE mode for ONE city (migration 030).
    *
-   * Saves immediately on change rather than behind a Save button: it is one
-   * radio and one checkbox, both instantly reversible, and a staged edit here
-   * would mean a second thing to forget to press.
+   * Saves immediately on tick rather than behind a Save button: each is one
+   * boolean, instantly reversible, and a staged grid would be a second thing to
+   * forget to press.
    *
-   * Optimistic — the row repaints before the request lands, then `load()`
-   * reconciles. On failure the reload puts the old value back, so the UI can
-   * never end up showing a setting the server did not accept.
+   * Optimistic — the checkbox repaints before the request lands, then `load()`
+   * reconciles. On failure the reload restores the server's value, so the UI
+   * can never sit showing a setting the server rejected.
    */
-  const saveTransport = (
-    city: City,
-    patch: { city_type?: CityType; has_train?: boolean },
-  ) => {
+  const toggleMode = (city: City, code: string, enabled: boolean) => {
     setBusyId(city.id);
     setError(null);
-    setCities(
-      (prev) =>
-        prev?.map((c) =>
-          c.id === city.id
-            ? {
-                ...c,
-                ...patch,
-                // has_metro is derived server-side; mirror the rule locally so
-                // the badge does not lag a beat behind the radio.
-                has_metro:
-                  patch.city_type !== undefined
-                    ? patch.city_type === "metro"
-                    : c.has_metro,
-              }
-            : c,
-        ) ?? prev,
+    setCities((prev) =>
+      prev?.map((c) =>
+        c.id === city.id ? { ...c, modes: { ...c.modes, [code]: enabled } } : c,
+      ) ?? prev,
     );
     adminApi
-      .setCityTransport(city.id, patch)
+      .setCityMode(city.id, code, enabled)
       .then(
         (res) => {
+          const label = modeDefs.find((m) => m.code === code)?.label ?? code;
           setNotice(
-            `${res.name}: ${CITY_TYPE_LABELS[res.city_type] ?? res.city_type}` +
-              `${res.has_metro ? ", Metro on" : ""}` +
-              `${res.has_train ? ", Train on" : ""}` +
-              ". Customers see this on their next outlet load — no app update needed.",
+            `${res.name}: ${label} ${enabled ? "enabled" : "disabled"}. ` +
+              "Customers see this on their next outlet load — no app update needed.",
           );
           return load();
         },
         (err: unknown) => {
           setError(
-            err instanceof Error
-              ? err.message
-              : "Could not update the city's transport profile.",
+            err instanceof Error ? err.message : "Could not update that mode.",
           );
-          // Undo the optimistic paint by re-reading the truth.
           return load();
         },
       )
@@ -185,10 +172,10 @@ export default function CitiesPage() {
           "selectable for future signups; it does not rewrite any existing outlet's city. " +
           "Renaming DOES rewrite every outlet holding the old name, and is refused if the new " +
           "name already belongs to another city — merging two cities is a separate operation. " +
-          "City type and travel modes drive what customers see at checkout: marking a city " +
-          "“Metro city” adds the Metro option for every outlet in it, on phones that are " +
-          "already installed — no app update. Train is set separately, because a city can have " +
-          "a mainline junction and no metro." +
+          "Travel modes decide what customers see at checkout: ticking one adds that chip for " +
+          "every outlet in the city, on phones that are already installed — no app update. " +
+          "Modes marked ·t ask the customer for an arrival time instead of their location. " +
+          "The list of modes comes from the server, so a new one appears here on its own." +
           (pending > 0 ? ` ${pending} awaiting review.` : "")
         }
       >
@@ -197,7 +184,6 @@ export default function CitiesPage() {
             <tr>
               <th className={th}>City</th>
               <th className={th}>Status</th>
-              <th className={th}>City type</th>
               <th className={th}>Travel modes</th>
               <th className={th}>Requested by</th>
               <th className={th}>Added</th>
@@ -236,44 +222,12 @@ export default function CitiesPage() {
                   <CityStatusBadge status={c.status} />
                 </td>
                 <td className={td}>
-                  <CityTypeRadio
+                  <ModeGrid
                     city={c}
+                    defs={modeDefs}
                     disabled={busyId === c.id}
-                    onChange={(city_type) => saveTransport(c, { city_type })}
+                    onToggle={(code, on) => toggleMode(c, code, on)}
                   />
-                </td>
-                <td className={td}>
-                  <div className="flex flex-col gap-1">
-                    {/* Metro is DERIVED from the radio, so it is shown, not
-                        toggled — two controls for one fact is how they drift. */}
-                    <span className="text-xs text-slate-600">
-                      Metro:{" "}
-                      <span
-                        className={
-                          c.has_metro
-                            ? "font-medium text-emerald-700"
-                            : "text-slate-400"
-                        }
-                      >
-                        {c.has_metro ? "on" : "off"}
-                      </span>
-                      <span className="text-slate-400"> (from city type)</span>
-                    </span>
-                    {/* Train is its OWN answer: Madurai is a tier-2 city with a
-                        major junction and no metro, and one flag could not say
-                        that. */}
-                    <label className="flex items-center gap-1.5 text-xs text-slate-600">
-                      <input
-                        type="checkbox"
-                        checked={c.has_train}
-                        disabled={busyId === c.id}
-                        onChange={(e) =>
-                          saveTransport(c, { has_train: e.target.checked })
-                        }
-                      />
-                      Train
-                    </label>
-                  </div>
                 </td>
                 {/* Null for the seeded cities — nobody requested those. */}
                 <td className={`${td} text-slate-600`}>
@@ -350,56 +304,66 @@ export default function CitiesPage() {
   );
 }
 
-/** Labels for the radio. Order is the order they render in. */
-const CITY_TYPE_LABELS: Record<string, string> = {
-  metro: "Metro city",
-  tier_1: "Tier 1",
-  tier_2: "Tier 2",
-  tier_3: "Tier 3",
-};
-
-const CITY_TYPES = Object.keys(CITY_TYPE_LABELS) as CityType[];
-
 /**
- * The city-type radio — the control that decides whether customers in this city
- * see the Metro option at checkout.
+ * One checkbox per mode in the CATALOG — not per mode in a hardcoded list.
  *
- * A radio, not a dropdown: four mutually exclusive options, all worth seeing at
- * once, and "which of these is Chennai" is a question you answer by comparing
- * them rather than by opening a menu.
+ * This is the whole extensibility claim of migration 030 made concrete: `defs`
+ * comes from `GET /admin/transport-modes`, so a ninth mode inserted into
+ * `transport_modes` renders here on the next page load with no edit to this
+ * file, no rebuild and no deploy.
  *
- * `city_type` can arrive null from a backend that has not run migration 029.
- * That renders as nothing selected rather than defaulting to Tier 2, so an
- * un-migrated deployment reads as "unknown" instead of quietly asserting an
- * answer the server never gave.
+ * A mode absent from `city.modes` falls back to the catalog's `default_enabled`
+ * — the same "absent means default" rule the backend read path uses, mirrored
+ * here so the checkbox never shows something the server would disagree with.
  */
-function CityTypeRadio({
+function ModeGrid({
   city,
+  defs,
   disabled,
-  onChange,
+  onToggle,
 }: {
   city: City;
+  defs: TransportModeDef[];
   disabled: boolean;
-  onChange: (type: CityType) => void;
+  onToggle: (code: string, enabled: boolean) => void;
 }) {
+  if (defs.length === 0) {
+    return (
+      <span className="text-xs text-slate-400">
+        No modes configured — run migration 030.
+      </span>
+    );
+  }
   return (
-    <div className="flex flex-col gap-1">
-      {CITY_TYPES.map((type) => (
-        <label
-          key={type}
-          className="flex items-center gap-1.5 text-xs text-slate-700"
-        >
-          <input
-            type="radio"
-            // Scoped per city, or every row would share one selection.
-            name={`city_type_${city.id}`}
-            checked={city.city_type === type}
-            disabled={disabled}
-            onChange={() => onChange(type)}
-          />
-          {CITY_TYPE_LABELS[type]}
-        </label>
-      ))}
+    <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+      {defs.map((m) => {
+        const on = city.modes?.[m.code] ?? m.default_enabled;
+        return (
+          <label
+            key={m.code}
+            className="flex items-center gap-1.5 text-xs text-slate-700"
+            // Declared-arrival modes ask the customer for a time instead of a
+            // location, which is worth knowing before switching one on.
+            title={
+              m.uses_declared_arrival
+                ? `${m.label}: customer states an arrival time (no GPS)`
+                : `${m.label}: travel estimated from the customer's location`
+            }
+          >
+            <input
+              type="checkbox"
+              data-mode={m.code}
+              checked={on}
+              disabled={disabled}
+              onChange={(e) => onToggle(m.code, e.target.checked)}
+            />
+            {m.label}
+            {m.uses_declared_arrival && (
+              <span className="text-slate-400">·t</span>
+            )}
+          </label>
+        );
+      })}
     </div>
   );
 }
