@@ -984,6 +984,7 @@ class AdminService:
         rows = (await db.execute(text("""
             SELECT c.id, c.name, c.status, c.created_at, c.decided_at,
                    c.requested_by_outlet_id,
+                   c.city_type, c.has_train,
                    o.location_name AS requested_by_outlet_name
             FROM cities c
             LEFT JOIN outlets o ON o.id = c.requested_by_outlet_id
@@ -1002,6 +1003,13 @@ class AdminService:
                 "decided_at": r.decided_at,
                 "requested_by_outlet_id": r.requested_by_outlet_id,
                 "requested_by_outlet_name": r.requested_by_outlet_name,
+                # Migration 029. has_metro is derived from city_type rather than
+                # stored, so the radio the admin sees IS the value that reaches
+                # the customer app — there is no second field to fall out of
+                # step with it.
+                "city_type": r.city_type,
+                "has_metro": r.city_type == "metro",
+                "has_train": bool(r.has_train),
             }
             for r in rows
         ]
@@ -1176,4 +1184,80 @@ class AdminService:
         return {
             "id": current.id, "name": clean, "previous_name": current.name,
             "status": current.status, "outlets_updated": outlets_updated,
+        }
+
+    # ------------------- city transport profile (029) ------------------------
+    CITY_TYPES = ("metro", "tier_1", "tier_2", "tier_3")
+
+    @staticmethod
+    async def set_city_transport(
+        db: AsyncSession,
+        actor: User,
+        city_id: uuid.UUID,
+        city_type: Optional[str] = None,
+        has_train: Optional[bool] = None,
+    ) -> dict:
+        """Set a city's type and rail flag — the admin end of migration 029.
+
+        This is the control the customer app reads: marking a city `metro`
+        makes the Metro option appear at checkout for every outlet in it,
+        on devices that are already installed. No release, no rebuild.
+
+        Both fields are OPTIONAL and only applied when present, so the radio
+        and the rail checkbox can be saved independently — sending one must not
+        silently reset the other to its default. That is also why the endpoint
+        is PUT-shaped over a partial body rather than a full replace.
+
+        Separate from [rename_city] on purpose. Renaming rewrites `outlets.city`
+        across the estate and can collide; this touches one row and cannot. A
+        single endpoint doing both would put a destructive operation and a
+        toggle behind the same call.
+        """
+        if city_type is None and has_train is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Nothing to update — send city_type, has_train, or both.",
+            )
+        if city_type is not None and city_type not in AdminService.CITY_TYPES:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Invalid city_type '{city_type}'. Must be one of: "
+                    f"{list(AdminService.CITY_TYPES)}"
+                ),
+            )
+
+        current = (await db.execute(text(
+            "SELECT id, name, city_type, has_train FROM cities WHERE id = :cid"
+        ), {"cid": str(city_id)})).first()
+        if not current:
+            raise HTTPException(status_code=404, detail="City not found")
+
+        new_type = city_type if city_type is not None else current.city_type
+        new_train = has_train if has_train is not None else bool(current.has_train)
+
+        await db.execute(text("""
+            UPDATE cities
+               SET city_type = :t, has_train = :r, transport_updated_at = now()
+             WHERE id = :cid
+        """), {"t": new_type, "r": new_train, "cid": str(city_id)})
+
+        await AdminService._audit(
+            db, actor, action="city.transport",
+            target_type="city", target_id=city_id,
+            detail={
+                "city": current.name,
+                "city_type": {"from": current.city_type, "to": new_type},
+                "has_train": {"from": bool(current.has_train), "to": new_train},
+            },
+        )
+        await db.commit()
+
+        return {
+            "id": current.id,
+            "name": current.name,
+            "city_type": new_type,
+            # Derived, never stored — see list_cities.
+            "has_metro": new_type == "metro",
+            "has_train": new_train,
         }

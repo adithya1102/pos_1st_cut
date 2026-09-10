@@ -65,6 +65,19 @@ HAVERSINE_SIGMA_INFLATE = 2.0         # FR-P4
 # promise_kept rate for train orders comes in low.
 TRAIN_DECLARED_SIGMA_S = 900
 
+# Modes whose Leg A is a time the customer TYPED, not a journey we estimate.
+#
+# Metro joined train in migration 029. It belongs here rather than with the
+# speed-based modes for the same reason train does: a metro rider knows which
+# train they are on and when it gets in, and no GPS origin we could take would
+# beat that. It also means metro never needs a MODE_SPEED_MPS entry — and a
+# mode with no entry silently resolves to BIKE speed, which is exactly the
+# invisible-for-months data error the alternative would have shipped.
+#
+# One tuple, imported by every branch that used to test == 'train', so the set
+# cannot drift between the predictor and the kitchen-notify query.
+DECLARED_ARRIVAL_MODES = ("train", "metro")
+
 # Platform -> restaurant door. Per-outlet override lives in outlet_config under
 # `train_last_mile_seconds`; this is the fallback when an outlet has no row,
 # which is every outlet today (the table is empty). 8 min covers a typical
@@ -401,7 +414,7 @@ class PredictionService:
         # `customer_declared`, not `train_schedule`: naming it after a
         # timetable would imply an external source we do not have and would
         # make this number look more trustworthy than it is.
-        if (mode or "").lower() == "train":
+        if (mode or "").lower() in DECLARED_ARRIVAL_MODES:
             last_mile = await PredictionService.train_last_mile_seconds(db, outlet_id)
             declared = declared_arrival_at
             if declared is None:

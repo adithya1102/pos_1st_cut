@@ -38,7 +38,14 @@ enum TransportMode {
   // Addendum Item 1. Unlike every mode above, this leg is NOT derived from a
   // GPS origin — the customer states an arrival time and the server treats it
   // as given, so selecting it swaps the origin picker for a time picker.
-  train('train', 'Train', Icons.train);
+  train('train', 'Train', Icons.train),
+  // Migration 029. A declared-arrival mode like train, NOT a speed-based one:
+  // a metro rider knows which train they are on and when it gets in, and no
+  // GPS origin could beat that. It also sidesteps a real trap — the backend's
+  // MODE_SPEED_MPS has no metro entry and `.get(mode, DEFAULT)` resolves a
+  // missing key to BIKE speed, so a speed-based metro would have been timed as
+  // a cycle ride and nobody would have noticed for months.
+  metro('metro', 'Metro', Icons.subway);
 
   const TransportMode(this.wire, this.label, this.icon);
   final String wire;
@@ -47,7 +54,12 @@ enum TransportMode {
 
   /// True when this mode is satisfied by a declared arrival time rather than
   /// an origin location.
-  bool get usesDeclaredArrival => this == TransportMode.train;
+  bool get usesDeclaredArrival =>
+      this == TransportMode.train || this == TransportMode.metro;
+
+  /// The word for the vehicle, for copy that has to name it ("When does your
+  /// metro arrive?"). Only meaningful for [usesDeclaredArrival] modes.
+  String get vehicleNoun => this == TransportMode.metro ? 'metro' : 'train';
 }
 
 /// Step 8: checkout with UPI / Card / Net Banking ONLY (no pay-at-counter).
@@ -112,16 +124,28 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   /// The modes offered for [outlet]'s city.
   ///
-  /// Train is the only conditional one: it is satisfied by a DECLARED arrival
-  /// time rather than an origin, so offering it where there is no rail would
-  /// collect a stated arrival for a journey that cannot happen — and that value
-  /// goes straight into the timing engine. The other five are unconditional;
-  /// walking, cycling and road transport exist everywhere.
+  /// Train and Metro are the conditional ones: both are satisfied by a DECLARED
+  /// arrival time rather than an origin, so offering either where there is no
+  /// such rail would collect a stated arrival for a journey that cannot happen
+  /// — and that value goes straight into the timing engine. The other five are
+  /// unconditional; walking, cycling and road transport exist everywhere.
+  ///
+  /// Gated SEPARATELY rather than off one "has rail" boolean. They genuinely
+  /// come apart: a city can have a mainline junction and no metro (Madurai) or
+  /// a metro and no useful suburban rail. One flag for both would have to be
+  /// wrong about one of them, and the admin dashboard exposes them as two
+  /// controls precisely so it does not have to be.
   List<TransportMode> _modesFor(Outlet? outlet) {
-    final rail = CityTransport.hasTrainAccess(outlet?.city);
+    final train = CityTransport.trainFor(outlet);
+    final metro = CityTransport.metroFor(outlet);
     return [
       for (final m in TransportMode.values)
-        if (rail || !m.usesDeclaredArrival) m,
+        if (switch (m) {
+          TransportMode.train => train,
+          TransportMode.metro => metro,
+          _ => true,
+        })
+          m,
     ];
   }
 
@@ -397,9 +421,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   Future<void> _payNow() async {
     final cart = context.read<CartState>();
 
-    // Train mode REQUIRES an arrival time — it is the only input the timing
-    // engine has for this mode (there is no GPS origin to infer from), so an
-    // order without it cannot be scheduled at all.
+    // Train and Metro REQUIRE an arrival time — it is the only input the timing
+    // engine has for these modes (there is no GPS origin to infer from), so an
+    // order without it cannot be scheduled at all. Gated on the shared
+    // `usesDeclaredArrival` rather than a mode literal, which is why adding
+    // Metro to that getter was enough to cover this path too.
     //
     // Surfaced as an inline message on the field, not a silently disabled Pay
     // button: a button that does nothing when tapped teaches the customer that
@@ -636,15 +662,22 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               ],
             ),
             const SizedBox(height: 24),
-            // Train replaces the origin picker entirely: Leg A is a stated
-            // time, so a GPS origin would be collected and then ignored.
+            // Train and Metro replace the origin picker entirely: Leg A is a
+            // stated time, so a GPS origin would be collected and then ignored.
             // Effective, not raw: the arrival picker must never appear for a
             // mode the chip row did not offer.
             if (_effectiveMode(cart.outlet).usesDeclaredArrival) ...[
-              Text('When does your train arrive?',
+              // Named after the mode actually chosen. Asking a metro rider when
+              // their "train" arrives is the kind of small wrongness that makes
+              // someone doubt the app knows what they picked.
+              Text(
+                  'When does your '
+                  '${_effectiveMode(cart.outlet).vehicleNoun} arrive?',
                   style: textTheme.headlineSmall),
               const SizedBox(height: 6),
-              Text('Required — it is the only timing signal train mode has.',
+              Text(
+                  'Required — it is the only timing signal '
+                  '${_effectiveMode(cart.outlet).vehicleNoun} mode has.',
                   style: textTheme.bodyMedium?.copyWith(color: c.inkSoft)),
               const SizedBox(height: 12),
               NeoCard(

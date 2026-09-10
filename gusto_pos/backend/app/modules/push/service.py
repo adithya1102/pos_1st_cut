@@ -309,11 +309,23 @@ class PushService:
 
     @staticmethod
     async def notify_outlet_train_due(db: AsyncSession, order_id, outlet_id) -> dict:
-        """"Start this one now" push for a train order that has become due.
+        """"Start this one now" push for a declared-arrival order become due.
+
+        Covers train AND metro (migration 029) — both state an arrival time
+        rather than travelling from a GPS origin, so both need the kitchen woken
+        against the clock. The copy names whichever the customer actually chose:
+        staff at a Chennai counter reading "the customer's train arrives" about
+        a metro rider would be told something plainly untrue, and small untrue
+        details are how staff learn to stop reading the notification.
+
+        KIND_TRAIN_START_DUE is reused for both rather than split. The kind is
+        under a CHECK constraint (`push_kind_valid`, migration 020) and adding a
+        value needs its own migration; more to the point the two mean the same
+        operational thing — start cooking now — and splitting them would break
+        the idempotency guard into two halves that cannot see each other.
 
         Fans out to every staff device at the outlet, exactly like
-        notify_outlet_new_order. Separate KIND so the two are distinguishable
-        in the log and neither suppresses the other.
+        notify_outlet_new_order.
 
         The caller has already written KITCHEN_START_NOTIFIED, so idempotency
         is handled there — this is delivery only, and stays best-effort.
@@ -323,19 +335,25 @@ class PushService:
             WHERE outlet_id = :oid AND fcm_token IS NOT NULL AND is_active = true
         """), {"oid": str(outlet_id)})).fetchall()
 
-        code = await db.scalar(text(
-            "SELECT pickup_code FROM customer_orders WHERE id = :o"),
-            {"o": str(order_id)})
+        order = (await db.execute(text(
+            "SELECT pickup_code, transport_mode FROM customer_orders WHERE id = :o"),
+            {"o": str(order_id)})).first()
+        code = order[0] if order else None
+        mode = ((order[1] if order else None) or "train").lower()
+        # Falls back to "train" for anything unexpected: this function is only
+        # ever called for a declared-arrival order, and a generic word here
+        # would be worse copy than the overwhelmingly likely one.
+        vehicle = "metro" if mode == "metro" else "train"
 
         sent = 0
         for r in rows:
             res = await PushService.send_staff(
                 db, user_id=r[0], kind=KIND_TRAIN_START_DUE,
                 title="Start this order now",
-                body=("Customer's train arrives shortly"
+                body=(f"Customer's {vehicle} arrives shortly"
                       + (f" — order {code}" if code else "") + "."),
                 order_id=order_id,
-                data={"reason": "train_declared_arrival"},
+                data={"reason": "declared_arrival", "transport_mode": mode},
             )
             if res["status"] == "sent":
                 sent += 1

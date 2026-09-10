@@ -234,6 +234,32 @@ async def rename_city(
     return await AdminService.rename_city(db, admin, city_id, payload.name)
 
 
+@router.put("/cities/{city_id}/transport", response_model=s.CityTransportOut)
+async def set_city_transport(
+    city_id: uuid.UUID,
+    payload: s.CityTransportIn,
+    admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set which travel modes a city supports (migration 029).
+
+    Marking a city `metro` makes the Metro option appear at checkout for every
+    outlet in it, on apps that are ALREADY INSTALLED — this list used to be a
+    const map compiled into customer_app, so a new metro city needed a store
+    release. That is the whole point of the endpoint.
+
+    Its own route rather than an extension of PATCH /cities/{id}: that one
+    renames, which rewrites `outlets.city` across the estate and can 409 on a
+    collision. Keeping a destructive operation and a toggle on separate verbs
+    means a mis-sent body cannot rename a city by accident.
+    """
+    return await AdminService.set_city_transport(
+        db, admin, city_id,
+        city_type=payload.city_type,
+        has_train=payload.has_train,
+    )
+
+
 # -------------------- prediction engine (shadow mode) ----------------------
 # Read-only observability over migration 006's PE tables. No response_model:
 # the payloads are nested and mix UUID/datetime/Decimal/JSONB, which FastAPI's

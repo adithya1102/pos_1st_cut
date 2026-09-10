@@ -105,6 +105,21 @@ class OutletOut(BaseModel):
     # behaviour off. The column was already SELECTed in list_outlets; this only
     # stops it being dropped before serialising. Purely additive.
     city: Optional[str] = None
+    # --- City transport profile (migration 029) ------------------------------
+    # The server's answer to "which travel modes does this city support", so an
+    # admin toggling a city to "metro" lights the option up in an already
+    # installed app. Before this the answer was a const map compiled into
+    # customer_app, and a new metro city needed a store release.
+    #
+    # All three are Optional and default to None, and None is NOT False:
+    #   None  -> this deployment has no answer (pre-029 backend, or a city with
+    #            no `cities` row). The app falls back to its built-in map.
+    #   False -> an admin has said this city does not have it.
+    # Collapsing the two would make an un-migrated backend strip Train from
+    # every city that offers it today.
+    city_type: Optional[str] = None          # metro | tier_1 | tier_2 | tier_3
+    has_metro: Optional[bool] = None
+    has_train: Optional[bool] = None
     # Outlet contact number (migration 009), so the app can offer a direct call.
     # NULL for most outlets today — 5 of the 6 customer-visible ones in prod
     # have none — so the app HIDES the call action rather than rendering a

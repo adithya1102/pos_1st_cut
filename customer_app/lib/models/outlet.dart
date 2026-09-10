@@ -14,6 +14,9 @@ class Outlet {
     this.offerText,
     this.locality,
     this.city,
+    this.cityType,
+    this.hasMetro,
+    this.hasTrain,
     this.phoneNumber,
     this.latitude,
     this.longitude,
@@ -70,6 +73,28 @@ class Outlet {
   /// Null for any response predating this field, which the transport lookup
   /// treats as "no rail" — the safe direction.
   final String? city;
+
+  /// The server's transport profile for [city] (migration 029).
+  ///
+  /// `metro` | `tier_1` | `tier_2` | `tier_3`, or null when this deployment has
+  /// no answer — an older backend, or a city with no `cities` row.
+  final String? cityType;
+
+  /// Whether this city offers Metro / Train, **as the server sees it**.
+  ///
+  /// Nullable, and null is NOT false. Three states, and the third is the whole
+  /// reason these are `bool?`:
+  ///
+  ///   true  — the admin marked this city as having it
+  ///   false — the admin marked this city as NOT having it
+  ///   null  — the server did not say, so [CityTransport] falls back to the
+  ///           built-in map
+  ///
+  /// Flatten null to false and every city loses Train the moment the app talks
+  /// to a backend that predates migration 029 — a silent regression on a screen
+  /// nobody would think to re-test.
+  final bool? hasMetro;
+  final bool? hasTrain;
 
   /// Outlet contact number (migration 009). Null for MOST outlets — 5 of the 6
   /// customer-visible ones in prod have none — so the call action is hidden
@@ -192,6 +217,14 @@ class Outlet {
       offerText: (offer != null && offer.isNotEmpty) ? offer : null,
       locality: (loc != null && loc.isNotEmpty) ? loc : null,
       city: (cty != null && cty.trim().isNotEmpty) ? cty.trim() : null,
+      // Read as `bool?` with NO ?? default, deliberately: a missing key must
+      // stay null so CityTransport can tell "server says no" from "server said
+      // nothing". See [hasMetro].
+      cityType: (json['city_type'] as String?)?.trim().isNotEmpty == true
+          ? (json['city_type'] as String).trim()
+          : null,
+      hasMetro: json['has_metro'] as bool?,
+      hasTrain: json['has_train'] as bool?,
       phoneNumber: (phone != null && phone.trim().isNotEmpty) ? phone.trim() : null,
       // `num?` then toDouble(): the column is Postgres `numeric`, so a value
       // that happens to be whole arrives as an int and a bare `as double`
@@ -223,6 +256,13 @@ class Outlet {
         'offer_text': offerText,
         'locality': locality,
         'city': city,
+        // Carried through the cart's persistence too, not just the API read:
+        // checkout renders its mode chips from the RESTORED outlet, so dropping
+        // these here would make Metro/Train vanish on any cold start with a
+        // saved cart — while still appearing on a fresh browse.
+        'city_type': cityType,
+        'has_metro': hasMetro,
+        'has_train': hasTrain,
         'phone_number': phoneNumber,
         'latitude': latitude,
         'longitude': longitude,

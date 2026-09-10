@@ -1,10 +1,34 @@
-/// Which cities a customer can plausibly arrive by rail from.
+/// Which rail modes a customer can plausibly arrive on.
 ///
-/// Gates the Train option at checkout. Train is unlike every other mode: it has
-/// no GPS origin and no speed, because the customer STATES an arrival time and
-/// the server takes it as given. Offering it where there is no rail would
-/// collect a declared arrival for a journey that cannot happen, and that value
-/// feeds the prediction engine's timing directly.
+/// Gates the Train and Metro options at checkout. Both are unlike every other
+/// mode: they carry no GPS origin and no speed, because the customer STATES an
+/// arrival time and the server takes it as given. Offering either where there
+/// is no rail would collect a declared arrival for a journey that cannot
+/// happen, and that value feeds the prediction engine's timing directly.
+///
+/// ## The server answers first (migration 029)
+///
+/// This used to be a const map and nothing else, which meant enabling rail for
+/// a new city needed a store release. The old docstring named that as the trade
+/// and named the fix: *"the honest fix is a server-supplied flag on the outlet
+/// payload, not a longer list here."* That flag now exists — `city_type`,
+/// `has_metro` and `has_train` on `OutletOut`, set from a radio on the admin
+/// dashboard's Cities page. An admin marking a city `metro` lights Metro up on
+/// phones that are already installed.
+///
+/// ## The map below is now a FALLBACK, not the source of truth
+///
+/// It is still here, and still correct, because the server's answer can be
+/// genuinely absent:
+///
+///   * a backend that predates migration 029 sends no such fields
+///   * a city with an outlet but no `cities` row resolves to null
+///   * a cart persisted by an older build restores without them
+///
+/// In all three the flag arrives as `null`, and null is NOT false — see
+/// [Outlet.hasMetro]. Treating those as "no rail" would silently strip Train
+/// from Chennai the first time the app met an older backend. So: use the
+/// server's answer when it gave one, otherwise fall back to what shipped.
 ///
 /// ## Keyed lower-cased, on purpose
 ///
@@ -13,26 +37,25 @@
 /// compares `lower(city)` on both sides for exactly this reason; this lookup
 /// follows the same rule so the two cannot disagree about what "Chennai" is.
 ///
-/// ## Absent means false
+/// ## Absent still means false
 ///
-/// A city not listed here shows no Train option. That is the DELIBERATE safe
-/// default, not an oversight: a new city appearing in `outlets` — through a new
-/// signup, not a code change — must not silently start offering a mode nobody
-/// has checked has rail. Adding a city here is a decision someone makes on
-/// purpose.
-///
-/// The consequence to know: this ships in the app, so enabling rail for a new
-/// city needs a release. That is the trade for the safe default. If it becomes
-/// a real constraint, the honest fix is a server-supplied flag on the outlet
-/// payload, not a longer list here.
+/// A city neither the server nor the map knows shows no Train and no Metro.
+/// That remains the DELIBERATE safe default: a new city appearing in `outlets`
+/// — through a signup, not a code change — must not silently start offering a
+/// mode nobody has checked it has.
 library;
+
+import '../models/outlet.dart';
 
 class CityTransport {
   CityTransport._();
 
   /// Cities with rail a customer can realistically arrive on.
   ///
-  /// All four live cities qualify today:
+  /// FALLBACK ONLY — consulted when the server sent no answer. Kept in sync
+  /// with migration 029's seed, which sets exactly these four to
+  /// `city_type='metro', has_train=true`, so the two agree on day one.
+  ///
   ///   * Chennai   — Chennai Suburban Railway (one of India's oldest and
   ///                 busiest) plus Chennai Metro.
   ///   * Bengaluru — Namma Metro; suburban rail (BSRP) still being built, but
@@ -41,6 +64,10 @@ class CityTransport {
   ///                 network.
   ///   * Kochi     — Kochi Metro (operational since 2017) and Ernakulam's
   ///                 mainline stations.
+  ///
+  /// Madurai is deliberately absent: a major mainline junction, but no metro,
+  /// and it has never been offered Train here. Changing that is now an admin
+  /// decision on the Cities page rather than an edit to this file.
   ///
   /// Worth knowing rather than discovering later: this is a CITY-level answer,
   /// not a per-outlet one. Kakkanad (the Kochi outlet) is not itself metro-served
@@ -54,13 +81,32 @@ class CityTransport {
     'kochi': true,
   };
 
-  /// True only when [city] is a known rail city.
+  /// True only when [city] is a known rail city, per the built-in map.
   ///
   /// Null, empty, or unknown all return false — an unrecognised city is treated
   /// exactly like a city known to have no rail.
+  ///
+  /// Prefer [trainFor]/[metroFor] where an [Outlet] is in hand: those consult
+  /// the server first and only land here when it stayed silent.
   static bool hasTrainAccess(String? city) {
     final key = (city ?? '').trim().toLowerCase();
     if (key.isEmpty) return false;
     return _hasRail[key] ?? false;
   }
+
+  /// Whether [outlet]'s city offers Train.
+  ///
+  /// Server answer wins; the built-in map covers a null.
+  static bool trainFor(Outlet? outlet) =>
+      outlet?.hasTrain ?? hasTrainAccess(outlet?.city);
+
+  /// Whether [outlet]'s city offers Metro.
+  ///
+  /// Falls back to the SAME rail map as Train, which is honest for the four
+  /// cities in it — all four run metros, which is why the migration seeds them
+  /// `city_type='metro'`. It is a fallback, not a claim that rail implies
+  /// metro: any city where the two genuinely differ gets its answer from the
+  /// server, because a city the admin has touched always sends real flags.
+  static bool metroFor(Outlet? outlet) =>
+      outlet?.hasMetro ?? hasTrainAccess(outlet?.city);
 }

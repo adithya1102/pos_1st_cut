@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { City, adminApi } from "@/lib/api";
+import { City, CityType, adminApi } from "@/lib/api";
 import {
   Button,
   EmptyRow,
@@ -93,6 +93,65 @@ export default function CitiesPage() {
       .finally(() => setBusyId(null));
   };
 
+  /**
+   * Transport profile (migration 029).
+   *
+   * Saves immediately on change rather than behind a Save button: it is one
+   * radio and one checkbox, both instantly reversible, and a staged edit here
+   * would mean a second thing to forget to press.
+   *
+   * Optimistic — the row repaints before the request lands, then `load()`
+   * reconciles. On failure the reload puts the old value back, so the UI can
+   * never end up showing a setting the server did not accept.
+   */
+  const saveTransport = (
+    city: City,
+    patch: { city_type?: CityType; has_train?: boolean },
+  ) => {
+    setBusyId(city.id);
+    setError(null);
+    setCities(
+      (prev) =>
+        prev?.map((c) =>
+          c.id === city.id
+            ? {
+                ...c,
+                ...patch,
+                // has_metro is derived server-side; mirror the rule locally so
+                // the badge does not lag a beat behind the radio.
+                has_metro:
+                  patch.city_type !== undefined
+                    ? patch.city_type === "metro"
+                    : c.has_metro,
+              }
+            : c,
+        ) ?? prev,
+    );
+    adminApi
+      .setCityTransport(city.id, patch)
+      .then(
+        (res) => {
+          setNotice(
+            `${res.name}: ${CITY_TYPE_LABELS[res.city_type] ?? res.city_type}` +
+              `${res.has_metro ? ", Metro on" : ""}` +
+              `${res.has_train ? ", Train on" : ""}` +
+              ". Customers see this on their next outlet load — no app update needed.",
+          );
+          return load();
+        },
+        (err: unknown) => {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Could not update the city's transport profile.",
+          );
+          // Undo the optimistic paint by re-reading the truth.
+          return load();
+        },
+      )
+      .finally(() => setBusyId(null));
+  };
+
   const decide = (city: City, approve: boolean) => {
     setBusyId(city.id);
     const call = approve
@@ -125,7 +184,11 @@ export default function CitiesPage() {
           "The canonical list owners choose from at signup. Approving a requested city makes it " +
           "selectable for future signups; it does not rewrite any existing outlet's city. " +
           "Renaming DOES rewrite every outlet holding the old name, and is refused if the new " +
-          "name already belongs to another city — merging two cities is a separate operation." +
+          "name already belongs to another city — merging two cities is a separate operation. " +
+          "City type and travel modes drive what customers see at checkout: marking a city " +
+          "“Metro city” adds the Metro option for every outlet in it, on phones that are " +
+          "already installed — no app update. Train is set separately, because a city can have " +
+          "a mainline junction and no metro." +
           (pending > 0 ? ` ${pending} awaiting review.` : "")
         }
       >
@@ -134,6 +197,8 @@ export default function CitiesPage() {
             <tr>
               <th className={th}>City</th>
               <th className={th}>Status</th>
+              <th className={th}>City type</th>
+              <th className={th}>Travel modes</th>
               <th className={th}>Requested by</th>
               <th className={th}>Added</th>
               <th className={th}>Decided</th>
@@ -141,9 +206,9 @@ export default function CitiesPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {cities === null && <EmptyRow colSpan={6}>Loading…</EmptyRow>}
+            {cities === null && <EmptyRow colSpan={8}>Loading…</EmptyRow>}
             {cities?.length === 0 && (
-              <EmptyRow colSpan={6}>No cities yet.</EmptyRow>
+              <EmptyRow colSpan={8}>No cities yet.</EmptyRow>
             )}
             {cities?.map((c) => (
               <tr
@@ -169,6 +234,46 @@ export default function CitiesPage() {
                 </td>
                 <td className={td}>
                   <CityStatusBadge status={c.status} />
+                </td>
+                <td className={td}>
+                  <CityTypeRadio
+                    city={c}
+                    disabled={busyId === c.id}
+                    onChange={(city_type) => saveTransport(c, { city_type })}
+                  />
+                </td>
+                <td className={td}>
+                  <div className="flex flex-col gap-1">
+                    {/* Metro is DERIVED from the radio, so it is shown, not
+                        toggled — two controls for one fact is how they drift. */}
+                    <span className="text-xs text-slate-600">
+                      Metro:{" "}
+                      <span
+                        className={
+                          c.has_metro
+                            ? "font-medium text-emerald-700"
+                            : "text-slate-400"
+                        }
+                      >
+                        {c.has_metro ? "on" : "off"}
+                      </span>
+                      <span className="text-slate-400"> (from city type)</span>
+                    </span>
+                    {/* Train is its OWN answer: Madurai is a tier-2 city with a
+                        major junction and no metro, and one flag could not say
+                        that. */}
+                    <label className="flex items-center gap-1.5 text-xs text-slate-600">
+                      <input
+                        type="checkbox"
+                        checked={c.has_train}
+                        disabled={busyId === c.id}
+                        onChange={(e) =>
+                          saveTransport(c, { has_train: e.target.checked })
+                        }
+                      />
+                      Train
+                    </label>
+                  </div>
                 </td>
                 {/* Null for the seeded cities — nobody requested those. */}
                 <td className={`${td} text-slate-600`}>
@@ -242,6 +347,60 @@ export default function CitiesPage() {
         </table>
       </Panel>
     </>
+  );
+}
+
+/** Labels for the radio. Order is the order they render in. */
+const CITY_TYPE_LABELS: Record<string, string> = {
+  metro: "Metro city",
+  tier_1: "Tier 1",
+  tier_2: "Tier 2",
+  tier_3: "Tier 3",
+};
+
+const CITY_TYPES = Object.keys(CITY_TYPE_LABELS) as CityType[];
+
+/**
+ * The city-type radio — the control that decides whether customers in this city
+ * see the Metro option at checkout.
+ *
+ * A radio, not a dropdown: four mutually exclusive options, all worth seeing at
+ * once, and "which of these is Chennai" is a question you answer by comparing
+ * them rather than by opening a menu.
+ *
+ * `city_type` can arrive null from a backend that has not run migration 029.
+ * That renders as nothing selected rather than defaulting to Tier 2, so an
+ * un-migrated deployment reads as "unknown" instead of quietly asserting an
+ * answer the server never gave.
+ */
+function CityTypeRadio({
+  city,
+  disabled,
+  onChange,
+}: {
+  city: City;
+  disabled: boolean;
+  onChange: (type: CityType) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      {CITY_TYPES.map((type) => (
+        <label
+          key={type}
+          className="flex items-center gap-1.5 text-xs text-slate-700"
+        >
+          <input
+            type="radio"
+            // Scoped per city, or every row would share one selection.
+            name={`city_type_${city.id}`}
+            checked={city.city_type === type}
+            disabled={disabled}
+            onChange={() => onChange(type)}
+          />
+          {CITY_TYPE_LABELS[type]}
+        </label>
+      ))}
+    </div>
   );
 }
 

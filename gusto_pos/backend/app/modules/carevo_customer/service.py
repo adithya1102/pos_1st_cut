@@ -319,6 +319,60 @@ class CarevoService:
         )))
     """
 
+    # ---------------------- city transport profile (029) ---------------------
+    @staticmethod
+    async def _city_transport_profiles(db: AsyncSession) -> dict[str, dict]:
+        """`lower(city name)` -> {city_type, has_train} for every known city.
+
+        One query for the whole outlet list, not one per card.
+
+        Tolerant of a database that has not run migration 029 yet: a missing
+        column raises, and the except returns {} — which every caller reads as
+        "the server has no answer", exactly the same as a city with no row. The
+        app then falls back to its built-in map, so a deploy that lands before
+        the migration degrades to the OLD behaviour instead of dropping Train.
+        """
+        try:
+            rows = (await db.execute(text(
+                "SELECT lower(name) AS key, city_type, has_train FROM cities"
+            ))).fetchall()
+        except Exception:
+            # SAVEPOINT hygiene: a failed statement poisons the surrounding
+            # transaction, and this runs mid-request alongside real queries.
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+            return {}
+        return {
+            r.key: {"city_type": r.city_type, "has_train": bool(r.has_train)}
+            for r in rows if r.key
+        }
+
+    @staticmethod
+    def _transport_flags(profiles: dict[str, dict], city: Optional[str]) -> dict:
+        """The three transport fields for one outlet's city.
+
+        Returns all-None when the city is unknown. None is NOT the same as
+        False here and the distinction is load-bearing: False means "the admin
+        says this city has no metro", None means "the server has no opinion",
+        and only the second lets the app fall back to its built-in map. Collapse
+        them and a backend that predates migration 029 silently strips Train
+        from every city that has it today.
+        """
+        key = (city or "").strip().lower()
+        row = profiles.get(key) if key else None
+        if not row:
+            return {"city_type": None, "has_metro": None, "has_train": None}
+        return {
+            "city_type": row["city_type"],
+            # Derived, not stored: "offers Metro" IS "is a metro city". Storing
+            # it twice would let the two disagree, and the admin radio would
+            # stop meaning what it says.
+            "has_metro": row["city_type"] == "metro",
+            "has_train": row["has_train"],
+        }
+
     @staticmethod
     async def list_outlets(
         db: AsyncSession,
@@ -348,6 +402,7 @@ class CarevoService:
         # Normalised here rather than at the edge so every caller gets the same
         # treatment: blanks dropped, lowercased once for the comparison below.
         cities = [c.strip().lower() for c in (city or []) if c and c.strip()]
+
 
         rows = (await db.execute(text(
             "SELECT id, location_name, city, locality, latitude, longitude, upi_id, image_url, "
@@ -393,6 +448,11 @@ class CarevoService:
         offers = await PromotionService.offer_summary_by_outlet(db)
         platform = offers.get("*")
 
+        # Transport profile per city (migration 029). Also ONE query, for the
+        # same reason as offers above, and keyed lower() on both sides because
+        # `outlets.city` is free text with no FK — see migration 013.
+        city_profiles = await CarevoService._city_transport_profiles(db)
+
         out = []
         for r in rows:
             (oid, name, city, locality, o_lat, o_lng, upi_id, image_url,
@@ -437,6 +497,12 @@ class CarevoService:
                 # off this, and keying it off a display string would break on
                 # pre-012 outlets whose `address` has no comma to split.
                 "city": city,
+                # Migration 029. The SERVER's answer to "which travel modes does
+                # this city support", so a new metro city needs an admin toggle
+                # rather than an app release. All three are None/absent when the
+                # city has no `cities` row, which the app reads as "no answer"
+                # and falls back to its built-in map — absent still means safe.
+                **CarevoService._transport_flags(city_profiles, city),
                 # Normalised to None so an empty string never renders a call
                 # button that dials nothing.
                 "phone_number": (phone_number or "").strip() or None,
@@ -1311,10 +1377,18 @@ class CarevoService:
 
         Does NOT touch status, PREP_STARTED, or anything else. Purely a push.
         """
-        from app.modules.prediction.service import KITCHEN_NOTIFY_SAFETY_BUFFER_S
+        from app.modules.prediction.service import (
+            DECLARED_ARRIVAL_MODES, KITCHEN_NOTIFY_SAFETY_BUFFER_S,
+        )
 
         clauses = [
-            "co.transport_mode = 'train'",
+            # Metro joined train here in migration 029: both are DECLARED-arrival
+            # modes, so both need the kitchen woken relative to a stated time
+            # rather than a travel estimate. Left as an IN-list over the wire
+            # values rather than a `declared_arrival_at IS NOT NULL` test alone,
+            # so a future mode that merely happens to carry a time cannot start
+            # silently triggering kitchen pushes.
+            "co.transport_mode = ANY(:declared_modes)",
             "co.declared_arrival_at IS NOT NULL",
             "co.status = ANY(:live)",
             # Not already notified — the append-only log IS the flag.
@@ -1328,6 +1402,7 @@ class CarevoService:
             "        - make_interval(secs => :buf)",
         ]
         params = {"live": list(_LIVE_STATUSES),
+                  "declared_modes": list(DECLARED_ARRIVAL_MODES),
                   "buf": KITCHEN_NOTIFY_SAFETY_BUFFER_S}
         if outlet_id is not None:
             clauses.append("co.outlet_id = :oid")

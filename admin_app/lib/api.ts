@@ -78,6 +78,11 @@ export const api = {
       method: "PATCH",
       body: body === undefined ? undefined : JSON.stringify(body),
     }),
+  put: <T,>(path: string, body?: unknown) =>
+    request<T>(path, {
+      method: "PUT",
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }),
 };
 
 /** Staff login. Form-encoded on purpose — the endpoint is OAuth2PasswordRequestForm. */
@@ -196,6 +201,24 @@ export interface City {
   /** Which outlet's signup requested it; null for seeded/admin-added rows. */
   requested_by_outlet_id: string | null;
   requested_by_outlet_name: string | null;
+  /** Transport profile (migration 029). `city_type` is the radio; `has_metro`
+   *  is DERIVED from it server-side and is read-only here. Setting a city to
+   *  "metro" makes the Metro option appear at checkout in customer_app —
+   *  on already-installed phones, with no release. */
+  city_type: CityType | null;
+  has_metro: boolean;
+  has_train: boolean;
+}
+
+/** metro = has an urban metro/rapid-transit system. The rest are size bands. */
+export type CityType = "metro" | "tier_1" | "tier_2" | "tier_3";
+
+export interface CityTransportResult {
+  id: string;
+  name: string;
+  city_type: CityType;
+  has_metro: boolean;
+  has_train: boolean;
 }
 
 // -------------------------- promotions (migration 016) ----------------------
@@ -479,6 +502,21 @@ export const adminApi = {
    *  DIFFERENT city — that would be a merge, not a rename. */
   renameCity: (id: string, name: string) =>
     api.patch<CityRenameResult>(`/api/v1/admin/cities/${id}`, { name }),
+
+  /** Set which travel modes this city supports (migration 029).
+   *
+   *  PARTIAL: omit a field to leave it alone. Sending `{city_type}` alone must
+   *  not reset a rail flag someone set last week, which is why neither is
+   *  defaulted here — an explicit `undefined` is dropped by JSON.stringify and
+   *  the server reads that as "unchanged". */
+  setCityTransport: (
+    id: string,
+    patch: { city_type?: CityType; has_train?: boolean },
+  ) =>
+    api.put<CityTransportResult>(
+      `/api/v1/admin/cities/${id}/transport`,
+      patch,
+    ),
 
   orders: (limit = 50, offset = 0) =>
     api.get<AdminOrderPage>(`/api/v1/admin/orders?limit=${limit}&offset=${offset}`),

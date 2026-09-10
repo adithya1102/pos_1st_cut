@@ -237,6 +237,12 @@ class AdminCityOut(BaseModel):
     # Which outlet's signup asked for it. NULL for seeded/admin-added rows.
     requested_by_outlet_id: Optional[uuid.UUID] = None
     requested_by_outlet_name: Optional[str] = None
+    # --- Transport profile (migration 029) -----------------------------------
+    # city_type is the radio the dashboard renders; has_metro is DERIVED from it
+    # and is read-only, sent so the UI never has to re-implement the rule.
+    city_type: Optional[str] = None          # metro | tier_1 | tier_2 | tier_3
+    has_metro: bool = False
+    has_train: bool = False
 
 
 class CityDecisionOut(BaseModel):
@@ -264,6 +270,28 @@ class CityCreateOut(BaseModel):
 
 class CityRenameIn(BaseModel):
     name: str = Field(..., min_length=2, max_length=80)
+
+
+# ---------------- City transport profile (migration 029) ---------------------
+class CityTransportIn(BaseModel):
+    """Partial update: send either field, or both.
+
+    Both default to None and None means "leave it alone" — NOT "set it false".
+    A body carrying only `city_type` must not quietly clear a rail flag an
+    admin set last week.
+    """
+    city_type: Optional[str] = Field(
+        None, description="metro | tier_1 | tier_2 | tier_3")
+    has_train: Optional[bool] = None
+
+
+class CityTransportOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    city_type: str
+    #: Derived from city_type, never stored separately.
+    has_metro: bool
+    has_train: bool
 
 
 class CityRenameOut(BaseModel):
