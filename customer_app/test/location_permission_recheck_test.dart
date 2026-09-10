@@ -635,6 +635,124 @@ void main() {
           reason: 'checkout is the third entry point onto the same service');
     });
   });
+
+  // =========================================================================
+  // Choosing a transport mode IS the location request
+  //
+  // "I'm coming by car" already answers "from where?" — so the ask belongs to
+  // that tap. Before this, the chip only set a mode and the customer had to
+  // find a separate "Use GPS" control further down the page; most did not, and
+  // orders arrived carrying a mode with no origin.
+  // =========================================================================
+  group('transport mode selection carries the location ask', () {
+    testWidgets('an existing grant is REUSED — origin fills, no prompt',
+        (tester) async {
+      _sizeSurface(tester);
+      fake.permission = LocationPermission.whileInUse;
+
+      await tester.pumpWidget(_checkoutHost(service));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tapMode(tester, 'Car');
+
+      expect(fake.requestCount, 0,
+          reason: 'permission is already held — nothing to ask for');
+      expect(fake.positionCount, 1, reason: 'the grant was used, not re-sought');
+      expect(find.text('Current location'), findsOneWidget);
+    });
+
+    testWidgets('with no grant yet, the chip tap raises the prompt itself',
+        (tester) async {
+      _sizeSurface(tester);
+      fake.permission = LocationPermission.denied;
+      fake.grantOnRequest = LocationPermission.whileInUse;
+
+      await tester.pumpWidget(_checkoutHost(service));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tapMode(tester, 'Walk');
+
+      expect(fake.requestCount, 1,
+          reason: 'the ask is part of selecting a mode, not a separate step');
+      expect(find.text('Current location'), findsOneWidget);
+    });
+
+    testWidgets('changing mode does NOT ask a second time', (tester) async {
+      // The whole complaint: being asked again for something already answered.
+      _sizeSurface(tester);
+      fake.permission = LocationPermission.denied;
+      fake.grantOnRequest = LocationPermission.denied;
+
+      await tester.pumpWidget(_checkoutHost(service));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      await tapMode(tester, 'Walk');
+      expect(fake.requestCount, 1);
+
+      await tapMode(tester, 'Car');
+      await tapMode(tester, 'Auto');
+      expect(fake.requestCount, 1,
+          reason: 'tapping through chips must not stack OS dialogs');
+    });
+
+    testWidgets('a granted origin is not re-fetched by the next chip',
+        (tester) async {
+      _sizeSurface(tester);
+      fake.permission = LocationPermission.whileInUse;
+
+      await tester.pumpWidget(_checkoutHost(service));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      await tapMode(tester, 'Car');
+      expect(fake.positionCount, 1);
+
+      await tapMode(tester, 'Bus');
+      expect(fake.positionCount, 1,
+          reason: 'the origin already exists — re-reading GPS buys nothing');
+    });
+
+    testWidgets('a blocked permission is never re-asked from a chip',
+        (tester) async {
+      _sizeSurface(tester);
+      fake.permission = LocationPermission.deniedForever;
+
+      await tester.pumpWidget(_checkoutHost(service));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tapMode(tester, 'Car');
+      await tester.pumpAndSettle();
+
+      expect(fake.requestCount, 0);
+      // And no modal ambushes a customer who only picked a travel mode: the
+      // explanation belongs to the deliberate Use-GPS tap, not to this one.
+      expect(find.byKey(const Key('location_blocked_dialog')), findsNothing);
+    });
+
+    testWidgets('FR-C6: a refusal still leaves checkout payable',
+        (tester) async {
+      _sizeSurface(tester);
+      fake.permission = LocationPermission.denied;
+      fake.grantOnRequest = LocationPermission.denied;
+
+      await tester.pumpWidget(_checkoutHost(service));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tapMode(tester, 'Car');
+      await tester.pumpAndSettle();
+
+      expect(find.text('Set your location'), findsOneWidget);
+      expect(find.byKey(const Key('checkout_use_gps')), findsOneWidget);
+    });
+  });
+}
+
+/// Taps a transport-mode chip by its label.
+///
+/// Scrolled into view first, exactly like [tapUseGps] — the chip row sits below
+/// the fold on the test surface, and a bare `tap()` there hits empty space.
+Future<void> tapMode(WidgetTester tester, String label) async {
+  final target = find.text(label);
+  await tester.ensureVisible(target);
+  await tester.pump();
+  await tester.tap(target);
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
 }
 
 /// A scripted geolocator, so permission states can be driven exactly.

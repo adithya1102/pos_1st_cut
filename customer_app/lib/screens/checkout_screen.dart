@@ -177,6 +177,94 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     });
   }
 
+  /// Picks a transport mode AND settles the origin it implies, in one tap.
+  ///
+  /// Choosing "Bike" already means "I am travelling here, from where I am" —
+  /// so the location ask belongs to that tap, not to a second control further
+  /// down the screen. Previously the two were disconnected: the chip set a
+  /// mode, and the customer then had to find "Use GPS" under a separate
+  /// heading before anything could be timed. Most never did, which is how
+  /// orders arrived carrying a mode and no origin.
+  ///
+  /// Three things it deliberately does NOT do:
+  ///
+  ///  * **Never overwrites an origin that already exists.** A searched address
+  ///    is a deliberate choice; stomping it with GPS because the customer then
+  ///    switched Bike→Car would silently discard it.
+  ///  * **Never re-asks once blocked.** `deniedForever` means the OS swallows
+  ///    the dialog, so calling out to it would buy a no-op await. The origin
+  ///    card still offers the route to Settings.
+  ///  * **Asks at most once per grant state.** `userInitiated` is left FALSE
+  ///    on purpose — the latch in LocationService is what stops tapping
+  ///    through five chips from raising five dialogs. The tap means "I'm
+  ///    coming by car", not "locate me"; only the explicit Use-GPS button
+  ///    carries the second meaning, and only it re-prompts.
+  ///
+  /// FR-C6 is unchanged either way: a refusal leaves the origin at `none` and
+  /// checkout proceeds with a wider, approximate wait.
+  Future<void> _selectMode(TransportMode mode) async {
+    setState(() {
+      _transport = mode;
+      // Switching away from train retires the error with the requirement that
+      // produced it.
+      if (!mode.usesDeclaredArrival) _arrivalMissing = false;
+    });
+
+    // Train's Leg A is a stated time, not a place — there is no origin to get.
+    if (mode.usesDeclaredArrival) return;
+
+    // Already answered, by GPS or by address search. Reuse it.
+    if (_originSource != 'none') return;
+
+    final service = context.read<LocationService>();
+    // A grant from anywhere else in the app (Near me, Nearest sort) is honoured
+    // here without a prompt: getCurrentLocation re-reads the OS status and only
+    // raises the dialog when it is actually `denied`.
+    if (service.isBlocked) return;
+
+    await _resolveOrigin(userInitiated: false);
+  }
+
+  /// Reads a GPS fix and folds the outcome into the origin fields.
+  ///
+  /// Shared by both entry points; [userInitiated] is the entire difference
+  /// between them. The explicit "Use GPS" button passes true and re-asks every
+  /// time — see LocationService.getCurrentLocation for why that has to bypass
+  /// the latch. Mode selection passes false and asks once per grant state.
+  Future<LocationResult> _resolveOrigin({required bool userInitiated}) async {
+    setState(() => _locating = true);
+    final service = context.read<LocationService>();
+
+    late final LocationResult res;
+    try {
+      res = await service.getCurrentLocation(userInitiated: userInitiated);
+    } finally {
+      // Cleared BEFORE any dialog the caller shows, so the button is not left
+      // spinning behind a modal the customer has to read.
+      if (mounted) setState(() => _locating = false);
+    }
+    if (!mounted) return res;
+
+    if (res.hasCoordinates) {
+      setState(() {
+        _originLat = res.latitude;
+        _originLng = res.longitude;
+        _originSource = 'gps';
+        _originLabel = 'Current location';
+      });
+    } else {
+      // FR-C6: denial degrades gracefully — the order still goes through,
+      // the estimate is just wider/approximate.
+      setState(() {
+        _originLat = null;
+        _originLng = null;
+        _originSource = 'none';
+        _originLabel = null;
+      });
+    }
+    return res;
+  }
+
   /// "Use my location". Third entry point onto the shared recheck path, after
   /// Discover's "Near me" and the outlet list's Nearest sort.
   ///
@@ -189,38 +277,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   /// cleared to `none` exactly as before and checkout continues with a wider,
   /// approximate wait. Nothing below decides whether the order can be placed.
   Future<void> _useMyLocation() async {
-    setState(() => _locating = true);
     final messenger = ScaffoldMessenger.of(context);
     final service = context.read<LocationService>();
 
-    late final LocationResult res;
-    try {
-      res = await service.getCurrentLocation(userInitiated: true);
-    } finally {
-      // Cleared BEFORE any dialog below, so the button is not left spinning
-      // behind a modal the customer has to read.
-      if (mounted) setState(() => _locating = false);
-    }
-    if (!mounted) return;
-
-    if (res.hasCoordinates) {
-      setState(() {
-        _originLat = res.latitude;
-        _originLng = res.longitude;
-        _originSource = 'gps';
-        _originLabel = 'Current location';
-      });
-      return;
-    }
-
-    // FR-C6: denial degrades gracefully — the order still goes through,
-    // the estimate is just wider/approximate.
-    setState(() {
-      _originLat = null;
-      _originLng = null;
-      _originSource = 'none';
-      _originLabel = null;
-    });
+    final res = await _resolveOrigin(userInitiated: true);
+    if (!mounted || res.hasCoordinates) return;
 
     // A permanent denial cannot be re-asked, so it gets the SAME explanation
     // dialog the other two entry points use rather than a SnackBar that times
@@ -567,12 +628,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   _TransportChip(
                     mode: mode,
                     selected: _transport == mode,
-                    // Switching away from train retires the error with the
-                    // requirement that produced it.
-                    onTap: () => setState(() {
-                      _transport = mode;
-                      if (!mode.usesDeclaredArrival) _arrivalMissing = false;
-                    }),
+                    // Selecting a mode also settles the origin that mode
+                    // implies — see _selectMode. The location ask lives inside
+                    // this one tap rather than in a second control below.
+                    onTap: () => _selectMode(mode),
                   ),
               ],
             ),
