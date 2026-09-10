@@ -125,19 +125,6 @@ Widget _checkoutHost(LocationService loc) {
   );
 }
 
-/// Taps "Use GPS" on checkout.
-///
-/// Scrolled into view first: the origin picker sits well down a long checkout
-/// page, so a bare `tap()` lands on empty space and silently does nothing.
-Future<void> tapUseGps(WidgetTester tester) async {
-  final target = find.byKey(const Key('checkout_use_gps'));
-  await tester.ensureVisible(target);
-  await tester.pump();
-  await tester.tap(target);
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 400));
-}
-
 /// Taps "Near me" on Discover.
 Future<void> tapNearMe(WidgetTester tester) async {
   await tester.tap(find.byKey(const Key('use_my_location')));
@@ -502,24 +489,107 @@ void main() {
   });
 
   // =========================================================================
-  // "Use my location" on checkout — the third entry point
   // =========================================================================
-  group('Checkout Use-my-location: all three states', () {
-    testWidgets('granted -> fills the origin, no dialog', (tester) async {
+  // Checkout: the transport chip is the ONLY location control
+  //
+  // The standalone "Your starting point" card and its Use-GPS / Search-address
+  // buttons were removed. A first tap on a chip resolves the origin; a RE-TAP
+  // on the already-selected chip is the retry, and is the only way left to
+  // force a fresh prompt.
+  // =========================================================================
+  group('checkout: the chip is the only location control', () {
+    testWidgets('the standalone starting-point control is gone',
+        (tester) async {
       _sizeSurface(tester);
       fake.permission = LocationPermission.whileInUse;
       await tester.pumpWidget(_checkoutHost(service));
       await tester.pump(const Duration(milliseconds: 400));
 
-      await tapUseGps(tester);
+      expect(find.byKey(const Key('checkout_use_gps')), findsNothing,
+          reason: 'the Use GPS button was removed with the card');
+      expect(find.text('Your starting point'), findsNothing);
+      expect(find.text('Search address'), findsNothing);
+      // What replaced it is a status line, not a control.
+      expect(find.byKey(const Key('checkout_origin_status')), findsOneWidget);
+    });
 
+    testWidgets('granted -> a chip tap fills the origin, no dialog',
+        (tester) async {
+      _sizeSurface(tester);
+      fake.permission = LocationPermission.whileInUse;
+      await tester.pumpWidget(_checkoutHost(service));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      await tapMode(tester, 'Car');
+
+      expect(fake.requestCount, 0, reason: 'already granted - nothing to ask');
       expect(fake.positionCount, 1);
-      // The origin landed: the control relabels once one is set.
       expect(find.text('Current location'), findsOneWidget);
       expect(find.byKey(const Key('location_blocked_dialog')), findsNothing);
     });
 
-    testWidgets('denied -> prompts, and RE-PROMPTS on the second tap',
+    testWidgets('RE-TAPPING the selected chip retries and re-prompts',
+        (tester) async {
+      // The retry gesture. With no Use-GPS button left, this is the only way to
+      // force the OS dialog after a refusal - and it must bypass the
+      // one-prompt latch or it would be a dead control.
+      _sizeSurface(tester);
+      fake.permission = LocationPermission.denied;
+      fake.grantOnRequest = LocationPermission.denied;
+      await tester.pumpWidget(_checkoutHost(service));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      await tapMode(tester, 'Car');
+      expect(fake.requestCount, 1, reason: 'first tap asks once');
+
+      await tapMode(tester, 'Car');
+      expect(fake.requestCount, 2,
+          reason: 'a re-tap on the SELECTED chip must reach the OS dialog again');
+
+      await tapMode(tester, 'Car');
+      expect(fake.requestCount, 3, reason: 'and again - it is a retry control');
+    });
+
+    testWidgets('a re-tap re-fetches even when an origin already exists',
+        (tester) async {
+      // Distinct from switching chips, which must NOT clobber a good origin.
+      _sizeSurface(tester);
+      fake.permission = LocationPermission.whileInUse;
+      await tester.pumpWidget(_checkoutHost(service));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      await tapMode(tester, 'Car');
+      expect(fake.positionCount, 1);
+
+      await tapMode(tester, 'Bus');
+      expect(fake.positionCount, 1,
+          reason: 'switching mode must not re-read a good origin');
+
+      await tapMode(tester, 'Bus');
+      expect(fake.positionCount, 2,
+          reason: 're-tapping the SELECTED chip is a deliberate refresh');
+    });
+
+    testWidgets('already deniedForever -> a deliberate tap explains',
+        (tester) async {
+      // Arriving with permission already permanently denied. The OS will never
+      // show its dialog, so a deliberate tap must explain or it is a dead
+      // control.
+      _sizeSurface(tester);
+      fake.permission = LocationPermission.deniedForever;
+      await tester.pumpWidget(_checkoutHost(service));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      await tapMode(tester, 'Car');
+      await tester.pumpAndSettle();
+
+      expect(fake.requestCount, 0, reason: 'deniedForever is never re-asked');
+      expect(find.byKey(const Key('location_blocked_dialog')), findsOneWidget);
+      expect(find.byKey(const Key('location_blocked_open_settings')),
+          findsOneWidget);
+    });
+
+    testWidgets('FR-C6: a refusal still leaves checkout payable',
         (tester) async {
       _sizeSurface(tester);
       fake.permission = LocationPermission.denied;
@@ -527,66 +597,140 @@ void main() {
       await tester.pumpWidget(_checkoutHost(service));
       await tester.pump(const Duration(milliseconds: 400));
 
-      await tapUseGps(tester);
+      await tapMode(tester, 'Car');
+      await tester.pumpAndSettle();
+
+      // The status line says what happened AND how to retry - without a
+      // separate button, a customer with no location needs telling.
+      expect(find.byKey(const Key('checkout_origin_status')), findsOneWidget);
+      expect(find.textContaining('tap your travel mode again'), findsOneWidget);
+      // And the order can still be placed.
+      expect(find.textContaining('Pay'), findsWidgets);
+    });
+  });
+
+
+  // =========================================================================
+  // The decline escalation, as ONE sequence
+  //
+  // Stage 1  first decline     -> nothing forceful. No dialog, no snackbar.
+  //                               The chip stays tappable and a re-tap
+  //                               re-prompts.
+  // Stage 2  second decline    -> Android flips the status to deniedForever,
+  //          (or that status)     and the app explains, with a button that
+  //                               opens system settings.
+  //
+  // The bug this pins: the escalation used to live on the NEXT tap, because
+  // _resolveOrigin's result was discarded. Someone who declined twice and
+  // stopped tapping was simply never told why location had stopped working.
+  // =========================================================================
+  group('location decline escalates in two stages', () {
+    testWidgets('stage 1: a first decline is silent and stays retryable',
+        (tester) async {
+      _sizeSurface(tester);
+      fake.permission = LocationPermission.denied;
+      fake.grantOnRequest = LocationPermission.denied;
+
+      await tester.pumpWidget(_checkoutHost(service));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      await tapMode(tester, 'Car');
+      await tester.pumpAndSettle();
+
+      expect(fake.requestCount, 1, reason: 'the OS dialog was raised once');
+      // Nothing forceful.
+      expect(find.byKey(const Key('location_blocked_dialog')), findsNothing);
+      expect(find.byType(SnackBar), findsNothing);
+      // The chip is still there and still says what it is.
+      expect(find.text('Car'), findsOneWidget);
+      // And checkout is still payable.
+      expect(find.textContaining('Pay'), findsWidgets);
+    });
+
+    testWidgets('stage 1 -> a later tap re-prompts normally', (tester) async {
+      _sizeSurface(tester);
+      fake.permission = LocationPermission.denied;
+      fake.grantOnRequest = LocationPermission.denied;
+
+      await tester.pumpWidget(_checkoutHost(service));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      await tapMode(tester, 'Car');
       expect(fake.requestCount, 1);
 
-      await tapUseGps(tester);
+      await tapMode(tester, 'Car');
+      await tester.pumpAndSettle();
       expect(fake.requestCount, 2,
-          reason: 'a second tap on Use GPS must reach the OS dialog again');
+          reason: 'a first decline must NOT mute the next deliberate tap');
+    });
 
+    testWidgets('stage 2: the SECOND decline explains, immediately',
+        (tester) async {
+      // The real Android sequence: refuse once -> denied; refuse again -> the
+      // OS reports deniedForever. The explanation must land on THAT tap.
+      _sizeSurface(tester);
+      fake.permission = LocationPermission.denied;
+      fake.grantOnRequest = LocationPermission.denied;
+
+      await tester.pumpWidget(_checkoutHost(service));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      // First decline - silent.
+      await tapMode(tester, 'Car');
+      await tester.pumpAndSettle();
       expect(find.byKey(const Key('location_blocked_dialog')), findsNothing);
+
+      // Second decline: this is the one Android makes permanent.
+      fake.grantOnRequest = LocationPermission.deniedForever;
+      await tapMode(tester, 'Car');
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('location_blocked_dialog')), findsOneWidget,
+          reason: 'the escalation must land on the declining tap itself, '
+              'not on some later tap the customer may never make');
     });
 
-    testWidgets('deniedForever -> no OS dialog, shows the explanation instead',
+    testWidgets('stage 2 offers a working route to system settings',
         (tester) async {
       _sizeSurface(tester);
-      fake.permission = LocationPermission.deniedForever;
+      fake.permission = LocationPermission.denied;
+      fake.grantOnRequest = LocationPermission.denied;
+
       await tester.pumpWidget(_checkoutHost(service));
       await tester.pump(const Duration(milliseconds: 400));
 
-      await tapUseGps(tester);
+      await tapMode(tester, 'Car');
       await tester.pumpAndSettle();
 
-      expect(fake.requestCount, 0);
-      expect(find.byKey(const Key('location_blocked_dialog')), findsOneWidget);
-      expect(find.textContaining('estimate your travel time'), findsOneWidget);
+      fake.grantOnRequest = LocationPermission.deniedForever;
+      await tapMode(tester, 'Car');
+      await tester.pumpAndSettle();
+
+      final settings = find.byKey(const Key('location_blocked_open_settings'));
+      expect(settings, findsOneWidget);
+      await tester.tap(settings);
+      await tester.pumpAndSettle();
+
+      expect(fake.openAppSettingsCount, 1,
+          reason: 'the button must actually reach the OS settings page');
     });
 
-    testWidgets('its explanation also opens the device settings page',
-        (tester) async {
+    testWidgets('stage 2 never re-asks the OS', (tester) async {
       _sizeSurface(tester);
       fake.permission = LocationPermission.deniedForever;
+
       await tester.pumpWidget(_checkoutHost(service));
       await tester.pump(const Duration(milliseconds: 400));
 
-      await tapUseGps(tester);
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('location_blocked_open_settings')));
-      await tester.pumpAndSettle();
-
-      expect(fake.openAppSettingsCount, 1);
-    });
-
-    testWidgets('FR-C6 preserved: a refusal still leaves checkout usable',
-        (tester) async {
-      // This is a permission-check swap, NOT a checkout-logic change. A denial
-      // must still degrade gracefully — the screen stays, the order can still
-      // be placed, only the wait estimate gets wider.
-      _sizeSurface(tester);
-      fake.permission = LocationPermission.deniedForever;
-      await tester.pumpWidget(_checkoutHost(service));
-      await tester.pump(const Duration(milliseconds: 400));
-
-      await tapUseGps(tester);
+      await tapMode(tester, 'Car');
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('location_blocked_dismiss')));
       await tester.pumpAndSettle();
+      await tapMode(tester, 'Car');
+      await tester.pumpAndSettle();
 
-      expect(find.byType(CheckoutScreen), findsOneWidget);
-      // Origin cleared to "none", exactly as before: no origin label is shown.
-      expect(find.text('Current location'), findsNothing);
-      // And the pay action is still there — nothing here gates checkout.
-      expect(find.byKey(const Key('checkout_use_gps')), findsOneWidget);
+      expect(fake.requestCount, 0,
+          reason: 'the OS swallows that dialog - asking would be a no-op wait');
     });
   });
 
@@ -629,7 +773,7 @@ void main() {
 
       await tester.pumpWidget(_checkoutHost(service));
       await tester.pump(const Duration(milliseconds: 400));
-      await tapUseGps(tester);
+      await tapMode(tester, 'Car');
 
       expect(fake.requestCount, 2,
           reason: 'checkout is the third entry point onto the same service');
@@ -720,9 +864,33 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(fake.requestCount, 0);
-      // And no modal ambushes a customer who only picked a travel mode: the
-      // explanation belongs to the deliberate Use-GPS tap, not to this one.
-      expect(find.byKey(const Key('location_blocked_dialog')), findsNothing);
+      // The dialog IS shown now, and that is the point: with the Use-GPS
+      // button gone there is no other control to carry the explanation, so a
+      // deliberate tap that cannot prompt has to say why or it is dead.
+      // A plain switch between chips still shows nothing — see the escalation
+      // group, which pins the full two-stage sequence.
+      expect(find.byKey(const Key('location_blocked_dialog')), findsOneWidget);
+    });
+
+    testWidgets('but a plain chip SWITCH while blocked stays silent',
+        (tester) async {
+      // The nagging guard: only a deliberate tap (first resolve, or a re-tap)
+      // explains. Browsing across chips must not throw a modal each time.
+      _sizeSurface(tester);
+      fake.permission = LocationPermission.deniedForever;
+
+      await tester.pumpWidget(_checkoutHost(service));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      await tapMode(tester, 'Car');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('location_blocked_dismiss')));
+      await tester.pumpAndSettle();
+
+      await tapMode(tester, 'Bus');
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('location_blocked_dialog')), findsNothing,
+          reason: 'switching chips is not a deliberate location request');
     });
 
     testWidgets('FR-C6: a refusal still leaves checkout payable',
@@ -736,8 +904,8 @@ void main() {
       await tapMode(tester, 'Car');
       await tester.pumpAndSettle();
 
-      expect(find.text('Set your location'), findsOneWidget);
-      expect(find.byKey(const Key('checkout_use_gps')), findsOneWidget);
+      expect(find.byKey(const Key('checkout_origin_status')), findsOneWidget);
+      expect(find.textContaining('tap your travel mode again'), findsOneWidget);
     });
   });
 }

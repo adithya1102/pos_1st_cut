@@ -11,7 +11,6 @@ import '../services/cashfree_service.dart';
 import '../services/location_service.dart';
 import '../services/order_service.dart';
 import '../services/payment_service.dart';
-import '../services/places_service.dart';
 import '../state/cart_state.dart';
 import '../theme/app_colors.dart';
 import '../theme/widgets/neo_button.dart';
@@ -24,7 +23,6 @@ import '../widgets/offer_sheet.dart';
 import '../widgets/price_text.dart';
 import 'payment_processing_screen.dart';
 import 'pickup_screen.dart';
-import 'place_search_screen.dart';
 import '../widgets/account_button.dart';
 
 /// PE Step 3 (FR-C1) — how the customer will travel to the outlet. Values map
@@ -45,21 +43,92 @@ enum TransportMode {
   // MODE_SPEED_MPS has no metro entry and `.get(mode, DEFAULT)` resolves a
   // missing key to BIKE speed, so a speed-based metro would have been timed as
   // a cycle ride and nobody would have noticed for months.
-  metro('metro', 'Metro', Icons.subway);
+  metro('metro', 'Metro', Icons.subway),
+  // Migration 030. Declared-arrival for the same reason as metro: a tram runs
+  // a scheduled route you read a time off, so a GPS origin would be collected
+  // and then ignored — and the backend's MODE_SPEED_MPS has no 'tram' key, so
+  // a speed-based tram would silently resolve to BIKE speed.
+  tram('tram', 'Tram', Icons.tram);
 
   const TransportMode(this.wire, this.label, this.icon);
   final String wire;
   final String label;
   final IconData icon;
 
-  /// True when this mode is satisfied by a declared arrival time rather than
-  /// an origin location.
+  /// LOCAL default for whether this mode is satisfied by a declared arrival
+  /// time. The SERVER's `uses_declared_arrival` wins when present — see
+  /// [CheckoutMode]. This is the offline/legacy answer only.
   bool get usesDeclaredArrival =>
-      this == TransportMode.train || this == TransportMode.metro;
+      this == TransportMode.train ||
+      this == TransportMode.metro ||
+      this == TransportMode.tram;
 
-  /// The word for the vehicle, for copy that has to name it ("When does your
-  /// metro arrive?"). Only meaningful for [usesDeclaredArrival] modes.
-  String get vehicleNoun => this == TransportMode.metro ? 'metro' : 'train';
+  /// Look up a known mode by its wire value, or null when the server has sent
+  /// one this build has never heard of.
+  static TransportMode? byWire(String wire) {
+    for (final m in TransportMode.values) {
+      if (m.wire == wire) return m;
+    }
+    return null;
+  }
+}
+
+/// One selectable chip, as the SERVER describes it.
+///
+/// Distinct from [TransportMode] on purpose. The enum is this build's registry
+/// of modes it has an icon for; this is whatever the backend actually enabled
+/// for the city, which may include a mode added after this app shipped.
+///
+/// That is the whole point of migration 030: a ninth mode is one INSERT, and it
+/// must appear in an already-installed app rather than waiting for a release.
+/// So an unknown code still renders — server label, fallback icon — and still
+/// BEHAVES correctly, because `usesDeclaredArrival` travels with the data
+/// instead of being inferred from a name the app does not recognise.
+class CheckoutMode {
+  const CheckoutMode({
+    required this.wire,
+    required this.label,
+    required this.icon,
+    required this.usesDeclaredArrival,
+  });
+
+  final String wire;
+  final String label;
+  final IconData icon;
+  final bool usesDeclaredArrival;
+
+  /// Generic transit glyph for a mode this build predates. Deliberately not a
+  /// question mark or a warning: an unrecognised mode is a normal consequence
+  /// of the server being ahead, not an error the customer should worry about.
+  static const IconData _unknownIcon = Icons.directions_transit;
+
+  /// Built from a server `transport_modes` entry.
+  factory CheckoutMode.fromServer(OutletTransportMode m) {
+    final known = TransportMode.byWire(m.code);
+    return CheckoutMode(
+      wire: m.code,
+      // Server label wins — it is the one an admin can correct without a
+      // release. Falls back to the built-in label only when blank.
+      label: m.label.trim().isNotEmpty ? m.label.trim() : (known?.label ?? m.code),
+      icon: known?.icon ?? _unknownIcon,
+      usesDeclaredArrival: m.usesDeclaredArrival,
+    );
+  }
+
+  /// Built from a mode this build knows, for the offline/legacy path.
+  factory CheckoutMode.fromLocal(TransportMode m) => CheckoutMode(
+        wire: m.wire,
+        label: m.label,
+        icon: m.icon,
+        usesDeclaredArrival: m.usesDeclaredArrival,
+      );
+
+  /// The word for the vehicle, for copy that names it ("When does your tram
+  /// arrive?"). Only meaningful for [usesDeclaredArrival] modes.
+  ///
+  /// Lower-cased server label rather than a hardcoded switch, so a mode added
+  /// server-side gets correct copy with no app change.
+  String get vehicleNoun => label.trim().toLowerCase();
 }
 
 /// Step 8: checkout with UPI / Card / Net Banking ONLY (no pay-at-counter).
@@ -120,7 +189,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       _offer?.previewSaving(subtotal) ?? 0;
 
   // FR-C1/C2: travel context captured before the order is placed.
-  TransportMode _transport = TransportMode.bike;
+  /// The SELECTED mode's wire value, not an enum member.
+  ///
+  /// A string because the offered list is server-driven as of migration 030 and
+  /// may contain a mode this build has no enum case for. Storing the enum would
+  /// make such a mode unselectable — the exact thing 030 exists to avoid.
+  String _transport = TransportMode.bike.wire;
 
   /// The modes offered for [outlet]'s city.
   ///
@@ -135,17 +209,32 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   /// a metro and no useful suburban rail. One flag for both would have to be
   /// wrong about one of them, and the admin dashboard exposes them as two
   /// controls precisely so it does not have to be.
-  List<TransportMode> _modesFor(Outlet? outlet) {
+  /// The chips to render, SERVER-FIRST.
+  ///
+  /// When the outlet carries a `transport_modes` list (migration 030) that list
+  /// IS the answer, verbatim and in server order — including any mode this
+  /// build has never heard of, which renders with a fallback icon and still
+  /// behaves correctly because `uses_declared_arrival` comes with it.
+  ///
+  /// The local branch below is the pre-030 fallback only. It cannot express
+  /// Tram (nothing older than 030 knows about it), so it does not try.
+  List<CheckoutMode> _modesFor(Outlet? outlet) {
+    final server = CityTransport.serverModesFor(outlet);
+    if (server != null) {
+      return [for (final m in server) CheckoutMode.fromServer(m)];
+    }
     final train = CityTransport.trainFor(outlet);
     final metro = CityTransport.metroFor(outlet);
+    final tram = CityTransport.tramFor(outlet);
     return [
       for (final m in TransportMode.values)
         if (switch (m) {
           TransportMode.train => train,
           TransportMode.metro => metro,
+          TransportMode.tram => tram,
           _ => true,
         })
-          m,
+          CheckoutMode.fromLocal(m),
     ];
   }
 
@@ -156,15 +245,35 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   /// It is guarded anyway because the failure would be silent and would land in
   /// the prediction engine as a train order from a city with no trains — the
   /// kind of thing that is invisible until someone reads the data months later.
-  TransportMode _effectiveMode(Outlet? outlet) {
+  /// [_transport], but never a mode this outlet does not offer.
+  ///
+  /// Belt and braces: a mode can only be SELECTED from a list that already
+  /// excluded the others, so a stale selection is not reachable through the UI
+  /// today. It is guarded anyway because the failure would be silent and would
+  /// land in the prediction engine as (say) a tram order from a city with no
+  /// trams — the kind of thing that is invisible until someone reads the data
+  /// months later.
+  ///
+  /// Falls back to the first offered mode rather than a hardcoded `bike`: with
+  /// a server-driven list there is no guarantee bike is even on it.
+  CheckoutMode _effectiveMode(Outlet? outlet) {
     final allowed = _modesFor(outlet);
-    return allowed.contains(_transport) ? _transport : TransportMode.bike;
+    for (final m in allowed) {
+      if (m.wire == _transport) return m;
+    }
+    return allowed.isNotEmpty
+        ? allowed.first
+        : CheckoutMode.fromLocal(TransportMode.bike);
   }
   double? _originLat;
   double? _originLng;
   String _originSource = 'none'; // none | gps | places_autocomplete
   String? _originLabel;
   bool _locating = false;
+
+  /// Whether this screen has already tried to resolve an origin.
+  /// Gates the one-off deliberate prompt in [_selectMode].
+  bool _originAttempted = false;
 
   /// Train mode only: the arrival time the customer states. Sent as
   /// `declared_arrival_at`; null for every other mode.
@@ -230,28 +339,97 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   ///
   /// FR-C6 is unchanged either way: a refusal leaves the origin at `none` and
   /// checkout proceeds with a wider, approximate wait.
-  Future<void> _selectMode(TransportMode mode) async {
+  Future<void> _selectMode(CheckoutMode mode) async {
+    // Re-tapping the mode already selected is the RETRY gesture.
+    //
+    // Migration 030 removed the separate "Your starting point" card, so there
+    // is no longer a "Use GPS" button to press after a refusal. Re-tapping the
+    // active chip takes its place: it is the only control on screen that still
+    // means "this is how I am travelling", and repeating that is a reasonable
+    // way to say "try again".
+    //
+    // userInitiated: true is what makes it a real retry — it bypasses
+    // LocationService's one-prompt latch, so the OS dialog is raised again
+    // rather than silently swallowed (see getCurrentLocation for why the latch
+    // has to be bypassed for a deliberate tap). A FIRST tap stays
+    // userInitiated: false so tapping through five chips cannot stack five
+    // dialogs.
+    final isRetap = _transport == mode.wire;
+
+    // FIRST resolve on this screen also counts as deliberate.
+    //
+    // Without this, a denial on Discover's "Near me" would leave the app-wide
+    // one-prompt latch set, and the first chip tap here would fall through to a
+    // silent refusal — the app suppressing its own dialog, which is the exact
+    // bug LocationService's latch was rewritten to stop. The removed Use-GPS
+    // button used to carry this weight by always passing userInitiated: true.
+    //
+    // It is scoped to the first attempt only, so tapping through five chips
+    // still cannot stack five dialogs: attempts 2..n are plain switches.
+    final isFirstAttempt = !_originAttempted;
+
     setState(() {
-      _transport = mode;
-      // Switching away from train retires the error with the requirement that
-      // produced it.
+      _transport = mode.wire;
+      // Switching away from a declared-arrival mode retires the error with the
+      // requirement that produced it.
       if (!mode.usesDeclaredArrival) _arrivalMissing = false;
     });
 
-    // Train's Leg A is a stated time, not a place — there is no origin to get.
+    // A declared-arrival leg is a stated time, not a place — no origin to get.
     if (mode.usesDeclaredArrival) return;
 
-    // Already answered, by GPS or by address search. Reuse it.
-    if (_originSource != 'none') return;
+    // Already answered, by GPS or by address search. Reuse it — unless this is
+    // a deliberate re-tap, which is how someone replaces an origin they are
+    // unhappy with now that the separate control is gone.
+    if (_originSource != 'none' && !isRetap) return;
+
+    // A tap the customer meant: the first resolve on this screen, or a re-tap
+    // on the chip already chosen. Both raise the OS dialog; a plain switch
+    // between chips does not, so five chips cannot stack five prompts.
+    final deliberate = isRetap || isFirstAttempt;
 
     final service = context.read<LocationService>();
-    // A grant from anywhere else in the app (Near me, Nearest sort) is honoured
-    // here without a prompt: getCurrentLocation re-reads the OS status and only
-    // raises the dialog when it is actually `denied`.
-    if (service.isBlocked) return;
 
-    await _resolveOrigin(userInitiated: false);
+    // ---------------- STAGE 2, arrived at from an earlier session ----------
+    // Already permanently denied before this screen was opened. The OS
+    // suppresses its dialog entirely, so a deliberate tap must get the
+    // explanation or it is a dead control — the precise failure this whole
+    // flow was fixed for.
+    if (service.isBlocked) {
+      if (deliberate && mounted) await _explainBlocked(service);
+      return;
+    }
+
+    _originAttempted = true;
+    final res = await _resolveOrigin(userInitiated: deliberate);
+    if (!mounted) return;
+
+    // ---------------- STAGE 2, arrived at just now -------------------------
+    // Android flips `denied` to `deniedForever` on the SECOND refusal, so the
+    // decline that just happened is the one that made it permanent. The
+    // escalation belongs here, immediately — not on some later tap the
+    // customer has no reason to make, and which was where it used to sit.
+    //
+    // Unconditional: they are looking at the consequence of a prompt they just
+    // dismissed, so this is an answer, not an ambush.
+    if (res.outcome == LocationOutcome.deniedForever) {
+      await _explainBlocked(service);
+      return;
+    }
+
+    // ---------------- STAGE 1 ----------------------------------------------
+    // A plain `denied` is deliberately SILENT. No dialog, no snackbar, no
+    // nagging: the chip stays tappable and a re-tap re-prompts normally. The
+    // customer said no once and is allowed to have meant it.
   }
+
+  /// The escalation: explain, and offer the only thing that can still fix it.
+  Future<void> _explainBlocked(LocationService service) =>
+      showLocationBlockedDialog(
+        context,
+        service: service,
+        purpose: 'estimate your travel time to the restaurant',
+      );
 
   /// Reads a GPS fix and folds the outcome into the origin fields.
   ///
@@ -293,56 +471,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     return res;
   }
 
-  /// "Use my location". Third entry point onto the shared recheck path, after
-  /// Discover's "Near me" and the outlet list's Nearest sort.
-  ///
-  /// `userInitiated: true` is the whole change: this call previously took the
-  /// default, so the service's one-prompt latch suppressed the OS dialog on
-  /// every tap after the first denial, and the button did nothing visible.
-  /// A deliberate tap asks again — see LocationService.getCurrentLocation.
-  ///
-  /// FR-C6 is unchanged: any refusal still degrades gracefully. The origin is
-  /// cleared to `none` exactly as before and checkout continues with a wider,
-  /// approximate wait. Nothing below decides whether the order can be placed.
-  Future<void> _useMyLocation() async {
-    final messenger = ScaffoldMessenger.of(context);
-    final service = context.read<LocationService>();
-
-    final res = await _resolveOrigin(userInitiated: true);
-    if (!mounted || res.hasCoordinates) return;
-
-    // A permanent denial cannot be re-asked, so it gets the SAME explanation
-    // dialog the other two entry points use rather than a SnackBar that times
-    // out. This branch is new here: the old code read only `hasCoordinates`,
-    // so deniedForever, denied, serviceDisabled and error all produced the one
-    // generic message and no route to Settings.
-    if (res.outcome == LocationOutcome.deniedForever) {
-      await showLocationBlockedDialog(
-        context,
-        service: service,
-        purpose: 'estimate your travel time to the restaurant',
-      );
-      return;
-    }
-
-    messenger.showSnackBar(const SnackBar(
-      content: Text('Location off — we\'ll show an approximate wait.'),
-    ));
-  }
-
-  Future<void> _searchLocation() async {
-    // FR-C2: Places Autocomplete origin (one Google session per search flow).
-    final loc = await Navigator.of(context).push<PlaceLocation>(
-      MaterialPageRoute(builder: (_) => const PlaceSearchScreen()),
-    );
-    if (!mounted || loc == null) return;
-    setState(() {
-      _originLat = loc.lat;
-      _originLng = loc.lng;
-      _originSource = 'places_autocomplete';
-      _originLabel = loc.label;
-    });
-  }
+  // REMOVED with the "Your starting point" card (migration 030):
+  //   _useMyLocation()  — the "Use GPS" button is gone; a re-tap on the
+  //                       selected chip is the retry, and _selectMode passes
+  //                       userInitiated: true for exactly that case.
+  //   _searchLocation() — the Places address-search entry point went with the
+  //                       card that hosted it. WORTH KNOWING: that removes the
+  //                       only way to give an origin WITHOUT granting GPS.
+  //                       Someone who declines location now has no manual
+  //                       fallback and always gets the wide estimate. FR-C6
+  //                       still holds (the order goes through), but this is a
+  //                       real capability loss, not just a moved button.
 
   /// Hard availability gate, run BEFORE payment.
   ///
@@ -657,7 +796,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 for (final mode in _modesFor(cart.outlet))
                   _TransportChip(
                     mode: mode,
-                    selected: _transport == mode,
+                    selected: _transport == mode.wire,
                     // Selecting a mode also settles the origin that mode
                     // implies — see _selectMode. The location ask lives inside
                     // this one tap rather than in a second control below.
@@ -733,14 +872,21 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 ),
               ],
             ] else ...[
-              Text('Your starting point', style: textTheme.headlineSmall),
-              const SizedBox(height: 12),
-              _OriginCard(
+              // The separate "Your starting point" card is GONE (migration 030).
+              //
+              // It was a second, disconnected place to answer a question the
+              // chip above already implies, and it sat far enough down a long
+              // page that most customers never reached it — which is how orders
+              // arrived carrying a mode and no origin. Location now resolves
+              // only through the chip tap; re-tapping the selected chip retries.
+              //
+              // What remains is a one-line STATUS, not a control: it says what
+              // the app has, and nothing else. Deliberately quiet — the origin
+              // is optional (FR-C6) and a prominent card implied otherwise.
+              _OriginStatus(
                 originLabel: _originLabel,
                 locating: _locating,
-                placesEnabled: context.read<PlacesService>().isEnabled,
-                onUseLocation: _locating ? null : _useMyLocation,
-                onSearch: _searchLocation,
+                key: const Key('checkout_origin_status'),
               ),
             ],
             const SizedBox(height: 24),
@@ -1039,7 +1185,7 @@ class _TransportChip extends StatelessWidget {
     required this.selected,
     required this.onTap,
   });
-  final TransportMode mode;
+  final CheckoutMode mode;
   final bool selected;
   final VoidCallback onTap;
 
@@ -1078,120 +1224,63 @@ class _TransportChip extends StatelessWidget {
   }
 }
 
-class _OriginCard extends StatelessWidget {
-  const _OriginCard({
+/// A one-line, non-interactive statement of the origin the app holds.
+///
+/// Replaces the old `_OriginCard` + `_OriginAction` pair, which were a separate
+/// heading, a card and two buttons for a question the transport chip already
+/// asks. That card is gone: location resolves only through the chip tap, and
+/// re-tapping the selected chip retries.
+///
+/// This is a STATUS, not a control, and it is deliberately quiet. The origin is
+/// optional — FR-C6 says a refusal must still leave checkout payable with a
+/// wider estimate — and the prominent card implied it was required. It renders
+/// no button at all, so there is nothing here to press and nothing to be
+/// confused about pressing.
+class _OriginStatus extends StatelessWidget {
+  const _OriginStatus({
+    super.key,
     required this.originLabel,
     required this.locating,
-    required this.placesEnabled,
-    required this.onUseLocation,
-    required this.onSearch,
   });
+
   final String? originLabel;
   final bool locating;
-  final bool placesEnabled;
-  final VoidCallback? onUseLocation;
-  final VoidCallback? onSearch;
 
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final textTheme = Theme.of(context).textTheme;
     final hasOrigin = originLabel != null;
-    return NeoCard(
-      color: hasOrigin ? c.accent : c.surface,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(hasOrigin ? Icons.my_location : Icons.location_searching,
-                  color: hasOrigin ? c.onAccent : c.ink),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      hasOrigin ? originLabel! : 'Set your location',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: textTheme.titleMedium
-                          ?.copyWith(color: hasOrigin ? c.onAccent : c.ink),
-                    ),
-                    Text(
-                      hasOrigin
-                          ? 'We\'ll estimate your travel time.'
-                          : 'Optional — skips to an approximate wait if off.',
-                      style: textTheme.bodySmall?.copyWith(
-                          color: hasOrigin ? c.onAccent : c.inkSoft),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              if (locating)
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 8),
-                  child: SizedBox(
-                      width: 20, height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2)),
-                )
-              else
-                _OriginAction(
-                  // Stable target for the permission tests — the label alternates
-                  // between "Use GPS" and "Update GPS" once an origin is set.
-                  key: const Key('checkout_use_gps'),
-                  icon: Icons.gps_fixed,
-                  label: hasOrigin ? 'Update GPS' : 'Use GPS',
-                  onTap: onUseLocation,
-                  onSurface: hasOrigin,
-                ),
-              if (placesEnabled) ...[
-                const SizedBox(width: 8),
-                _OriginAction(
-                  icon: Icons.search,
-                  label: 'Search address',
-                  onTap: onSearch,
-                  onSurface: hasOrigin,
-                ),
-              ],
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
 
-class _OriginAction extends StatelessWidget {
-  const _OriginAction({
-    super.key,
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    required this.onSurface,
-  });
-  final IconData icon;
-  final String label;
-  final VoidCallback? onTap;
-  final bool onSurface;
+    // Three honest states, and the third is why the retry hint exists: with no
+    // separate button, someone whose location failed needs telling how to try
+    // again, or the flow is a dead end.
+    final (IconData icon, String line) = locating
+        ? (Icons.my_location, 'Finding your location…')
+        : hasOrigin
+            ? (Icons.my_location, originLabel!)
+            : (Icons.location_searching,
+                'No location yet — tap your travel mode again to retry. '
+                'Optional: we will show an approximate wait without it.');
 
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    final textTheme = Theme.of(context).textTheme;
-    final fg = onSurface ? c.onAccent : c.primary;
-    return TextButton.icon(
-      onPressed: onTap,
-      icon: Icon(icon, size: 18, color: fg),
-      label: Text(label, style: textTheme.labelLarge?.copyWith(color: fg)),
-      style: TextButton.styleFrom(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      ),
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (locating)
+          const SizedBox(
+              width: 16, height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2))
+        else
+          Icon(icon, size: 18, color: hasOrigin ? c.ink : c.inkSoft),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            line,
+            style: textTheme.bodySmall
+                ?.copyWith(color: hasOrigin ? c.ink : c.inkSoft),
+          ),
+        ),
+      ],
     );
   }
 }

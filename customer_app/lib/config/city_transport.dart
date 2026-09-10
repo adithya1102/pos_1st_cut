@@ -94,11 +94,42 @@ class CityTransport {
     return _hasRail[key] ?? false;
   }
 
+  /// The mode codes this outlet's city offers, or null when the server has not
+  /// said (pre-030 backend, or a city with no row).
+  ///
+  /// Three layers, most authoritative first:
+  ///   1. `transport_modes` — the 030 answer, a real list including modes this
+  ///      build may never have heard of
+  ///   2. `has_metro` / `has_train` — the 029 answer, for a backend that has
+  ///      not run 030 yet
+  ///   3. the built-in `_hasRail` map — offline, or a backend older than both
+  ///
+  /// Only layer 1 can express a mode added after this app shipped, which is why
+  /// it is checked first and why an empty list from it is honoured rather than
+  /// treated as absent.
+  static List<OutletTransportMode>? serverModesFor(Outlet? outlet) =>
+      outlet?.transportModes;
+
   /// Whether [outlet]'s city offers Train.
   ///
   /// Server answer wins; the built-in map covers a null.
-  static bool trainFor(Outlet? outlet) =>
-      outlet?.hasTrain ?? hasTrainAccess(outlet?.city);
+  static bool trainFor(Outlet? outlet) {
+    final modes = outlet?.transportModes;
+    if (modes != null) return modes.any((m) => m.code == 'train');
+    return outlet?.hasTrain ?? hasTrainAccess(outlet?.city);
+  }
+
+  /// Whether [outlet]'s city offers Tram.
+  ///
+  /// No built-in fallback on purpose: tram is new in migration 030, so a
+  /// backend old enough to omit `transport_modes` has no opinion about it and
+  /// the honest answer is "no". Guessing from the rail map would offer Tram in
+  /// four cities on the strength of them having a metro.
+  static bool tramFor(Outlet? outlet) {
+    final modes = outlet?.transportModes;
+    if (modes != null) return modes.any((m) => m.code == 'tram');
+    return false;
+  }
 
   /// Whether [outlet]'s city offers Metro.
   ///
@@ -107,6 +138,9 @@ class CityTransport {
   /// `city_type='metro'`. It is a fallback, not a claim that rail implies
   /// metro: any city where the two genuinely differ gets its answer from the
   /// server, because a city the admin has touched always sends real flags.
-  static bool metroFor(Outlet? outlet) =>
-      outlet?.hasMetro ?? hasTrainAccess(outlet?.city);
+  static bool metroFor(Outlet? outlet) {
+    final modes = outlet?.transportModes;
+    if (modes != null) return modes.any((m) => m.code == 'metro');
+    return outlet?.hasMetro ?? hasTrainAccess(outlet?.city);
+  }
 }

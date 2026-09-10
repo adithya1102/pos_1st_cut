@@ -1,3 +1,53 @@
+/// One travel mode the server says this outlet's city offers (migration 030).
+///
+/// `usesDeclaredArrival` is the load-bearing field. It tells the app to swap
+/// origin resolution for a time picker WITHOUT the app needing to know the mode
+/// by name — which is what lets a mode added server-side behave correctly in a
+/// build that predates it.
+class OutletTransportMode {
+  const OutletTransportMode({
+    required this.code,
+    required this.label,
+    required this.usesDeclaredArrival,
+  });
+
+  final String code;
+  final String label;
+  final bool usesDeclaredArrival;
+
+  /// Tolerant of a malformed entry: anything without a usable `code` is
+  /// dropped by [parseList] rather than rendering a blank chip.
+  static OutletTransportMode? tryParse(Object? raw) {
+    if (raw is! Map) return null;
+    final code = (raw['code'] as String?)?.trim() ?? '';
+    if (code.isEmpty) return null;
+    return OutletTransportMode(
+      code: code,
+      label: (raw['label'] as String?)?.trim() ?? code,
+      usesDeclaredArrival: raw['uses_declared_arrival'] == true,
+    );
+  }
+
+  static List<OutletTransportMode>? parseList(Object? raw) {
+    if (raw is! List) return null;
+    final out = <OutletTransportMode>[];
+    for (final e in raw) {
+      final m = tryParse(e);
+      if (m != null) out.add(m);
+    }
+    // An EMPTY list from the server is a real answer ("this city offers
+    // nothing"), not a missing one — so it is kept, not collapsed to null.
+    // Only an absent/!List key means "the server did not say".
+    return out;
+  }
+
+  Map<String, dynamic> toJson() => {
+        'code': code,
+        'label': label,
+        'uses_declared_arrival': usesDeclaredArrival,
+      };
+}
+
 /// A nearby restaurant/outlet available for self pickup.
 class Outlet {
   const Outlet({
@@ -17,6 +67,7 @@ class Outlet {
     this.cityType,
     this.hasMetro,
     this.hasTrain,
+    this.transportModes,
     this.phoneNumber,
     this.latitude,
     this.longitude,
@@ -95,6 +146,18 @@ class Outlet {
   /// nobody would think to re-test.
   final bool? hasMetro;
   final bool? hasTrain;
+
+  /// The full enabled mode list for this outlet's city (migration 030).
+  ///
+  /// THE authoritative answer when present — [hasMetro]/[hasTrain] are derived
+  /// from the same source server-side and exist only for builds that predate
+  /// this field. Null means the server did not say (pre-030 backend, or a city
+  /// with no `cities` row), and the app falls back to the older fields and then
+  /// to its built-in map.
+  ///
+  /// An EMPTY list is a real answer, not a missing one — see
+  /// [OutletTransportMode.parseList].
+  final List<OutletTransportMode>? transportModes;
 
   /// Outlet contact number (migration 009). Null for MOST outlets — 5 of the 6
   /// customer-visible ones in prod have none — so the call action is hidden
@@ -225,6 +288,7 @@ class Outlet {
           : null,
       hasMetro: json['has_metro'] as bool?,
       hasTrain: json['has_train'] as bool?,
+      transportModes: OutletTransportMode.parseList(json['transport_modes']),
       phoneNumber: (phone != null && phone.trim().isNotEmpty) ? phone.trim() : null,
       // `num?` then toDouble(): the column is Postgres `numeric`, so a value
       // that happens to be whole arrives as an int and a bare `as double`
@@ -263,6 +327,7 @@ class Outlet {
         'city_type': cityType,
         'has_metro': hasMetro,
         'has_train': hasTrain,
+        'transport_modes': transportModes?.map((m) => m.toJson()).toList(),
         'phone_number': phoneNumber,
         'latitude': latitude,
         'longitude': longitude,
