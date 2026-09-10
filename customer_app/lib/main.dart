@@ -83,6 +83,20 @@ Future<void> main() async {
   final googleAuth = GoogleAuthService(api);
   final push = PushService(api);
 
+  // Register a session that was RESTORED rather than freshly logged in.
+  //
+  // Registration used to happen only inside the two login methods, but a
+  // customer signs in once and then stays signed in for weeks — the session
+  // renews itself instead of expiring. So for most customers the login path
+  // never ran again, and a registration that failed or was skipped once stayed
+  // that way for the life of the session. This is the re-attempt.
+  //
+  // Fire-and-forget and prompt-free: it must not delay the first frame, and the
+  // permission dialog belongs to a deliberate moment, not to app start.
+  if (AppConfig.useFirebaseAuth) {
+    unawaited(push.ensureRegistered());
+  }
+
   runApp(
     MultiProvider(
       providers: [

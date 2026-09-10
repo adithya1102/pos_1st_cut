@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -90,6 +92,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       // A tapped staff push (new order, or a train order due to start) lands
       // on the EXISTING Orders tab rather than a new screen.
       _push.attachTapRouting();
+      // Re-attempt registration for a session restored at app start. The login
+      // screen is the only other caller, and a tablet stays logged in for
+      // weeks — so without this a registration that failed once never ran
+      // again for that device.
+      unawaited(_push.ensureRegistered());
       _push.openOrderId.addListener(_onPushTapped);
       // A cold start from a notification sets the value before this listener
       // exists, so check once on mount too.
