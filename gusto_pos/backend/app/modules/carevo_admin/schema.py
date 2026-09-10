@@ -289,7 +289,7 @@ class CityTransportOut(BaseModel):
 
 
 # ---------------- Transport modes (migration 030) ----------------------------
-class TransportModeOut(BaseModel):
+class TransportModeDefOut(BaseModel):
     """One row of the mode CATALOG.
 
     The dashboard renders one checkbox per entry, so this list — not a

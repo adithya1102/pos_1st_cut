@@ -259,7 +259,7 @@ async def set_city_transport(
     )
 
 
-@router.get("/transport-modes", response_model=list[s.TransportModeOut])
+@router.get("/transport-modes", response_model=list[s.TransportModeDefOut])
 async def list_transport_modes(
     _admin: User = Depends(get_current_super_admin),
     db: AsyncSession = Depends(get_db),
