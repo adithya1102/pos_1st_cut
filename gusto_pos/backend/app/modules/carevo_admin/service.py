@@ -981,10 +981,13 @@ class AdminService:
                 status_code=422,
                 detail="Invalid status. Must be one of: ['active', 'pending', 'rejected']",
             )
+        # One query for the whole grid, not one per city.
+        modes_map = await AdminService.city_modes_map(db)
+
         rows = (await db.execute(text("""
             SELECT c.id, c.name, c.status, c.created_at, c.decided_at,
                    c.requested_by_outlet_id,
-                   c.city_type, c.has_train,
+                   c.city_type,
                    o.location_name AS requested_by_outlet_name
             FROM cities c
             LEFT JOIN outlets o ON o.id = c.requested_by_outlet_id
@@ -1003,13 +1006,11 @@ class AdminService:
                 "decided_at": r.decided_at,
                 "requested_by_outlet_id": r.requested_by_outlet_id,
                 "requested_by_outlet_name": r.requested_by_outlet_name,
-                # Migration 029. has_metro is derived from city_type rather than
-                # stored, so the radio the admin sees IS the value that reaches
-                # the customer app — there is no second field to fall out of
-                # step with it.
+                # Classification only as of migration 030 — it drives NO
+                # transport behaviour any more. `modes` below is the answer to
+                # "what does this city offer".
                 "city_type": r.city_type,
-                "has_metro": r.city_type == "metro",
-                "has_train": bool(r.has_train),
+                "modes": modes_map.get(str(r.id), {}),
             }
             for r in rows
         ]
@@ -1186,7 +1187,133 @@ class AdminService:
             "status": current.status, "outlets_updated": outlets_updated,
         }
 
-    # ------------------- city transport profile (029) ------------------------
+    # ------------------- city transport modes (030) --------------------------
+    @staticmethod
+    async def list_transport_modes(db: AsyncSession) -> list[dict]:
+        """The mode CATALOG — what the dashboard renders a column per.
+
+        The dashboard must not hardcode a mode list. It renders one checkbox
+        per row returned here, so adding a ninth mode is an INSERT into
+        `transport_modes` and nothing else: no migration, no backend change, no
+        frontend change, no app release for it to become togglable.
+        """
+        try:
+            rows = (await db.execute(text("""
+                SELECT code, label, uses_declared_arrival, default_enabled, sort_order
+                FROM transport_modes
+                WHERE is_active = true
+                ORDER BY sort_order, code
+            """))).fetchall()
+        except Exception:
+            # 030 not applied yet. An empty catalog renders an empty column set
+            # in the dashboard, which reads as "not configured" — far better
+            # than a 500 that takes the whole Cities page down.
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+            return []
+        return [
+            {
+                "code": r.code,
+                "label": r.label,
+                "uses_declared_arrival": bool(r.uses_declared_arrival),
+                "default_enabled": bool(r.default_enabled),
+                "sort_order": int(r.sort_order),
+            }
+            for r in rows
+        ]
+
+    @staticmethod
+    async def city_modes_map(db: AsyncSession) -> dict[str, dict[str, bool]]:
+        """`city_id` -> {mode_code: enabled} for every city, one query.
+
+        COALESCE to the catalog default so a city with no rows still reports a
+        full, correct grid — the same rule the customer read path uses. The two
+        must agree, so they are written the same way deliberately.
+        """
+        try:
+            rows = (await db.execute(text("""
+                SELECT ci.id::text AS city_id, m.code,
+                       COALESCE(ctm.enabled, m.default_enabled) AS enabled
+                FROM cities ci
+                CROSS JOIN transport_modes m
+                LEFT JOIN city_transport_modes ctm
+                       ON ctm.city_id = ci.id AND ctm.mode_code = m.code
+                WHERE m.is_active = true
+                ORDER BY ci.id, m.sort_order
+            """))).fetchall()
+        except Exception:
+            # 030 not applied yet — see list_transport_modes. Cities still list.
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+            return {}
+        out: dict[str, dict[str, bool]] = {}
+        for r in rows:
+            out.setdefault(r.city_id, {})[r.code] = bool(r.enabled)
+        return out
+
+    @staticmethod
+    async def set_city_mode(
+        db: AsyncSession,
+        actor: User,
+        city_id: uuid.UUID,
+        mode_code: str,
+        enabled: bool,
+    ) -> dict:
+        """Turn one mode on or off for one city.
+
+        One (city, mode) pair per call rather than a whole grid PUT. The
+        dashboard saves on each checkbox tick, and a whole-grid write would
+        make two admins editing different cities' different modes able to
+        clobber each other with stale state.
+
+        UPSERT, because a city may legitimately have no row yet — see the
+        "absent means default" rule in migration 030.
+        """
+        mode = (mode_code or "").strip().lower()
+        known = (await db.execute(text(
+            "SELECT code, label FROM transport_modes "
+            "WHERE code = :c AND is_active = true"
+        ), {"c": mode})).first()
+        if not known:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unknown or inactive transport mode '{mode_code}'.",
+            )
+
+        city = (await db.execute(text(
+            "SELECT id, name FROM cities WHERE id = :cid"
+        ), {"cid": str(city_id)})).first()
+        if not city:
+            raise HTTPException(status_code=404, detail="City not found")
+
+        await db.execute(text("""
+            INSERT INTO city_transport_modes (city_id, mode_code, enabled, updated_at)
+            VALUES (:cid, :m, :e, now())
+            ON CONFLICT (city_id, mode_code)
+            DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = now()
+        """), {"cid": str(city_id), "m": mode, "e": bool(enabled)})
+
+        await AdminService._audit(
+            db, actor, action="city.transport_mode",
+            target_type="city", target_id=city_id,
+            detail={"city": city.name, "mode": mode, "enabled": bool(enabled)},
+        )
+        await db.commit()
+
+        modes = (await AdminService.city_modes_map(db)).get(str(city_id), {})
+        return {
+            "id": city.id,
+            "name": city.name,
+            "mode_code": mode,
+            "enabled": bool(enabled),
+            "modes": modes,
+        }
+
+    # ------------------- city classification (029, decoupled) ----------------
     CITY_TYPES = ("metro", "tier_1", "tier_2", "tier_3")
 
     @staticmethod
@@ -1195,28 +1322,28 @@ class AdminService:
         actor: User,
         city_id: uuid.UUID,
         city_type: Optional[str] = None,
-        has_train: Optional[bool] = None,
     ) -> dict:
-        """Set a city's type and rail flag — the admin end of migration 029.
+        """Set a city's CLASSIFICATION. No longer touches transport.
 
-        This is the control the customer app reads: marking a city `metro`
-        makes the Metro option appear at checkout for every outlet in it,
-        on devices that are already installed. No release, no rebuild.
+        Under migration 029 this endpoint did double duty: the `metro` value
+        both classified the city and switched the Metro chip on. 030 split
+        those apart, and transport now lives entirely in
+        [set_city_mode] / `city_transport_modes`.
 
-        Both fields are OPTIONAL and only applied when present, so the radio
-        and the rail checkbox can be saved independently — sending one must not
-        silently reset the other to its default. That is also why the endpoint
-        is PUT-shaped over a partial body rather than a full replace.
+        `has_train` is gone from the signature: 029's column is no longer read
+        by anything, and continuing to accept writes for it would let the
+        dashboard update a field that changes nothing — the most confusing
+        possible outcome for whoever ticked it.
 
         Separate from [rename_city] on purpose. Renaming rewrites `outlets.city`
         across the estate and can collide; this touches one row and cannot. A
         single endpoint doing both would put a destructive operation and a
         toggle behind the same call.
         """
-        if city_type is None and has_train is None:
+        if city_type is None:
             raise HTTPException(
                 status_code=422,
-                detail="Nothing to update — send city_type, has_train, or both.",
+                detail="Nothing to update — send city_type.",
             )
         if city_type is not None and city_type not in AdminService.CITY_TYPES:
             raise HTTPException(
@@ -1228,27 +1355,25 @@ class AdminService:
             )
 
         current = (await db.execute(text(
-            "SELECT id, name, city_type, has_train FROM cities WHERE id = :cid"
+            "SELECT id, name, city_type FROM cities WHERE id = :cid"
         ), {"cid": str(city_id)})).first()
         if not current:
             raise HTTPException(status_code=404, detail="City not found")
 
-        new_type = city_type if city_type is not None else current.city_type
-        new_train = has_train if has_train is not None else bool(current.has_train)
+        new_type = city_type
 
         await db.execute(text("""
             UPDATE cities
-               SET city_type = :t, has_train = :r, transport_updated_at = now()
+               SET city_type = :t, transport_updated_at = now()
              WHERE id = :cid
-        """), {"t": new_type, "r": new_train, "cid": str(city_id)})
+        """), {"t": new_type, "cid": str(city_id)})
 
         await AdminService._audit(
-            db, actor, action="city.transport",
+            db, actor, action="city.classification",
             target_type="city", target_id=city_id,
             detail={
                 "city": current.name,
                 "city_type": {"from": current.city_type, "to": new_type},
-                "has_train": {"from": bool(current.has_train), "to": new_train},
             },
         )
         await db.commit()
@@ -1257,7 +1382,5 @@ class AdminService:
             "id": current.id,
             "name": current.name,
             "city_type": new_type,
-            # Derived, never stored — see list_cities.
-            "has_metro": new_type == "metro",
-            "has_train": new_train,
+            "modes": (await AdminService.city_modes_map(db)).get(str(city_id), {}),
         }

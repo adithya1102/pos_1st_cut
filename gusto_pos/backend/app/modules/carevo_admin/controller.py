@@ -256,7 +256,42 @@ async def set_city_transport(
     return await AdminService.set_city_transport(
         db, admin, city_id,
         city_type=payload.city_type,
-        has_train=payload.has_train,
+    )
+
+
+@router.get("/transport-modes", response_model=list[s.TransportModeOut])
+async def list_transport_modes(
+    _admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """The mode catalog (migration 030).
+
+    The dashboard renders one checkbox per row returned here rather than a
+    hardcoded list, so adding a ninth mode is a single INSERT into
+    `transport_modes` — no migration, no backend change, no frontend change.
+    """
+    return await AdminService.list_transport_modes(db)
+
+
+@router.put("/cities/{city_id}/modes/{mode_code}", response_model=s.CityModeOut)
+async def set_city_mode(
+    city_id: uuid.UUID,
+    mode_code: str,
+    payload: s.CityModeIn,
+    admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Turn one travel mode on or off for one city (migration 030).
+
+    Enabling `metro` or `tram` here makes that chip appear at checkout for
+    every outlet in the city, on apps that are already installed.
+
+    One pair per call, not a whole-grid write — see AdminService.set_city_mode
+    for why. 422 on an unknown or retired mode rather than silently creating a
+    row for a code nothing will ever read.
+    """
+    return await AdminService.set_city_mode(
+        db, admin, city_id, mode_code, payload.enabled
     )
 
 

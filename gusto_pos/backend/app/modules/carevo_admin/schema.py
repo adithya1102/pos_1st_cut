@@ -237,12 +237,14 @@ class AdminCityOut(BaseModel):
     # Which outlet's signup asked for it. NULL for seeded/admin-added rows.
     requested_by_outlet_id: Optional[uuid.UUID] = None
     requested_by_outlet_name: Optional[str] = None
-    # --- Transport profile (migration 029) -----------------------------------
-    # city_type is the radio the dashboard renders; has_metro is DERIVED from it
-    # and is read-only, sent so the UI never has to re-implement the rule.
+    # --- Classification (migration 029, decoupled by 030) --------------------
+    # Drives NO transport behaviour any more. Kept as what its name says.
     city_type: Optional[str] = None          # metro | tier_1 | tier_2 | tier_3
-    has_metro: bool = False
-    has_train: bool = False
+    # --- Transport grid (migration 030) --------------------------------------
+    # {mode_code: enabled} for every ACTIVE mode in the catalog. The dashboard
+    # renders a checkbox per key, so a ninth mode appears here — and therefore
+    # in the UI — with no frontend change.
+    modes: dict[str, bool] = Field(default_factory=dict)
 
 
 class CityDecisionOut(BaseModel):
@@ -274,24 +276,49 @@ class CityRenameIn(BaseModel):
 
 # ---------------- City transport profile (migration 029) ---------------------
 class CityTransportIn(BaseModel):
-    """Partial update: send either field, or both.
-
-    Both default to None and None means "leave it alone" — NOT "set it false".
-    A body carrying only `city_type` must not quietly clear a rail flag an
-    admin set last week.
-    """
+    """Set a city's classification. Transport moved to CityModeIn in 030."""
     city_type: Optional[str] = Field(
         None, description="metro | tier_1 | tier_2 | tier_3")
-    has_train: Optional[bool] = None
 
 
 class CityTransportOut(BaseModel):
     id: uuid.UUID
     name: str
     city_type: str
-    #: Derived from city_type, never stored separately.
-    has_metro: bool
-    has_train: bool
+    modes: dict[str, bool] = Field(default_factory=dict)
+
+
+# ---------------- Transport modes (migration 030) ----------------------------
+class TransportModeOut(BaseModel):
+    """One row of the mode CATALOG.
+
+    The dashboard renders one checkbox per entry, so this list — not a
+    hardcoded array in the frontend — decides how many modes exist.
+    """
+    code: str
+    label: str
+    uses_declared_arrival: bool = False
+    default_enabled: bool = False
+    sort_order: int = 100
+
+
+class CityModeIn(BaseModel):
+    """Toggle ONE mode for ONE city.
+
+    Deliberately not a whole-grid replace: the dashboard saves per tick, and a
+    full-grid PUT would let two admins editing different modes overwrite each
+    other with stale state.
+    """
+    enabled: bool
+
+
+class CityModeOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    mode_code: str
+    enabled: bool
+    #: The city's full grid after the change, so the UI can reconcile in one go.
+    modes: dict[str, bool] = Field(default_factory=dict)
 
 
 class CityRenameOut(BaseModel):

@@ -319,23 +319,41 @@ class CarevoService:
         )))
     """
 
-    # ---------------------- city transport profile (029) ---------------------
+    # ------------------- city transport modes (030) --------------------------
     @staticmethod
     async def _city_transport_profiles(db: AsyncSession) -> dict[str, dict]:
-        """`lower(city name)` -> {city_type, has_train} for every known city.
+        """`lower(city name)` -> {city_type, modes: [...]} for every known city.
 
         One query for the whole outlet list, not one per card.
 
-        Tolerant of a database that has not run migration 029 yet: a missing
-        column raises, and the except returns {} — which every caller reads as
-        "the server has no answer", exactly the same as a city with no row. The
-        app then falls back to its built-in map, so a deploy that lands before
-        the migration degrades to the OLD behaviour instead of dropping Train.
+        ## Absent (city, mode) rows read as the catalog default
+
+        The CROSS JOIN + LEFT JOIN + COALESCE is the rule migration 030 relies
+        on instead of a backfill trigger: a city with no row for a mode gets
+        `transport_modes.default_enabled`. That makes a city created by ANY code
+        path — signup, admin, a hand-written INSERT — behave correctly from the
+        moment it exists, with no row required and no second mechanism that has
+        to stay in agreement with this one.
+
+        Tolerant of a database that has not run 030 yet: the missing table
+        raises, and the except falls back to reading 029's columns. A deploy
+        landing before the migration therefore degrades to the OLD behaviour
+        rather than serving every city an empty mode list, which would strip
+        every chip off the checkout screen.
         """
         try:
-            rows = (await db.execute(text(
-                "SELECT lower(name) AS key, city_type, has_train FROM cities"
-            ))).fetchall()
+            rows = (await db.execute(text("""
+                SELECT lower(ci.name) AS key,
+                       ci.city_type,
+                       m.code, m.label, m.uses_declared_arrival, m.sort_order,
+                       COALESCE(ctm.enabled, m.default_enabled) AS enabled
+                FROM cities ci
+                CROSS JOIN transport_modes m
+                LEFT JOIN city_transport_modes ctm
+                       ON ctm.city_id = ci.id AND ctm.mode_code = m.code
+                WHERE m.is_active = true
+                ORDER BY lower(ci.name), m.sort_order
+            """))).fetchall()
         except Exception:
             # SAVEPOINT hygiene: a failed statement poisons the surrounding
             # transaction, and this runs mid-request alongside real queries.
@@ -343,34 +361,95 @@ class CarevoService:
                 await db.rollback()
             except Exception:
                 pass
+            return await CarevoService._city_transport_profiles_legacy(db)
+
+        out: dict[str, dict] = {}
+        for r in rows:
+            if not r.key:
+                continue
+            entry = out.setdefault(r.key, {"city_type": r.city_type, "modes": []})
+            if r.enabled:
+                entry["modes"].append({
+                    "code": r.code,
+                    "label": r.label,
+                    "uses_declared_arrival": bool(r.uses_declared_arrival),
+                })
+        return out
+
+    @staticmethod
+    async def _city_transport_profiles_legacy(db: AsyncSession) -> dict[str, dict]:
+        """029-shaped fallback, used only until 030 is applied.
+
+        Synthesises the same `modes` list from the old columns so callers have
+        exactly one shape to handle. Tram is absent here by construction: 029
+        had no concept of it.
+        """
+        try:
+            rows = (await db.execute(text(
+                "SELECT lower(name) AS key, city_type, has_train FROM cities"
+            ))).fetchall()
+        except Exception:
+            try:
+                await db.rollback()
+            except Exception:
+                pass
             return {}
-        return {
-            r.key: {"city_type": r.city_type, "has_train": bool(r.has_train)}
-            for r in rows if r.key
-        }
+
+        base = [("walk", "Walk"), ("bike", "Bike"), ("car", "Car"),
+                ("auto", "Auto"), ("bus", "Bus")]
+        out: dict[str, dict] = {}
+        for r in rows:
+            if not r.key:
+                continue
+            modes = [{"code": c, "label": l, "uses_declared_arrival": False}
+                     for c, l in base]
+            if r.has_train:
+                modes.append({"code": "train", "label": "Train",
+                              "uses_declared_arrival": True})
+            if r.city_type == "metro":
+                modes.append({"code": "metro", "label": "Metro",
+                              "uses_declared_arrival": True})
+            out[r.key] = {"city_type": r.city_type, "modes": modes}
+        return out
 
     @staticmethod
     def _transport_flags(profiles: dict[str, dict], city: Optional[str]) -> dict:
-        """The three transport fields for one outlet's city.
+        """The transport fields for one outlet's city.
 
-        Returns all-None when the city is unknown. None is NOT the same as
-        False here and the distinction is load-bearing: False means "the admin
-        says this city has no metro", None means "the server has no opinion",
-        and only the second lets the app fall back to its built-in map. Collapse
-        them and a backend that predates migration 029 silently strips Train
-        from every city that has it today.
+        `transport_modes` is the real answer as of 030 — the full enabled list,
+        each entry carrying whether it is a declared-arrival mode, so an app
+        build that has never heard of a given mode still treats it correctly.
+
+        `has_metro` / `has_train` / `city_type` are kept ALONGSIDE it and are
+        derived from the same list. They are not redundant: builds already in
+        customers' hands read those keys and know nothing about
+        `transport_modes`, and one of those builds is the app in production
+        right now. Removing them would silently strip Train and Metro from
+        every installed app the moment this deploys.
+
+        Returns all-None / empty when the city is unknown. None is NOT False
+        here and the distinction is load-bearing: False means "the admin says
+        this city has no metro", None means "the server has no opinion", and
+        only the second lets the app fall back to its built-in map.
         """
         key = (city or "").strip().lower()
         row = profiles.get(key) if key else None
         if not row:
-            return {"city_type": None, "has_metro": None, "has_train": None}
+            return {
+                "city_type": None,
+                "has_metro": None,
+                "has_train": None,
+                "transport_modes": None,
+            }
+        codes = {m["code"] for m in row["modes"]}
         return {
             "city_type": row["city_type"],
-            # Derived, not stored: "offers Metro" IS "is a metro city". Storing
-            # it twice would let the two disagree, and the admin radio would
-            # stop meaning what it says.
-            "has_metro": row["city_type"] == "metro",
-            "has_train": row["has_train"],
+            # Derived from the grid, NOT from city_type any more. 029 made
+            # "is a metro city" and "offers Metro" the same fact; 030 separates
+            # them, and this is the side that means "offers Metro".
+            "has_metro": "metro" in codes,
+            "has_train": "train" in codes,
+            "transport_modes": row["modes"],
         }
 
     @staticmethod

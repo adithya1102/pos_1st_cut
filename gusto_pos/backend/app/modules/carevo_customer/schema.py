@@ -70,6 +70,19 @@ class VerifyOtpOut(BaseModel):
 
 
 # --------------------------- Discovery --------------------------------------
+class TransportModeOut(BaseModel):
+    """One travel mode a city offers (migration 030).
+
+    `uses_declared_arrival` is the load-bearing field: it tells the app to swap
+    the origin resolution for a time picker WITHOUT the app needing to know the
+    mode by name. That is what makes a mode added server-side work in a build
+    that predates it — it renders with a fallback icon and behaves correctly.
+    """
+    code: str
+    label: str
+    uses_declared_arrival: bool = False
+
+
 class OutletOut(BaseModel):
     id: uuid.UUID
     name: str
@@ -120,6 +133,17 @@ class OutletOut(BaseModel):
     city_type: Optional[str] = None          # metro | tier_1 | tier_2 | tier_3
     has_metro: Optional[bool] = None
     has_train: Optional[bool] = None
+    # --- The real answer as of migration 030 ---------------------------------
+    # Every mode enabled for this outlet's city, in display order, each
+    # carrying whether it is satisfied by a declared arrival TIME rather than a
+    # GPS origin. Behaviour travels with the data, so an app build that has
+    # never heard of a mode still handles it correctly — which is what lets a
+    # ninth mode be added without an app release.
+    #
+    # has_metro/has_train above are DERIVED from this same list and kept only
+    # for builds already installed, which read those keys and know nothing
+    # about this one.
+    transport_modes: Optional[list[TransportModeOut]] = None
     # Outlet contact number (migration 009), so the app can offer a direct call.
     # NULL for most outlets today — 5 of the 6 customer-visible ones in prod
     # have none — so the app HIDES the call action rather than rendering a
