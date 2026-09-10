@@ -272,6 +272,50 @@ void main() {
       expect(find.byKey(const Key('checkout_use_gps')), findsNothing);
     });
 
+    // REGRESSION: the page heading and the sheet it opens disagreed.
+    //
+    // The first pass named the vehicle on the checkout page but left
+    // ArrivalTimePicker's own title hardcoded to "train", so picking Metro
+    // read "When does your metro arrive?" until you tapped it, and then
+    // "…your train arrive?". The earlier test missed it by only ever
+    // asserting on the page — the sheet was never opened.
+    testWidgets('the OPENED picker sheet also names the metro', (tester) async {
+      await tester.pumpWidget(
+          _checkout(Outlet.fromJson(_outletJson(city: 'Chennai'))));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.text('Metro'));
+      await tester.pump();
+      await tester.tap(find.text('Metro'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('arrival_field')));
+      await tester.pumpAndSettle();
+
+      // The sheet is up: its own day-part label proves it, not the page.
+      expect(find.byKey(const Key('arrival_day_part')), findsOneWidget);
+      expect(find.textContaining('train'), findsNothing,
+          reason: 'the sheet must not say "train" for a metro journey');
+      expect(find.text('When does your metro arrive?'), findsWidgets);
+    });
+
+    testWidgets('the opened sheet still says train for Train', (tester) async {
+      await tester.pumpWidget(
+          _checkout(Outlet.fromJson(_outletJson(city: 'Chennai'))));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.text('Train'));
+      await tester.pump();
+      await tester.tap(find.text('Train'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('arrival_field')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('arrival_day_part')), findsOneWidget);
+      expect(find.text('When does your train arrive?'), findsWidgets);
+    });
+
     testWidgets('switching to Train restores the train wording',
         (tester) async {
       await tester.pumpWidget(

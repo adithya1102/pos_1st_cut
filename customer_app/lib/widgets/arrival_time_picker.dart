@@ -45,10 +45,18 @@ enum DayPart {
 /// Text here is deliberately LIGHTER in weight than the rest of the app, not
 /// smaller: a wheel of numbers at the app's usual w700 reads as a wall.
 class ArrivalTimePicker extends StatefulWidget {
+  /// The vehicle the heading names ("train", "metro").
+  ///
+  /// Defaults to 'train' so every existing caller is unchanged. It exists
+  /// because the sheet used to hardcode "train" while the page that opens it
+  /// names the mode the customer actually picked — so choosing Metro read
+  /// "When does your metro arrive?" on the page and "…your train arrive?" the
+  /// instant you tapped it. Two names for one journey, one tap apart.
   const ArrivalTimePicker({
     super.key,
     required this.initial,
     required this.maxAhead,
+    this.vehicleNoun = 'train',
   });
 
   /// Where the wheels start. Usually now + a short lead time.
@@ -58,17 +66,25 @@ class ArrivalTimePicker extends StatefulWidget {
   /// cap so the sheet cannot return a value the screen would then refuse.
   final Duration maxAhead;
 
+  /// See the note on the constructor. 'train' | 'metro'.
+  final String vehicleNoun;
+
   /// Shows the sheet. Resolves to null if dismissed.
   static Future<DateTime?> show(
     BuildContext context, {
     required DateTime initial,
     required Duration maxAhead,
+    String vehicleNoun = 'train',
   }) {
     return showModalBottomSheet<DateTime>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => ArrivalTimePicker(initial: initial, maxAhead: maxAhead),
+      builder: (_) => ArrivalTimePicker(
+        initial: initial,
+        maxAhead: maxAhead,
+        vehicleNoun: vehicleNoun,
+      ),
     );
   }
 
@@ -131,7 +147,7 @@ class _ArrivalTimePickerState extends State<ArrivalTimePicker> {
             ),
             const SizedBox(height: 16),
             Text(
-              'When does your train arrive?',
+              'When does your ${widget.vehicleNoun} arrive?',
               style: textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w500),
             ),
             const SizedBox(height: 4),

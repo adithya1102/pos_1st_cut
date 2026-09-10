@@ -192,6 +192,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       context,
       initial: now.add(const Duration(minutes: 45)),
       maxAhead: _maxArrivalAhead,
+      // The sheet names the same vehicle the heading that opened it does.
+      // Effective, not raw, for the same reason as everywhere else here: the
+      // picker must never name a mode the chip row did not offer.
+      vehicleNoun: _effectiveMode(context.read<CartState>().outlet).vehicleNoun,
     );
     if (when == null || !mounted) return;
     setState(() {
