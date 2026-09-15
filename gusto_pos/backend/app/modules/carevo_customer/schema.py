@@ -229,6 +229,16 @@ class CreateOrderIn(BaseModel):
     origin_lat: Optional[float] = None
     origin_lng: Optional[float] = None
     origin_source: Optional[str] = None        # gps | places_autocomplete | none
+    # Scheduled pickup (migration 031). The time the customer chose to collect.
+    # Absent/NULL = order now, which is every order placed before this shipped.
+    #
+    # NOT mutually exclusive with declared_arrival_at at the API boundary, on
+    # purpose. A train passenger who also schedules a pickup has given two real
+    # pieces of information and refusing the pair would discard one of them —
+    # declared_arrival_at still feeds predict_travel's `customer_declared` leg.
+    # What IS exclusive is which of the two may WAKE THE KITCHEN: release_at
+    # wins, and _notify_kitchen_for_due_trains is suppressed for held orders.
+    requested_pickup_at: Optional[datetime] = None
 
 
 # --- PE Step 3: customer event inputs ---------------------------------------
@@ -331,6 +341,18 @@ class OrderOut(BaseModel):
     departed: bool = False
     arrived: bool = False
     picked_up: bool = False
+    # Scheduled pickup (migration 031). Both NULL for an ASAP order, which is
+    # every order an already-installed build can produce — and an unknown field
+    # is ignored by those builds, so this is additive in both directions.
+    #
+    # requested_pickup_at is what the app RENDERS ("Scheduled for 7:30 pm"):
+    # it is the customer's own choice and never moves. release_at is the
+    # internal decision and is deliberately also exposed, because without it a
+    # held order and a released one are indistinguishable on the client — the
+    # status is PAID either way — and the app would have to guess which of its
+    # two states to draw.
+    requested_pickup_at: Optional[datetime] = None
+    release_at: Optional[datetime] = None
 
 
 # ---------------------------- Payment ---------------------------------------

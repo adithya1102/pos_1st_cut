@@ -655,8 +655,18 @@ class TestNoRosterDependency:
 
     async def _assert_roster_untouched(self, db):
         assert await db.scalar(text("SELECT count(*) FROM testers")) == 0
+        # Scoped to kind='roster' since migration 031. This used to count the
+        # whole table, which worked only while roster automation was the sole
+        # writer of it. Scheduled pickup now writes kind='release' rows there
+        # too — a real customer feature that has nothing to do with the roster,
+        # and whose rows belong to other tests' orders entirely.
+        #
+        # The assertion's actual claim is unchanged and just as strict: these
+        # manual actions must not engage roster automation. A roster row
+        # appearing still fails this.
         assert await db.scalar(text(
-            "SELECT count(*) FROM auto_advance_schedule")) == 0
+            "SELECT count(*) FROM auto_advance_schedule "
+            "WHERE kind = 'roster'")) == 0
 
     async def test_approve_then_ready_then_deliver_all_work_manually(
             self, client, seed, paid_order, db):

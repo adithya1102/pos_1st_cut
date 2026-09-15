@@ -6,6 +6,7 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -335,6 +336,14 @@ async def get_order(
     wait_estimate = await CarevoService.shadow_estimate(db, order_id)
     # Customer's own pickup-journey acks (migration 023), read from order_events.
     progress = await CarevoService.pickup_progress(db, order_id)
+    # Scheduled pickup (031). Read with raw SQL rather than added to the ORM
+    # model, matching how every other migration-added order column is handled
+    # here (transport_mode, declared_arrival_at, origin_*): the deploy order is
+    # DB-first, and an ORM column the database has not got yet breaks every
+    # query against the table, not just the one that wanted it.
+    sched = (await db.execute(text(
+        "SELECT requested_pickup_at, release_at FROM customer_orders WHERE id = :o"
+    ), {"o": str(order_id)})).first()
     # total_amount is what was charged; the discount is stored alongside it
     # (migration 010) precisely so the original can be reconstructed here rather
     # than being lost the moment the order is placed.
@@ -353,6 +362,8 @@ async def get_order(
         "departed": progress["departed"],
         "arrived": progress["arrived"],
         "picked_up": progress["picked_up"],
+        "requested_pickup_at": sched.requested_pickup_at if sched else None,
+        "release_at": sched.release_at if sched else None,
         "items": [
             {
                 "id": it.id,

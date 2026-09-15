@@ -92,6 +92,39 @@ TRAIN_LAST_MILE_CONFIG_KEY = "train_last_mile_seconds"
 # train arrived on time waiting at the counter.
 KITCHEN_NOTIFY_SAFETY_BUFFER_S = 300
 
+# --- scheduled pickup (migration 031) ---------------------------------------
+# Subtracted from the customer's CHOSEN pickup time, on top of mu_ready_s, to
+# decide when a held order is released to the restaurant:
+#
+#     release_at = requested_pickup_at - (mu_ready_s + this)
+#
+# DELIBERATELY A SEPARATE CONSTANT FROM KITCHEN_NOTIFY_SAFETY_BUFFER_S ABOVE,
+# NOT AN ALIAS OF IT. The two absorb the same kinds of slop, so the temptation
+# to share one number is real — and wrong. They protect different promises and
+# will want different values as evidence arrives: the train buffer guards
+# against a stated arrival being wrong (the customer's own estimate, ±15 min by
+# TRAIN_DECLARED_SIGMA_S), while this one guards against OUR prep estimate being
+# wrong for a time the customer chose exactly. Tuning one must never silently
+# retune the other, so they are declared apart even while the values agree.
+#
+# 420s (7 min) rather than 300s: being slightly EARLY is cheap here (the food
+# sits inside its hold tolerance and the customer is coming at a time they
+# picked), while being late is the whole failure mode the feature exists to
+# prevent. Starting wider and shrinking it from data is the safe direction.
+#
+# THIS IS THE ONE KNOB. Every 'release' row in prediction_log carries the margin
+# it was computed with alongside the decision, so once order_outcome.ready_at
+# can be joined back against customer_orders.requested_pickup_at, the real
+# distribution of (ready - requested) is measurable and this number stops being
+# a judgement call. Do not add a second knob before that data exists.
+SCHEDULED_RELEASE_SAFETY_MARGIN_S = 420
+
+# Model version stamped on the prediction_log rows this decision writes. Its own
+# version string, not the kitchen model's: the kitchen mu may stay at
+# kitchen_det_v1 while the RELEASE rule around it changes, and the log has to be
+# able to tell those two apart when the margin is revisited.
+RELEASE_MODEL_VERSION = "release_v1"
+
 # --- cold-start JIT fallback (addendum Item 2) — SHADOW MODE ONLY ------------
 # Fires only when BOTH hold: the outlet has too little history to trust its
 # timing (trusted_order_count < COLD_START_TRUST_ORDERS) AND the order contains

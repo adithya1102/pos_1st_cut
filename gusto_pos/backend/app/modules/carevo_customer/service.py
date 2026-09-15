@@ -81,6 +81,35 @@ AVAIL_OPEN = "open"
 AVAIL_CLOSING_SOON = "closing_soon"
 AVAIL_CLOSED = "closed"
 
+# --- universal arrival-feasibility gate (migration 031) ----------------------
+# ONE message for every way an order can be infeasible: the requested slot is in
+# the past, beyond the scheduling horizon, or the customer's ESTIMATED arrival
+# lands when the outlet is closed or inside its pre-close cutoff.
+#
+# Deliberately one string rather than a reason per case. The customer's remedy
+# is identical in all of them — pick a different time, or come back later — and
+# a gate that explains its internal taxonomy ("your haversine ETA exceeds the
+# cutoff") tells them nothing they can act on. The precise reason is recorded
+# server-side in the prediction log instead, where it is actually useful.
+#
+# NOTE: distinct from outlet_availability's own `reason` strings, which stay
+# exactly as they were. Those answer "why can't I order NOW" about a shop that
+# is shut; this one answers "why not for THIS time" about a shop that is open.
+ARRIVAL_INFEASIBLE_MESSAGE = (
+    "We're sorry — we're not able to take orders for this pickup time. "
+    "Please try a different time or check back later."
+)
+
+# How far ahead a pickup may be scheduled. Same-day by intent, but expressed as
+# a duration because "same day" is not well defined for an outlet whose window
+# crosses midnight (18:00 -> 02:00): for those, today ends at closes_at, which
+# the calendar would call tomorrow. See the arrival gate.
+#
+# It is also a correctness guard, not just a product limit. outlet_availability
+# compares MINUTE-OF-DAY only, so a request 26 hours out would wrap around and
+# evaluate as open. Bounding the horizon below 24h makes that impossible.
+SCHEDULED_MAX_AHEAD_S = 14 * 3600
+
 
 class CarevoService:
     #: How long a verified pickup stays in the owner app's LIVE order queue
@@ -714,6 +743,116 @@ class CarevoService:
                     "orders."}
         return {"status": AVAIL_OPEN, "reason": None}
 
+    # ------------------- Arrival feasibility (migration 031) ----------------
+    @staticmethod
+    def _normalise_requested_pickup(value: Optional[datetime]) -> Optional[datetime]:
+        """The customer's chosen pickup time as tz-aware UTC, or None for ASAP.
+
+        A NAIVE datetime is read as UTC rather than rejected. Pydantic accepts
+        both an offset-bearing ISO string and a bare one, and the app sends the
+        former — but a bare value reaching here and being silently treated as
+        IST (or as the server's local clock) is precisely the class of bug the
+        ORDER_CUTOFF comment warns about. UTC is the project's wire convention
+        for every other timestamp on this model, so it is the honest reading.
+        """
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    @staticmethod
+    async def _estimated_arrival_at(
+        db: AsyncSession, *, outlet_id, outlet_lat, outlet_lng,
+        transport_mode, origin_lat, origin_lng, declared_arrival_at,
+        requested_pickup_at, now: Optional[datetime] = None,
+    ) -> tuple[datetime, str]:
+        """When this customer is expected at the counter, and where that came from.
+
+        ONE answer for every mode, because PredictionService.predict_travel
+        already unifies them: it returns "seconds until this customer gets
+        here" whether that came from a declared train/metro arrival
+        (`customer_declared`, arrival + platform-to-door), a real Distance
+        Matrix ETA (`maps_live` / `maps_cached`), or distance/speed over
+        MODE_SPEED_MPS (`haversine_fallback`). Nothing new is computed here and
+        no second travel model is introduced — this only turns a duration into
+        an instant.
+
+        A SCHEDULED order short-circuits: the customer named the time, so there
+        is nothing to estimate and no reason to spend a Maps call on it.
+
+        Best-effort by construction. predict_travel never raises for a missing
+        origin — it returns a deliberately wide 20-minute fallback (FR-C6, the
+        location-denied case) — so a customer who refused GPS is gated on a
+        generous estimate rather than being refused outright.
+        """
+        now = now or datetime.now(timezone.utc)
+        if requested_pickup_at is not None:
+            return requested_pickup_at, "scheduled"
+
+        from app.modules.prediction.service import PredictionService
+        mu_travel, _sigma, source = await PredictionService.predict_travel(
+            db, outlet_id, origin_lat, origin_lng, outlet_lat, outlet_lng,
+            transport_mode, declared_arrival_at=declared_arrival_at)
+        return now + timedelta(seconds=float(mu_travel)), source
+
+    @staticmethod
+    async def _assert_arrival_feasible(
+        db: AsyncSession, *, gate, outlet_id, transport_mode, origin_lat,
+        origin_lng, declared_arrival_at, requested_pickup_at,
+        now: Optional[datetime] = None,
+    ) -> dict:
+        """Refuse an order whose customer cannot realistically be served.
+
+        Applies to EVERY mode — declared-arrival, GPS-estimated, and scheduled —
+        because the question is the same one in all three cases: will this
+        restaurant still be open, with room to cook, when this person arrives?
+        Before this existed only the "can they take an order right now" half was
+        checked, so a customer 40 minutes away could pay for food from a kitchen
+        that shuts in 35.
+
+        Evaluated with outlet_availability REUSED VERBATIM, given the arrival
+        instant as its injectable `now`. That is the whole point of the function
+        being pure and clock-injectable, and it means the scheduled gate and the
+        immediate gate can never drift apart into two different definitions of
+        "open enough" — including the 30-minute pre-close cutoff, which is
+        already exactly "is there room to cook this".
+
+        Raises 409 with ARRIVAL_INFEASIBLE_MESSAGE. Returns the estimate on
+        success so the caller can record what it decided on.
+        """
+        now = now or datetime.now(timezone.utc)
+
+        # Horizon checks first: cheapest, and they protect the availability call
+        # below from a request so far out that minute-of-day wraps (see
+        # SCHEDULED_MAX_AHEAD_S). A time already past is refused for the obvious
+        # reason — nothing can be cooked for it.
+        if requested_pickup_at is not None:
+            ahead = (requested_pickup_at - now).total_seconds()
+            if ahead <= 0 or ahead > SCHEDULED_MAX_AHEAD_S:
+                raise HTTPException(status_code=409,
+                                    detail=ARRIVAL_INFEASIBLE_MESSAGE)
+
+        arrival_at, source = await CarevoService._estimated_arrival_at(
+            db, outlet_id=outlet_id,
+            outlet_lat=gate.latitude, outlet_lng=gate.longitude,
+            transport_mode=transport_mode, origin_lat=origin_lat,
+            origin_lng=origin_lng, declared_arrival_at=declared_arrival_at,
+            requested_pickup_at=requested_pickup_at, now=now)
+
+        # IST, never UTC. outlet_availability reads hour/minute off whatever it
+        # is handed and opens_at/closes_at are bare LOCAL times, so a UTC
+        # instant would be compared against the wrong clock — the same trap
+        # documented on ORDER_CUTOFF_MINUTES.
+        avail = CarevoService.outlet_availability(
+            gate.opens_at, gate.closes_at, bool(gate.is_manually_closed),
+            now=arrival_at.astimezone(_OUTLET_TZ))
+        if avail["status"] != AVAIL_OPEN:
+            raise HTTPException(status_code=409,
+                                detail=ARRIVAL_INFEASIBLE_MESSAGE)
+        return {"arrival_at": arrival_at, "source": source,
+                "availability": avail["status"]}
+
     # ----------------------------- Orders ----------------------------------
     @staticmethod
     async def create_order(db: AsyncSession, customer: Customer, payload) -> dict:
@@ -721,16 +860,48 @@ class CarevoService:
         # before any row is written, so a closed outlet never leaves an orphan
         # CREATED order behind. Only NEW orders are gated here — nothing touches
         # orders already in progress.
+        #
+        # latitude/longitude joined in for the arrival estimate below; they were
+        # always on this row and cost nothing to carry.
         gate = (await db.execute(text(
-            "SELECT opens_at, closes_at, is_manually_closed "
+            "SELECT opens_at, closes_at, is_manually_closed, latitude, longitude "
             "FROM outlets WHERE id = :oid"
         ), {"oid": str(payload.outlet_id)})).first()
         if gate is None:
             raise HTTPException(status_code=404, detail="Outlet not found")
+
+        requested_pickup_at = CarevoService._normalise_requested_pickup(
+            getattr(payload, "requested_pickup_at", None))
+
         avail = CarevoService.outlet_availability(
             gate.opens_at, gate.closes_at, bool(gate.is_manually_closed))
-        if avail["status"] != AVAIL_OPEN:
+        if requested_pickup_at is None:
+            # ASAP — unchanged. Anything short of fully open refuses, including
+            # closing_soon, because the kitchen has no room for an order now.
+            if avail["status"] != AVAIL_OPEN:
+                raise HTTPException(status_code=409, detail=avail["reason"])
+        elif avail["status"] == AVAIL_CLOSED:
+            # SCHEDULED — survives closing_soon, which is the whole point:
+            # "not enough room to cook this RIGHT NOW" is not an answer to a
+            # request for 19:30, and the arrival gate below judges that time on
+            # its own merits. A CLOSED shutter still refuses, though. It means
+            # either the owner flipped the manual switch (a now-flag we cannot
+            # meaningfully evaluate against a future instant, so the safe
+            # reading is no) or nobody is there at all — and taking money for a
+            # slot with no one present to see the order land is a different and
+            # worse promise than making someone wait.
             raise HTTPException(status_code=409, detail=avail["reason"])
+
+        # Universal arrival-feasibility gate (migration 031). Every mode, every
+        # order — declared-arrival, GPS-estimated, and scheduled alike. Runs
+        # before any row is written, for the same reason the hours gate does.
+        await CarevoService._assert_arrival_feasible(
+            db, gate=gate, outlet_id=payload.outlet_id,
+            transport_mode=getattr(payload, "transport_mode", None),
+            origin_lat=getattr(payload, "origin_lat", None),
+            origin_lng=getattr(payload, "origin_lng", None),
+            declared_arrival_at=getattr(payload, "declared_arrival_at", None),
+            requested_pickup_at=requested_pickup_at)
 
         # Snapshot name + price from menu_items.
         item_ids = [str(i.menu_item_id) for i in payload.items]
@@ -754,17 +925,23 @@ class CarevoService:
         # PE Step 3 (FR-C1/C2): persist travel context on the order.
         if any(v is not None for v in (payload.transport_mode, payload.origin_lat,
                                        payload.origin_lng, payload.origin_source,
-                                       getattr(payload, "declared_arrival_at", None))):
+                                       getattr(payload, "declared_arrival_at", None),
+                                       requested_pickup_at)):
             await db.execute(text("""
                 UPDATE customer_orders SET transport_mode=:tm, origin_lat=:la,
                        origin_lng=:ln, origin_source=:os,
-                       declared_arrival_at=:dec
+                       declared_arrival_at=:dec, requested_pickup_at=:req
                 WHERE id=:id
             """), {"tm": payload.transport_mode, "la": payload.origin_lat,
                    "ln": payload.origin_lng, "os": payload.origin_source,
                    # Train only. Stored for any mode that sends it, but nothing
                    # reads it outside the train branch, so a stray value is inert.
                    "dec": getattr(payload, "declared_arrival_at", None),
+                   # Scheduled pickup (031). Stored on the CREATED order, but
+                   # release_at stays NULL until payment: an unpaid order is not
+                   # held, it simply does not exist as far as the kitchen is
+                   # concerned, and the hold only has meaning once money moved.
+                   "req": requested_pickup_at,
                    "id": str(order.id)})
 
         total = 0.0
@@ -878,6 +1055,12 @@ class CarevoService:
                 "origin_lat": getattr(payload, "origin_lat", None),
                 "origin_lng": getattr(payload, "origin_lng", None),
                 "origin_source": getattr(payload, "origin_source", None),
+                # Scheduled pickup (031), in the append-only log as well as on
+                # the row: order_events is what the timeline view reads, and a
+                # scheduled order whose timeline never mentions the schedule
+                # would be unexplainable after the fact.
+                "requested_pickup_at": (
+                    requested_pickup_at.isoformat() if requested_pickup_at else None),
             },
         )
         await db.commit()
@@ -1107,9 +1290,29 @@ class CarevoService:
         Done in SQL (now()/interval vs the timestamptz column) to avoid naive-vs-
         aware datetime bugs. Commits its own maintenance UPDATE. Returns rowcount.
         Scope to one outlet or one order; at least one must be given.
+
+        HELD ORDERS ARE EXEMPT (migration 031) — `release_at IS NULL`.
+
+        Note this is NOT the same clause the owner queue uses. The queue asks a
+        TIME question ("may the restaurant see it yet") and can afford to be
+        eager: (release_at IS NULL OR release_at <= now()). This asks a STATE
+        question ("is this order's pickup window running yet"), and the time
+        form would be a live bug: between release_at passing and the release
+        actually executing, an order would be TTL-eligible while still carrying
+        the updated_at stamped at PAYMENT, hours earlier — so the very next
+        sweep would ABANDON a paid order at the exact moment it was due to
+        reach the kitchen. The sweeper also runs FIRST in list_active_orders,
+        which is precisely where that race would be lost.
+
+        Clearing release_at at release, in the same transaction that hands the
+        order to advance_status (which stamps updated_at=now()), is therefore
+        what restarts the 45-minute pickup window at the RELEASE moment rather
+        than at payment. An unscheduled order has release_at NULL and this
+        predicate is byte-for-byte what it always was.
         """
         clauses = [
             "status = ANY(:live)",
+            "release_at IS NULL",
             "updated_at < now() - make_interval(mins => :ttl)",
         ]
         params = {
@@ -1259,6 +1462,51 @@ class CarevoService:
             order.pickup_code = await CarevoService._generate_pickup_code(db, order.outlet_id)
         order.updated_at = datetime.now(timezone.utc)
 
+        # --- scheduled pickup: take the hold IN THIS TRANSACTION (031) -------
+        # A held order must never be visible to the restaurant, not even for the
+        # width of one poll. Setting release_at anywhere after this commit would
+        # leave exactly that window open, so the hold is taken atomically with
+        # the PAID transition itself.
+        #
+        # The value seeded here is requested_pickup_at — the LATEST possible
+        # release, i.e. the most conservative hold there is. It is deliberately
+        # not the real answer: mu_ready_s comes from the twin, and the twin is
+        # recomputed after this commit (recompute_twin commits internally, so it
+        # cannot join this transaction). Every later derivation can only move
+        # release_at EARLIER, so the invariant "never released before its true
+        # release moment" holds at every instant, including the moments between.
+        #
+        # If the refinement never runs at all the order still releases — at
+        # pickup time, with the customer waiting mu minutes. Degraded, not lost,
+        # and self-healing: the poller and the check-on-read both re-derive.
+        requested_pickup_at = (await db.execute(text(
+            "SELECT requested_pickup_at FROM customer_orders WHERE id = :id"
+        ), {"id": str(order.id)})).scalar()
+        held = (requested_pickup_at is not None
+                and requested_pickup_at > datetime.now(timezone.utc))
+        if held:
+            await db.execute(text(
+                "UPDATE customer_orders SET release_at = :r WHERE id = :id"),
+                {"r": requested_pickup_at, "id": str(order.id)})
+            # The durable record of the pending release, written in the SAME
+            # transaction as the hold so a restart between the two is not a
+            # state that exists. auto_advance_schedule (028) already is "one
+            # order's next stage and when it is due" and already survives a
+            # redeploy, so scheduled pickup reuses it rather than adding a
+            # second table with the same shape.
+            #
+            # kind='release' is what stops process_due_auto_advances treating
+            # this as roster automation: release rows ignore
+            # AUTO_ADVANCE_ROSTER_ORDERS entirely and drive exactly one advance.
+            await db.execute(text("""
+                INSERT INTO auto_advance_schedule
+                    (order_id, next_stage, due_at, kind, updated_at)
+                VALUES (:oid, 'RECEIVED', :due, 'release', now())
+                ON CONFLICT (order_id)
+                DO UPDATE SET next_stage = 'RECEIVED', due_at = EXCLUDED.due_at,
+                              kind = 'release', updated_at = now()
+            """), {"oid": str(order.id), "due": requested_pickup_at})
+
         # FR-E1: ORDER_PAID in the same transaction as the PAID transition.
         await pe.write_event(
             db, order.id, pe.ORDER_PAID,
@@ -1269,16 +1517,28 @@ class CarevoService:
         # the system INFERS the kitchen lifecycle. Payment confirmation is taken
         # as acceptance + prep start. source='inferred' → excluded from kitchen
         # training as ground truth (FR-E2), but anchors the twin/prediction.
-        await pe.write_event(
-            db, order.id, pe.ORDER_ACCEPTED,
-            actor_type="system", source="inferred", outlet_id=order.outlet_id,
-            payload={"derived_from": "mark_paid"},
-        )
-        await pe.write_event(
-            db, order.id, pe.PREP_STARTED,
-            actor_type="system", source="inferred", outlet_id=order.outlet_id,
-            payload={"derived_from": "mark_paid"},
-        )
+        #
+        # NOT FOR A HELD ORDER (031). For a scheduled pickup these two are
+        # emitted at RELEASE instead — see _release_held_order. Payment is no
+        # longer a truthful proxy for "the kitchen started" when the kitchen is
+        # deliberately not being told for another three hours, and the lie is
+        # not cosmetic: compute_outcome derives actual_prep_s as
+        # (ready_at - prep_started_at), so a held order would record a prep time
+        # of hours. That feeds refresh_outlet_reliability's median_prep_s and
+        # trusted_order_count, and trusted_order_count feeds straight back into
+        # sigma — the first scheduled orders would poison the very statistic the
+        # engine uses to size its own uncertainty.
+        if not held:
+            await pe.write_event(
+                db, order.id, pe.ORDER_ACCEPTED,
+                actor_type="system", source="inferred", outlet_id=order.outlet_id,
+                payload={"derived_from": "mark_paid"},
+            )
+            await pe.write_event(
+                db, order.id, pe.PREP_STARTED,
+                actor_type="system", source="inferred", outlet_id=order.outlet_id,
+                payload={"derived_from": "mark_paid"},
+            )
 
         # Loyalty accrual (migration 010), in the SAME transaction as the PAID
         # transition: points are earned iff the payment is recorded, and the two
@@ -1300,6 +1560,16 @@ class CarevoService:
         except Exception:
             await db.rollback()
 
+        # Scheduled pickup (031): now that a twin exists, refine the conservative
+        # hold taken above down to its real value and record the decision. Same
+        # best-effort contract as everything else after the commit — a failure
+        # here leaves the order held until pickup time, which is safe.
+        if held:
+            try:
+                await CarevoService.refresh_scheduled_releases(db, order_id=order.id)
+            except Exception:
+                await db.rollback()
+
         # Roster-scoped auto-progression (testing only). If the feature is on and
         # this order's phone is a tester, schedule the automatic RECEIVED ->
         # PREPARING -> READY advances (READY then chains into the existing
@@ -1309,11 +1579,19 @@ class CarevoService:
         # best-effort so a scheduling failure can never affect the committed
         # payment. Only the true PAID transition reaches here — the idempotent
         # early-returns above mean a retried webhook does not re-schedule.
-        try:
-            from app.modules.testing_dashboard.service import TestingService
-            await TestingService.maybe_schedule_auto_advance(db, order)
-        except Exception:
-            pass
+        #
+        # SKIPPED while held: auto_advance_schedule is keyed on order_id, so a
+        # roster row would overwrite the release row that refresh_scheduled_
+        # releases just wrote and the order would walk into the kitchen
+        # immediately — the exact opposite of being held. A tester's scheduled
+        # order picks the roster chain back up at release instead, so tester
+        # automation still covers this path end to end.
+        if not held:
+            try:
+                from app.modules.testing_dashboard.service import TestingService
+                await TestingService.maybe_schedule_auto_advance(db, order)
+            except Exception:
+                pass
         return order
 
     # Rejecting is allowed right up until the food is ready. Past READY the
@@ -1470,6 +1748,16 @@ class CarevoService:
             "co.transport_mode = ANY(:declared_modes)",
             "co.declared_arrival_at IS NOT NULL",
             "co.status = ANY(:live)",
+            # Scheduled pickup wins (031). A customer can legitimately supply
+            # both a declared train arrival and a chosen pickup time, and both
+            # of these mechanisms decide WHEN THE KITCHEN STARTS. Firing both
+            # would wake the kitchen twice, at two different moments, for one
+            # order. release_at is the authority because it is the time the
+            # customer explicitly asked to collect at, rather than one we
+            # inferred from when their train gets in. declared_arrival_at is
+            # still stored and still feeds predict_travel's customer_declared
+            # leg — only the notification is suppressed.
+            "co.release_at IS NULL",
             # Not already notified — the append-only log IS the flag.
             "NOT EXISTS (SELECT 1 FROM order_events e "
             " WHERE e.order_id = co.id AND e.event_type = 'KITCHEN_START_NOTIFIED')",
@@ -1523,6 +1811,329 @@ class CarevoService:
         except Exception:
             await db.rollback()
         return len(rows)
+
+    # ------------------ Scheduled pickup release (migration 031) ------------
+    #: A re-derived release_at that moves by less than this is not written and
+    #: not logged. The engine's mu wobbles by a few seconds on every recompute
+    #: as the backlog shifts, and the poller runs every few seconds — without a
+    #: deadband, prediction_log would fill with rows recording that nothing
+    #: happened, and the margin dataset would be mostly noise. 60s is well under
+    #: the smallest margin change anyone would act on.
+    RELEASE_REDERIVE_DEADBAND_S = 60
+
+    @staticmethod
+    async def _twin_prep_estimate(db: AsyncSession, order_id) -> Optional[tuple]:
+        """(mu_ready_s, sigma_ready_s) for an order, refreshing a stale twin.
+
+        Reads the SAME `order_twin.inputs` field _notify_kitchen_for_due_trains
+        reads, for the same reason: predict_kitchen has already produced this
+        number and a second prep estimator is explicitly out of scope.
+
+        Unlike that function, this one will REFRESH a stale twin rather than
+        COALESCE a miss to zero. The train path fires a notification and a stale
+        estimate only makes it slightly early; here the number decides when a
+        paid order reaches the kitchen at all, and an hours-old backlog estimate
+        for a pickup three hours out is not worth acting on. Staleness is judged
+        by the twin's own stale_after, the same test shadow_estimate uses.
+
+        Returns None when no usable estimate exists — the caller then leaves the
+        conservative hold in place rather than guessing.
+        """
+        sql = text("SELECT (inputs->>'mu_ready_s')::numeric AS mu, "
+                   "       (inputs->>'sigma_ready_s')::numeric AS sigma, "
+                   "       stale_after FROM order_twin WHERE order_id = :o")
+        row = (await db.execute(sql, {"o": str(order_id)})).first()
+        stale = row is None or (
+            row.stale_after is not None
+            and row.stale_after < datetime.now(timezone.utc))
+        if stale:
+            try:
+                from app.modules.prediction.service import PredictionService
+                await PredictionService.recompute_twin(db, order_id)
+                row = (await db.execute(sql, {"o": str(order_id)})).first()
+            except Exception:
+                await db.rollback()
+                row = (await db.execute(sql, {"o": str(order_id)})).first()
+        if row is None or row.mu is None:
+            return None
+        return float(row.mu), float(row.sigma) if row.sigma is not None else None
+
+    @staticmethod
+    async def _log_release_decision(
+        db: AsyncSession, *, order_id, outlet_id, mu, sigma,
+        requested_pickup_at, release_at, decision: str, margin_s: int,
+    ) -> None:
+        """One prediction_log row for a release decision.
+
+        THE SIXTH PREDICTOR. prediction_log.predictor is plain TEXT with no
+        CHECK constraint, so this needed no migration — it slots in beside
+        kitchen / travel / load / decision / promise using the same insert shape
+        recompute_twin uses.
+
+        This is the dataset that earns the right to shrink
+        SCHEDULED_RELEASE_SAFETY_MARGIN_S. Every row carries the margin it was
+        computed with and the decision it produced, and requested_pickup_at is
+        on customer_orders, so the answer to "how early or late was the food
+        against the time the customer picked" is one join against
+        order_outcome.ready_at. Without the margin recorded per row, a later
+        analysis could not tell which margin produced which outcome.
+
+        Best-effort: a logging failure must never hold up a release.
+        """
+        from app.modules.prediction.service import RELEASE_MODEL_VERSION
+        try:
+            await db.execute(text("""
+                INSERT INTO prediction_log
+                    (order_id, outlet_id, predictor, model_version,
+                     mu_seconds, sigma_seconds, features, output)
+                VALUES (:o, :ou, 'release', :mv, :mu, :sig,
+                        CAST(:f AS jsonb), CAST(:out AS jsonb))
+            """), {
+                "o": str(order_id), "ou": str(outlet_id),
+                "mv": RELEASE_MODEL_VERSION,
+                "mu": round(mu) if mu is not None else None,
+                "sig": round(sigma) if sigma is not None else None,
+                "f": json.dumps({
+                    "requested_pickup_at": requested_pickup_at.isoformat()
+                    if requested_pickup_at else None,
+                    "safety_margin_s": margin_s,
+                    "mu_ready_s": round(mu) if mu is not None else None,
+                    "mu_source": "order_twin" if mu is not None else "none",
+                }),
+                "out": json.dumps({
+                    "release_at": release_at.isoformat() if release_at else None,
+                    "decision": decision,
+                    "lead_s": round((requested_pickup_at - release_at).total_seconds())
+                    if (requested_pickup_at and release_at) else None,
+                }),
+            })
+        except Exception:
+            logger.warning("release decision log failed for order %s", order_id)
+
+    @staticmethod
+    async def refresh_scheduled_releases(
+        db: AsyncSession, *, outlet_id=None, order_id=None
+    ) -> int:
+        """Re-derive release_at for every held order in scope, and release the
+        ones now due. Returns how many were released.
+
+        THE single release implementation. Three things trigger it and none of
+        them own it:
+
+          * list_active_orders — the PRIMARY path. Check-on-read, exactly like
+            _notify_kitchen_for_due_trains: the owner app polls /pos/orders
+            every 15 seconds while the tablet is open, which is precisely when
+            a release matters, since the whole purpose of releasing is to put
+            the order on that tablet.
+          * the background poller — the backstop. Render's free tier sleeps
+            after ~15 minutes idle and takes the asyncio loop with it, so the
+            poller alone would release late by however long the service napped.
+          * mark_paid — once, to refine the conservative hold it just took.
+
+        RE-DERIVED, NOT FROZEN. mu_ready_s at payment predicts the backlog at
+        payment; for a pickup three hours out that number is meaningless by the
+        time it matters. Each pass recomputes from the current twin, so a
+        kitchen that got busy pushes its own releases earlier.
+
+        The derivation can only move release_at earlier than the conservative
+        seed mark_paid took (requested_pickup_at), never later than the
+        customer's chosen time, so no refresh can make an order release late.
+        """
+        from app.modules.prediction.service import SCHEDULED_RELEASE_SAFETY_MARGIN_S
+
+        clauses = ["release_at IS NOT NULL", "requested_pickup_at IS NOT NULL",
+                   "status = ANY(:live)"]
+        params = {"live": list(_LIVE_STATUSES)}
+        if outlet_id is not None:
+            clauses.append("outlet_id = :oid")
+            params["oid"] = str(outlet_id)
+        if order_id is not None:
+            clauses.append("id = :iid")
+            params["iid"] = str(order_id)
+
+        # Retire holds on orders that left the live set without going through a
+        # release. Two ways that genuinely happens, both reachable today:
+        #
+        #   * the customer turns up EARLY and staff serve them anyway —
+        #     lookup_pickup matches any live order by its code, including a held
+        #     one, so verify_pickup can complete it before its release moment;
+        #   * staff reject the order from the testing dashboard, which can see
+        #     held orders even though the owner queue cannot.
+        #
+        # In both cases _release_held_order is never reached (the select above
+        # requires a live status), so without this the schedule row survives its
+        # order forever and the poller re-examines it every few seconds for the
+        # life of the deployment. The stale release_at is inert — nothing reads
+        # it on a terminal order — but it is cleared too, so the admin timeline
+        # does not show a hold that never happened.
+        scope = ""
+        if outlet_id is not None:
+            scope += " AND outlet_id = :oid"
+        if order_id is not None:
+            scope += " AND id = :iid"
+        await db.execute(text(
+            "UPDATE customer_orders SET release_at = NULL "
+            "WHERE release_at IS NOT NULL AND NOT (status = ANY(:live))" + scope
+        ), params)
+        await db.execute(text(
+            "DELETE FROM auto_advance_schedule s WHERE s.kind = 'release' "
+            "AND NOT EXISTS (SELECT 1 FROM customer_orders co "
+            "                WHERE co.id = s.order_id "
+            "                  AND co.release_at IS NOT NULL)"
+        ))
+        await db.commit()
+
+        held = (await db.execute(text(
+            "SELECT id, outlet_id, release_at, requested_pickup_at "
+            "FROM customer_orders WHERE " + " AND ".join(clauses)
+        ), params)).fetchall()
+        if not held:
+            return 0
+
+        released = 0
+        for row in held:
+            try:
+                estimate = await CarevoService._twin_prep_estimate(db, row.id)
+                mu, sigma = estimate if estimate else (None, None)
+
+                if mu is not None:
+                    new_release = row.requested_pickup_at - timedelta(
+                        seconds=mu + SCHEDULED_RELEASE_SAFETY_MARGIN_S)
+                    # Never later than the customer's chosen time, whatever the
+                    # engine says. A negative or absurd mu must not push a
+                    # release past the moment they turn up to collect.
+                    new_release = min(new_release, row.requested_pickup_at)
+                    moved = abs((new_release - row.release_at).total_seconds())
+                    if moved >= CarevoService.RELEASE_REDERIVE_DEADBAND_S:
+                        await db.execute(text(
+                            "UPDATE customer_orders SET release_at = :r "
+                            "WHERE id = :id AND release_at IS NOT NULL"),
+                            {"r": new_release, "id": str(row.id)})
+                        await db.execute(text(
+                            "UPDATE auto_advance_schedule SET due_at = :r, "
+                            "updated_at = now() WHERE order_id = :id "
+                            "AND kind = 'release'"),
+                            {"r": new_release, "id": str(row.id)})
+                        await CarevoService._log_release_decision(
+                            db, order_id=row.id, outlet_id=row.outlet_id,
+                            mu=mu, sigma=sigma,
+                            requested_pickup_at=row.requested_pickup_at,
+                            release_at=new_release, decision="held",
+                            margin_s=SCHEDULED_RELEASE_SAFETY_MARGIN_S)
+                        await db.commit()
+                else:
+                    new_release = row.release_at
+
+                if new_release <= datetime.now(timezone.utc):
+                    await CarevoService._release_held_order(
+                        db, row.id, mu=mu, sigma=sigma,
+                        requested_pickup_at=row.requested_pickup_at,
+                        margin_s=SCHEDULED_RELEASE_SAFETY_MARGIN_S)
+                    released += 1
+            except Exception:
+                # One bad order must never stop the rest of the sweep, and must
+                # never break the owner's queue read that triggered it.
+                logger.warning("scheduled release pass failed for order %s",
+                               row.id, exc_info=True)
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+        return released
+
+    @staticmethod
+    async def _release_held_order(
+        db: AsyncSession, order_id, *, mu=None, sigma=None,
+        requested_pickup_at=None, margin_s: int = 0,
+    ) -> Optional[CustomerOrder]:
+        """Hand one held order to the restaurant. PAID -> RECEIVED, hold cleared.
+
+        Ordering below is load-bearing:
+
+          1. Clear release_at, write the DEFERRED inferred ORDER_ACCEPTED and
+             PREP_STARTED, drop the schedule row — one transaction. Clearing
+             FIRST is what makes the TTL exemption safe to leave the moment the
+             order becomes live (see _expire_stale_pickups); doing it last would
+             leave a released order still hidden if step 2 failed, which is the
+             worse failure of the two.
+          2. advance_status(RECEIVED) — the SAME function a staff tap, the
+             webhook's auto_receive and the roster worker all call. It stamps
+             updated_at=now(), which restarts the 45-minute pickup TTL at the
+             release moment rather than at payment, and it broadcasts + pushes
+             the customer through the one existing choke point.
+          3. Tell the outlet, exactly as the payment webhook does for an
+             immediate order — for a held order THIS is the moment the kitchen
+             first learns the order exists, so the push belongs here.
+          4. Hand off to the roster chain if applicable (testers only).
+        """
+        res = await db.execute(select(CustomerOrder).where(CustomerOrder.id == order_id))
+        order = res.scalars().first()
+        if order is None:
+            return None
+        # Anything not still PAID has been rejected, abandoned or advanced by a
+        # human in the meantime; the hold is simply dropped.
+        if (order.status or "").upper() != "PAID":
+            await db.execute(text(
+                "UPDATE customer_orders SET release_at = NULL WHERE id = :id"),
+                {"id": str(order_id)})
+            await db.execute(text(
+                "DELETE FROM auto_advance_schedule WHERE order_id = :id "
+                "AND kind = 'release'"), {"id": str(order_id)})
+            await db.commit()
+            return order
+
+        await db.execute(text(
+            "UPDATE customer_orders SET release_at = NULL WHERE id = :id"),
+            {"id": str(order_id)})
+        # The events mark_paid deliberately withheld. source='inferred' and the
+        # same payload shape as the mark_paid pair, so nothing downstream has to
+        # learn a new event type — only their TIMING changed, which is the whole
+        # point: actual_prep_s is now measured from the real start of cooking.
+        await pe.write_event(
+            db, order_id, pe.ORDER_ACCEPTED,
+            actor_type="system", source="inferred", outlet_id=order.outlet_id,
+            payload={"derived_from": "scheduled_release",
+                     "requested_pickup_at": requested_pickup_at.isoformat()
+                     if requested_pickup_at else None},
+        )
+        await pe.write_event(
+            db, order_id, pe.PREP_STARTED,
+            actor_type="system", source="inferred", outlet_id=order.outlet_id,
+            payload={"derived_from": "scheduled_release",
+                     "mu_ready_s": round(mu) if mu is not None else None,
+                     "safety_margin_s": margin_s},
+        )
+        await db.execute(text(
+            "DELETE FROM auto_advance_schedule WHERE order_id = :id "
+            "AND kind = 'release'"), {"id": str(order_id)})
+        await CarevoService._log_release_decision(
+            db, order_id=order_id, outlet_id=order.outlet_id, mu=mu, sigma=sigma,
+            requested_pickup_at=requested_pickup_at,
+            release_at=datetime.now(timezone.utc), decision="released",
+            margin_s=margin_s)
+        await db.commit()
+
+        order = await CarevoService.advance_status(db, order_id, "RECEIVED")
+
+        try:
+            from app.modules.push.service import PushService
+            await PushService.notify_outlet_new_order(db, order)
+        except Exception:
+            await db.rollback()
+
+        # A tester who scheduled a pickup still gets hands-free progression —
+        # the chain simply starts from PREPARING, because the release itself
+        # just performed the RECEIVED step. Both of the roster gates (the
+        # master switch and the roster membership check) still apply inside,
+        # so a real customer's released order stops here and waits for a real
+        # kitchen, which is the entire contract of the release.
+        try:
+            from app.modules.testing_dashboard.service import TestingService
+            await TestingService.maybe_schedule_roster_chain(
+                db, order, first_stage="PREPARING")
+        except Exception:
+            pass
+        return order
 
     @staticmethod
     async def mark_payment_failed(
@@ -2318,6 +2929,26 @@ class CarevoService:
     @staticmethod
     async def list_active_orders(db: AsyncSession, outlet_id: uuid.UUID) -> list[dict]:
         """Active customer_orders for the outlet, newest first. NAME-FREE."""
+        # Scheduled-pickup releases run FIRST, before the expiry sweep, and the
+        # order of these two is not stylistic (migration 031).
+        #
+        # Releasing clears release_at and hands the order to advance_status,
+        # which stamps updated_at=now(). Sweeping first would mean a just-due
+        # order is examined by the TTL check while it still carries the
+        # updated_at from payment — hours old — and although the sweeper's
+        # `release_at IS NULL` clause already protects it, relying on that
+        # ordering-independence twice over costs nothing and removes the whole
+        # class of question. Release, then sweep, then list.
+        #
+        # This is the PRIMARY release mechanism, not a backup: the owner app
+        # polls here every 15 seconds while the tablet is open, and the
+        # background poller cannot be trusted alone on a free-tier instance
+        # that sleeps. Wrapped for the same reason the train notify is — a
+        # release failure must never stop the owner seeing their queue.
+        try:
+            await CarevoService.refresh_scheduled_releases(db, outlet_id=outlet_id)
+        except Exception:
+            await db.rollback()
         # Sweep expired pickups so the queue never shows stale orders.
         await CarevoService._expire_stale_pickups(db, outlet_id=outlet_id)
         # Same check-on-read slot: push the kitchen for any train order that has
@@ -2345,6 +2976,18 @@ class CarevoService:
             FROM customer_orders
             WHERE outlet_id = :oid
               AND created_at >= :rename_cutoff
+              -- Scheduled pickup (031). A held order is payment-confirmed and
+              -- genuinely live, so it passes the status floor below — this is
+              -- the clause that keeps it off the tablet until its moment.
+              --
+              -- The TIME form, deliberately, and NOT the sweeper's state form:
+              -- the question here is "may the restaurant see it yet", and being
+              -- eager is harmless. If release_at has passed but the release has
+              -- not executed (poller asleep, first request after a cold start),
+              -- the order still appears — correct, since it IS due — and the
+              -- refresh call above will have executed it on this very request
+              -- in all but the narrowest race.
+              AND (release_at IS NULL OR release_at <= now())
               AND (
                     -- Payment-confirmed and still live. Reuses _LIVE_STATUSES
                     -- (the same set the expiry sweep uses) as the floor, which

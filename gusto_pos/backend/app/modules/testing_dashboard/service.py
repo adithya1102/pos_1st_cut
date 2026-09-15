@@ -579,6 +579,28 @@ class TestingService:
         Best-effort by contract: the caller wraps this so a scheduling failure
         can never affect the payment that triggered it.
         """
+        return await TestingService.maybe_schedule_roster_chain(
+            db, order, first_stage=_AUTO_ADVANCE_STAGES[0])
+
+    @staticmethod
+    async def maybe_schedule_roster_chain(
+        db: AsyncSession, order, *, first_stage: str
+    ) -> bool:
+        """The body of maybe_schedule_auto_advance, with the starting stage as a
+        parameter. Both gates are unchanged and still applied here.
+
+        Extracted for scheduled pickup (migration 031). A held order does NOT
+        get a roster row at payment — that row would overwrite the release row
+        on the order_id primary key and march the order straight into the
+        kitchen, defeating the hold. Instead the chain is picked up at RELEASE,
+        starting from PREPARING, because the release itself performed the
+        RECEIVED step. So a tester can still exercise scheduled pickup end to
+        end with zero restaurant-side taps, which is the point of the roster
+        feature, without the two mechanisms fighting over one row.
+
+        Writes kind='roster' explicitly rather than leaning on the column
+        default, so the two writers of this table each name what they are.
+        """
         if not settings.AUTO_ADVANCE_ROSTER_ORDERS:
             return False
         ident = await TestingService._customer_identifier(db, order.customer_id)
@@ -587,12 +609,14 @@ class TestingService:
         due = datetime.now(timezone.utc) + timedelta(
             seconds=settings.AUTO_ADVANCE_DELAY_SECONDS)
         await db.execute(text("""
-            INSERT INTO auto_advance_schedule (order_id, next_stage, due_at, updated_at)
-            VALUES (:oid, :stage, :due, now())
+            INSERT INTO auto_advance_schedule
+                (order_id, next_stage, due_at, kind, updated_at)
+            VALUES (:oid, :stage, :due, 'roster', now())
             ON CONFLICT (order_id)
             DO UPDATE SET next_stage = EXCLUDED.next_stage,
-                          due_at = EXCLUDED.due_at, updated_at = now()
-        """), {"oid": str(order.id), "stage": _AUTO_ADVANCE_STAGES[0], "due": due})
+                          due_at = EXCLUDED.due_at, kind = 'roster',
+                          updated_at = now()
+        """), {"oid": str(order.id), "stage": first_stage, "due": due})
         await db.commit()
         return True
 
@@ -601,18 +625,49 @@ class TestingService:
         """Advance every order whose scheduled stage is due. Returns how many
         rows were processed. Called on a loop by the poller and directly by tests.
 
-        The kill switch is honoured HERE too: while AUTO_ADVANCE_ROSTER_ORDERS is
-        off, due rows are left untouched (progression pauses) and resume when it
-        is turned back on — a durable version of the same switch.
+        TWO KINDS OF ROW, PROCESSED UNDER OPPOSITE RULES (migration 031).
+
+        kind='release' — scheduled pickup, a REAL CUSTOMER FEATURE. Processed
+        unconditionally. AUTO_ADVANCE_ROSTER_ORDERS is a testing kill switch: it
+        is off by default, it is absent from render.yaml and therefore off in
+        production, and it exists to be flipped after a Play Store test window.
+        Letting it gate a paying customer's release would mean the feature
+        silently never fires in prod — so the switch is read only for roster
+        rows, below, and the release branch never consults it.
+
+        Release rows also do not WALK the stage chain: each is handed to
+        CarevoService.refresh_scheduled_releases, which performs one advance
+        (PAID -> RECEIVED) and deletes the row. A real kitchen takes it from
+        there.
+
+        kind='roster' — testing auto-progression. Unchanged: the kill switch is
+        honoured here too, so while it is off due rows are left untouched
+        (progression pauses) and resume when it is turned back on.
         """
-        if not settings.AUTO_ADVANCE_ROSTER_ORDERS:
-            return 0
         now = now or datetime.now(timezone.utc)
+        processed = 0
+
+        # --- release rows: no switch, no chain --------------------------------
+        due_release = (await db.execute(text(
+            "SELECT order_id FROM auto_advance_schedule "
+            "WHERE kind = 'release' AND due_at <= :now ORDER BY due_at LIMIT 100"
+        ), {"now": now})).fetchall()
+        for r in due_release:
+            try:
+                await CarevoService.refresh_scheduled_releases(db, order_id=r.order_id)
+                processed += 1
+            except Exception:
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+
+        if not settings.AUTO_ADVANCE_ROSTER_ORDERS:
+            return processed
         due = (await db.execute(text(
             "SELECT order_id, next_stage FROM auto_advance_schedule "
-            "WHERE due_at <= :now ORDER BY due_at LIMIT 100"
+            "WHERE kind = 'roster' AND due_at <= :now ORDER BY due_at LIMIT 100"
         ), {"now": now})).fetchall()
-        processed = 0
         for r in due:
             try:
                 await TestingService._advance_one_scheduled(db, r.order_id, r.next_stage)
@@ -676,10 +731,33 @@ async def auto_advance_poller_loop() -> None:
     mid-progression costs nothing. Each pass is best-effort and fully swallowed —
     one bad pass must never kill the loop — and it runs regardless of the kill
     switch, since process_due_auto_advances itself no-ops while the switch is off.
+
+    SCHEDULED PICKUP (031) rides the same loop, and each pass does two things:
+
+      * refresh_scheduled_releases with no scope — re-derives release_at for
+        every held order from its CURRENT twin. This cannot be left to
+        process_due_auto_advances below, which by definition only selects rows
+        that are already DUE: a held order's due_at is in the future, so it
+        would never be re-derived and the release would stay frozen at the
+        conservative value mark_paid seeded.
+      * process_due_auto_advances — which then executes any release that has
+        come due, plus the roster chain.
+
+    This loop is the BACKSTOP for releases, not the primary mechanism. Render's
+    free tier sleeps after ~15 minutes idle and takes the loop with it, so a
+    release would otherwise fire whenever the next request happened to wake the
+    service. list_active_orders performs the same check on read, which is what
+    actually makes releases punctual while a tablet is watching the queue. On
+    boot, past-due rows are found here and resumed — that is what the durable
+    table buys.
     """
     while True:
         try:
             async with AsyncSessionLocal() as db:
+                try:
+                    await CarevoService.refresh_scheduled_releases(db)
+                except Exception:
+                    await db.rollback()
                 await TestingService.process_due_auto_advances(db)
         except Exception:
             pass
