@@ -5687,3 +5687,773 @@ pre-existing `info` lints). owner_app 93/93 tests pass — the same count
 as before the deletion, so nothing was silently lost.
 
 ---
+
+## 2026-09-10 — FCM token registration: audit + live count
+
+Question asked: does client-side FCM token registration actually exist
+and reach the backend, and has anything populated `fcm_token` now that
+`FIREBASE_ENABLED` is fixed?
+
+### Registration exists in both apps — verified end to end
+
+customer_app: `getToken()` at `push_service.dart:87` → POST
+`/customer/push/register` at `:107`; called after login from
+`auth_state.dart:45` (invoked `:123` OTP, `:148` Google). Backend route
+`push/controller.py:31` → `push/service.py:492`
+`UPDATE customers SET fcm_token = ...`.
+
+owner_app: `getToken()` at `staff_push_service.dart:128` → `:147` →
+`order_service.dart:161` POST `/pos/push/register`; called after login
+from `login_screen.dart:43`. Backend route
+`carevo_pos/controller.py:265` → `carevo_customer/service.py:2466`
+`UPDATE users SET fcm_token = ...`.
+
+### Live count unchanged: still all NULL
+
+45 customers / 9 staff, **0 non-NULL `fcm_token`** — same as before.
+300 `push_notifications` rows, 100% `skipped`, 100%
+`detail='customer has no fcm_token'`. Zero `STAFF_*`/`TRAIN_*` rows.
+
+### Two findings that redirect the diagnosis
+
+**1. The endpoints ARE being reached; only the register half fails.**
+Seven customer rows carry a non-NULL `fcm_token_updated_at` with a NULL
+token (latest `2026-09-09 13:40:26`). The only path that stamps that
+column while leaving the token NULL is `clear_token`
+(`push/service.py:503`) — the logout DELETE from `auth_state.dart:165`.
+So auth and routing are fine; `registerAfterLogin()` returns before
+`_sendToken()` — either permission denied (`push_service.dart:81-83`)
+or `getToken()` null/throwing (`:87`), both swallowed by the catch at
+`:97`. Staff never registered even once (no `fcm_token_updated_at` on
+any user row).
+
+**2. `FIREBASE_ENABLED` was never the blocker for storage.**
+`register_token` (`push/service.py:486`) writes unconditionally and
+never consults `_configured()` before the UPDATE. `FIREBASE_ENABLED`
+gates inbound auth; `PUSH_ENABLED` gates outbound sending. Neither
+gates token storage.
+
+Corollary: the `skipped` log says NOTHING about `PUSH_ENABLED` —
+`service.py:187-190` tests `if not token` FIRST, `elif not
+_configured()` second, so the config branch has never been reached.
+
+### Still open
+
+`PUSH_ENABLED` / `FCM_SERVICE_ACCOUNT_FILE` on Render are UNVERIFIED —
+no API key or CLI available locally. `render.yaml` declares neither
+(only `FIREBASE_ENABLED=true` at `:109`), and per `render.yaml:63-65`
+the blueprint is not authoritative anyway. Local `.env` has
+`FIREBASE_PROJECT_ID=carevo-pos` and `FIREBASE_ENABLED=true` but no
+`PUSH_ENABLED` and no `FCM_SERVICE_ACCOUNT_FILE`. Owner to read the
+dashboard.
+
+Note: backend is ALIVE — root returns 200, but cold start measured at
+**111s** on the free tier. Sub-60s curl timeouts read as a dead service
+and are not.
+
+---
+
+## 2026-09-10 — FCM registration fixed (75ece177)
+
+Root cause of the all-NULL `fcm_token` columns. Two client-side bugs,
+both silent. Backend untouched — that side was already correct.
+
+### 1. Permission gated registration, permanently
+
+`if (!_granted) return;` sat between `requestPermission()` and
+`getToken()` in BOTH services (`push_service.dart:83`,
+`staff_push_service.dart:126` at the old revision). One "Don't allow"
+meant the token was never fetched.
+
+Wrong twice: on Android `POST_NOTIFICATIONS` controls whether a
+notification is DISPLAYED — FCM issues a token without it — and Android
+stops showing the dialog after two dismissals, so `requestPermission()`
+returned denied instantly forever after and every later login took the
+same silent path. Unrecoverable even if the user later enabled
+notifications in system settings.
+
+Now: permission still requested (it is the only way alerts get shown,
+and iOS genuinely needs it for APNs), denial recorded, registration
+continues.
+
+### 2. Registration only ever ran at the login moment
+
+customer_app called it from `verifyOtp`/`signInWithGoogle` only;
+owner_app from `login_screen.dart` only. But a customer signs in ONCE
+and stays signed in for weeks — the session renews rather than expires
+(see `session_refresher.dart`) — and a tablet stays logged in
+indefinitely. Nothing re-attempted for a RESTORED session, so one
+skipped registration was permanent for the life of that session.
+
+Added `ensureRegistered()`, called from `customer_app/lib/main.dart`
+and `owner_app` HomeScreen mount. Prompt-free by design: the OS dialog
+belongs to a deliberate moment, not app start.
+
+### Why it was invisible
+
+- Every failure branch was a bare `return` with no log line.
+- owner_app wrapped EVERY `debugPrint` in `if (kDebugMode)` — the
+  release build on the real tablet logged nothing at all, which is
+  precisely where the failure lived.
+- A failed POST left `_lastRegistered` unset but nothing ever retried.
+- `onTokenRefresh` added a listener per attempt (two logins in one
+  process = two POSTs per rotation).
+- `_sendToken` caught only `ApiException`, so transport errors escaped
+  the retry bookkeeping.
+
+All failure branches now log unconditionally and set an observable
+status (`registered` / `noToken` / `sendFailed` / `unavailable`).
+
+### Tests
+
+customer_app 467 pass (was 454, +13), analyze clean. owner_app 103 pass
+(was 93, +10), analyze 21 pre-existing info lints, none in changed
+files. Permission/getToken/rotation are injectable seams so
+registration is assertable without a Firebase app.
+
+### NOT yet verified
+
+The prod DB is still 0/45 and 0/9. Nothing can populate until a build
+carrying this commit is installed on a device and someone logs in —
+that is the remaining verification step and it needs a real device.
+
+---
+
+## 2026-09-10 — Location-with-mode, server-driven Metro, push re-diagnosis
+
+Four items. Two built (uncommitted, pending checkpoint), two diagnostic.
+
+### 1. Location is now asked BY the transport chip (built)
+
+`checkout_screen.dart` had the two disconnected: the chip row at
+`build()` only called `setState(_transport = mode)`, and the location
+ask lived in a separate `_OriginCard` under its own "Your starting
+point" heading with a "Use GPS" button. Two taps, two sections — most
+customers never made the second one, which is how orders arrived
+carrying a mode and no origin.
+
+New `_selectMode()` folds the ask into the chip tap. `_useMyLocation`
+and it now share `_resolveOrigin({userInitiated})`; that flag is the
+only difference between them:
+
+- chip tap → `userInitiated: false`, so LocationService's one-prompt
+  latch applies and tapping through five chips raises ONE dialog.
+- explicit "Use GPS" → `userInitiated: true`, unchanged, still
+  re-prompts every tap.
+
+Reuse was already free: `getCurrentLocation` re-reads the OS status and
+only prompts on a plain `denied`, so a grant from Near-me or the
+Nearest sort is honoured silently. Guards added: never overwrite an
+existing origin (a searched address is a deliberate choice), never
+re-ask when `deniedForever`, no dialog/snackbar from a chip tap.
+FR-C6 unchanged — a refusal leaves origin `none` and checkout proceeds.
+
++6 tests in `location_permission_recheck_test.dart`.
+
+### 2. Metro — the premise was wrong, and the fix is now server-driven
+
+**"Metro missing for Chennai/Bangalore" was not a data gap.** Metro
+never existed as a mode, for any city: the enum was
+walk/bike/car/auto/bus/train. Both cities already offered *Train* —
+`CityTransport._hasRail` has `chennai` and `bengaluru` true, and live
+`outlets.city` stores exactly `Chennai` / `Bengaluru`, so the lookup
+matched. Nothing was broken; the option had never been built.
+
+Built as a DECLARED-ARRIVAL mode (user's call), like train, not a
+speed-based one. That also dodges a real trap: `MODE_SPEED_MPS` has no
+metro key and `.get(mode, DEFAULT)` resolves a miss to **bike speed**,
+so a speed-based metro would have been timed as a cycle ride, silently,
+for months.
+
+Per the user, the city list is no longer hardcoded — which is exactly
+the fix `city_transport.dart`'s own docstring had named ("a
+server-supplied flag on the outlet payload, not a longer list here"):
+
+- **Migration 029** (written, NOT applied) adds `city_type`
+  (`metro|tier_1|tier_2|tier_3`, CHECK NOT VALID), `has_train` and
+  `transport_updated_at` to the EXISTING `cities` table from 013 —
+  not a parallel table, which would give two answers to "what is
+  Chennai". Seeded to today's exact behaviour: the four rail cities go
+  `metro`/`has_train=true`, Madurai stays `tier_2`/false. Validated
+  against prod inside a transaction that was rolled back — applies
+  cleanly, idempotent on a second run, seeds the expected 5 rows.
+- **Backend**: `OutletOut` gains `city_type`/`has_metro`/`has_train`,
+  all `Optional` — **null is not false**, and that distinction is
+  load-bearing. Null means "no server answer" and the app falls back to
+  its const map; flatten it and a pre-029 backend silently strips Train
+  from every city that has it. `_city_transport_profiles` catches a
+  missing column and returns `{}`, so a deploy landing before the
+  migration degrades to the OLD behaviour rather than breaking.
+  `has_metro` is DERIVED from `city_type`, never stored twice.
+- **`PUT /admin/cities/{id}/transport`** — partial body, own route
+  rather than folded into the rename PATCH (that one rewrites
+  `outlets.city` estate-wide and can 409; a toggle should not share a
+  verb with it). Audited as `city.transport`.
+- **Admin dashboard**: radio per city + a separate Train checkbox.
+  Train is its own answer because Madurai is a tier-2 city with a major
+  junction and no metro — one flag could not say that.
+- **Two backend `'train'` literals widened** to a shared
+  `DECLARED_ARRIVAL_MODES = ("train","metro")`: `predict_travel`'s
+  branch and `_notify_kitchen_for_due_trains`' SQL. `TRAIN_START_DUE`
+  push copy now names the actual vehicle (KIND reused — it is under a
+  CHECK constraint, and both mean "start cooking now").
+
+No DDL needed for `transport_mode` itself: `customer_orders` has zero
+CHECK constraints (re-verified against prod), so `'metro'` is already
+legal. +16 tests. customer_app 483 pass, backend 363 pass, admin_app
+tsc + eslint clean.
+
+### 3. Coloured status backgrounds — NOT built, states do not exist
+
+"Collected" is real: `owner_app/lib/models/order.dart:62`
+`isCollected => status == 'COMPLETED'`, rendered in the orders queue
+with "Collected 12m ago — clearing soon", and stamped COLLECTED in
+customer_app's history.
+
+**"Viewed" does not exist anywhere as an order state.** Live
+`customer_orders.status` holds only COMPLETED / CANCELLED / ABANDONED /
+CREATED. The nearest thing is `OrdersState._announced`, a session-local
+`Set<orderId>` that dedupes the new-order alert — in-memory, not
+persisted, never shown. `waiter_notifications.is_read` is legacy
+dine-in, not CareVo Skip. Reported rather than guessed, per the brief.
+
+### 4. Push has NEVER transmitted — `_transmit` was never once reached
+
+Definitive, from the live DB. All **304** `push_notifications` rows are
+`status='skipped'`, and every one says `detail='customer has no
+fcm_token'`. Zero rows say "push disabled", zero say sent or failed.
+
+`send()` tests `if not token` at `push/service.py:187` **before**
+`_configured()` at 189. So the token check short-circuited every single
+attempt, `_configured()` has never been evaluated, and `_transmit` has
+never been called. PUSH_ENABLED and the service-account file are
+therefore **moot** — they cannot be the cause of something that never
+reached them.
+
+Tokens are still 0/45 customers and 0/9 staff. The 09-10 fix
+(`75ece177`) is client-side and is on origin/21_7, but no build
+carrying it has been installed — the newest skipped row is from *after*
+the commit and still says "no fcm_token".
+
+Wiring itself is correct and complete: `_broadcast_status(order, db)`
+fires from `mark_paid`, `reject_order`, `mark_payment_failed`,
+`advance_status` and `verify_pickup`, all passing `db`; plus
+`notify_outlet_new_order` (controller:496), `notify_outlet_train_due`
+and the ITEM_UNAVAILABLE send. Nothing is missing there.
+
+`FIREBASE_PROJECT_ID` **is** set live and correct — probing
+`POST /customer/auth/firebase` with a junk token returns 401 "Malformed
+Firebase token", and `verify_id_token` checks the project id FIRST
+(500 if unset), so reaching the parse proves it. Note `render.yaml`
+contains none of PUSH_ENABLED / FCM_SERVICE_ACCOUNT_FILE /
+FIREBASE_PROJECT_ID — all three are dashboard-only.
+
+---
+
+## 2026-09-10 (later) — 029 applied to prod; Tasks 1+2 committed and pushed
+
+### Migration 029 APPLIED to production
+
+DB identity confirmed first, since the Render Environment tab is not
+readable from here: the public `GET /api/v1/cities` on the live service
+returned the same 5 cities with byte-identical UUIDs to the Neon DB in
+`.env` (`ep-morning-meadow-ao6m0otk-pooler`, db `neondb`, PG 17.11).
+Same database, and the very table being migrated.
+
+Before/after, verified programmatically:
+
+- `cities` gained exactly 3 columns: `city_type`, `has_train`,
+  `transport_updated_at`. Nothing else on the table changed.
+- Seed landed as designed — Chennai / Bengaluru / Kolkata / Kochi all
+  `metro` + `has_train=true`; **Madurai left `tier_2` / false**.
+- `cities_city_type_valid` CHECK present and `NOT VALID` as intended
+  (`convalidated=False`), so no full-table rescan under an ACCESS
+  EXCLUSIVE lock. `idx_cities_city_type` created.
+- **Row counts snapshotted across ALL 48 tables before and after: zero
+  tables added, zero removed, and not one table gained or lost a row.**
+  "No other table was touched" is measured, not assumed.
+
+Deployed backend (still on the old code at that moment) kept serving
+200 throughout — the migration being purely additive is what made
+applying it before the code deploy the safe ordering.
+
+### Commits
+
+Split into two, because the diffs genuinely separated. Only
+`checkout_screen.dart` carried both concerns, and its hunks did not
+overlap — location work sat in the `_useMyLocation` region and the chip
+`onTap`; Metro work in the enum, `_modesFor`, and the arrival copy. One
+`git diff` hunk did merge the chip `onTap` with the arrival copy under
+U3 context, so rather than fight patch offsets the Task-1 blob was
+reconstructed from HEAD + only the location edits, staged directly via
+`git hash-object` + `update-index`, and guarded by asserting the blob
+contained no `metro`/`vehicleNoun`/`trainFor`/`cityType` token at all.
+
+- `74dd43a4` feat(customer_app): ask for location as part of picking a
+  transport mode — 2 files, +207/-30
+- `917dc391` feat: Metro transport mode, driven by an admin city-type
+  radio — 14 files, +848/-50
+
+`74dd43a4` was verified **standalone** before building on it: the
+working tree was swapped to exactly that commit's customer_app state
+and it analyzed clean with **473 tests passing** (467 baseline + 6 new
+location tests). A split commit that does not compile is a broken
+bisect, so this was worth the extra step.
+
+Fresh full runs at final HEAD: customer_app **483**, backend **363**,
+admin_app tsc + eslint both exit 0.
+
+### Pushed and deployed
+
+`75ece177..917dc391  21_7 -> 21_7`. Local and `origin/21_7` both at
+`917dc391c921786298f52ee7f158a3ba297e5acf`.
+
+Render auto-deployed and the new code is confirmed LIVE, not assumed:
+
+- `PUT /api/v1/admin/cities/{id}/transport` returns **401**, not 404 —
+  the route is mounted and auth is gating it.
+- `/openapi.json` registers
+  `/api/v1/admin/cities/{city_id}/transport`.
+- `OutletOut` in the live contract now carries `city_type`,
+  `has_metro`, `has_train` alongside `city`; `AdminCityOut` carries all
+  three; `CityTransportIn` exposes `city_type` + `has_train`.
+
+So the chain is complete end to end: DB migrated -> backend deployed ->
+admin route live -> outlet payload carries the flags. The remaining
+step is a customer_app build, since Metro only appears in an app
+carrying `917dc391`.
+
+---
+
+## 2026-09-10 (later still) — debug APK built; metro/train copy bug caught
+
+### Bug found BY the APK verification, not by the test suite
+
+Grepping the compiled kernel for old strings that should have gone
+turned up `'When does your train arrive?'` still present. It was not a
+stale build — `lib/widgets/arrival_time_picker.dart:134` keeps its OWN
+title and 917dc391 had only made the checkout PAGE heading mode-aware.
+
+So picking Metro read "When does your metro arrive?" on the page and,
+the instant you tapped the field, the sheet said "…your train arrive?".
+Two names for one journey, one tap apart — exactly the wrongness
+917dc391's own commit message claimed to have avoided.
+
+**Why the test suite missed it:** the existing test asserted
+`find.text('When does your train arrive?')` was absent after selecting
+Metro, but only ever rendered the page. The sheet was never opened, so
+the widget carrying the wrong string was not in the tree to be found.
+A passing assertion about the absence of something that was never
+mounted.
+
+Fixed in `2c479a53`: `ArrivalTimePicker.show()` takes `vehicleNoun`
+(default `'train'`, so no existing caller changes), checkout passes
+`_effectiveMode(...).vehicleNoun`. Two new tests tap through to the
+OPEN sheet and anchor on its own `arrival_day_part` key so they cannot
+pass against the page alone. customer_app **485** pass (+2).
+
+### APK
+
+Built from `2c479a53`, working tree clean for `customer_app/lib` and
+`customer_app/test` at build time, so the artifact maps to that commit
+exactly.
+
+    path   customer_app/build/app/outputs/flutter-apk/app-debug.apk
+    size   191,516,577 bytes (182.64 MB)
+    sha256 487821cf6063c6d29b249ac0301f23509880024082ce7f732ae559b7474cbbf3
+
+Verified in the compiled Dart (`kernel_blob.bin`, debug builds keep
+identifiers and literals):
+
+- **Metro** — `Metro`, `metro`, `vehicleNoun`, `usesDeclaredArrival`,
+  `metroFor`/`trainFor`, `hasMetro`, `has_metro`, `city_type`.
+- **Location merge** — `_selectMode`, `_resolveOrigin`,
+  `userInitiated`, `isBlocked`, `checkout_use_gps`, `deniedForever`.
+- **FCM fix (75ece177)** — `ensureRegistered`, `noToken`,
+  `sendFailed`, `push/register`, `fcm_token`, `getToken`,
+  `onTokenRefresh`. `main.dart:97` calls
+  `unawaited(push.ensureRegistered())` at start, which is the
+  restored-session path that was missing.
+- **Stale-build guard** — `'When does your train arrive?'` now x0
+  (was x1 pre-fix); both call sites interpolate.
+
+`2c479a53` is committed LOCALLY and NOT pushed.
+
+---
+
+## 2026-09-11 — migration 030: normalized per-city transport modes, Tram, starting-point card removed
+
+UNCOMMITTED, pending review. Migration 030 is written and validated but NOT
+applied to prod.
+
+### Task 1 — schema redesign
+
+029's shape was a column per mode (`has_train`) plus Metro DERIVED from
+`city_type='metro'`. It could not grow: Tram under 029 meant `has_tram
+boolean` plus the whole backend/app chain again.
+
+030 replaces it with **two** tables:
+
+- `transport_modes` — the CATALOG (code, label, uses_declared_arrival,
+  default_enabled, sort_order, is_active). Seeded with the 8 modes.
+- `city_transport_modes` — (city_id, mode_code, enabled), PK on the pair.
+
+Adding a ninth mode is now ONE INSERT: no DDL, no backend change, no
+frontend change, and it appears in an already-installed app.
+
+**No backfill trigger.** The read path is `CROSS JOIN transport_modes LEFT
+JOIN city_transport_modes ... COALESCE(enabled, default_enabled)`, so an
+absent (city, mode) pair reads as the catalog default. One rule, used
+identically by the admin and customer paths, instead of a trigger that has
+to stay in agreement with them forever.
+
+**Carry-across verified against prod data** (in a rolled-back transaction):
+40 rows = 5 cities x 8 modes; 33 enabled = 25 road + 4 train + 4 metro + 0
+tram; Madurai correctly keeps neither. Idempotent on re-run, and re-running
+does NOT clobber a later admin choice (ON CONFLICT DO NOTHING).
+
+### city_type: KEPT, decoupled
+
+Swept every reader — `city_type` is referenced ONLY by the transport feature
+itself (carevo_admin service/schema/controller, carevo_customer
+service/schema, customer_app outlet+city_transport, admin_app). Nothing else
+in the codebase touches it.
+
+Kept anyway, and deliberately: it is populated real data that was explicitly
+asked for as a city tiering field, and an unused column costs nothing while
+an irreversible DROP costs everything if that judgement was wrong. After 030
+it drives NO behaviour — `has_metro` now comes from the grid, not from
+`city_type='metro'`. Say the word and it goes.
+
+`has_train` is likewise left in place for one release so a rollback has
+something to roll back to. Nothing reads it.
+
+### Tasks 2-4
+
+- **Admin**: tier radio + train checkbox replaced by a checkbox GRID rendered
+  from `GET /admin/transport-modes`. The count of checkboxes is whatever the
+  catalog holds — no hardcoded list of 8 anywhere in the frontend.
+  `PUT /admin/cities/{id}/modes/{code}` toggles one pair (not a whole-grid
+  PUT, which would let two admins clobber each other).
+- **Tram**: full mode, declared-arrival like Metro — same reasoning, plus the
+  same trap (`MODE_SPEED_MPS` has no 'tram' key and `.get(mode, DEFAULT)`
+  resolves a miss to BIKE speed). Off everywhere until an admin enables it.
+- **Starting-point card REMOVED**. Location resolves only through the chip.
+  Re-tapping the SELECTED chip is the retry (`userInitiated: true`); the
+  FIRST resolve on the screen is also deliberate, otherwise a denial on
+  Discover would silently mute checkout — the exact bug the latch rewrite
+  fixed. Switching chips stays non-prompting so five chips cannot stack five
+  dialogs.
+
+**Capability lost, flagged not hidden**: `_searchLocation` (Places address
+autocomplete) went with the card. That was the only way to give an origin
+WITHOUT granting GPS. Someone who declines location now always gets the wide
+estimate. FR-C6 still holds (the order goes through) but this is a real loss,
+not a moved button.
+
+### The app now renders modes it has never heard of
+
+`OutletOut.transport_modes` carries `{code,label,uses_declared_arrival}` per
+enabled mode. customer_app keeps `TransportMode` as its ICON registry only;
+`CheckoutMode.fromServer` renders any server code, falling back to a generic
+transit glyph, and takes BEHAVIOUR from the payload. Tested with a fictitious
+`ferry` mode: it renders, and because `uses_declared_arrival` travels with
+it, it correctly asks for a time and says "When does your ferry arrive?".
+
+`has_metro`/`has_train`/`city_type` are still emitted, derived from the same
+grid — builds already in customers' hands read those keys and know nothing
+about `transport_modes`.
+
+### Tests
+
+- customer_app **501 pass** (was 485; +15 new server-driven/Tram file, and
+  the removed-button tests rewritten as chip/re-tap tests), analyze clean.
+- backend **361/382 pass**. The 21 failures are **pre-existing and
+  environmental** — byte-identical failure set on clean HEAD (verified by
+  stashing), zero introduced. Cause: the suite runs against the LIVE prod
+  database and asserts things like `next(o for o in orders if ...)`, which
+  breaks while someone is actually ordering. "363 passing" was never a stable
+  number. My 19 new tests run on a throwaway `t030` schema for exactly this
+  reason.
+- admin_app tsc + eslint both exit 0.
+
+**Found while doing this**: `pytest.ini` sets `python_files = test_api_*.py`,
+so `tests/test_carevo_skip.py` and `tests/test_owner_app.py` have NEVER been
+collected. My new file was silently skipped for the same reason until renamed
+to `test_api_city_transport_modes.py`.
+
+### Push diagnosis
+
+No Android device is attached (`adb devices` empty), so no logcat could be
+captured here. The user confirmed the Metro chip IS visible on a
+Chennai/Bengaluru outlet — so the NEW build (2c479a53) is installed and
+registration is still failing silently on-device. Firebase init, the
+registration wiring and the server route were all re-verified as correct, so
+the answer is on the device.
+
+---
+
+## 2026-09-11 — 030 applied to prod, escalation fixed, shipped, APK built
+
+### Migration 030 APPLIED to production
+
+Verified live, same discipline as 029:
+
+- `transport_modes` + `city_transport_modes` created; **48 -> 50 tables**,
+  and a row-count diff across all 48 pre-existing tables showed **none
+  touched**.
+- 40 rows (5 cities x 8 modes), 33 enabled (25 road + 4 train + 4 metro + 0
+  tram). Per-city breakdown matches 029 exactly; Madurai keeps neither.
+- Re-ran the migration against the LIVE table: rows/enabled unchanged.
+  Idempotent for real, not just in a sandbox.
+
+### Task 2 — the escalation was NOT what was specified. Fixed.
+
+Spec: stage 1 (first decline) soft and retryable; stage 2 (second decline /
+deniedForever) shows the blocked dialog with a settings button.
+
+**The gap:** `_resolveOrigin`'s RESULT was discarded. Android flips `denied`
+to `deniedForever` on the second refusal, but nothing read that outcome — the
+dialog only appeared via the `service.isBlocked` check at the *top* of a
+LATER tap. So a customer who declined twice and stopped tapping was never
+told why location had stopped working. Three taps to see an explanation that
+belonged on the second.
+
+Now the escalation is tied to the deniedForever STATE and fires on the
+declining tap itself. Stage 1 stays deliberately silent — no dialog, no
+snackbar. `_explainBlocked` extracted; the dialog already wired
+`openSettings()` (`location_blocked_open_settings`).
+
+One earlier assertion had to change with it: a deliberate tap on an
+already-blocked permission now explains rather than doing nothing. With the
+Use-GPS button gone there is no other control to carry that message, and a
+tap that can neither prompt nor explain is a dead control. A plain chip
+SWITCH while blocked still stays silent — pinned by its own test.
+
++6 tests covering the exact two-stage sequence.
+
+### Tests
+
+- customer_app **507** pass, analyze clean.
+- backend **361/382**; the 21 failures are the same pre-existing set as clean
+  HEAD (0 new). The 19 new 030 tests run on a throwaway `t030` schema.
+- admin_app tsc + eslint both exit 0.
+
+### Commits, pushed `2c479a53..9e40c5c0`
+
+Split three ways by directory — no file spanned two concerns:
+
+- `79a14d43` backend: migration 030 + API (7 files, +755/-72)
+- `6f1fedc9` admin: catalog-driven checkbox grid (2 files, +115/-127)
+- `9e40c5c0` customer_app: server modes, Tram, chip-only location
+  (5 files, +927/-239)
+
+customer_app stayed ONE commit deliberately: the three changes all rewrite
+the same functions in `checkout_screen.dart` (the CheckoutMode refactor
+changed `_selectMode`'s signature, which is where the escalation lives), so
+splitting them would have meant reconstructing the same code twice.
+
+### APK — built from 9e40c5c0
+
+    size   191,516,891 bytes (182.64 MB)
+    sha256 d8cb10447119c230006f7333107d134a5aa2688504bd355572f1bc7d97ce40e5
+
+Verified in compiled Dart: Tram (`Icons.tram`, `tramFor`); grid-driven
+visibility (`transportModes`, `OutletTransportMode`, `CheckoutMode`,
+`uses_declared_arrival`, `serverModesFor`, `directions_transit` fallback);
+escalation (`_explainBlocked`, `location_blocked_open_settings`,
+`openSettings`, `_originAttempted`).
+
+**Gotcha worth remembering for future APK greps:** a DEBUG `kernel_blob.bin`
+embeds SOURCE TEXT for stack traces, so *comments* match too. "Your starting
+point" showed as present ×3 — all three were comments describing the removal.
+Use identifiers that appear in no comment to prove removal: `onUseLocation`
+x0, `placesEnabled` x0, `PlaceSearchScreen` x0 confirm the card is really
+gone.
+
+---
+
+## 2026-09-16 — scheduled pickup + universal arrival-feasibility gate (031)
+
+Shipped `9e96ce83` (backend) + `a92795b9` (customer_app). Migration 031
+APPLIED to prod — see the verification block at the end.
+
+### Task 0 first: the GPS arrival estimate already existed
+
+The diagnosis question was whether "time to reach the restaurant" existed
+for car/bike/walk/auto/bus separately from mu/sigma prep. It does.
+`PredictionService.predict_travel` (`prediction/service.py:396-476`)
+already unifies EVERY mode into "seconds until this customer gets here":
+declared train/metro arrival gives `customer_declared`; Distance Matrix
+gives `maps_live`/`maps_cached`; and `_haversine_travel` (`:356-366`) is
+literally `dist_km*1000 / MODE_SPEED_MPS[mode] + LASTMILE_S` — the exact
+distance/speed fallback the brief thought might need writing. No origin at
+all returns a deliberately wide 20 min (FR-C6).
+
+So no second travel model was built. Three traps handled:
+
+- `mu_travel` is a DURATION. The stored `arrival_p50` adds the Monte-Carlo
+  *recommended departure delay* (`bucket*60`), so using it would push
+  arrival later and reject feasible orders. The gate uses `now + mu_travel`.
+- **No twin exists at create_order time** (`recompute_twin` runs inside
+  `mark_paid`), so the gate calls predict_travel directly.
+- With `MAPS_SERVER_KEY` set, order creation can now make a live 4s-timeout
+  Maps call. travel_cache absorbs repeats; any failure falls back instantly.
+
+### The TTL clause is NOT the queue's clause, deliberately
+
+The brief said "add the identical release_at exemption". That would have
+been a live bug. Two different questions:
+
+    queue    (release_at IS NULL OR release_at <= now())   TIME
+    sweeper  (release_at IS NULL)                          STATE
+
+Between release_at passing and the release executing, an order becomes
+TTL-eligible while still carrying the `updated_at` stamped at PAYMENT,
+hours earlier — and `_expire_stale_pickups` runs FIRST inside
+`list_active_orders`. The next owner poll would ABANDON a paid order at the
+exact moment it was due to reach the kitchen. Clearing release_at at
+release, in the same breath as `advance_status` stamps updated_at, restarts
+the 45-min window at the right moment. `refresh_scheduled_releases` is also
+ordered before the sweep, so the race cannot be lost from either side.
+
+Accepted consequence: while held, an order is TTL-exempt indefinitely.
+Bounded by same-day scheduling; a held order has reached no kitchen.
+
+### Kitchen-trust events moved to release — prerequisite, not polish
+
+`mark_paid` no longer infers ORDER_ACCEPTED/PREP_STARTED for a HELD order.
+`compute_outcome` derives `actual_prep_s` as (ready_at - prep_started_at),
+so a held order would have logged HOURS of prep — poisoning `median_prep_s`
+and `trusted_order_count`, and trusted_order_count feeds straight back into
+sigma. The first scheduled orders would have corrupted the very statistic
+the engine uses to size its own uncertainty. ASAP orders unchanged.
+
+### hold-first, refine-down
+
+`mark_paid` seeds `release_at = requested_pickup_at` (the latest, safest
+value) INSIDE the payment transaction, so a held order is never visible for
+even one poll. Every later derivation can only move it earlier, so "never
+released early" holds at every instant, including between the two writes.
+If the refinement never runs the order still releases — at pickup time,
+with the customer waiting mu minutes. Degraded, not lost, and self-healing.
+
+### Poller: the kill switch must never gate a customer feature
+
+`auto_advance_schedule` gains `kind`. `AUTO_ADVANCE_ROSTER_ORDERS` is off by
+default, absent from render.yaml, therefore OFF IN PROD — riding it would
+have meant the feature silently never firing. 'release' rows ignore it
+entirely and drive exactly ONE advance before deletion.
+
+`list_active_orders` is the PRIMARY mechanism (owner app polls every 15s,
+which is exactly when a release matters); the poller is the backstop
+because Render's free tier sleeps and takes the asyncio loop with it. The
+poller also re-derives UNSCOPED each tick — `process_due_auto_advances` by
+definition only selects already-due rows, and a held order's due_at is in
+the future, so it would otherwise never be re-derived.
+
+### Two fixes beyond the brief
+
+- **Roster handoff at release.** auto_advance_schedule is keyed on
+  order_id, so a roster row at payment would clobber the release row and
+  march a held order straight into the kitchen. Held orders skip roster
+  scheduling and rejoin the chain at RELEASE, from PREPARING.
+- **Orphan-row cleanup.** A held order can leave the live set WITHOUT a
+  release: its pickup code is live so `lookup_pickup` matches it and staff
+  can serve an early arrival, and the testing dashboard can reject it.
+  Neither reaches `_release_held_order`, so the schedule row outlived its
+  order and the poller re-examined it every 5s forever.
+
+### SHIPS INERT — and that cuts both ways
+
+All 8 prod outlets have NULL `opens_at`/`closes_at`, which
+outlet_availability reads as always-open. **The gate refuses nothing in
+production today.** The moment ANY owner enters real hours it goes live for
+that outlet and it is a genuine behaviour change: an ASAP order is then
+also refused when the ESTIMATED ARRIVAL lands inside the 30-min pre-close
+cutoff. With no origin that estimate is the wide 20-min fallback, so that
+outlet starts refusing ~50 min before close rather than 30.
+
+Corollary worth remembering: this cannot be validated against prod until
+someone sets hours. The overnight rule (today ends at the outlet's own
+closes_at) is likewise untested against real data — no prod outlet has
+hours at all, let alone a window crossing midnight.
+
+### SAFETY_MARGIN
+
+`SCHEDULED_RELEASE_SAFETY_MARGIN_S = 420`, its own constant, NOT an alias
+of `KITCHEN_NOTIFY_SAFETY_BUFFER_S` (300). They absorb the same kind of
+slop but protect different promises — the train buffer guards against a
+stated arrival being wrong (the customer's own estimate, sigma 900s), this
+one against OUR prep estimate being wrong for a time they chose exactly.
+Tuning one must not silently retune the other, so they are declared apart
+even while the values would agree.
+
+420 because early is cheap (food sits inside hold tolerance, customer is
+coming at a time they picked) and late is the whole failure mode. Starting
+wide and shrinking from data is the safe direction. The sixth
+prediction_log predictor ('release', no DDL needed — `predictor` is plain
+TEXT with no CHECK) carries the margin it used alongside its decision, so
+`prediction_log JOIN customer_orders ON requested_pickup_at` makes
+shrinking it a query rather than an argument.
+
+### Rejection copy — one string, four failure shapes
+
+    We're sorry — we're not able to take orders for this pickup time.
+    Please try a different time or check back later.
+
+Past time, beyond horizon, closed at arrival, inside the cutoff. The
+remedy is identical in all four, and a gate that explains its internal
+taxonomy tells the customer nothing they can act on. The precise reason
+goes to prediction_log, where it is useful.
+
+### Client
+
+`closing_soon` no longer blocks everything. `blocked =
+!outlet.isAcceptingOrders` collapsed 'closed' and 'closing_soon' into one
+refusal, which would have made scheduling dead exactly when it is worth
+the most. Closed still blocks all; closing_soon blocks ASAP only and steps
+aside once a slot is chosen.
+
+Two picker bugs fixed: `maxAhead.inHours` rendered any sub-hour bound as
+"within the next 0 hours" (unfollowable advice, and scheduled pickup hits
+it constantly since the last slot before close is often minutes away) —
+now names the boundary, "Pick a time before 9:30 pm". And the cap became
+an optional absolute `latest`, because a Duration cannot express "before
+this restaurant closes". Roll-to-tomorrow KEPT, not banned: an 18:00-02:00
+outlet is still having "today" at 00:30, and a rolled time simply fails the
+ceiling unless the shop is genuinely open then.
+
+**Stale doc corrected**: `outlet.dart` claimed opensAt/closesAt were
+"currently ALWAYS null, a backend gap". True up to migration 021, WRONG
+SINCE 024 — /customer/outlets has been sending real hours all along. The
+next person to read it would have added a redundant fetch for data the app
+already had.
+
+### Tests
+
+- backend **429 tests, 408 pass, 21 fail**. The 21 are byte-identical to
+  the pre-existing set on clean HEAD, verified as a SET (not just a count)
+  across two consecutive runs. Zero introduced. +47 new.
+- customer_app **530 pass** (was 507), analyze clean. +23 new.
+
+**Flakiness note for future baselines**: 5 admin-order-log tests
+(`test_api_promotions_account.TestAdminOrders`, the paid-gate admin test)
+oscillate between runs — the admin log has a LIMIT and the test's own order
+falls off the end once enough orders accumulate in the shared test DB.
+Mid-session they read 16 failures, at ship time 21. Compare the SET, never
+the count.
+
+One existing assertion was modified: `test_api_testing_actions.py` counted
+`auto_advance_schedule` GLOBALLY, which held only while roster automation
+was the sole writer of that table. Scoped to `kind='roster'`; its claim is
+unchanged and just as strict.
+
+### Known edge, flagged not fixed
+
+An early counter pickup of a held order completes it with no PREP_STARTED,
+so `compute_outcome` scores `kitchen_trust = 0.0` (`prep_started_absent`).
+Honest — the kitchen genuinely never cooked it — but it means early
+pickups mildly depress an outlet's trust stats.
+
+---
