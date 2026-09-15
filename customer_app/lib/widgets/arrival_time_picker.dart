@@ -57,6 +57,10 @@ class ArrivalTimePicker extends StatefulWidget {
     required this.initial,
     required this.maxAhead,
     this.vehicleNoun = 'train',
+    this.latest,
+    this.minAhead = Duration.zero,
+    this.title,
+    this.confirmLabel = 'Set arrival time',
   });
 
   /// Where the wheels start. Usually now + a short lead time.
@@ -64,10 +68,35 @@ class ArrivalTimePicker extends StatefulWidget {
 
   /// Arrivals further ahead than this are rejected, matching the caller's own
   /// cap so the sheet cannot return a value the screen would then refuse.
+  ///
+  /// Superseded by [latest] when that is supplied. Kept because the declared-
+  /// arrival callers genuinely think in "within the next 6 hours", while
+  /// scheduled pickup thinks in "before this restaurant closes" — a duration
+  /// and an instant, and forcing either into the other's shape loses meaning.
   final Duration maxAhead;
 
   /// See the note on the constructor. 'train' | 'metro'.
   final String vehicleNoun;
+
+  /// Hard upper bound as an ABSOLUTE instant. Wins over [maxAhead].
+  ///
+  /// Absolute rather than a duration because scheduled pickup's ceiling is the
+  /// outlet's closing time, and that has to survive the roll-to-tomorrow below.
+  /// An outlet whose window crosses midnight (18:00 -> 02:00) legitimately
+  /// accepts a 00:30 pickup: by the calendar that is tomorrow, by the
+  /// restaurant's own day it is tonight. Expressing the cap as an instant makes
+  /// that one comparison instead of a special case.
+  final DateTime? latest;
+
+  /// Minimum lead time. A pick closer than this is refused rather than silently
+  /// accepted and then released immediately by the server.
+  final Duration minAhead;
+
+  /// Overrides the "When does your train arrive?" heading. Scheduled pickup is
+  /// not asking about a vehicle at all.
+  final String? title;
+
+  final String confirmLabel;
 
   /// Shows the sheet. Resolves to null if dismissed.
   static Future<DateTime?> show(
@@ -75,6 +104,10 @@ class ArrivalTimePicker extends StatefulWidget {
     required DateTime initial,
     required Duration maxAhead,
     String vehicleNoun = 'train',
+    DateTime? latest,
+    Duration minAhead = Duration.zero,
+    String? title,
+    String confirmLabel = 'Set arrival time',
   }) {
     return showModalBottomSheet<DateTime>(
       context: context,
@@ -84,6 +117,10 @@ class ArrivalTimePicker extends StatefulWidget {
         initial: initial,
         maxAhead: maxAhead,
         vehicleNoun: vehicleNoun,
+        latest: latest,
+        minAhead: minAhead,
+        title: title,
+        confirmLabel: confirmLabel,
       ),
     );
   }
@@ -110,6 +147,12 @@ class _ArrivalTimePickerState extends State<ArrivalTimePicker> {
 
   /// The chosen wall-clock time, rolled to tomorrow if it has already passed —
   /// the common case for a late-evening pick just after midnight, not an error.
+  ///
+  /// The roll is kept for scheduled pickup too, and deliberately: an outlet
+  /// open 18:00 -> 02:00 is still having "today" at 00:30. What stops that
+  /// becoming an accidental booking for tomorrow lunchtime is [_latestAllowed]
+  /// below, not a ban on rolling — a rolled time simply fails the ceiling
+  /// unless the restaurant is genuinely still open then.
   DateTime get _resolved {
     final now = DateTime.now();
     var when = DateTime(now.year, now.month, now.day, _hour, _minute);
@@ -117,7 +160,36 @@ class _ArrivalTimePickerState extends State<ArrivalTimePicker> {
     return when;
   }
 
-  bool get _tooFar => _resolved.difference(DateTime.now()) > widget.maxAhead;
+  /// The ceiling, as an instant. An explicit [latest] wins; otherwise the
+  /// caller's duration cap is projected from now.
+  DateTime get _latestAllowed =>
+      widget.latest ?? DateTime.now().add(widget.maxAhead);
+
+  bool get _tooFar => _resolved.isAfter(_latestAllowed);
+
+  bool get _tooSoon =>
+      _resolved.difference(DateTime.now()) < widget.minAhead;
+
+  /// "10:30 pm" — the same 12-hour shape the outlet card's hours line uses, so
+  /// a customer comparing the two is not reading two clocks.
+  static String _clock(DateTime t) {
+    final suffix = t.hour < 12 ? 'am' : 'pm';
+    final h = t.hour % 12 == 0 ? 12 : t.hour % 12;
+    return '$h:${t.minute.toString().padLeft(2, '0')} $suffix';
+  }
+
+  /// "45 minutes" / "2 hours" / "1 hour 30 minutes". Replaces the old
+  /// `maxAhead.inHours` interpolation, which rendered any sub-hour bound as
+  /// "within the next 0 hours" — advice that cannot be followed.
+  static String _spell(Duration d) {
+    final total = d.inMinutes;
+    if (total < 60) return '$total minute${total == 1 ? '' : 's'}';
+    final h = total ~/ 60;
+    final m = total % 60;
+    final hours = '$h hour${h == 1 ? '' : 's'}';
+    if (m == 0) return hours;
+    return '$hours $m minute${m == 1 ? '' : 's'}';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -147,7 +219,8 @@ class _ArrivalTimePickerState extends State<ArrivalTimePicker> {
             ),
             const SizedBox(height: 16),
             Text(
-              'When does your ${widget.vehicleNoun} arrive?',
+              widget.title ?? 'When does your ${widget.vehicleNoun} arrive?',
+              textAlign: TextAlign.center,
               style: textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w500),
             ),
             const SizedBox(height: 4),
@@ -211,8 +284,20 @@ class _ArrivalTimePickerState extends State<ArrivalTimePicker> {
             const SizedBox(height: 14),
             if (_tooFar) ...[
               Text(
-                'Pick a time within the next ${widget.maxAhead.inHours} hours.',
+                // Names the actual boundary rather than a duration. For a
+                // scheduled pickup that boundary IS the restaurant's closing
+                // time, which is the one fact that makes the refusal make
+                // sense; for a train it still reads naturally.
+                'Pick a time before ${_clock(_latestAllowed)}.',
                 key: const Key('arrival_too_far'),
+                textAlign: TextAlign.center,
+                style: textTheme.bodyMedium?.copyWith(color: AppColors.tomato),
+              ),
+              const SizedBox(height: 10),
+            ] else if (_tooSoon) ...[
+              Text(
+                'Pick a time at least ${_spell(widget.minAhead)} from now.',
+                key: const Key('arrival_too_soon'),
                 textAlign: TextAlign.center,
                 style: textTheme.bodyMedium?.copyWith(color: AppColors.tomato),
               ),
@@ -220,10 +305,11 @@ class _ArrivalTimePickerState extends State<ArrivalTimePicker> {
             ],
             NeoButton(
               key: const Key('arrival_confirm'),
-              label: 'Set arrival time',
+              label: widget.confirmLabel,
               icon: Icons.check,
-              onPressed:
-                  _tooFar ? null : () => Navigator.of(context).pop(_resolved),
+              onPressed: (_tooFar || _tooSoon)
+                  ? null
+                  : () => Navigator.of(context).pop(_resolved),
             ),
           ],
         ),

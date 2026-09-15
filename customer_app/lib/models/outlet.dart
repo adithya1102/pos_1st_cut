@@ -185,24 +185,50 @@ class Outlet {
 
   /// Serving hours, as the API reports them ("09:00", "22:30").
   ///
-  /// ## Currently ALWAYS null, and that is a backend gap, not a bug here
+  /// REAL DATA since migration 024. `/customer/outlets` populates both from
+  /// `outlets.opens_at` / `outlets.closes_at`, and `order_status` alongside
+  /// them is computed server-side by `CarevoService.outlet_availability` — the
+  /// same function that gates order creation, so the label and the gate cannot
+  /// disagree.
   ///
-  /// The `outlets` table has no hours columns — checked against every migration
-  /// 001-021, none of which adds one — so `/customer/outlets` has nothing to
-  /// send. The fields, the parsing and [hoursLabel] are wired up so the display
-  /// lights up the moment a migration adds them, and every consumer HIDES the
-  /// line while they are null rather than inventing plausible hours. A guessed
-  /// "10am - 10pm" is the one failure mode worth avoiding completely: it sends
-  /// someone to a shut restaurant with the app's word for it.
+  /// (This doc previously said the columns did not exist and that these were
+  /// always null. That was true up to migration 021 and has been wrong since
+  /// 024. It is corrected here because scheduled pickup bounds its time picker
+  /// on [closesAt], and the next person to read the old note would have added a
+  /// redundant endpoint to fetch data the app already had.)
   ///
-  /// Note that `is_open` is not a substitute — the backend hardcodes it to
-  /// `true` for every outlet (`carevo_customer/service.py`), so the OPEN pill
-  /// and the "Open now" filter currently assert nothing.
+  /// Still NULLABLE, and null still means something specific: the owner has
+  /// not entered hours, which the backend reads as ALWAYS OPEN. Consumers must
+  /// treat null as "no constraint", never as "closed" — and never invent
+  /// plausible hours, which is the one failure worth avoiding completely: a
+  /// guessed "10am - 10pm" sends someone to a shut restaurant with the app's
+  /// word for it.
   final String? opensAt;
   final String? closesAt;
 
   bool get hasHours =>
       (opensAt?.isNotEmpty ?? false) && (closesAt?.isNotEmpty ?? false);
+
+  /// [closesAt] as the next absolute instant the outlet shuts, or null when no
+  /// hours are on record (always-open).
+  ///
+  /// Rolls to tomorrow when the closing time has already passed today, which is
+  /// what makes an overnight window (18:00 -> 02:00) work: at 23:00 the next
+  /// close is 02:00 TOMORROW by the calendar, and tonight by the restaurant's
+  /// own day. Scheduled pickup bounds its picker on this.
+  DateTime? nextCloseAfter(DateTime from) {
+    if (!hasHours) return null;
+    final parts = closesAt!.trim().split(':');
+    if (parts.length < 2) return null;
+    final h = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1]);
+    if (h == null || m == null || h < 0 || h > 23 || m < 0 || m > 59) {
+      return null;
+    }
+    var close = DateTime(from.year, from.month, from.day, h, m);
+    if (!close.isAfter(from)) close = close.add(const Duration(days: 1));
+    return close;
+  }
 
   /// When this outlet joined the platform. Backs the "Newest" sort.
   ///

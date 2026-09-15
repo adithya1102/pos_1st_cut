@@ -283,6 +283,81 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   /// the inline error; cleared as soon as a time is picked or the mode changes.
   bool _arrivalMissing = false;
 
+  // --- scheduled pickup (migration 031) ------------------------------------
+
+  /// False = order now (every order before this shipped). True = the customer
+  /// has chosen "Pick a time".
+  bool _scheduled = false;
+
+  /// The pickup time chosen, once they have chosen one. Sent as
+  /// `requested_pickup_at`; null for an ASAP order.
+  DateTime? _requestedPickup;
+
+  /// Set when Pay is tapped with scheduling on but no time chosen. Same
+  /// treatment as [_arrivalMissing] — an inline message rather than a dead
+  /// button, for the same reason.
+  bool _pickupMissing = false;
+
+  /// Client-side floor on how soon a slot may be. The SERVER is the authority
+  /// and accepts anything from now onward (releasing immediately when there is
+  /// no room to hold), so this is purely about not offering a "schedule" that
+  /// is indistinguishable from ordering now.
+  static const _minScheduleLead = Duration(minutes: 30);
+
+  /// Subtracted from the outlet's closing time to get the last offerable slot.
+  ///
+  /// Mirrors the server's ORDER_CUTOFF_MINUTES, which is what
+  /// outlet_availability enforces when the arrival gate evaluates the chosen
+  /// instant. Matching it means the picker never offers a time the server will
+  /// then refuse — the app is not re-implementing the rule, it is declining to
+  /// contradict it.
+  static const _schedulePrepAllowance = Duration(minutes: 30);
+
+  /// Last slot this outlet can be asked for today, or null when it keeps no
+  /// hours (always-open, so only the horizon applies).
+  DateTime? _latestSlotFor(Outlet? outlet) {
+    final close = outlet?.nextCloseAfter(DateTime.now());
+    if (close == null) return null;
+    return close.subtract(_schedulePrepAllowance);
+  }
+
+  Future<void> _pickPickupTime(Outlet? outlet) async {
+    final now = DateTime.now();
+    final latest = _latestSlotFor(outlet);
+    // An outlet with no hours on record is always-open server-side, so falling
+    // back to the end of today is the honest bound — NOT refusing to offer a
+    // picker, which would read as "scheduling is unavailable here" when in fact
+    // it is unconstrained.
+    final ceiling = latest ??
+        DateTime(now.year, now.month, now.day, 23, 59);
+
+    final when = await ArrivalTimePicker.show(
+      context,
+      initial: now.add(const Duration(minutes: 45)),
+      // Unused once `latest` is given, but the parameter is required and the
+      // two must not disagree if that ever changes.
+      maxAhead: ceiling.difference(now),
+      latest: ceiling,
+      minAhead: _minScheduleLead,
+      title: 'When would you like to collect?',
+      confirmLabel: 'Set pickup time',
+    );
+    if (when == null || !mounted) return;
+    setState(() {
+      _requestedPickup = when;
+      _pickupMissing = false;
+    });
+  }
+
+  /// Whether this outlet can be asked for a future slot at all.
+  ///
+  /// Offered while the outlet is open OR closing soon — closing_soon is the
+  /// window where scheduling is most useful, since "no room to cook that now"
+  /// is not an answer to a request for later. A fully closed shutter offers
+  /// nothing, matching the server, which refuses scheduled orders there too.
+  bool _canSchedule(Outlet? outlet) =>
+      outlet == null || outlet.orderStatus != 'closed';
+
   /// Upper bound on how far ahead an arrival may be declared.
   ///
   /// 6h is generous enough for a genuine long-distance train while still
@@ -579,6 +654,14 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       return;
     }
 
+    // Scheduling turned on but no slot chosen. Same shape as the arrival check
+    // above and for the same reason — a Pay button that silently does nothing
+    // teaches the customer the app is broken.
+    if (_scheduled && _requestedPickup == null) {
+      setState(() => _pickupMissing = true);
+      return;
+    }
+
     setState(() => _placing = true);
     try {
       if (!await _ensureAvailable(cart)) return;
@@ -596,6 +679,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               promotionId: _offer?.id,
               declaredArrivalAt:
                   mode.usesDeclaredArrival ? _declaredArrival : null,
+              // Only when the toggle is actually on: a stale _requestedPickup
+              // left over from switching back to ASAP must not quietly hold
+              // the order.
+              requestedPickupAt: _scheduled ? _requestedPickup : null,
             ),
           );
       if (!mounted) return;
@@ -693,8 +780,22 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     // means the customer is told before they tap rather than after. Null outlet
     // (should not happen on this screen) is treated as "accepting" so the
     // server stays the authority.
+    //
+    // SPLIT IN TWO by scheduled pickup (031). This used to be a single
+    // !isAcceptingOrders test, which collapses 'closed' and 'closing_soon' into
+    // one refusal — and that would have made scheduling unreachable at exactly
+    // the moment it earns its keep. "We cannot cook that in the 20 minutes we
+    // have left" is a true statement about ordering NOW and says nothing about
+    // a request for 19:30.
+    //
+    // So: a closed shutter still blocks everything (the server agrees, and
+    // refuses scheduled orders there too), while closing_soon blocks only the
+    // ASAP path and steps aside once a slot has actually been chosen.
     final outlet = cart.outlet;
-    final blocked = outlet != null && !outlet.isAcceptingOrders;
+    final closed = outlet != null && outlet.orderStatus == 'closed';
+    final closingSoon = outlet != null && outlet.orderStatus == 'closing_soon';
+    final hasSlot = _scheduled && _requestedPickup != null;
+    final blocked = closed || (closingSoon && !hasSlot);
 
     // Back closes the keyboard BEFORE it leaves checkout.
     //
@@ -712,7 +813,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         if (!didPop) releaseFocus();
       },
       child: _buildScaffold(context, cart, textTheme, c, subtotal, discount,
-          payable, outlet, blocked),
+          payable, outlet, blocked, closingSoon),
     );
   }
 
@@ -726,6 +827,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     double payable,
     Outlet? outlet,
     bool blocked,
+    bool closingSoon,
   ) {
     return Scaffold(
       appBar: AppBar(
@@ -749,8 +851,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       child: Text(
                         // `blocked` is only true when outlet is non-null, but
                         // that promotion is lost across the parameter boundary.
-                        outlet!.closedReason ??
-                            'This outlet is not accepting orders right now.',
+                        //
+                        // When it is closing_soon the refusal has a way out —
+                        // say so, rather than leaving the customer to discover
+                        // the toggle further up the page on their own.
+                        closingSoon
+                            ? 'Too close to closing for an order right now — '
+                                'pick a pickup time above to schedule one.'
+                            : (outlet!.closedReason ??
+                                'This outlet is not accepting orders right now.'),
                         style: textTheme.bodyMedium
                             ?.copyWith(color: AppColors.tomato),
                       ),
@@ -888,6 +997,110 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 locating: _locating,
                 key: const Key('checkout_origin_status'),
               ),
+            ],
+            // --- scheduled pickup (migration 031) ------------------------
+            // Placed after the travel question and before payment: the two
+            // answers together are what let the kitchen be timed, and the
+            // choice has to be made before money moves — the server refuses an
+            // infeasible slot at order creation, which is only useful if the
+            // customer has already picked one.
+            if (_canSchedule(cart.outlet)) ...[
+              const SizedBox(height: 24),
+              Text('When do you want it?', style: textTheme.headlineSmall),
+              const SizedBox(height: 6),
+              Text(
+                _scheduled
+                    ? 'We\'ll hold your order and send it to the kitchen so '
+                        'it\'s ready when you arrive.'
+                    : 'Order now, or pick a time later today.',
+                style: textTheme.bodyMedium?.copyWith(color: c.inkSoft),
+              ),
+              const SizedBox(height: 14),
+              Row(
+                key: const Key('schedule_toggle'),
+                children: [
+                  Expanded(
+                    child: _ScheduleChoice(
+                      key: const Key('schedule_asap'),
+                      label: 'Order now',
+                      icon: Icons.bolt,
+                      selected: !_scheduled,
+                      onTap: () => setState(() {
+                        _scheduled = false;
+                        _pickupMissing = false;
+                      }),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _ScheduleChoice(
+                      key: const Key('schedule_later'),
+                      label: 'Pick a time',
+                      icon: Icons.schedule,
+                      selected: _scheduled,
+                      onTap: () {
+                        setState(() => _scheduled = true);
+                        // Opening the picker on the same tap: choosing "Pick a
+                        // time" and then having to find a second control to
+                        // actually pick one is the disconnect that lost the
+                        // origin card its origins (migration 030).
+                        _pickPickupTime(cart.outlet);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              if (_scheduled) ...[
+                const SizedBox(height: 12),
+                NeoCard(
+                  key: const Key('pickup_time_field'),
+                  onTap: () => _pickPickupTime(cart.outlet),
+                  color: _requestedPickup != null ? c.accent : c.surface,
+                  borderColor: _pickupMissing ? AppColors.tomato : null,
+                  child: Row(
+                    children: [
+                      Icon(Icons.schedule,
+                          color: _requestedPickup != null ? c.onAccent : c.ink),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Text(
+                          _requestedPickup == null
+                              ? 'Set pickup time'
+                              : 'Ready for '
+                                  '${TimeOfDay.fromDateTime(_requestedPickup!).format(context)}',
+                          style: textTheme.titleMedium?.copyWith(
+                              color: _requestedPickup != null
+                                  ? c.onAccent
+                                  : c.ink),
+                        ),
+                      ),
+                      Icon(Icons.edit,
+                          size: 18,
+                          color: _requestedPickup != null
+                              ? c.onAccent
+                              : c.inkSoft),
+                    ],
+                  ),
+                ),
+                if (_pickupMissing) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    key: const Key('pickup_required_error'),
+                    children: [
+                      Icon(Icons.error_outline,
+                          size: 18, color: AppColors.tomato),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Choose a pickup time, or switch back to Order now.',
+                          style: textTheme.bodyMedium
+                              ?.copyWith(color: AppColors.tomato),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
             ],
             const SizedBox(height: 24),
             Text('Offers', style: textTheme.headlineSmall),
@@ -1217,6 +1430,68 @@ class _TransportChip extends StatelessWidget {
             Text(mode.label,
                 style: textTheme.titleSmall
                     ?.copyWith(color: selected ? c.onAccent : c.ink)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One half of the Order-now / Pick-a-time choice (migration 031).
+///
+/// Shares [_TransportChip]'s visual language deliberately — same border weight,
+/// same accent fill, same hard shadow — because it is the same kind of decision
+/// one section further down the page. What differs is the layout: these two
+/// stretch to fill the row rather than wrapping to their content, so the choice
+/// reads as a pair of alternatives rather than as the start of another list of
+/// chips the customer should scan for more options.
+class _ScheduleChoice extends StatelessWidget {
+  const _ScheduleChoice({
+    super.key,
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final textTheme = Theme.of(context).textTheme;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: selected ? c.accent : c.surface,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: c.border, width: 2.5),
+          boxShadow: [
+            BoxShadow(
+              color: c.shadow,
+              offset: selected ? const Offset(3, 3) : const Offset(2, 2),
+              blurRadius: 0,
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 20, color: selected ? c.onAccent : c.ink),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                style: textTheme.titleSmall
+                    ?.copyWith(color: selected ? c.onAccent : c.ink),
+              ),
+            ),
           ],
         ),
       ),

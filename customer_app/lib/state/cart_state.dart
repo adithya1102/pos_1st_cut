@@ -391,6 +391,7 @@ class CartState extends ChangeNotifier {
     String? promotionId,
     String? promotionCode,
     DateTime? declaredArrivalAt,
+    DateTime? requestedPickupAt,
   }) =>
       {
         'outlet_id': _outlet?.id,
@@ -411,6 +412,12 @@ class CartState extends ChangeNotifier {
         // and silently shift the kitchen notification by the offset.
         if (declaredArrivalAt != null)
           'declared_arrival_at': declaredArrivalAt.toUtc().toIso8601String(),
+        // Scheduled pickup (migration 031). UTC on the wire for exactly the
+        // same reason as declaredArrivalAt above — and it matters more here,
+        // because this value decides when the kitchen is told to start, so an
+        // offset error would put the food out hours from when it was wanted.
+        if (requestedPickupAt != null)
+          'requested_pickup_at': requestedPickupAt.toUtc().toIso8601String(),
         'origin_lat': ?originLat,
         'origin_lng': ?originLng,
         'origin_source': ?originSource,
