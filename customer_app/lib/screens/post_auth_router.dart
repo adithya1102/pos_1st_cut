@@ -25,8 +25,8 @@ import 'name_capture_screen.dart';
 /// happened to put in the name field.
 ///
 /// A legacy account with no name is deliberately NOT trapped here — it reaches
-/// Home and simply gets the nameless greeting ("Good morning" rather than
-/// "Good morning, Asha"), with Account → Your name available whenever they
+/// Home and simply gets the nameless greeting ("Welcome back" rather than
+/// "Welcome back, Asha"), with Account → Your name available whenever they
 /// want it. Blocking someone who has been ordering for months, on launch, to
 /// collect a nicety is a worse trade than a slightly plainer greeting.
 ///

@@ -1,9 +1,12 @@
-// Task 3 — the time-of-day greeting.
-// Task 4 — the "Offers only" empty-state button caption.
+// The home greeting, and the "Offers only" empty-state button caption.
 //
-// Both are small label fixes with a shared theme: a message that was wrong for
-// a correct state. The greeting called midnight "morning"; the offers filter
-// called a correct zero-match "Try again", as if something had failed.
+// Both began as small label fixes with a shared theme: a message that was wrong
+// for a correct state. The greeting called midnight "morning"; the offers
+// filter called a correct zero-match "Try again", as if something had failed.
+//
+// The greeting has since gone further — the time-of-day banding is gone
+// entirely rather than re-tuned, so the cases here now assert that the hour
+// CANNOT change the answer. See welcomeGreeting for why the bands went.
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -13,7 +16,7 @@ import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:customer_app/screens/home_screen.dart' show greetingFor;
+import 'package:customer_app/screens/home_screen.dart' show welcomeGreeting;
 import 'package:customer_app/screens/outlets_screen.dart';
 import 'package:customer_app/services/api_client.dart';
 import 'package:customer_app/services/catalog_service.dart';
@@ -25,38 +28,42 @@ import 'package:customer_app/theme/theme_provider.dart';
 
 void main() {
   // =========================================================================
-  // Task 3 — greeting bands (pure, so the hour is pinned rather than "now")
+  // The greeting — now TIME-INVARIANT
   // =========================================================================
-  group('greeting matches the local hour', () {
-    test('midnight and the small hours are NOT "Good morning"', () {
-      // The reported bug: opening the app at 00:00 said "Good morning".
-      for (final h in [0, 1, 2, 3, 4]) {
-        expect(greetingFor(h, null), 'Good evening',
-            reason: 'hour $h is late night, not morning');
-      }
+  //
+  // These replace the old hour-band cases wholesale. That group pinned an hour
+  // and asserted which of three greetings came back; there are no bands left to
+  // pin, and the property worth holding is the opposite one — that the hour
+  // cannot change the answer.
+  group('greeting is the same at every hour', () {
+    test('identical for all 24 hours of the day', () {
+      // The old banding could only be tested by injecting an hour. This asserts
+      // the stronger thing: there is no longer an input that could vary it.
+      final answers = {for (var h = 0; h < 24; h++) welcomeGreeting('Asha')};
+      expect(answers, hasLength(1),
+          reason: 'the greeting must not depend on the time of day');
+      expect(answers.single, 'Welcome back, Asha');
     });
 
-    test('morning is 05:00–11:59', () {
-      expect(greetingFor(5, null), 'Good morning');
-      expect(greetingFor(9, null), 'Good morning');
-      expect(greetingFor(11, null), 'Good morning');
-    });
-
-    test('afternoon is 12:00–16:59', () {
-      expect(greetingFor(12, null), 'Good afternoon');
-      expect(greetingFor(16, null), 'Good afternoon');
-    });
-
-    test('evening is 17:00 onward', () {
-      expect(greetingFor(17, null), 'Good evening');
-      expect(greetingFor(21, null), 'Good evening');
-      expect(greetingFor(23, null), 'Good evening');
+    test('the small hours read the same as midday', () {
+      // The bug that forced the last fix here: 00:00 was greeted "Good
+      // morning". There is now no hour at which anything different is said.
+      expect(welcomeGreeting('Asha'), 'Welcome back, Asha');
     });
 
     test('the name is appended when present', () {
-      expect(greetingFor(9, 'Asha'), 'Good morning, Asha');
-      expect(greetingFor(0, '  '), 'Good evening',
-          reason: 'a blank name adds nothing');
+      expect(welcomeGreeting('Asha'), 'Welcome back, Asha');
+    });
+
+    test('a missing or blank name degrades to the bare greeting', () {
+      expect(welcomeGreeting(null), 'Welcome back');
+      expect(welcomeGreeting(''), 'Welcome back');
+      expect(welcomeGreeting('   '), 'Welcome back',
+          reason: 'a blank name adds nothing, and never a dangling comma');
+    });
+
+    test('surrounding whitespace on a real name is trimmed', () {
+      expect(welcomeGreeting('  Asha  '), 'Welcome back, Asha');
     });
   });
 
@@ -179,6 +186,139 @@ void main() {
       // And it is classified: a 500 is the server category, not a generic
       // "could not load restaurants".
       expect(find.text('We hit a little roadblock.'), findsOneWidget);
+    });
+  });
+
+  // =========================================================================
+  // "Schedule ahead" — the discoverability chip
+  // =========================================================================
+  //
+  // Scheduling is otherwise invisible until checkout, three screens past the
+  // point where knowing would have changed which restaurant someone picked.
+  // This chip's whole job is awareness; it schedules nothing.
+  group('Schedule ahead chip', () {
+    http.Response okJson(Object body) => http.Response(
+        jsonEncode(body), 200, headers: {'content-type': 'application/json'});
+
+    Widget host() {
+      SharedPreferences.setMockInitialValues({'carevo_access_token': 'valid'});
+      final api = ApiClient(client: MockClient((req) async {
+        if (req.url.path.contains('/customer/orders')) return okJson(const []);
+        if (req.url.path.contains('/customer/outlets')) {
+          return okJson([
+            {
+              'id': 'a',
+              'name': 'Test Kitchen',
+              'address': 'Anna Nagar, Chennai',
+              'is_open': true,
+              'order_status': 'open',
+              'distance_km': 1.0,
+            }
+          ]);
+        }
+        return okJson(const []);
+      }));
+      return MultiProvider(
+        providers: [
+          Provider<ApiClient>.value(value: api),
+          Provider<CatalogService>(create: (_) => CatalogService(api)),
+          Provider<CustomerService>(create: (_) => CustomerService(api)),
+          ChangeNotifierProvider<LocationService>(
+              create: (_) => LocationService()),
+          ChangeNotifierProvider<CartState>(create: (_) => CartState()),
+          ChangeNotifierProvider<ThemeProvider>(create: (_) => ThemeProvider()),
+        ],
+        child: MaterialApp(theme: AppTheme.light(), home: const OutletsScreen()),
+      );
+    }
+
+    Future<void> pump(WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1170, 2532);
+      tester.view.devicePixelRatio = 3.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(host());
+      await tester.pump(const Duration(milliseconds: 600));
+    }
+
+    testWidgets('renders in the chip row, immediately after offers',
+        (tester) async {
+      await pump(tester);
+      expect(find.byKey(const Key('chip_offers')), findsOneWidget);
+      expect(find.byKey(const Key('chip_schedule')), findsOneWidget);
+      expect(find.text('Schedule ahead'), findsOneWidget);
+
+      // On a 390pt phone these two do NOT fit side by side and the Wrap puts
+      // the second on its own line. That is measured, not assumed: "Offers
+      // only" alone is 218pt of the 350pt available, so no label short enough
+      // to sit beside it exists ("Schedule" is still 175pt). Asserting
+      // same-row adjacency here would be asserting a layout the app cannot
+      // produce.
+      //
+      // What IS worth holding: it comes after offers in the row and is BELOW
+      // it, i.e. it wrapped rather than being clipped off the right edge.
+      final offers = tester.getTopLeft(find.byKey(const Key('chip_offers')));
+      final schedule = tester.getTopLeft(find.byKey(const Key('chip_schedule')));
+      expect(schedule.dy, greaterThan(offers.dy),
+          reason: 'wrapped onto the next line, not clipped');
+      expect(schedule.dx, offers.dx, reason: 'both start at the same margin');
+    });
+
+    testWidgets('is fully on screen — the point of it is to be seen',
+        (tester) async {
+      // The regression this guards: a horizontal scroller would have "fixed"
+      // the original 140px overflow by letting this chip sit off the right
+      // edge, silently defeating the only reason it exists.
+      await pump(tester);
+      final r = tester.getRect(find.byKey(const Key('chip_schedule')));
+      final screen = tester.getSize(find.byType(MaterialApp));
+      expect(r.left, greaterThanOrEqualTo(0));
+      expect(r.right, lessThanOrEqualTo(screen.width),
+          reason: 'the chip must not extend past the right edge');
+      expect(r.width, greaterThan(0));
+    });
+
+    testWidgets('tapping it opens the explainer', (tester) async {
+      await pump(tester);
+      expect(find.byKey(const Key('schedule_info_sheet')), findsNothing);
+
+      await tester.tap(find.byKey(const Key('chip_schedule')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('schedule_info_sheet')), findsOneWidget);
+      expect(find.textContaining('pick a time to collect later today'),
+          findsOneWidget);
+      expect(find.textContaining('Choose a restaurant to get started'),
+          findsOneWidget);
+    });
+
+    testWidgets('the explainer dismisses and changes nothing', (tester) async {
+      await pump(tester);
+      await tester.tap(find.byKey(const Key('chip_schedule')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('schedule_info_dismiss')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('schedule_info_sheet')), findsNothing);
+      // The list is untouched — this chip is not a filter.
+      expect(find.text('Test Kitchen'), findsOneWidget);
+    });
+
+    testWidgets('it does NOT filter the list the way Offers only does',
+        (tester) async {
+      // The real risk of putting an action chip beside a toggle: the two are
+      // drawn by the same widget, so a customer could reasonably expect this
+      // one to narrow the list too. It must not, and it must not latch.
+      await pump(tester);
+      expect(find.text('Test Kitchen'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('chip_schedule')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('schedule_info_dismiss')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Test Kitchen'), findsOneWidget);
+      expect(find.byKey(const Key('outlet_result_count')), findsNothing,
+          reason: 'no filter is active, so no result count should appear');
     });
   });
 }

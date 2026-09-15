@@ -234,31 +234,30 @@ class _HomeScreenState extends State<HomeScreen> {
 
 /// Greeting for someone who has ordered before.
 ///
-/// Time-of-day rather than a static "Hello": this app is used at meal times and
-/// the greeting is the one place the screen can acknowledge that cheaply.
-String _greeting(String? name) => greetingFor(DateTime.now().hour, name);
-
-/// The greeting text for a given local hour (0–23) and optional name.
+/// TIME-INVARIANT. This replaced a three-band time-of-day greeting
+/// (morning/afternoon/evening keyed off `DateTime.now().hour`), and the hour
+/// banding is gone rather than merely unused — there is no clock reading left
+/// in this file.
 ///
-/// Split out and made pure so the banding is testable — `DateTime.now()` cannot
-/// be pinned to a specific hour in a widget test. The caller passes
-/// `DateTime.now().hour`, which is the DEVICE's local time in Dart: the time
-/// source was never the bug. The bug was the banding — `hour < 12` swept
-/// 00:00–04:59 into "Good morning", so opening the app at midnight was greeted
-/// as morning. Morning now starts at 05:00; the small hours fall through to
-/// "Good evening", the conventional late catch-all.
+/// The bands were defensible on paper (a food app is used at meal times) and
+/// still cost more than they returned. They were only ever right about the
+/// DEVICE's clock, which is not the same thing as the customer's day: a
+/// traveller crossing timezones, a phone with the wrong time, or a night-shift
+/// worker all got greeted wrongly, confidently. They also had to be defended —
+/// an earlier fix already moved the morning boundary to 05:00 because
+/// `hour < 12` was calling midnight "morning", and every future edge would
+/// have been another such fix to a line nobody reads twice.
+///
+/// "Welcome back" says the one thing this screen actually knows to be true:
+/// this person has ordered here before. That is what earns the warmth, and it
+/// is correct at every hour in every timezone.
+///
+/// Pure and name-only, so it stays directly testable without pinning a clock.
 @visibleForTesting
-String greetingFor(int hour, String? name) {
-  final String part;
-  if (hour >= 5 && hour < 12) {
-    part = 'Good morning';
-  } else if (hour >= 12 && hour < 17) {
-    part = 'Good afternoon';
-  } else {
-    part = 'Good evening';
-  }
+String welcomeGreeting(String? name) {
+  const base = 'Welcome back';
   final trimmed = name?.trim() ?? '';
-  return trimmed.isEmpty ? part : '$part, $trimmed';
+  return trimmed.isEmpty ? base : '$base, $trimmed';
 }
 
 // ---------------------------------------------------------------------------
@@ -318,7 +317,7 @@ class _ReturningHome extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
       children: [
-        PageHeader(_greeting(name)),
+        PageHeader(welcomeGreeting(name)),
         const SizedBox(height: 6),
         Text(
           active.isEmpty

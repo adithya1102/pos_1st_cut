@@ -478,6 +478,31 @@ class _OutletsScreenState extends State<OutletsScreen> {
     await _selectSort(chosen, loaded);
   }
 
+  /// Explain scheduled pickup. Awareness only — it does NOT schedule anything.
+  ///
+  /// ## Why an explainer and not a deep link
+  ///
+  /// A deep link was considered and is not merely harder, it is incoherent.
+  /// Scheduling is a property of an ORDER: the picker lives at checkout, is
+  /// bounded by the chosen outlet's closing time, and the time it produces is
+  /// sent as `requested_pickup_at` on that order. From a list of restaurants
+  /// there is no order to attach one to — a link would have to invent which
+  /// outlet and which items, or drop the customer on an empty cart that can
+  /// schedule nothing. Either is a worse answer than a sentence.
+  ///
+  /// So this does the one job it can do honestly: tell people the feature
+  /// exists, before they have picked a restaurant, and get out of the way.
+  /// "Choose a restaurant to get started" is the call to action, because
+  /// choosing one IS the next step and the list is already underneath.
+  Future<void> _openScheduleInfo() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => const _ScheduleInfoSheet(),
+    );
+  }
+
   /// Apply search + filters, then the active sort. Kept pure and separate from
   /// build so the ordering rules are readable in one place.
   List<Outlet> _apply(List<Outlet> all) {
@@ -827,7 +852,22 @@ class _OutletsScreenState extends State<OutletsScreen> {
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: Row(
+                      // Wrap, not Row (and not a horizontal scroller).
+                      //
+                      // A second chip overflowed the fixed Row by 140px on a
+                      // 390pt screen — the striped overflow banner, on the main
+                      // discovery screen. A horizontal ListView is the usual
+                      // reflex for a chip row and is wrong HERE: it fixes the
+                      // overflow by letting a chip sit off-screen, and the whole
+                      // reason this second chip exists is to be seen. It would
+                      // have failed hardest for large-text users, who need it
+                      // most and would have been the ones it hid from.
+                      //
+                      // Wrap costs one extra line when the two do not fit and
+                      // keeps both fully visible at every text scale.
+                      child: Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
                         children: [
                           NeoChip(
                             key: const Key('chip_offers'),
@@ -836,6 +876,30 @@ class _OutletsScreenState extends State<OutletsScreen> {
                             selected: _offersOnly,
                             onTap: () =>
                                 setState(() => _offersOnly = !_offersOnly),
+                          ),
+                          // An ACTION, not a filter — the one chip here that
+                          // does not narrow the list.
+                          //
+                          // It sits next to a toggle and is drawn by the same
+                          // widget, which is a real risk: two controls that look
+                          // alike should not behave differently. `selected` is
+                          // pinned false so it never takes the filled state that
+                          // means "this filter is on", and the clock icon plus a
+                          // verb-shaped label ("Schedule ahead", not "Scheduled")
+                          // carry the difference. It opens a sheet immediately,
+                          // so the distinction survives exactly one tap.
+                          //
+                          // It lives here because this is the last screen before
+                          // someone commits to a restaurant, and scheduling is
+                          // otherwise invisible until checkout — three screens
+                          // later, past the point where knowing would have
+                          // changed which restaurant they picked.
+                          NeoChip(
+                            key: const Key('chip_schedule'),
+                            label: 'Schedule ahead',
+                            icon: Icons.schedule,
+                            selected: false,
+                            onTap: _openScheduleInfo,
                           ),
                           // NO "Open now" chip here — see the comment by the
                           // (removed) `_openOnly` field above for why.
@@ -1692,6 +1756,79 @@ class _FilterButton extends StatelessWidget {
 ///
 /// Selecting pops with the chosen option, so the sheet closes itself — the
 /// caller cannot forget to.
+/// What "Schedule ahead" opens. Purely informational — see [_openScheduleInfo]
+/// for why this is a sentence and not a link.
+///
+/// Three lines and a dismiss, deliberately. Everything a customer needs in
+/// order to go looking for the control later is: the feature exists, where it
+/// lives, and what it does for them. Anything more is a manual for a two-tap
+/// toggle they have not reached yet.
+///
+/// It promises no specific TIME and no guarantee. The hold is computed from a
+/// prep estimate plus a safety margin and the server can refuse a slot outright
+/// when the restaurant cannot honour it, so "close to when you arrive" is the
+/// strongest honest claim — and the checkout picker only ever offers times that
+/// outlet can actually serve.
+class _ScheduleInfoSheet extends StatelessWidget {
+  const _ScheduleInfoSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final textTheme = Theme.of(context).textTheme;
+
+    return SafeArea(
+      top: false,
+      child: Container(
+        key: const Key('schedule_info_sheet'),
+        margin: const EdgeInsets.all(12),
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+        decoration: BoxDecoration(
+          color: c.surface,
+          borderRadius: BorderRadius.circular(AppTheme.radius),
+          border: Border.all(color: c.border, width: AppTheme.borderWidth),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.schedule, color: c.ink),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text('Schedule ahead',
+                      style: textTheme.headlineSmall),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Order now and pick a time to collect later today. '
+              'We hold your order and send it to the kitchen at the right '
+              'moment, so it is ready close to when you arrive.',
+              style: textTheme.bodyMedium?.copyWith(color: c.inkSoft),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Choose a restaurant to get started — the pickup time is the '
+              'last thing you set before paying.',
+              style: textTheme.bodyMedium?.copyWith(color: c.inkSoft),
+            ),
+            const SizedBox(height: 18),
+            NeoButton(
+              key: const Key('schedule_info_dismiss'),
+              label: 'Got it',
+              icon: Icons.check,
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _SortSheet extends StatelessWidget {
   const _SortSheet({required this.active});
 
