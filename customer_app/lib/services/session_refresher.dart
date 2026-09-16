@@ -1,7 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/foundation.dart';
 
 import 'api_client.dart';
+import 'session_log.dart';
 
 /// Endpoint that re-exchanges a Firebase identity for a CareVo session.
 ///
@@ -42,6 +42,17 @@ Future<String?> refreshCareVoSession(ApiClient api) async {
   final user = FirebaseAuth.instance.currentUser;
   if (user == null) {
     // No Firebase session: this is a genuine expiry. Nothing to refresh from.
+    //
+    // LOGGED, because this branch cannot tell two very different situations
+    // apart and used to report neither: a customer who really is signed out of
+    // Firebase, and a customer whose persisted user simply has not finished
+    // being restored from disk yet. Firebase restores asynchronously after
+    // initializeApp, and Home fires several requests on its first frame, so a
+    // 401 arriving in that window lands here and logs someone out who was
+    // never actually signed out. The elapsed stamp is what distinguishes them:
+    // compare it against the 'firebase user restored' line.
+    sessionLog('refresh ABORTED: no Firebase user (currentUser == null) — '
+        'either signed out, or auth state has not restored yet');
     return null;
   }
 
@@ -55,22 +66,38 @@ Future<String?> refreshCareVoSession(ApiClient api) async {
   } else if (hasGoogle && !hasPhone) {
     endpoint = _googleExchange;
   } else {
-    if (kDebugMode) {
-      debugPrint('session refresh: ambiguous providers $providers — '
-          'falling back to logout');
-    }
+    sessionLog('refresh ABORTED: ambiguous providers $providers — '
+        'need exactly one of phone / google.com');
     return null;
   }
+
+  sessionLog('refresh attempting via $endpoint (providers=$providers)');
 
   // force: true so a token that expired alongside the CareVo one is actually
   // renewed. Without it Firebase may hand back the same cached ID token, the
   // exchange rejects it, and the refresh fails for a session that was fine.
   final idToken = await user.getIdToken(true);
-  if (idToken == null || idToken.isEmpty) return null;
+  if (idToken == null || idToken.isEmpty) {
+    // Firebase returned without throwing but handed back nothing usable —
+    // distinct from getIdToken THROWING, which surfaces as 'refresh threw'
+    // upstream. Worth separating: one is a failed network call, the other is
+    // Firebase believing it succeeded while producing no credential.
+    sessionLog('refresh ABORTED: getIdToken returned '
+        '${idToken == null ? 'null' : 'an empty string'}');
+    return null;
+  }
 
   // postWithoutRefresh, not post: refreshing in order to refresh is a loop.
   final res = await api.postWithoutRefresh(endpoint, body: {'id_token': idToken});
   final token = (res is Map) ? res['access_token'] : null;
-  if (token is! String || token.isEmpty) return null;
+  if (token is! String || token.isEmpty) {
+    // The exchange answered 2xx — anything else would have thrown — but the
+    // body was not the shape this expects. A backend contract change would
+    // look exactly like this, and used to be indistinguishable from an expiry.
+    sessionLog('refresh ABORTED: exchange returned no access_token '
+        '(body was ${res.runtimeType})');
+    return null;
+  }
+  sessionLog('refresh OK: new session token issued');
   return token;
 }

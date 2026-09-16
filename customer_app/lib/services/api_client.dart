@@ -5,6 +5,9 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_config.dart';
+// Logging only — carries no Firebase dependency, so ApiClient stays
+// constructible in tests and in any context with no Firebase app.
+import 'session_log.dart';
 
 /// Thrown for any non-2xx response or transport failure.
 class ApiException implements Exception {
@@ -218,18 +221,49 @@ class ApiClient {
   }
 
   Future<bool> _doRefresh() async {
+    // The attempt itself, stamped. Half of the evidence for the race
+    // hypothesis: this line's elapsed time compared against the
+    // 'firebase user restored' line says whether the refresh beat Firebase's
+    // async restore or whether currentUser was already there and something
+    // else failed. Logged here rather than at the 401 site because
+    // _refreshSession coalesces a burst of concurrent 401s onto ONE attempt,
+    // and this is that attempt.
+    sessionLog('refresh triggered by a 401');
+
     final refresher = sessionRefresher;
-    if (refresher == null) return false;
+    if (refresher == null) {
+      // DEFENSIVE ONLY. _send checks `sessionRefresher != null` before calling
+      // here, so this is unreachable on the 401 path — the real "no refresher"
+      // log lives there, at the decision point. Kept because _doRefresh is not
+      // private to that one caller forever, and a silently-false return is what
+      // this whole change exists to stop.
+      sessionLog('refresh UNAVAILABLE: no refresher wired (via _doRefresh)');
+      return false;
+    }
     try {
       final fresh = await refresher();
-      if (fresh == null || fresh.isEmpty) return false;
+      if (fresh == null || fresh.isEmpty) {
+        // The refresher already logged its own specific reason; this records
+        // that the decision reached the client and is about to become a
+        // logout, so the two halves can be matched up in a device log.
+        sessionLog('refresh FAILED: refresher returned '
+            '${fresh == null ? 'null' : 'an empty token'} — signing out');
+        return false;
+      }
       await setToken(fresh);
+      sessionLog('refresh SUCCEEDED: session renewed, replaying the request');
       return true;
     } catch (e) {
       // A refresh that throws is a refresh that failed. Swallowed so the
       // caller falls through to the ordinary expiry path rather than showing
       // a Firebase error to someone who only asked to see their orders.
-      if (kDebugMode) debugPrint('session refresh failed: $e');
+      //
+      // NO LONGER kDebugMode-gated. This was the single line that could have
+      // explained a forced re-login, and it printed nothing in exactly the
+      // build where the failure happens — the same way the FCM registration
+      // failure hid. getIdToken throwing (offline, Firebase internal) and the
+      // exchange POST timing out both land here.
+      sessionLog('refresh THREW: $e — signing out');
       return false;
     }
   }
@@ -284,10 +318,27 @@ class ApiClient {
       //
       // `run()` rebuilds its headers when called, so the replay picks up the
       // token setToken() just wrote, with no plumbing.
+      if (allowRefresh && sessionRefresher == null) {
+        // THE decision point for "there is no way to refresh" — not the
+        // matching guard inside _doRefresh, which this short-circuit means is
+        // never reached from here. Logged at the place the choice is actually
+        // made, so the log cannot claim something the code did not do.
+        //
+        // Reachable when Firebase auth is off (USE_FIREBASE_AUTH=false) or the
+        // wiring in main() was missed. From the outside it is indistinguishable
+        // from a genuine expiry, which is exactly why it needs a name.
+        sessionLog('refresh UNAVAILABLE: no refresher wired '
+            '(AppConfig.useFirebaseAuth false, or wiring missed) — signing out');
+      }
       if (allowRefresh && sessionRefresher != null) {
         if (await _refreshSession()) {
           return _send(run, allowRefresh: false);
         }
+      } else if (!allowRefresh) {
+        // The replay after a successful refresh 401'd as well. The identity is
+        // genuinely dead rather than merely stale, and looping would only
+        // hammer the exchange endpoint.
+        sessionLog('replay after refresh STILL 401 — session really is dead');
       }
 
       await clearToken();

@@ -13,12 +13,35 @@
 // below meaningful instead of vacuous.
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:customer_app/services/api_client.dart';
+import 'package:customer_app/services/session_log.dart';
+
+/// Capture everything [sessionLog] emits during [body].
+///
+/// debugPrint is swapped rather than the logger being made injectable: the
+/// whole point of this change is that the call sites print UNCONDITIONALLY in a
+/// real build, and a seam that tests could disable is a seam production could
+/// disable too. This asserts on the actual output path.
+Future<List<String>> captureLogs(Future<void> Function() body) async {
+  final lines = <String>[];
+  final original = debugPrint;
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message != null) lines.add(message);
+  };
+  resetSessionLogForTest();
+  try {
+    await body();
+  } finally {
+    debugPrint = original;
+  }
+  return lines;
+}
 
 http.Response _json(Object body, {int status = 200}) =>
     http.Response(jsonEncode(body), status,
@@ -235,6 +258,141 @@ void main() {
       await api.setToken('stale-again');
       await api.get('/customer/orders');
       expect(refreshes, 2, reason: 'the in-flight guard must release');
+    });
+  });
+
+  // =========================================================================
+  // Observability — every silent exit now says WHICH one it was
+  // =========================================================================
+  //
+  // Five of these paths logged nothing in any build and two logged only under
+  // kDebugMode, so a forced re-login on a real phone produced no evidence at
+  // all. That is the same shape as the FCM registration bug. These assert the
+  // lines exist AND that behaviour is unchanged — a diagnostic that alters what
+  // it measures is worse than none.
+  group('failure paths are observable', () {
+    test('no refresher wired is named, and still logs out', () async {
+      final backend = _Backend();
+      late ApiClient api;
+      final logs = await captureLogs(() async {
+        api = await _signedIn(backend);
+        await expectLater(api.get('/customer/orders'),
+            throwsA(isA<AuthExpiredException>()));
+      });
+
+      expect(logs.where((l) => l.contains('refresh UNAVAILABLE')), isNotEmpty);
+      expect(logs.where((l) => l.contains('no refresher wired')), isNotEmpty);
+      // Behaviour unchanged.
+      expect(api.isAuthenticated, isFalse);
+      expect(api.authFailures.value, 1);
+    });
+
+    test('a null return is named as such, distinct from a throw', () async {
+      final backend = _Backend();
+      late ApiClient api;
+      final logs = await captureLogs(() async {
+        api = await _signedIn(backend);
+        api.sessionRefresher = () async => null;
+        await expectLater(api.get('/customer/orders'),
+            throwsA(isA<AuthExpiredException>()));
+      });
+
+      expect(logs.where((l) => l.contains('refresh FAILED')), isNotEmpty);
+      expect(logs.where((l) => l.contains('returned null')), isNotEmpty);
+      expect(logs.where((l) => l.contains('refresh THREW')), isEmpty,
+          reason: 'a null return must not be reported as a crash');
+      expect(api.isAuthenticated, isFalse);
+    });
+
+    test('an empty-string return is distinguished from null', () async {
+      final backend = _Backend();
+      final logs = await captureLogs(() async {
+        final api = await _signedIn(backend);
+        api.sessionRefresher = () async => '';
+        await expectLater(api.get('/customer/orders'),
+            throwsA(isA<AuthExpiredException>()));
+      });
+      expect(logs.where((l) => l.contains('an empty token')), isNotEmpty);
+    });
+
+    test('a throw is named, and carries the cause', () async {
+      final backend = _Backend();
+      late ApiClient api;
+      final logs = await captureLogs(() async {
+        api = await _signedIn(backend);
+        api.sessionRefresher = () async => throw StateError('firebase exploded');
+        await expectLater(api.get('/customer/orders'),
+            throwsA(isA<AuthExpiredException>()));
+      });
+
+      expect(logs.where((l) => l.contains('refresh THREW')), isNotEmpty);
+      expect(logs.where((l) => l.contains('firebase exploded')), isNotEmpty,
+          reason: 'the cause is the whole diagnostic value');
+      expect(api.isAuthenticated, isFalse);
+    });
+
+    test('the attempt itself is logged, before any outcome', () async {
+      // Half of the race evidence: this line is what gets compared against
+      // "firebase user restored" to tell a race from an ordinary failure.
+      final backend = _Backend();
+      final logs = await captureLogs(() async {
+        final api = await _signedIn(backend);
+        api.sessionRefresher = () async => 'fresh-token';
+        await api.get('/customer/orders');
+      });
+
+      final triggered = logs.indexWhere((l) => l.contains('refresh triggered by a 401'));
+      final succeeded = logs.indexWhere((l) => l.contains('refresh SUCCEEDED'));
+      expect(triggered, isNonNegative);
+      expect(succeeded, greaterThan(triggered),
+          reason: 'the attempt must be logged before its outcome');
+    });
+
+    test('every line is tagged and carries an elapsed stamp', () async {
+      final logs = await captureLogs(() async {
+        final api = await _signedIn(_Backend());
+        api.sessionRefresher = () async => null;
+        await expectLater(api.get('/customer/orders'),
+            throwsA(isA<AuthExpiredException>()));
+      });
+      final ours = logs.where((l) => l.startsWith('[session]')).toList();
+      expect(ours, isNotEmpty);
+      for (final l in ours) {
+        expect(l, matches(RegExp(r'^\[session\] \+\d+ms ')),
+            reason: 'a stamp is what makes the sequence readable: $l');
+      }
+    });
+
+    test('a SUCCESSFUL refresh is quiet about failure', () async {
+      // The logs must not cry wolf — a renewed session should read as success.
+      final backend = _Backend();
+      final logs = await captureLogs(() async {
+        final api = await _signedIn(backend);
+        api.sessionRefresher = () async => 'fresh-token';
+        await api.get('/customer/orders');
+      });
+      expect(logs.where((l) => l.contains('FAILED')), isEmpty);
+      expect(logs.where((l) => l.contains('THREW')), isEmpty);
+      expect(logs.where((l) => l.contains('UNAVAILABLE')), isEmpty);
+    });
+
+    test('logging did not change the concurrent-401 coalescing', () async {
+      // The in-flight guard is the one behaviour a per-attempt log line could
+      // plausibly have disturbed.
+      final backend = _Backend();
+      var refreshes = 0;
+      final logs = await captureLogs(() async {
+        final api = await _signedIn(backend);
+        api.sessionRefresher = () async {
+          refreshes++;
+          return 'fresh-token';
+        };
+        await Future.wait(List.generate(5, (_) => api.get('/customer/orders')));
+      });
+
+      expect(refreshes, 1, reason: 'still exactly one exchange for five 401s');
+      expect(logs.where((l) => l.contains('refresh triggered by a 401')),
+          hasLength(1), reason: 'and exactly one attempt line');
     });
   });
 }

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
@@ -18,6 +19,7 @@ import 'services/otp_auth_service.dart';
 import 'services/payment_service.dart';
 import 'services/places_service.dart';
 import 'services/push_service.dart';
+import 'services/session_log.dart';
 import 'services/session_refresher.dart';
 import 'state/auth_state.dart';
 import 'widgets/focus_release.dart';
@@ -31,10 +33,42 @@ import 'theme/theme_provider.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Start the clock before anything else can log. Every [sessionLog] line is
+  // stamped with elapsed-since-here, which is what makes the session-refresh
+  // trace readable as a SEQUENCE rather than a pile of unrelated lines.
+  markAppStart();
+
   // Reads android/app/google-services.json (Firebase project carevo-pos).
   // Required before FirebaseAuth.instance is touched.
   if (AppConfig.useFirebaseAuth) {
     await Firebase.initializeApp();
+
+    // WHEN Firebase finishes restoring a persisted user, relative to app start.
+    //
+    // This exists to settle one question with evidence instead of argument:
+    // forced re-logins are suspected to be a race, where a 401 fires a session
+    // refresh before `currentUser` has been restored from disk, and the
+    // refresher reads that transient null as "signed out". initializeApp is
+    // awaited above, but auth state restores asynchronously AFTER it, and Home
+    // fires several requests on its first frame.
+    //
+    // A single logcat capture now answers it. If 'refresh triggered by a 401'
+    // is stamped EARLIER than 'firebase user restored', the race is real. If
+    // the user was restored first and the refresh still failed, the cause is
+    // whatever specific reason the refresher logged instead.
+    //
+    // Listener, not a one-shot read: the restore is precisely the event that
+    // has not happened yet at this point in main().
+    FirebaseAuth.instance.authStateChanges().listen((user) {
+      if (user == null) {
+        logFirebaseNoUser();
+      } else {
+        logFirebaseUserRestored(
+          user.uid,
+          providers: user.providerData.map((p) => p.providerId).toList(),
+        );
+      }
+    });
 
     // Registered BEFORE runApp: FCM binds the background entry point during
     // plugin startup, and a handler attached later is not there when the
