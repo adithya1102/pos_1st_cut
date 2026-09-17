@@ -1,6 +1,7 @@
 from uuid import UUID
 from typing import Any, List
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 import asyncio
 import os
 import json as _json
@@ -20,6 +21,29 @@ from app.core.websocket_manager import (
 from app.modules.orders.schema import OrderCreate, OrderUpdate, OrderItemCreate
 
 OUTLET_ID = "0b8a8349-6144-41a8-b028-b9089bd8eaea"
+
+#: The restaurant's wall clock. Same Asia/Kolkata convention as
+#: carevo_customer's _OUTLET_TZ and testing_dashboard's TESTING_TZ — a "day"
+#: and a printed time mean the same thing across every module.
+#:
+#: This module used bare `datetime.now()`, which is the SERVER's local time and
+#: therefore a different answer on Render (UTC) than on a developer box (IST).
+#: Neither reading was right: the rows it compares against are stored in UTC,
+#: and the receipts it prints are read by someone standing in India.
+_OUTLET_TZ = ZoneInfo("Asia/Kolkata")
+
+
+def _utc_naive(dt: datetime) -> datetime:
+    """An aware datetime as NAIVE UTC, for comparing against this module's columns.
+
+    `orders.created_at` and `order_items.created_at` are `timestamp WITHOUT
+    time zone` holding UTC (the shared `Base.created_at` default writes naive
+    `datetime.utcnow`). A bound compared against them must therefore be naive
+    UTC too — passing an aware value here would make asyncpg raise rather than
+    compare, which is the same edge that kept the timestamptz fix scoped to
+    carevo_customer only.
+    """
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 # Tasks are garbage collected if nothing holds a reference to them.
 _pending_pushes: set[asyncio.Task] = set()
@@ -620,9 +644,23 @@ class OrderService:
 
     @staticmethod
     async def get_sales_summary(db: AsyncSession):
-        today = datetime.now().date()
-        start = datetime.combine(today, datetime.min.time())
-        end = datetime.combine(today, datetime.max.time())
+        # "Today" is the restaurant's calendar day in IST, converted to the UTC
+        # the rows are actually stored in.
+        #
+        # This was `datetime.now().date()` with naive LOCAL bounds compared
+        # against UTC-stored columns, which is two errors that partly hide each
+        # other. On Render (UTC server) the window was a true UTC midnight-to-
+        # midnight day — so an evening's trade after 05:30 IST... in fact the
+        # whole IST evening from 00:00 to 05:29 IST fell into the NEXT UTC day,
+        # splitting a single night's service across two summaries. On an IST dev
+        # box the bounds were IST numbers compared against UTC values, sliding
+        # the window 5h30m so it ran 05:30 today to 05:29 tomorrow. Neither is
+        # the day a restaurant means, and the two disagreed with each other.
+        today = datetime.now(_OUTLET_TZ).date()
+        start = _utc_naive(
+            datetime.combine(today, datetime.min.time(), tzinfo=_OUTLET_TZ))
+        end = _utc_naive(
+            datetime.combine(today, datetime.max.time(), tzinfo=_OUTLET_TZ))
 
         timeline_rows = await db.execute(
             select(OrderItem, Order.table_id)
@@ -731,7 +769,11 @@ class OrderService:
         net_payable = round(grand_total)
         round_off = round(net_payable - grand_total, 2)
         bill_no = "-".join(order_ids)
-        now = datetime.now()
+        # The restaurant's wall clock, not the server's. This prints onto the
+        # customer's receipt ("Date: … Time: …" below) and names the PDF; on
+        # Render, which runs UTC, a bill handed over at 20:00 IST was printing
+        # 14:30. Never written to a column, so an aware value is safe here.
+        now = datetime.now(_OUTLET_TZ)
 
         # Create bills directory
         bills_dir = os.path.join(

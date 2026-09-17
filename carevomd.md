@@ -6731,3 +6731,62 @@ UTC. They feed local-day reporting against naive columns so they are not the
 same bug, but they are the same family and worth a look separately.
 
 ---
+
+## 2026-09-18 (later) — the other half: `datetime.now()` in the dine-in module
+
+Follow-on to 92d7a503, closing the item that entry flagged as "still open".
+Different columns, different failure, same family.
+
+### Two sites, and the sales summary was the real one
+
+`orders/service.py` used bare `datetime.now()` — the SERVER's local time, so a
+different answer on Render (UTC) than on a developer box (IST).
+
+**`get_sales_summary`** built naive LOCAL midnight bounds and compared them
+against `orders.created_at` / `order_items.created_at`, which are `timestamp
+WITHOUT time zone` holding UTC. Two errors that partly hid each other and which
+disagreed by deployment:
+
+  * on Render the window was a true UTC midnight-to-midnight day, so the IST
+    hours 00:00-05:29 fell into the NEXT UTC day — one night's service split
+    across two summaries;
+  * on an IST box the bounds were IST numbers compared against UTC values,
+    sliding the window to 05:30 today -> 05:29 tomorrow.
+
+Measured at 00:35 IST: an order created seconds earlier (utcnow 19:05 on the
+17th) was BEFORE the old lower bound (naive 00:00 on the 18th) and so was
+missing from its own day's summary entirely.
+
+Now: IST calendar day -> UTC, naive, via a `_utc_naive` helper. Verified
+2026-09-18 IST maps to [2026-09-17 18:30:00, 2026-09-18 18:29:59.999999] —
+exactly 24h.
+
+**The bill PDF** used `datetime.now()` for the receipt's printed
+`Date: ... Time: ...` line and the filename. On Render that printed UTC: a bill
+handed to a customer at 20:00 IST read 14:30. Now `datetime.now(_OUTLET_TZ)` —
+safe to be aware because it is only ever strftime'd, never bound to a column.
+
+Module-local `_OUTLET_TZ = ZoneInfo("Asia/Kolkata")`, matching
+carevo_customer's `_OUTLET_TZ` and testing_dashboard's `TESTING_TZ` rather than
+inventing a fourth convention.
+
+### The bounds stay NAIVE, and that is deliberate
+
+Same edge that kept 92d7a503 scoped to carevo_customer: these columns are
+`timestamp WITHOUT time zone`, so an aware bound would make asyncpg raise
+instead of compare. `_utc_naive` converts and THEN drops tzinfo — a bare
+`.replace(tzinfo=None)` would keep IST digits and label them UTC, which is the
+original bug relocated rather than fixed. There is a test for exactly that.
+
+### Tests
+
+**485 pass, 0 fail** (+9 in `test_api_sales_summary_day.py`).
+
+The guard was proven to bite rather than assumed to: the fix was temporarily
+reverted in place and the suite re-run — 2 behavioural tests failed with their
+intended messages, then the file was restored and re-verified. The window
+assertions are pure arithmetic and hold at every hour in every server timezone;
+the behavioural ones would have been asleep for most of the day on their own,
+which is why both shapes are present.
+
+---
