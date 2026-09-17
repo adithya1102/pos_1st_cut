@@ -6660,3 +6660,74 @@ rather than riding along here. Also: a suite green at 20:00 and red at 00:30
 should be read as a clock-dependent bug, not flakiness.
 
 ---
+
+## 2026-09-18 — the naive-utcnow timezone bug, fixed where it was actually real
+
+Root-cause fix for the 22 failures logged in the previous entry. NOT COMMITTED
+at time of writing — held for review because it touches model defaults.
+
+### The fix is 7 references in ONE file, and that is the finding
+
+The instinct is a repo-wide sweep of `datetime.utcnow` -> `datetime.now(timezone.utc)`.
+That would have broken the backend. The column type decides, not the call:
+
+  * `DateTime(timezone=True)` -> `timestamptz`. A naive value is localised by
+    the CLIENT's timezone before binding, so on this Asia/Calcutta box it lands
+    5h30m early. THIS IS THE BUG.
+  * plain `DateTime` -> `timestamp WITHOUT time zone`. Naive is stored verbatim
+    and is already correct — and asyncpg REFUSES an aware value outright:
+
+        DataError: invalid input for query argument $1
+        (can't subtract offset-naive and offset-aware datetimes)
+
+    Probed directly before changing anything, both directions.
+
+Every timestamptz default in the codebase lives in `carevo_customer/model.py`
+(customer_orders, customer_order_items, payment_transactions, point_transactions,
+coupons). Everything else — `Base.created_at`, inventory, menu_history,
+orders.waiter_approved_at, order_items.served_at, the legacy dine-in
+tables/sessions modules — writes to NAIVE columns. Making those aware would
+raise DataError on every insert into organizations, outlets, menus, categories,
+menu_items, users, roles, orders and order_items.
+
+So: a module-local `_utcnow()` helper in that one file, 7 `default=` and 2
+`onupdate=` references repointed. Nothing else touched. JWT expiry
+(`auth.py`, `carevo_customer/deps.py`) is not a DB column and jose reads a
+naive value as UTC correctly; the analytics/chat day-start helpers are compared
+against naive columns. Both left alone deliberately.
+
+### Reproduced, not assumed
+
+Two rows written through the real ORM on the Asia/Calcutta box at 00:25 IST:
+
+    Postgres session TimeZone : Asia/Calcutta
+    database now()            : 2026-09-17 18:55:50Z  (IST 2026-09-18 00:25)
+
+    FIXED   stored 2026-09-17 18:55:50Z   IST date 2026-09-18   skew      0s
+    BROKEN  stored 2026-09-17 13:25:50Z   IST date 2026-09-17   skew  19800s
+
+19800s is exactly 5h30m, and the broken row lands on the WRONG IST DAY — which
+is precisely why the day-view queries could not find an order created seconds
+earlier.
+
+### Tests
+
+**476 pass, 0 fail** (was 442/22 on the same machine at the same hour). Failing
+sets compared, not counts: all 22 resolved, NEWLY BROKEN = none.
+
++12 new in `test_api_timestamp_timezone.py`. The load-bearing choice there: the
+assertion is "stored value is within 60s of the DATABASE's own now()", not
+"stored IST date == today's IST date". The date form only fails between 00:00
+and 05:30 IST, so it would guard nothing for nineteen hours a day and would be
+invisible on a UTC CI box. Skew-from-now() catches a whole-timezone offset at
+any hour, anywhere. A separate class asserts the naive defaults STAY naive, so
+the next person to attempt the repo-wide sweep fails in the test rather than in
+production.
+
+### Still open, flagged not fixed
+
+`orders/service.py:623,734` use bare `datetime.now()` — naive LOCAL, not even
+UTC. They feed local-day reporting against naive columns so they are not the
+same bug, but they are the same family and worth a look separately.
+
+---

@@ -5,13 +5,46 @@ no back_populates is attached to existing Customer/Outlet/MenuItem mappers, so
 existing mappings are untouched.
 """
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import String, ForeignKey, DECIMAL, Integer, Boolean, DateTime
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
+
+
+def _utcnow() -> datetime:
+    """An AWARE UTC timestamp for every column in this file.
+
+    Every timestamp here is `DateTime(timezone=True)` -> `timestamptz`, and the
+    naive `datetime.utcnow` these used to default to was a real bug rather than
+    a style issue. SQLAlchemy's asyncpg dialect localises a naive value using
+    the CLIENT machine's timezone before binding it to timestamptz, so on an IST
+    developer box a "now" row was written 5h30m in the past. Between 00:00 and
+    05:30 IST that crosses the IST date boundary, and every day-view query
+    (`(created_at AT TIME ZONE 'Asia/Kolkata')::date = :day`) then fails to find
+    an order that had just been created.
+
+    Production has always been correct because Render and Neon both run UTC,
+    where reading a naive UTC value as local IS reading it as UTC. The bug was
+    latent, not active — but it was one environment variable away from
+    corrupting the timestamps this product schedules orders by.
+
+    DELIBERATELY NOT APPLIED REPO-WIDE. The shared `Base.created_at` and the
+    older modules (inventory, menu_history, orders.waiter_approved_at,
+    order_items.served_at) write to `timestamp WITHOUT time zone` columns, and
+    asyncpg REFUSES an aware datetime for those outright:
+
+        DataError: invalid input for query argument $1 ...
+        (can't subtract offset-naive and offset-aware datetimes)
+
+    So the same edit made there would not be a smaller version of this fix; it
+    would break every insert into those tables. Naive-into-naive is stored
+    verbatim and is already correct. The column type is what decides, and only
+    this file's columns are timestamptz.
+    """
+    return datetime.now(timezone.utc)
 
 
 class CustomerOrder(Base):
@@ -43,10 +76,10 @@ class CustomerOrder(Base):
     )
     # Base already defines created_at; override to timestamptz to match DDL.
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=_utcnow
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
 
     items = relationship(
@@ -80,7 +113,7 @@ class CustomerOrderItem(Base):
     customizations: Mapped[dict | list | None] = mapped_column(JSONB, nullable=True)
     item_notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=_utcnow
     )
 
     order = relationship("CustomerOrder", back_populates="items", lazy="raise")
@@ -104,10 +137,10 @@ class PaymentTransaction(Base):
     status: Mapped[str] = mapped_column(String(20), default="CREATED")
     raw_payload: Mapped[dict | list | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=_utcnow
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
 
     order = relationship("CustomerOrder", back_populates="transactions", lazy="raise")
@@ -139,7 +172,7 @@ class PointTransaction(Base):
     points_delta: Mapped[float] = mapped_column(DECIMAL(10, 2), nullable=False)
     reason: Mapped[str] = mapped_column(String(40), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=_utcnow
     )
 
 
@@ -180,5 +213,5 @@ class Coupon(Base):
         DateTime(timezone=True), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=_utcnow
     )
