@@ -432,12 +432,33 @@ export interface TimelineEvent {
   payload: Record<string, unknown> | null;
 }
 
+/**
+ * A prediction_log row's `output` — the shape differs per predictor, so the
+ * index signature carries the rest rather than enumerating five payloads that
+ * the UI does not read.
+ *
+ * `decision` and `release_at` are named because they are the only keys the UI
+ * renders. They come from the SIXTH predictor, `release` (migration 031): a
+ * scheduled-pickup order is held off the restaurant's queue until
+ * `requested_pickup_at - (mu_ready_s + safety_margin)`, and each pass logs
+ * either decision="held" with the moment it computed, or decision="released".
+ *
+ * Optional, not required: the other five predictors (kitchen / travel / load /
+ * decision / promise) emit neither key, which is exactly why reading them
+ * generically is unambiguous — no predictor name needs hardcoding.
+ */
+export interface PredictionOutput {
+  decision?: string | null;
+  release_at?: string | null;
+  [key: string]: unknown;
+}
+
 export interface TimelinePrediction {
   predictor: string;
   model_version: string;
   mu_seconds: number | null;
   sigma_seconds: number | null;
-  output: unknown;
+  output: PredictionOutput | null;
   predicted_at: string;
 }
 

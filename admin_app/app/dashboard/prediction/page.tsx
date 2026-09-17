@@ -293,6 +293,23 @@ function RiskBadge({ risk }: { risk: string | null }) {
   );
 }
 
+/** Held vs released, coloured like RiskBadge above so the two read as one
+ *  vocabulary. Amber for held — the order is paid and real but the restaurant
+ *  cannot see it yet; green once it has become an ordinary order on the queue. */
+function DecisionBadge({ decision }: { decision: string }) {
+  const styles: Record<string, string> = {
+    held: "bg-amber-100 text-amber-800",
+    released: "bg-emerald-100 text-emerald-800",
+  };
+  return (
+    <span
+      className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-medium ${styles[decision] ?? "bg-slate-200 text-slate-700"}`}
+    >
+      {decision}
+    </span>
+  );
+}
+
 function TimelineDetail({ orderId }: { orderId: string }) {
   const [tl, setTl] = useState<OrderTimeline | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -366,16 +383,39 @@ function TimelineDetail({ orderId }: { orderId: string }) {
             <p className="text-sm text-slate-500">None logged.</p>
           ) : (
             <ul className="space-y-1 text-sm">
-              {tl.predictions.map((p, i) => (
-                <li key={i} className="flex items-baseline gap-2">
-                  <span className="w-20 shrink-0 font-medium text-slate-700">{p.predictor}</span>
-                  <span className="text-xs text-slate-500">
-                    {p.mu_seconds !== null ? `μ=${secs(p.mu_seconds)}` : ""}
-                    {p.sigma_seconds !== null ? ` σ=${secs(p.sigma_seconds)}` : ""}
-                  </span>
-                  <span className="ml-auto font-mono text-[10px] text-slate-400">{p.model_version}</span>
-                </li>
-              ))}
+              {tl.predictions.map((p, i) => {
+                // Read generically rather than on `p.predictor === "release"`:
+                // no other predictor emits either key (see PredictionOutput),
+                // so the keys themselves are the discriminator — and a future
+                // predictor that logs a decision gets rendered for free.
+                const decision =
+                  typeof p.output?.decision === "string" ? p.output.decision : null;
+                const releaseAt =
+                  typeof p.output?.release_at === "string" ? p.output.release_at : null;
+                return (
+                  <li key={i} className="flex items-baseline gap-2">
+                    <span className="w-20 shrink-0 font-medium text-slate-700">{p.predictor}</span>
+                    <span className="text-xs text-slate-500">
+                      {p.mu_seconds !== null ? `μ=${secs(p.mu_seconds)}` : ""}
+                      {p.sigma_seconds !== null ? ` σ=${secs(p.sigma_seconds)}` : ""}
+                    </span>
+                    {decision && <DecisionBadge decision={decision} />}
+                    {releaseAt && (
+                      // Full date in the tooltip, not just the time: a release
+                      // computed for an 01:00 pickup lands on the NEXT day, and
+                      // a bare "01:16" beside a row created at 22:00 reads as a
+                      // release nine hours in the past.
+                      <span
+                        className="font-mono text-xs text-slate-600"
+                        title={fmtDate(releaseAt)}
+                      >
+                        → {fmtTime(releaseAt)}
+                      </span>
+                    )}
+                    <span className="ml-auto font-mono text-[10px] text-slate-400">{p.model_version}</span>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

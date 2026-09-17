@@ -322,3 +322,82 @@ class TestScopeAndOrdering:
         rows = await _rows(client, day=other)
         assert all(o["state"] == "held" for o in rows), \
             "only a live hold may bypass the day filter"
+
+
+# ==========================================================================
+# the OTHER surface: the admin dashboard's per-order timeline
+# ==========================================================================
+@pytest.mark.asyncio
+class TestReleaseDecisionReachesTheAdminTimeline:
+    """`/admin/prediction/orders/{id}/timeline` selects every prediction_log
+    row for an order with NO predictor filter, so the `release` predictor has
+    appeared there since 031 — but only its predictor name and mu were ever
+    rendered. The admin page now reads `output.decision` and
+    `output.release_at` out of that payload, so these pin the contract the UI
+    depends on. Without them the page would fail silently: a missing key just
+    renders nothing.
+
+    A different gate from the rest of this file — staff bearer + SUPER_ADMIN,
+    not X-Testing-Key — which is the point: these are two independent surfaces
+    onto the same append-only log.
+    """
+
+    async def _timeline(self, client, seed, order_id):
+        r = await client.get(
+            f"{API}/admin/prediction/orders/{order_id}/timeline",
+            headers=seed["admin_auth"])
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    async def test_the_release_row_carries_its_decision_and_moment(
+            self, client, seed):
+        order = await _scheduled_order(client, seed)
+        tl = await self._timeline(client, seed, order["id"])
+        rel = [p for p in tl["predictions"] if p["predictor"] == "release"]
+        assert rel, "the release predictor must appear on the admin timeline"
+        out = rel[-1]["output"]
+        assert out["decision"] == "held"
+        assert out["release_at"] is not None
+        assert rel[-1]["model_version"] == "release_v1"
+
+    async def test_the_released_decision_shows_up_after_the_flip(
+            self, client, seed, db):
+        order = await _scheduled_order(client, seed)
+        await _make_due(db, order["id"])
+        await _rows(client)                     # this read performs the release
+        tl = await self._timeline(client, seed, order["id"])
+        decisions = [p["output"].get("decision")
+                     for p in tl["predictions"] if p["predictor"] == "release"]
+        assert "held" in decisions and "released" in decisions, \
+            "both sides of the flip must be readable after the fact"
+
+    async def test_no_other_predictor_emits_these_keys(self, client, seed):
+        """Why the page can read `output.decision` generically instead of
+        branching on `predictor === "release"`. If a future predictor starts
+        emitting either key this fails, and whoever added it gets to decide
+        whether the admin badge should render for it."""
+        order = await _scheduled_order(client, seed)
+        tl = await self._timeline(client, seed, order["id"])
+        others = [p for p in tl["predictions"] if p["predictor"] != "release"]
+        assert others, "sanity: the original five predictors still log"
+        for p in others:
+            out = p["output"] or {}
+            assert "decision" not in out, f"{p['predictor']} now emits decision"
+            assert "release_at" not in out, f"{p['predictor']} now emits release_at"
+
+    async def test_an_asap_order_has_no_release_row_at_all(self, client, seed):
+        """The badge must not appear for an ordinary order — there is no hold
+        to describe, so there is no row to render."""
+        asap = await _asap_order(client, seed)
+        tl = await self._timeline(client, seed, asap["id"])
+        assert not [p for p in tl["predictions"] if p["predictor"] == "release"]
+
+    async def test_the_timeline_is_super_admin_gated(self, client, seed):
+        order = await _scheduled_order(client, seed)
+        anon = await client.get(
+            f"{API}/admin/prediction/orders/{order['id']}/timeline")
+        assert anon.status_code in (401, 403)
+        as_owner = await client.get(
+            f"{API}/admin/prediction/orders/{order['id']}/timeline",
+            headers=seed["owner_auth"])
+        assert as_owner.status_code == 403

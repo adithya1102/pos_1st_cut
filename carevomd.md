@@ -6564,3 +6564,99 @@ Note `pytest.ini` sets `python_files = test_api_*.py`, so
 default run — both need a live server on a port. Unchanged here.
 
 ---
+
+## 2026-09-17 (later) — release decision + release_at surfaced on the admin timeline
+
+Follow-on to the scheduled-pickup observability work, and a correction.
+
+### Correction: carevo-admin-dashboard is admin_app, NOT dashboard_app
+
+`render.yaml` maps `carevo-admin-dashboard` to `rootDir: admin_app` (Next.js).
+`gusto_pos/dashboard_app` is not in the blueprint at all — its README
+describes it as a separate, hand-created Render service
+(`rootDir: gusto_pos/dashboard_app`, uvicorn). So 9fcb993e — which touched
+zero files under `admin_app/` — ships to gusto-pos-backend + that separate
+testing-dashboard service, and the admin dashboard was correctly showing no
+change.
+
+### What the Prediction engine page already was
+
+`admin_app/app/dashboard/prediction/page.tsx`, four super-admin-gated GETs:
+`/admin/prediction/overview|outlets|orders`, plus
+`/admin/prediction/orders/{id}/timeline` on row expand. Shadow banner, data
+health vs the 300-order graduation threshold, per-outlet trust/calibration,
+and the last 50 orders with a drill-in timeline.
+
+Data is live SQL; the PAGE is not — `useEffect(load, [load])` with `load`
+memoised on `[]` fetches exactly once per mount. No polling, no Refresh
+button, no revalidate anywhere in the page or the dashboard layout. It goes
+stale the instant it renders.
+
+`"shadow_mode": True` is hardcoded in `prediction_overview`. Not a bug:
+`refresh_outlet_reliability` inserts the column literally `true` and its
+ON CONFLICT set-list deliberately omits it, nothing writes false, and 006
+defaults it true — so `graduated_outlets` is structurally always 0.
+Graduation is Step 7, unimplemented, and the code says so.
+
+### The change
+
+`order_timeline` already selected every prediction_log row with NO predictor
+filter, so `release` rows had been on that page since 031 — rendered as a
+bare `release  mu=7.0m   release_v1`. The backend already SENT `output`; the
+TS type carried it as `output: unknown` and the page dropped it.
+
+Now typed as `PredictionOutput` (named `decision` + `release_at`, index
+signature for the rest) and rendered: an amber/green decision badge and
+`-> HH:MM` with the full date in the title attribute — because a release
+computed for an 01:00 pickup lands on the NEXT day and a bare "01:16" beside
+a row created at 22:00 reads as nine hours in the past.
+
+READ GENERICALLY, not on `predictor === "release"`. The other five
+predictors emit `model` / `source` / `rho`+`backlog_s` /
+`depart_bucket_min`+`cost`+`window` / `promise`+`shadow_range_min` — none
+carries either key, so the keys ARE the discriminator. A test pins that:
+if a future predictor starts emitting `decision`, it fails and whoever added
+it decides whether the badge should render for it.
+
+No backend change was needed. This is three files in admin_app plus tests.
+
+### Tests
+
+backend **+5 new**, all in `test_api_scheduled_observability.py` — a new class
+covering the ADMIN surface: both sides of the flip readable after the fact, no
+release row on an ASAP order, super-admin gating, and the no-other-predictor
+guard above. All 5 pass.
+admin_app: `tsc --noEmit` clean, `npm run lint` clean, `npm run build`
+succeeds (16 routes).
+
+**The suite read 464/0 at 18:28 IST and 442/22 at 00:15 IST the same night,
+with no code change in between. Not a regression — a REAL pre-existing bug
+this repo had never run late enough to see.**
+
+`customer_orders.created_at` defaults to `datetime.utcnow` (model.py:45-46) —
+a NAIVE datetime — written into a `timestamptz`. Postgres then interprets it
+in the SESSION timezone. This dev machine's Postgres runs
+`TimeZone = Asia/Calcutta`, so every row is stored 5h30m EARLY:
+
+    real UTC now       2026-09-17 18:39Z
+    stored created_at  2026-09-17 13:09Z   (= 18:39 read as IST)
+
+Before midnight IST that shift lands on the same IST calendar date and is
+invisible. Between 00:00 and 05:30 IST it lands on the PREVIOUS date, so
+`active_orders` / `scheduled_orders` — which filter
+`(created_at AT TIME ZONE 'Asia/Kolkata')::date = :day` — cannot find an order
+the test just created. Hence 22 failures across three files, every one of them
+a day-view lookup.
+
+Proven not-ours the way the 2026-09-16 entry asks: fresh DB + full suite WITH
+the change, fresh DB + full suite at 9fcb993e WITHOUT it, failure SETS
+compared — byte-identical, 22 = 22. The 5 new tests are absent from both.
+
+PRODUCTION IS NOT AFFECTED while the server's Postgres session timezone is UTC
+(Neon's default) — a naive UTC value read as UTC is correct. The bug is latent,
+not active, and it is a data-correctness bug the moment that assumption moves.
+Fix is `datetime.now(timezone.utc)`, repo-wide, and it deserves its own change
+rather than riding along here. Also: a suite green at 20:00 and red at 00:30
+should be read as a clock-dependent bug, not flakiness.
+
+---
