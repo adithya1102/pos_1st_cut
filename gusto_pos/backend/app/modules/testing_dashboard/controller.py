@@ -58,6 +58,20 @@ async def active_orders(day: Optional[str] = None,
     return await TestingService.active_orders(db, day)
 
 
+@router.get("/scheduled")
+async def scheduled_orders(day: Optional[str] = None,
+                           db: AsyncSession = Depends(get_db)):
+    # Scheduled-pickup holds and the engine's live reasoning about each one
+    # (migration 031). Same `day` contract as /orders — an IST calendar date,
+    # omitted means today IST — except that a still-held order is always
+    # included regardless of the day picked. See the service docstring.
+    #
+    # NOTE: this read RE-DERIVES release_at before returning, so it is also a
+    # release trigger, exactly as the owner queue's read is. That is what makes
+    # the numbers it shows current rather than last-written.
+    return await TestingService.scheduled_orders(db, day)
+
+
 @router.get("/testers")
 async def list_testers(db: AsyncSession = Depends(get_db)):
     return await TestingService.list_testers(db)

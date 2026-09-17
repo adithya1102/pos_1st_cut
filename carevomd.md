@@ -6457,3 +6457,110 @@ Honest — the kitchen genuinely never cooked it — but it means early
 pickups mildly depress an outlet's trust stats.
 
 ---
+
+## 2026-09-17 — Scheduled pickup verified end to end; dashboard gains an engine-observability section
+
+Two confirmations and one new surface. Nothing about the hold changed —
+this session set out to check whether 031 behaves as its commit message
+claims, and then to make the claim watchable.
+
+### Confirmed: the OTP is minted at PAYMENT, hold or no hold
+
+Traced literally, not inferred from the ASAP path. In `mark_paid`
+(`carevo_customer/service.py`) the code assignment
+
+    if not order.pickup_code:
+        order.pickup_code = await CarevoService._generate_pickup_code(...)
+
+sits ABOVE the block that reads `requested_pickup_at` and computes `held`.
+The hold cannot gate it because the hold has not been computed yet — the
+ordering, not a conditional, is what makes this true.
+
+Read path matches: `GET /customer/orders/{id}` returns `pickup_code`
+unconditionally, with no `release_at` clause anywhere in `get_order`. And
+`pickup_screen.dart` contains ZERO references to `requestedPickupAt`,
+`releaseAt` or "scheduled" — the code card is gated on
+`paymentStatus == 'PAID'` alone, so a held order renders identically to an
+ASAP one. Checkout sends both kinds to the same screen.
+
+Consequence worth naming: because `lookup_pickup` matches any LIVE order by
+code, a customer who turns up early can be served at the counter before
+their release moment. That is correct behaviour, and it is also the reason
+`refresh_scheduled_releases` has to retire orphaned holds.
+
+### Confirmed: the owner queue cannot see a held order
+
+Verified against a real held order on the throwaway local DB, not restated
+from the commit message. Before release the order is absent from
+`/pos/orders`; after `_make_due` the same order id is present, its status is
+`RECEIVED` and `release_at` is NULL. Also asserted with an ASAP sibling in
+the same outlet on the same poll, so "absent" cannot be "the queue was
+empty", and across five consecutive polls, so it cannot be one lucky race.
+
+### New: `GET /api/v1/testing/scheduled` + a Scheduled-pickups section
+
+Reuses the existing X-Testing-Key gate on the whole router — no new auth
+mechanism. Per held order it returns `requested_pickup_at`, the live
+`release_at`, `mu_ready_s`, `mu_source`, `safety_margin_s`, `lead_s`,
+`seconds_until_release`, `state` and the re-derivation count.
+
+Three decisions worth keeping:
+
+**It re-derives before it reads.** The endpoint calls
+`refresh_scheduled_releases` first, so the `release_at` it shows is the
+value as of THIS request rather than whatever was last written — and the
+dashboard becomes a third release trigger alongside the owner queue's
+check-on-read and the poller. That is what makes the flip happen on screen
+while Render's free tier has the poller asleep. Safe because
+`refresh_scheduled_releases` is the single release implementation and can
+only ever move a release earlier than the conservative seed, never past the
+customer's chosen time.
+
+**`implied_mu_s` alongside the logged `mu_ready_s`.** A re-derivation that
+moves release_at by less than `RELEASE_REDERIVE_DEADBAND_S` (60s) is
+deliberately not logged, so the newest prediction_log row can lag the live
+release_at. `implied_mu_s = lead_s - margin` backs the mu out of the live
+timestamps instead. Showing both makes the deadband legible rather than
+looking like the page disagreeing with itself.
+
+**The countdown is anchored to the SERVER's number.** `release_at` minus
+`Date.now()` would put "is this due yet" on the browser clock; a laptop a
+couple of minutes off — ordinary — would disagree with the backend about
+the one moment this section exists to make trustworthy. The server sends
+`seconds_until_release` and the 1s ticker only counts elapsed time since
+the fetch, re-anchoring every poll.
+
+`state` is derived from what is observable, not stored: held / released /
+retired (held, then left the live set before release) / not_held. A live
+hold is exempt from the day picker, so a 22:00 hold for an 01:00 pickup
+does not vanish at midnight.
+
+### One existing test was narrowed, deliberately
+
+`test_no_fixed_interval_drives_the_refresh` banned `setInterval(`
+page-wide. That was exactly right while every timer fetched something; the
+countdown ticker repaints text nodes and makes no request. Narrowed to an
+ALLOWLIST (`calls == ["tickCountdowns"]`) rather than deleted, so
+`setInterval(refreshAll, …)` — the regression it was written for — still
+fails, and so does any new timer. Backed by a second test asserting
+`tickCountdowns` contains no `api(`, `fetch(` or `await`, which is what
+earns it the exemption.
+
+### Tests
+
+- backend **459 pass, 0 fail** (+30: 8 in `test_api_scheduled_pickup.py`,
+  22 in the new `test_api_scheduled_observability.py`).
+- dashboard_app **55 pass, 0 fail** (+13).
+
+**Baseline note, correcting the 2026-09-16 entry.** That session recorded
+21 pre-existing backend failures and flagged them as a shared-test-DB
+artifact: the admin-order-log tests have a LIMIT and their own order falls
+off the end once enough orders accumulate. Confirmed — this session ran
+`python tests/bootstrap_test_db.py create` first and all 459 pass. The 21
+were the artifact, not a defect. Rebuild the DB before trusting a baseline.
+
+Note `pytest.ini` sets `python_files = test_api_*.py`, so
+`test_carevo_skip.py` and `test_owner_app.py` are not collected by the
+default run — both need a live server on a port. Unchanged here.
+
+---

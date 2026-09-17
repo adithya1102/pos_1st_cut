@@ -12,6 +12,7 @@ The backend is a MockTransport, so these run with no real backend and can
 inspect exactly what header the proxy sent outward.
 """
 import os
+import re
 
 import httpx
 import pytest
@@ -54,6 +55,27 @@ def _env_and_backend(monkeypatch):
                 {"id": "ou1", "name": "R1", "order_status": "open",
                  "is_manually_closed": False, "opening_time": None,
                  "closing_time": None}])
+        if p.endswith("/scheduled"):
+            # One held order, shaped exactly as the backend's
+            # TestingService.scheduled_orders returns it.
+            return httpx.Response(200, json=[
+                {"order_id": "o9", "outlet_id": "ou1", "outlet_name": "R1",
+                 "identifier": "+919812345678", "label": None,
+                 "pickup_code": "771204", "status": "PAID",
+                 "payment_status": "PAID", "state": "held",
+                 "requested_pickup_at": "2026-09-17T14:00:00+00:00",
+                 "requested_pickup_at_ist": "2026-09-17 19:30",
+                 "release_at": "2026-09-17T13:46:00+00:00",
+                 "release_at_ist": "2026-09-17 19:16",
+                 "seconds_until_release": 840, "is_due": False,
+                 "mu_ready_s": 420, "mu_source": "order_twin",
+                 "implied_mu_s": 420, "safety_margin_s": 420, "lead_s": 840,
+                 "model_version": "release_v1", "decisions": 1,
+                 "last_decision": "held",
+                 "last_decision_at": "2026-09-17T11:00:00+00:00",
+                 "last_decision_at_ist": "2026-09-17 16:30",
+                 "released_at": None, "released_at_ist": None,
+                 "created_at_ist": "2026-09-17 16:30"}])
         if p.endswith("/compliance"):
             return httpx.Response(200, json={
                 "ordered": [], "not_ordered": [],
@@ -214,6 +236,121 @@ class TestDayFilterPassthrough:
         assert main._TEST_SENT_URLS[-1].endswith("/orders")
 
 
+class TestScheduledSectionIsProxied:
+    """The Scheduled-pickups section goes through the SAME proxy contract as
+    every other read: session required, key attached outbound, key never
+    returned inward, day forwarded verbatim."""
+
+    def test_it_requires_a_session(self):
+        assert _client().get("/api/scheduled").status_code == 401
+
+    def test_the_outbound_call_carries_the_key(self, _env_and_backend):
+        c = _client(); _login(c)
+        r = c.get("/api/scheduled")
+        assert r.status_code == 200
+        assert _env_and_backend[-1].get("x-testing-key") == KEY
+        assert main._TEST_SENT_URLS[-1].endswith("/scheduled")
+
+    def test_the_response_does_not_leak_the_key(self):
+        c = _client(); _login(c)
+        assert KEY not in c.get("/api/scheduled").text
+
+    def test_the_engine_numbers_survive_the_proxy(self):
+        """The proxy hands the browser the data unchanged — the section is
+        useless if the numbers behind the release moment are dropped on the
+        way through."""
+        c = _client(); _login(c)
+        row = c.get("/api/scheduled").json()[0]
+        assert row["state"] == "held"
+        assert row["mu_ready_s"] == 420
+        assert row["safety_margin_s"] == 420
+        assert row["lead_s"] == 840
+        assert row["seconds_until_release"] == 840
+        assert row["pickup_code"] == "771204"
+
+    def test_day_is_forwarded_verbatim(self, _env_and_backend):
+        c = _client(); _login(c)
+        assert c.get("/api/scheduled?day=2026-09-01").status_code == 200
+        assert main._TEST_SENT_URLS[-1].endswith("/scheduled?day=2026-09-01")
+
+    def test_no_day_means_no_query_string(self, _env_and_backend):
+        # Same reasoning as /api/orders: the backend owns the definition of
+        # "today", and defaulting here would create a second one.
+        c = _client(); _login(c)
+        assert c.get("/api/scheduled").status_code == 200
+        assert main._TEST_SENT_URLS[-1].endswith("/scheduled")
+
+
+class TestScheduledSectionIsWiredIntoThePage:
+    """Source-level, like the button tests: the page is a static template with
+    no JS harness, so the wiring is asserted by reading it."""
+
+    def _page(self):
+        c = _client(); _login(c)
+        return c.get("/").text
+
+    def test_the_section_exists_and_is_fetched_every_round(self):
+        page = self._page()
+        assert "Scheduled pickups" in page
+        assert "id=\"scheduled\"" in page
+        assert "/api/scheduled" in page, \
+            "the refresh round must actually fetch the section"
+
+    def test_every_required_column_is_rendered(self):
+        """requested_pickup_at, the computed release_at, mu, the margin, the
+        state, and the time remaining — the six things the section exists to
+        show."""
+        page = self._page()
+        for field in ("requested_pickup_at_ist", "release_at_ist",
+                      "safety_margin_s", "mu_ready_s", "o.state",
+                      "seconds_until_release"):
+            assert field in page, f"{field} is missing from the section"
+
+    def test_the_countdown_is_anchored_to_the_servers_number(self):
+        """NOT to release_at minus the browser clock. A laptop a few minutes
+        off would otherwise disagree with the backend about whether an order
+        is due — and being able to trust the displayed moment is the entire
+        point of this section."""
+        page = self._page()
+        assert "seconds_until_release" in page
+        assert "scheduledFetchedAt" in page, \
+            "the ticker must count elapsed time since the fetch"
+        assert "Date.parse(o.release_at)" not in page
+        assert "new Date(o.release_at)" not in page
+
+    def test_the_countdown_ticks_between_polls(self):
+        page = self._page()
+        assert "tickCountdowns" in page
+        assert "setInterval(tickCountdowns, 1000)" in page
+
+    def test_the_section_renders_even_while_a_label_is_being_edited(self):
+        """It holds no inputs to protect, and freezing a countdown because
+        someone is naming a tester elsewhere would be a bug."""
+        page = self._page()
+        refresh = page[page.index("async function refreshAll"):]
+        # The body of `if (!editing) { … }` — the block that is skipped mid-edit.
+        block = refresh[refresh.index("if (!editing)"):]
+        block = block[: block.index("}") + 1]
+        assert "render(orders)" in block, "sanity: found the right block"
+        assert "renderScheduled" not in block, \
+            "renderScheduled must sit OUTSIDE the editing guard"
+        assert "renderScheduled(scheduled)" in refresh, \
+            "…but it must still run every round"
+
+    def test_a_held_row_shows_the_pickup_code(self):
+        """The OTP column is on this table too — a held order having a code is
+        the most counter-intuitive part of the feature."""
+        page = self._page()
+        start = page.index("function renderScheduled")
+        section = page[start: page.index("function renderOutlets", start)]
+        assert "o.pickup_code" in section
+        assert "<th>OTP</th>" in section
+
+    def test_states_are_styled_so_held_reads_differently_from_released(self):
+        page = self._page()
+        assert ".pill.held" in page and ".pill.released" in page
+
+
 class TestReadyButtonIsWired:
     """The page is served as a static template with no JS test harness, so the
     wiring is asserted at the source level: the button must be gated on the
@@ -357,12 +494,37 @@ class TestTheRefreshLoopCannotOverlapItself:
 
     def test_no_fixed_interval_drives_the_refresh(self):
         page = self._page()
-        # The CALL, not the word: the comment above the loop names setInterval
-        # to explain what it replaced, and that mention must stay allowed.
-        assert "setInterval(" not in page, (
+        # An ALLOWLIST of what may be put on a fixed interval, not a page-wide
+        # ban on the word.
+        #
+        # This started as `"setInterval(" not in page`, which was exactly right
+        # while every timer on the page fetched something. The countdown ticker
+        # then arrived: it fires every second and repaints a few text nodes,
+        # makes no request, and cannot overlap anything — so a blanket ban would
+        # have forced the one shape that genuinely wants an interval into a
+        # self-scheduling chain for no reason.
+        #
+        # Narrowed rather than deleted, and narrowed to a whitelist rather than
+        # a blacklist: setInterval(refreshAll, …) — the actual regression this
+        # was written to catch — still fails, and so does any NEW timer, because
+        # anything not named here fails by default.
+        calls = re.findall(r"setInterval\(\s*([A-Za-z0-9_$.]+)", page)
+        assert calls == ["tickCountdowns"], (
             "a fixed interval fires regardless of whether the previous round "
-            "finished — that is exactly the overlap this removes"
+            "finished — that is exactly the overlap this removes. Only the "
+            f"countdown repaint may be on one; found {calls}"
         )
+
+    def test_the_one_permitted_interval_performs_no_network_call(self):
+        """What earns tickCountdowns its exemption above, asserted rather than
+        assumed: the moment it fetches anything it becomes the overlapping
+        shape the loop exists to prevent, and this fails."""
+        page = self._page()
+        fn = page[page.index("function tickCountdowns"):]
+        fn = fn[: fn.index("\n    }")]
+        for forbidden in ("api(", "fetch(", "await "):
+            assert forbidden not in fn, (
+                f"tickCountdowns must stay a pure repaint — found {forbidden!r}")
 
     def test_the_next_round_is_scheduled_only_after_the_previous_awaits(self):
         page = self._page()

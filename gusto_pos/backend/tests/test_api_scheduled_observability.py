@@ -1,0 +1,324 @@
+"""The testing dashboard's Scheduled-pickups section — engine observability.
+
+`GET /api/v1/testing/scheduled` exists so a held order can be WATCHED: sitting
+held with the numbers that justified its release moment on the row, then
+flipping to released at exactly that moment. These tests assert the data behind
+that, not the markup.
+
+Same throwaway local DB and same X-Testing-Key gate as the rest of the testing
+module — no new auth mechanism was introduced for this endpoint.
+"""
+import uuid
+from datetime import datetime, timedelta, timezone
+
+import pytest
+from sqlalchemy import text
+
+from app.core.config import settings
+from app.modules.carevo_customer.service import CarevoService
+from app.modules.testing_dashboard.service import TESTING_TZ
+
+API = "/api/v1"
+KEY = "test-dash-key"
+HDR = {"X-Testing-Key": KEY}
+
+
+@pytest.fixture(autouse=True)
+def _configure_key():
+    """The gate reads settings at request time; set a known key for this file
+    and restore afterwards so no other test sees it."""
+    prev = settings.TESTING_DASHBOARD_KEY
+    settings.TESTING_DASHBOARD_KEY = KEY
+    yield
+    settings.TESTING_DASHBOARD_KEY = prev
+
+
+# --------------------------------------------------------------------------
+# helpers
+# --------------------------------------------------------------------------
+def _iso(dt):
+    return dt.astimezone(timezone.utc).isoformat()
+
+
+async def _scheduled_order(client, seed, minutes_ahead: int = 120):
+    """A paid order with a pickup slot far enough out to be genuinely held."""
+    r = await client.post(
+        f"{API}/customer/orders", headers=seed["customer_auth"],
+        json={"outlet_id": seed["outlet_id"],
+              "items": [{"menu_item_id": seed["menu_item_id"], "quantity": 1}],
+              "requested_pickup_at": _iso(datetime.now(timezone.utc)
+                                          + timedelta(minutes=minutes_ahead))})
+    assert r.status_code == 200, r.text
+    order = r.json()
+    p = await client.post(f"{API}/customer/payment/simulate",
+                          headers=seed["customer_auth"],
+                          json={"order_id": order["id"], "method": "upi"})
+    assert p.status_code == 200, p.text
+    return order
+
+
+async def _asap_order(client, seed):
+    r = await client.post(
+        f"{API}/customer/orders", headers=seed["customer_auth"],
+        json={"outlet_id": seed["outlet_id"],
+              "items": [{"menu_item_id": seed["menu_item_id"], "quantity": 1}]})
+    assert r.status_code == 200, r.text
+    order = r.json()
+    p = await client.post(f"{API}/customer/payment/simulate",
+                          headers=seed["customer_auth"],
+                          json={"order_id": order["id"], "method": "upi"})
+    assert p.status_code == 200, p.text
+    return order
+
+
+async def _rows(client, day=None):
+    url = f"{API}/testing/scheduled" + (f"?day={day}" if day else "")
+    r = await client.get(url, headers=HDR)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+async def _row(client, order_id):
+    return next((o for o in await _rows(client)
+                 if o["order_id"] == str(order_id)), None)
+
+
+async def _make_due(db, order_id):
+    """Bring the pickup moment forward instead of waiting two hours.
+
+    Moves requested_pickup_at, NOT release_at — the latter is re-derived from
+    the former on every pass, so poking it directly proves nothing.
+    """
+    await db.execute(text(
+        "UPDATE customer_orders SET requested_pickup_at = now() + interval "
+        "'10 seconds' WHERE id=:o"), {"o": str(order_id)})
+    await db.execute(text(
+        "UPDATE auto_advance_schedule SET due_at = now() - interval '1 minute' "
+        "WHERE order_id=:o"), {"o": str(order_id)})
+    await db.commit()
+
+
+# ==========================================================================
+# the gate — reused, not reinvented
+# ==========================================================================
+@pytest.mark.asyncio
+class TestScheduledEndpointGate:
+    async def test_no_header_is_401(self, client):
+        assert (await client.get(f"{API}/testing/scheduled")).status_code == 401
+
+    async def test_a_wrong_key_is_401(self, client):
+        r = await client.get(f"{API}/testing/scheduled",
+                             headers={"X-Testing-Key": "nope"})
+        assert r.status_code == 401
+
+    async def test_the_right_key_passes(self, client, seed):
+        r = await client.get(f"{API}/testing/scheduled", headers=HDR)
+        assert r.status_code == 200
+        assert isinstance(r.json(), list)
+
+    async def test_it_fails_closed_when_the_key_is_unset(self, client):
+        settings.TESTING_DASHBOARD_KEY = ""
+        r = await client.get(f"{API}/testing/scheduled", headers=HDR)
+        assert r.status_code == 401
+
+
+# ==========================================================================
+# a held order, and why it is held
+# ==========================================================================
+@pytest.mark.asyncio
+class TestHeldOrderIsFullyExplained:
+    async def test_a_held_order_appears_with_state_held(self, client, seed):
+        order = await _scheduled_order(client, seed)
+        row = await _row(client, order["id"])
+        assert row is not None, "a held order must be on the scheduled section"
+        assert row["state"] == "held"
+
+    async def test_it_carries_both_timestamps(self, client, seed):
+        order = await _scheduled_order(client, seed)
+        row = await _row(client, order["id"])
+        assert row["requested_pickup_at"] is not None
+        assert row["release_at"] is not None
+        assert row["requested_pickup_at_ist"] and row["release_at_ist"]
+
+    async def test_the_release_moment_is_justified_by_the_numbers_shown(
+            self, client, seed):
+        """The row must not merely assert a moment — the arithmetic behind it
+        has to be on the row: release_at = requested - (mu + margin)."""
+        order = await _scheduled_order(client, seed)
+        row = await _row(client, order["id"])
+        assert row["safety_margin_s"] > 0
+        assert row["lead_s"] == row["implied_mu_s"] + row["safety_margin_s"]
+        req = datetime.fromisoformat(row["requested_pickup_at"])
+        rel = datetime.fromisoformat(row["release_at"])
+        assert round((req - rel).total_seconds()) == row["lead_s"]
+
+    async def test_the_logged_mu_matches_what_the_engine_used(self, client, seed):
+        """mu_ready_s comes from the prediction_log row the derivation wrote;
+        implied_mu_s is backed out of the live timestamps. Their agreement is
+        what says this section reports the engine rather than re-deriving its
+        own answer beside it — and the tolerance is the derivation deadband,
+        not a fudge factor."""
+        order = await _scheduled_order(client, seed)
+        row = await _row(client, order["id"])
+        assert row["mu_ready_s"] is not None
+        assert row["mu_source"] == "order_twin"
+        assert abs(row["mu_ready_s"] - row["implied_mu_s"]) \
+            <= CarevoService.RELEASE_REDERIVE_DEADBAND_S
+
+    async def test_time_remaining_counts_down_and_is_not_yet_due(
+            self, client, seed):
+        order = await _scheduled_order(client, seed)
+        row = await _row(client, order["id"])
+        assert row["seconds_until_release"] > 0
+        assert row["is_due"] is False
+
+    async def test_the_held_order_still_shows_its_pickup_code(self, client, seed):
+        """The OTP finding, visible on the same surface: the hold is about what
+        the RESTAURANT sees, never about what the customer was given."""
+        order = await _scheduled_order(client, seed)
+        row = await _row(client, order["id"])
+        assert row["pickup_code"], "a held order has its code from payment on"
+        assert row["status"] == "PAID"
+
+    async def test_the_engine_records_that_it_re_derived(self, client, seed):
+        order = await _scheduled_order(client, seed)
+        row = await _row(client, order["id"])
+        assert row["decisions"] >= 1
+        assert row["last_decision"] == "held"
+        assert row["model_version"] == "release_v1"
+        assert row["last_decision_at"] is not None
+
+    async def test_an_asap_order_is_not_in_this_section_at_all(self, client, seed):
+        """Scoped to scheduled pickups. An ordinary order has no hold to explain
+        and would only be noise here."""
+        asap = await _asap_order(client, seed)
+        rows = await _rows(client)
+        assert all(o["order_id"] != str(asap["id"]) for o in rows)
+
+
+# ==========================================================================
+# the flip — held, then released, at the computed moment
+# ==========================================================================
+@pytest.mark.asyncio
+class TestItFlipsToReleased:
+    async def test_the_whole_sequence_on_one_row(self, client, seed, db):
+        order = await _scheduled_order(client, seed)
+        assert (await _row(client, order["id"]))["state"] == "held"
+
+        await _make_due(db, order["id"])
+        row = await _row(client, order["id"])
+        assert row["state"] == "released"
+        assert row["release_at"] is None, "the hold is cleared at release"
+        assert row["seconds_until_release"] is None
+        assert row["released_at"] is not None
+        assert row["status"] == "RECEIVED", "and it has reached the restaurant"
+
+    async def test_the_read_itself_performs_the_release(self, client, seed, db):
+        """This endpoint re-derives before it reads, so it is a release trigger
+        in its own right — which is what makes the flip happen on screen even
+        while the free-tier background poller is asleep."""
+        order = await _scheduled_order(client, seed)
+        await _make_due(db, order["id"])
+        await _rows(client)
+        status, release_at = (await db.execute(text(
+            "SELECT status, release_at FROM customer_orders WHERE id=:o"),
+            {"o": order["id"]})).first()
+        assert status == "RECEIVED"
+        assert release_at is None
+
+    async def test_the_release_is_logged_as_its_own_decision(
+            self, client, seed, db):
+        order = await _scheduled_order(client, seed)
+        before = (await _row(client, order["id"]))["decisions"]
+        await _make_due(db, order["id"])
+        after = await _row(client, order["id"])
+        assert after["decisions"] > before
+        assert after["last_decision"] == "released"
+
+    async def test_a_released_order_keeps_the_numbers_that_released_it(
+            self, client, seed, db):
+        """The justification must survive the flip. A row that loses its mu and
+        margin the moment it releases cannot be audited afterwards — which is
+        exactly when someone asks whether the moment was right."""
+        order = await _scheduled_order(client, seed)
+        await _make_due(db, order["id"])
+        row = await _row(client, order["id"])
+        assert row["mu_ready_s"] is not None
+        assert row["safety_margin_s"] > 0
+        assert row["requested_pickup_at"] is not None
+
+    async def test_the_order_is_invisible_to_the_owner_until_it_flips(
+            self, client, seed, db):
+        """The two surfaces, checked against each other in one test: while the
+        dashboard says 'held' the owner queue does not contain the order, and
+        both change together."""
+        order = await _scheduled_order(client, seed)
+
+        async def queue_ids():
+            r = await client.get(f"{API}/pos/orders", headers=seed["owner_auth"])
+            assert r.status_code == 200, r.text
+            return [str(o["order_id"]) for o in r.json()]
+
+        assert (await _row(client, order["id"]))["state"] == "held"
+        assert str(order["id"]) not in await queue_ids()
+
+        await _make_due(db, order["id"])
+        assert (await _row(client, order["id"]))["state"] == "released"
+        assert str(order["id"]) in await queue_ids()
+
+
+# ==========================================================================
+# scope, ordering, and the states that are not held/released
+# ==========================================================================
+@pytest.mark.asyncio
+class TestScopeAndOrdering:
+    async def test_held_orders_sort_before_finished_ones(self, client, seed, db):
+        """The section is read as a countdown, so the next thing to happen
+        belongs on the top row."""
+        done = await _scheduled_order(client, seed, minutes_ahead=150)
+        await _make_due(db, done["id"])
+        await _rows(client)                     # this read performs that release
+        still_held = await _scheduled_order(client, seed, minutes_ahead=120)
+
+        ids = [o["order_id"] for o in await _rows(client)]
+        assert ids.index(str(still_held["id"])) < ids.index(str(done["id"]))
+
+    async def test_a_live_hold_is_never_hidden_by_the_day_picker(
+            self, client, seed):
+        """A hold taken at 22:00 for an 01:00 pickup must not vanish off the
+        section at midnight — it is the order most worth watching."""
+        order = await _scheduled_order(client, seed)
+        other = (datetime.now(TESTING_TZ) - timedelta(days=3)).strftime("%Y-%m-%d")
+        rows = await _rows(client, day=other)
+        assert any(o["order_id"] == str(order["id"]) for o in rows)
+
+    async def test_a_bad_day_is_a_422_not_a_500(self, client, seed):
+        r = await client.get(f"{API}/testing/scheduled?day=not-a-date",
+                             headers=HDR)
+        assert r.status_code == 422
+
+    async def test_an_order_that_left_the_live_set_reads_as_retired(
+            self, client, seed, db):
+        """Held, then rejected before its release moment. The section must say
+        what actually happened rather than falling back to 'not held', which
+        would read as though no hold was ever taken."""
+        order = await _scheduled_order(client, seed)
+        await CarevoService.reject_order(
+            db, uuid.UUID(order["id"]), uuid.UUID(seed["outlet_id"]),
+            reason="served early")
+        row = await _row(client, order["id"])
+        assert row["state"] == "retired"
+        assert row["release_at"] is None
+        # The reasoning is still there — that is the point of keeping the row.
+        assert row["decisions"] >= 1
+
+    async def test_a_day_with_nothing_on_it_returns_only_live_holds(
+            self, client, seed):
+        """The complement of the test above, and the exact price of it: a day
+        the outlet did no business on is not necessarily an empty list, because
+        a hold that is live RIGHT NOW is deliberately exempt from the day
+        filter. What must never appear is a finished order from another day."""
+        other = (datetime.now(TESTING_TZ) - timedelta(days=400)).strftime("%Y-%m-%d")
+        rows = await _rows(client, day=other)
+        assert all(o["state"] == "held" for o in rows), \
+            "only a live hold may bypass the day filter"

@@ -347,6 +347,195 @@ class TestingService:
             "items": by_order.get(str(r.id), []),
         } for r in rows]
 
+    # ----------------------- scheduled pickup observability ---------------
+    @staticmethod
+    async def scheduled_orders(db: AsyncSession, day: str | None = None) -> list[dict]:
+        """Every scheduled-pickup order and the engine's live reasoning about it.
+
+        This is the ENGINE OBSERVABILITY surface for migration 031. The orders
+        table next to it answers "what has been ordered"; this answers the
+        different question "why is that order not on the restaurant's tablet
+        yet, and exactly when will it be" — with the numbers that produced the
+        answer, not just the verdict.
+
+        ## It RE-DERIVES before it reads, on purpose
+
+        release_at is derived, never frozen: mu_ready_s at payment predicts the
+        backlog at payment, which is meaningless for a pickup three hours out.
+        So this endpoint calls refresh_scheduled_releases FIRST and then reads
+        the row, which means the release_at it shows is the value as of THIS
+        request rather than whatever was last written — you can watch it move
+        earlier as a kitchen gets busy, which is the whole point of the section.
+
+        That also makes the dashboard a third TRIGGER for release, alongside the
+        owner queue's check-on-read and the background poller. That is
+        deliberate and safe: refresh_scheduled_releases is the single release
+        implementation and is idempotent, so calling it from one more reader
+        cannot release anything early (the derivation can only move release_at
+        earlier than a conservative seed, and never past the customer's chosen
+        time). It matters because Render's free tier sleeps the poller, and this
+        page is often the only thing polling while a scheduled order is watched.
+
+        Wrapped best-effort: a refresh failure must still render the section,
+        just with the last-written numbers instead of freshly derived ones.
+
+        ## What the day filter does and does not hide
+
+        Same IST calendar day as active_orders, so a row lines up with its row in
+        the orders table above. With ONE addition: an order that is STILL HELD is
+        always included whatever day is selected. A hold taken at 22:00 for an
+        01:00 pickup would otherwise disappear off the section at midnight — the
+        exact order most worth watching.
+        """
+        from app.modules.prediction.service import SCHEDULED_RELEASE_SAFETY_MARGIN_S
+
+        day = TestingService.resolve_day(day)
+        try:
+            await CarevoService.refresh_scheduled_releases(db)
+        except Exception:
+            # Never let a derivation failure blank the page — the stored values
+            # are still the truth as of the last successful pass.
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+
+        rows = (await db.execute(text("""
+            SELECT co.id, co.outlet_id, co.status, co.payment_status,
+                   co.pickup_code, co.requested_pickup_at, co.release_at,
+                   co.created_at,
+                   o.location_name AS outlet_name,
+                   COALESCE(c.phone_number, c.email) AS identifier,
+                   cl.label AS label
+            FROM customer_orders co
+            LEFT JOIN outlets   o ON o.id = co.outlet_id
+            LEFT JOIN customers c ON c.id = co.customer_id
+            LEFT JOIN contact_labels cl
+                   ON cl.identifier = COALESCE(c.phone_number, c.email)
+            WHERE co.requested_pickup_at IS NOT NULL
+              AND ((co.created_at AT TIME ZONE 'Asia/Kolkata')::date
+                       = CAST(:day AS date)
+                   -- A live hold is never hidden by the day picker. See above.
+                   OR co.release_at IS NOT NULL)
+            -- Still-held orders first, soonest release at the top: this section
+            -- is read as a countdown, so the next thing to happen belongs on the
+            -- first row. `release_at IS NULL` is false for a held order and
+            -- false sorts before true.
+            ORDER BY (co.release_at IS NULL), co.release_at ASC,
+                     co.requested_pickup_at DESC
+        """), {"day": date.fromisoformat(day)})).fetchall()
+        if not rows:
+            return []
+
+        ids = [str(r.id) for r in rows]
+        # The most recent release decision per order — the numbers that justified
+        # the current release_at. DISTINCT ON over the append-only log rather
+        # than a status column: prediction_log IS the record (migration 006
+        # makes it immutable), so there is nothing else to trust.
+        latest = {str(r.order_id): r for r in (await db.execute(text("""
+            SELECT DISTINCT ON (order_id)
+                   order_id, predicted_at, model_version, mu_seconds, features, output
+            FROM prediction_log
+            WHERE predictor = 'release' AND order_id = ANY(:ids)
+            ORDER BY order_id, id DESC
+        """), {"ids": ids})).fetchall()}
+        # How many times the engine has re-derived, and when the release itself
+        # fired. `decisions` is what makes "re-derived, not frozen" visible as a
+        # number instead of a claim.
+        agg = {str(r.order_id): r for r in (await db.execute(text("""
+            SELECT order_id, count(*) AS decisions,
+                   max(predicted_at) FILTER (
+                       WHERE output ->> 'decision' = 'released') AS released_at
+            FROM prediction_log
+            WHERE predictor = 'release' AND order_id = ANY(:ids)
+            GROUP BY order_id
+        """), {"ids": ids})).fetchall()}
+
+        now = datetime.now(timezone.utc)
+        out = []
+        for r in rows:
+            log = latest.get(str(r.id))
+            a = agg.get(str(r.id))
+            features = (log.features if log else None) or {}
+            decisions = int(a.decisions) if a else 0
+            released_at = a.released_at if a else None
+
+            # STATE, derived from what is observable rather than stored:
+            #   held      — the hold is in place right now
+            #   released  — the hold ran and the order reached the restaurant
+            #   retired   — held, then left the live set before its release
+            #               (served early at the counter, or rejected)
+            #   not_held  — paid, but no hold was ever taken
+            if r.release_at is not None:
+                state = "held"
+            elif released_at is not None:
+                state = "released"
+            elif decisions:
+                state = "retired"
+            else:
+                state = "not_held"
+
+            # The margin this order was actually computed with, from its own log
+            # row — NOT today's constant. The constant is expected to shrink once
+            # the dataset earns it, and a row must keep reading as what it was.
+            margin_s = features.get("safety_margin_s")
+            if margin_s is None:
+                margin_s = SCHEDULED_RELEASE_SAFETY_MARGIN_S
+
+            # Lead is computed LIVE from the two timestamps on the order, so it
+            # describes the current release_at even when the last re-derivation
+            # moved by less than RELEASE_REDERIVE_DEADBAND_S and was therefore
+            # never logged. implied_mu_s backs the engine's mu out of it the same
+            # way: release_at = requested - (mu + margin), so mu = lead - margin.
+            # Where it differs from the logged mu_ready_s by under a minute, that
+            # is the deadband working, not a disagreement.
+            lead_s = implied_mu_s = None
+            if r.release_at is not None and r.requested_pickup_at is not None:
+                lead_s = round((r.requested_pickup_at - r.release_at).total_seconds())
+                implied_mu_s = lead_s - margin_s
+
+            # Negative is meaningful and deliberately not clamped: it says the
+            # computed moment has passed and the flip is owed, which is exactly
+            # what you want to see during the second it takes to happen.
+            secs_left = (round((r.release_at - now).total_seconds())
+                         if r.release_at is not None else None)
+
+            out.append({
+                "order_id": r.id,
+                "outlet_id": r.outlet_id,
+                "outlet_name": r.outlet_name,
+                "identifier": r.identifier,
+                "label": r.label,
+                # Carried here too, not just in the orders table: this section is
+                # where someone checks that a HELD order already has its code —
+                # the hold is about what the restaurant sees, never about what
+                # the customer was given at payment.
+                "pickup_code": r.pickup_code,
+                "status": r.status,
+                "payment_status": r.payment_status,
+                "state": state,
+                "requested_pickup_at": r.requested_pickup_at,
+                "requested_pickup_at_ist": _ist_str(r.requested_pickup_at),
+                "release_at": r.release_at,
+                "release_at_ist": _ist_str(r.release_at),
+                "seconds_until_release": secs_left,
+                "is_due": secs_left is not None and secs_left <= 0,
+                "mu_ready_s": features.get("mu_ready_s"),
+                "mu_source": features.get("mu_source"),
+                "implied_mu_s": implied_mu_s,
+                "safety_margin_s": margin_s,
+                "lead_s": lead_s,
+                "model_version": log.model_version if log else None,
+                "decisions": decisions,
+                "last_decision": (log.output or {}).get("decision") if log else None,
+                "last_decision_at": log.predicted_at if log else None,
+                "last_decision_at_ist": _ist_str(log.predicted_at) if log else None,
+                "released_at": released_at,
+                "released_at_ist": _ist_str(released_at),
+                "created_at_ist": _ist_str(r.created_at),
+            })
+        return out
+
     # --------------------- manual approve / ready / reject ----------------
     # All three REUSE the exact staff service functions — no parallel logic. The
     # real functions stay authoritative (advance_status performs the transition;

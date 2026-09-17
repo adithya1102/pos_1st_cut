@@ -48,6 +48,22 @@
     /* A spent code, struck through — the same treatment the customer's own
        ticket gives it once collected. */
     tr.done .otp { color:var(--soft); text-decoration:line-through; }
+    /* --- scheduled pickup / engine observability -------------------------
+       A held order is deliberately AMBER, not green: it is paid and real but
+       the restaurant cannot see it yet, which is a state worth reading as
+       "in hand, not yet handed over". Released goes green because at that
+       moment it has become an ordinary order on the tablet. */
+    .pill.held { background:rgba(243,156,18,.15); color:var(--amber); }
+    .pill.released { background:rgba(46,204,113,.15); color:var(--green); }
+    .pill.retired,.pill.not_held { background:rgba(154,162,177,.15); color:var(--soft); }
+    /* Tabular numerals so a ticking countdown does not jitter its own column
+       width every second — the digits change, the layout must not. */
+    .countdown { font-family:ui-monospace, monospace; font-variant-numeric:tabular-nums;
+                 font-weight:700; white-space:nowrap; }
+    .countdown.due { color:var(--green); }
+    .num { font-family:ui-monospace, monospace; font-variant-numeric:tabular-nums;
+           white-space:nowrap; }
+    .math { color:var(--soft); font-size:12px; white-space:nowrap; }
     .ident { display:flex; flex-direction:column; gap:2px; }
     .ident .raw { color:var(--soft); font-size:12px; }
     .label-edit { background:#0f1115; border:1px dashed var(--line); color:var(--ink);
@@ -87,6 +103,23 @@
         <button class="ghost" onclick="setDay(istToday())">Today</button>
       </div>
       <div id="orders"></div>
+    </div>
+
+    <!-- Engine observability for scheduled pickup (migration 031).
+         Sits directly under Orders because it explains a row that is MISSING
+         from the restaurant's tablet: a held order is paid, real and invisible
+         to the outlet, and this is the only surface that says why and for how
+         much longer. Every number that produced the release moment is on the
+         row next to the countdown, so the moment can be checked rather than
+         trusted. -->
+    <div class="outlet">
+      <div class="outlet-head">
+        <h2>Scheduled pickups</h2>
+        <span class="muted" id="scheduled-count"></span>
+        <span style="flex:1"></span>
+        <span class="muted" style="font-size:12px">release_at = requested − (mu_ready_s + margin), re-derived every poll</span>
+      </div>
+      <div id="scheduled"></div>
     </div>
 
     <div class="outlet">
@@ -271,6 +304,127 @@
         : '<div class="empty">no orders placed on this day</div>';
     }
 
+    // ------------------- scheduled pickup / engine observability ------------
+    //
+    // WHY THE COUNTDOWN IS ANCHORED TO A SERVER NUMBER, NOT TO release_at.
+    //
+    // The obvious version parses release_at and subtracts Date.now(). That puts
+    // the customer-facing question "is this order due yet" on the BROWSER's
+    // clock, and a laptop a couple of minutes off — which is ordinary — would
+    // show a countdown that disagrees with the server by exactly that much. The
+    // page would read "releases in 40s" while the backend had already released
+    // it, or worse the other way round, and the whole point of this section is
+    // that the displayed moment can be TRUSTED against what the engine did.
+    //
+    // So the server sends seconds_until_release, computed against ITS clock, and
+    // the local ticker only ever counts ELAPSED time since the fetch. Elapsed
+    // time is the one thing a local clock measures reliably regardless of how
+    // wrong its absolute time is. Every poll re-anchors, so drift cannot
+    // accumulate either.
+    let scheduledRows = [];
+    let scheduledFetchedAt = 0;
+
+    const fmtSecs = s => {
+      if (s === null || s === undefined) return '—';
+      const neg = s < 0;
+      let v = Math.abs(Math.round(s));
+      const h = Math.floor(v / 3600), m = Math.floor((v % 3600) / 60), sec = v % 60;
+      const body = h ? `${h}h ${m}m ${sec}s` : (m ? `${m}m ${sec}s` : `${sec}s`);
+      return (neg ? '−' : '') + body;
+    };
+    // Seconds as minutes for the engine's own numbers — mu of 420 reads as
+    // "7m 0s" here, which is how anyone actually thinks about prep time.
+    const fmtDur = s => (s === null || s === undefined) ? '—' : fmtSecs(s);
+
+    // The live remaining time for one row: the server's number minus however
+    // long ago we fetched it. Null for anything not currently held.
+    function remainingFor(o) {
+      if (o.seconds_until_release === null || o.seconds_until_release === undefined)
+        return null;
+      return o.seconds_until_release - (Date.now() - scheduledFetchedAt) / 1000;
+    }
+
+    function countdownCell(o) {
+      if (o.state !== 'held')
+        return '<span class="muted">—</span>';
+      const left = remainingFor(o);
+      const due = left <= 0;
+      // "due — releasing" rather than a negative number dressed up as a wait:
+      // past zero the honest statement is that the release is owed and the next
+      // pass performs it, which is a different thing from "0s left".
+      return `<span class="countdown ${due ? 'due' : ''}" data-order="${esc(o.order_id)}">`
+           + (due ? 'due — releasing…' : 'in ' + fmtSecs(left)) + '</span>';
+    }
+
+    // Re-paints ONLY the countdown cells, once a second, between the 15s polls.
+    // Deliberately not a full re-render: this section can be watched for
+    // minutes, and rebuilding the table every second would fight text selection
+    // and burn battery for no new information. Everything else on the row only
+    // changes when the server says so.
+    function tickCountdowns() {
+      for (const o of scheduledRows) {
+        const el = document.querySelector(`.countdown[data-order="${CSS.escape(o.order_id)}"]`);
+        if (!el || o.state !== 'held') continue;
+        const left = remainingFor(o);
+        const due = left <= 0;
+        el.classList.toggle('due', due);
+        el.textContent = due ? 'due — releasing…' : 'in ' + fmtSecs(left);
+      }
+    }
+
+    function renderScheduled(rows) {
+      scheduledRows = rows || [];
+      // Stamped at RENDER, not at request start: the elapsed-time anchor has to
+      // begin from the moment the numbers were true on this page.
+      scheduledFetchedAt = Date.now();
+      const held = scheduledRows.filter(o => o.state === 'held').length;
+      document.getElementById('scheduled-count').textContent = scheduledRows.length
+        ? `${scheduledRows.length} scheduled · ${held} still held`
+        : '';
+      const body = scheduledRows.map(o => `
+        <tr class="${o.state === 'held' ? '' : 'done'}">
+          <td>
+            <div class="ident">
+              <span>${esc(o.label) || '<i class="muted">no label</i>'}</span>
+              <span class="raw">${esc(o.identifier) || '<i>unknown</i>'}</span>
+            </div>
+          </td>
+          <td style="white-space:nowrap">${esc(o.outlet_name) || '—'}</td>
+          <!-- The OTP belongs on THIS table too. A held order having a code is
+               the single most counter-intuitive thing about the feature, and
+               seeing it sat next to the word "held" settles the question
+               without anyone opening the app. -->
+          <td class="otp">${esc(o.pickup_code) || '<span class="muted" style="font-size:12px">—</span>'}</td>
+          <td>${pill(o.state, o.state.replace('_', ' '))}
+              <div class="math">${esc(o.status)}</div></td>
+          <td class="num" style="white-space:nowrap">${esc(o.requested_pickup_at_ist) || '—'}</td>
+          <td class="num" style="white-space:nowrap">${esc(o.release_at_ist)
+              || (o.released_at_ist ? esc(o.released_at_ist) + ' <span class="muted">(fired)</span>' : '—')}</td>
+          <td>${countdownCell(o)}</td>
+          <!-- The justification, spelled out as the sum it actually is. Reading
+               left to right this is the formula in the section header with real
+               values in it, so the release moment above can be checked by hand. -->
+          <td class="math">
+            mu ${fmtDur(o.implied_mu_s !== null && o.implied_mu_s !== undefined
+                        ? o.implied_mu_s : o.mu_ready_s)}
+            + margin ${fmtDur(o.safety_margin_s)}
+            = lead ${fmtDur(o.lead_s)}
+            ${o.mu_source ? '<br><span class="muted">mu from ' + esc(o.mu_source) + '</span>' : ''}
+          </td>
+          <td class="math">${o.decisions || 0}×
+            ${o.last_decision_at_ist ? '<br>' + esc(o.last_decision_at_ist) : ''}
+          </td>
+        </tr>`).join('');
+      document.getElementById('scheduled').innerHTML = body
+        ? `<table><thead><tr>
+             <th>Identifier / label</th><th>Restaurant</th><th>OTP</th>
+             <th>State</th><th>Requested pickup (IST)</th>
+             <th>Release at (IST)</th><th>Releases</th>
+             <th>Why that moment</th><th>Re-derived</th>
+           </tr></thead><tbody>${body}</tbody></table>`
+        : '<div class="empty">no scheduled orders on this day</div>';
+    }
+
     // Outlet health kept as its own strip. It is NOT grouping — the orders no
     // longer hang off it — but open/closed and the hours are still worth seeing
     // and had nowhere else to live once the per-outlet sections went.
@@ -320,20 +474,33 @@
       status.textContent = 'refreshing…';
       const day = document.getElementById('day').value;
       try {
-        const [outlets, orders] = await Promise.all([
+        const [outlets, orders, scheduled] = await Promise.all([
           api('/api/outlets'),
           api('/api/orders' + (day ? '?day=' + encodeURIComponent(day) : '')),
+          api('/api/scheduled' + (day ? '?day=' + encodeURIComponent(day) : '')),
         ]);
         if (!editing) {            // don't clobber an in-progress label edit
           render(orders);
           renderOutlets(outlets);
         }
+        // Rendered OUTSIDE the editing guard, unlike the tables above. That
+        // guard exists to protect a half-typed label from being overwritten
+        // mid-keystroke; this section contains no inputs to protect, and
+        // freezing a countdown because someone is naming a tester elsewhere on
+        // the page would be a bug, not caution.
+        renderScheduled(scheduled);
         await loadCompliance();
         status.textContent = 'updated ' + new Date().toLocaleTimeString();
       } catch (e) { status.textContent = 'error: ' + e.message; }
     }
 
     document.getElementById('day').value = istToday();
+
+    // The one-second countdown ticker. setInterval IS right here, unlike the
+    // refresh loop below: this fires no network request and cannot stack — it
+    // rewrites at most a handful of text nodes and returns. The 15s poll
+    // re-anchors it each round.
+    setInterval(tickCountdowns, 1000);
 
     // Self-scheduling, NOT setInterval.
     //

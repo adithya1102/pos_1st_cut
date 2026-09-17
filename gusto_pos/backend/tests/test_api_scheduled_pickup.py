@@ -749,3 +749,137 @@ class TestOrderOutCarriesTheSchedule:
         body = r.json()
         assert body["requested_pickup_at"] is None
         assert body["release_at"] is None
+
+
+# ==========================================================================
+# The pickup CODE is minted at PAYMENT, hold or no hold
+# ==========================================================================
+@pytest.mark.asyncio
+class TestHeldOrderStillGetsItsCodeAtPayment:
+    """The hold is about what the RESTAURANT can see, never about what the
+    CUSTOMER is told.
+
+    mark_paid mints pickup_code unconditionally, BEFORE it has even read
+    requested_pickup_at — see service.py, where the code assignment sits above
+    the `held = ...` computation. These tests pin that ordering by its observable
+    consequence, so a later refactor that moves the mint under `if not held`
+    fails here rather than in someone's hands at a counter.
+    """
+
+    async def test_a_held_order_has_a_pickup_code_the_moment_it_is_paid(
+            self, client, seed, db):
+        order = await _place_and_pay(client, seed, requested_pickup_at=_iso(
+            datetime.now(timezone.utc) + timedelta(minutes=120)))
+        code = (await db.execute(text(
+            "SELECT pickup_code FROM customer_orders WHERE id=:o"),
+            {"o": order["id"]})).scalar()
+        assert code, "a held order must still be given its pickup code at payment"
+
+    async def test_the_customer_endpoint_returns_it_while_still_held(
+            self, client, seed, db):
+        """What PickupScreen actually reads. It polls GET /customer/orders/{id}
+        and shows `pickup_code` gated on payment_status == 'PAID' alone — there
+        is no hold-aware branch in the app, and this is the response that makes
+        that correct."""
+        order = await _place_and_pay(client, seed, requested_pickup_at=_iso(
+            datetime.now(timezone.utc) + timedelta(minutes=120)))
+        # Still held: proving the code is visible during the hold, not after it.
+        row = await _row(db, order["id"])
+        assert row.release_at is not None and row.release_at > datetime.now(timezone.utc)
+
+        r = await client.get(f"{API}/customer/orders/{order['id']}",
+                             headers=seed["customer_auth"])
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["payment_status"].upper() == "PAID"
+        assert body["pickup_code"], "the customer must see their code while held"
+
+    async def test_it_is_the_same_code_the_order_keeps_through_release(
+            self, client, seed, db):
+        """A code shown at payment and then changed at release would be worse
+        than no code at all — the customer screenshots the first one."""
+        order = await _place_and_pay(client, seed, requested_pickup_at=_iso(
+            datetime.now(timezone.utc) + timedelta(minutes=120)))
+        before = (await db.execute(text(
+            "SELECT pickup_code FROM customer_orders WHERE id=:o"),
+            {"o": order["id"]})).scalar()
+        await _make_due(db, order["id"])
+        await CarevoService.refresh_scheduled_releases(db, order_id=order["id"])
+        after = (await db.execute(text(
+            "SELECT pickup_code FROM customer_orders WHERE id=:o"),
+            {"o": order["id"]})).scalar()
+        assert after == before
+
+    async def test_a_held_order_is_indistinguishable_from_asap_on_the_code(
+            self, client, seed, db):
+        """Same shape, same length, same moment — the ASAP order is the
+        control."""
+        held = await _place_and_pay(client, seed, requested_pickup_at=_iso(
+            datetime.now(timezone.utc) + timedelta(minutes=120)))
+        asap = await _place_and_pay(client, seed)
+        codes = {}
+        for label, o in (("held", held), ("asap", asap)):
+            r = await client.get(f"{API}/customer/orders/{o['id']}",
+                                 headers=seed["customer_auth"])
+            codes[label] = r.json()["pickup_code"]
+        assert codes["held"] and codes["asap"]
+        assert len(codes["held"]) == len(codes["asap"])
+        assert codes["held"] != codes["asap"], "codes must still be unique"
+
+    async def test_the_code_works_at_the_counter_even_while_held(
+            self, client, seed, db):
+        """Consequence of the above, and the reason it matters: a customer who
+        turns up early can still be served — lookup_pickup resolves a held
+        order's code rather than reporting it unknown."""
+        order = await _place_and_pay(client, seed, requested_pickup_at=_iso(
+            datetime.now(timezone.utc) + timedelta(minutes=120)))
+        code = (await db.execute(text(
+            "SELECT pickup_code FROM customer_orders WHERE id=:o"),
+            {"o": order["id"]})).scalar()
+        found = await CarevoService.lookup_pickup(
+            db, uuid.UUID(seed["outlet_id"]), code)
+        assert found["found"] is True, "a held order's code must still resolve"
+        assert str(found["order"]["order_id"]) == str(order["id"])
+
+
+# ==========================================================================
+# Owner-side invisibility, asserted as a before/after on ONE order
+# ==========================================================================
+@pytest.mark.asyncio
+class TestOwnerQueueVisibilityFlipsAtRelease:
+    async def test_invisible_before_release_and_visible_after(
+            self, client, seed, db):
+        """The whole promise in one test, on a single order: the owner queue
+        does not contain it while held, and does once its release has run."""
+        order = await _place_and_pay(client, seed, requested_pickup_at=_iso(
+            datetime.now(timezone.utc) + timedelta(minutes=120)))
+        oid = str(order["id"])
+
+        assert oid not in await _queue_ids(client, seed), "held must be invisible"
+        row = await _row(db, oid)
+        assert row.status == "PAID" and row.release_at is not None
+
+        await _make_due(db, oid)
+        assert oid in await _queue_ids(client, seed), "due must be visible"
+        row = await _row(db, oid)
+        assert row.status == "RECEIVED"
+        assert row.release_at is None, "release must clear the hold"
+
+    async def test_repeated_polls_while_held_never_leak_it(self, client, seed):
+        """One poll proving absence could be luck of a race. The owner app polls
+        every 15s for hours before a scheduled order is due."""
+        order = await _place_and_pay(client, seed, requested_pickup_at=_iso(
+            datetime.now(timezone.utc) + timedelta(minutes=120)))
+        for _ in range(5):
+            assert str(order["id"]) not in await _queue_ids(client, seed)
+
+    async def test_the_held_order_is_absent_but_an_asap_sibling_is_present(
+            self, client, seed):
+        """Scoping check: the queue is not simply empty. Two orders, same
+        outlet, same poll — only the unheld one comes back."""
+        held = await _place_and_pay(client, seed, requested_pickup_at=_iso(
+            datetime.now(timezone.utc) + timedelta(minutes=120)))
+        asap = await _place_and_pay(client, seed)
+        ids = await _queue_ids(client, seed)
+        assert str(asap["id"]) in ids
+        assert str(held["id"]) not in ids

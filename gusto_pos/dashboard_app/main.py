@@ -142,6 +142,14 @@ async def api_orders(day: str = "", _=Depends(require_session)):
     return await _proxy("GET", f"/orders?day={day}" if day else "/orders")
 
 
+@app.get("/api/scheduled")
+async def api_scheduled(day: str = "", _=Depends(require_session)):
+    # Scheduled-pickup holds + the prediction engine's live release reasoning.
+    # `day` is passed straight through exactly as /api/orders does, so the two
+    # sections always agree about which day they are showing.
+    return await _proxy("GET", f"/scheduled?day={day}" if day else "/scheduled")
+
+
 @app.get("/api/compliance")
 async def api_compliance(_=Depends(require_session)):
     return await _proxy("GET", "/compliance")
