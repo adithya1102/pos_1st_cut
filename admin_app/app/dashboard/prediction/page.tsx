@@ -6,6 +6,7 @@ import {
   OutletQuality,
   PredictionOrderRow,
   PredictionOverview,
+  ScheduledOrderRow,
   adminApi,
 } from "@/lib/api";
 import { EmptyRow, ErrorBox, Panel, fmtDate, td, th } from "@/components/ui";
@@ -15,6 +16,7 @@ export default function PredictionPage() {
   const [overview, setOverview] = useState<PredictionOverview | null>(null);
   const [outlets, setOutlets] = useState<OutletQuality[] | null>(null);
   const [orders, setOrders] = useState<PredictionOrderRow[] | null>(null);
+  const [scheduled, setScheduled] = useState<ScheduledOrderRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(
@@ -23,11 +25,13 @@ export default function PredictionPage() {
         adminApi.predictionOverview(),
         adminApi.predictionOutlets(),
         adminApi.predictionOrders(50),
+        adminApi.scheduledOrders(100),
       ]).then(
-        ([ov, out, ord]) => {
+        ([ov, out, ord, sch]) => {
           setOverview(ov);
           setOutlets(out);
           setOrders(ord);
+          setScheduled(sch);
           setError(null);
         },
         (err: unknown) =>
@@ -45,10 +49,128 @@ export default function PredictionPage() {
       {error && <ErrorBox message={error} />}
       <ShadowBanner overview={overview} />
       <OverviewCards overview={overview} />
+      {/* Above per-outlet quality and the order list: a held order is INVISIBLE
+          to its restaurant right now, which is the most time-sensitive thing on
+          this page. It is also the one thing the list below cannot show — a
+          held order's Status column reads RECEIVED like any other. */}
+      <ScheduledOrdersPanel rows={scheduled} />
       <OutletQualityPanel outlets={outlets} />
       <RecentOrdersPanel orders={orders} />
     </>
   );
+}
+
+// -------------------------- scheduled pickup (031) -------------------------
+
+/** READ-ONLY view of every scheduled-pickup order across all outlets.
+ *
+ *  No override controls: the backend route re-derives nothing and this renders
+ *  nothing tappable, so opening the page cannot move an order. A manual
+ *  release-time override is deliberately a separate piece of work — it has to
+ *  go through _release_held_order rather than writing release_at directly, or
+ *  it would skip the deferred kitchen-trust events and the TTL restamp. */
+function ScheduledOrdersPanel({ rows }: { rows: ScheduledOrderRow[] | null }) {
+  const held = rows?.filter((r) => r.state === "held").length ?? 0;
+  return (
+    <Panel
+      title="Scheduled orders"
+      subtitle={
+        rows === null
+          ? "Held and released pickups across every outlet."
+          : `${rows.length} scheduled · ${held} still held. release_at = requested − (mu_ready_s + margin). Read-only; values are the engine's last committed decision.`
+      }
+    >
+      <table className="w-full">
+        <thead className="bg-slate-50">
+          <tr>
+            <th className={th}>Restaurant</th>
+            <th className={th}>Items</th>
+            <th className={th}>State</th>
+            <th className={th}>Requested pickup</th>
+            <th className={th}>Release at</th>
+            <th className={th}>Releases in</th>
+            <th className={th}>Why that moment</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows === null && <EmptyRow colSpan={7}>Loading…</EmptyRow>}
+          {rows?.length === 0 && (
+            <EmptyRow colSpan={7}>
+              No scheduled orders yet. One appears here the moment a customer
+              picks a pickup time and pays.
+            </EmptyRow>
+          )}
+          {rows?.map((r) => (
+            <tr key={r.order_id} className={r.state === "held" ? "" : "text-slate-500"}>
+              <td className={`${td} font-medium`}>{r.outlet_name ?? "—"}</td>
+              <td className={td}>
+                {r.items.length === 0
+                  ? "—"
+                  : r.items.map((i) => `${i.quantity}× ${i.name ?? "Item"}`).join(", ")}
+              </td>
+              <td className={td}>
+                <StateBadge state={r.state} />
+                <div className="text-[10px] text-slate-400">{r.status}</div>
+              </td>
+              <td className={`${td} whitespace-nowrap`}>{fmtDate(r.requested_pickup_at)}</td>
+              <td className={`${td} whitespace-nowrap`}>
+                {r.release_at
+                  ? fmtDate(r.release_at)
+                  : r.released_at
+                    ? `${fmtDate(r.released_at)} (fired)`
+                    : "—"}
+              </td>
+              <td className={`${td} whitespace-nowrap font-mono`}>
+                {r.state !== "held"
+                  ? "—"
+                  : r.is_due
+                    ? "due — releasing"
+                    : countdown(r.seconds_until_release)}
+              </td>
+              <td className={`${td} whitespace-nowrap text-xs text-slate-500`}>
+                {r.mu_ready_s === null && r.lead_s === null
+                  ? "—"
+                  : `mu ${secs(r.mu_ready_s)} + margin ${secs(r.safety_margin_s)} = lead ${secs(r.lead_s)}`}
+                {r.decisions > 0 && (
+                  <span className="ml-2 text-slate-400">({r.decisions}× re-derived)</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Panel>
+  );
+}
+
+/** Amber = paid, real, and deliberately invisible to the restaurant. Green =
+ *  it has become an ordinary order on their queue. */
+function StateBadge({ state }: { state: string }) {
+  const styles: Record<string, string> = {
+    held: "bg-amber-100 text-amber-800",
+    released: "bg-emerald-100 text-emerald-800",
+    retired: "bg-slate-200 text-slate-600",
+    not_held: "bg-slate-200 text-slate-600",
+  };
+  return (
+    <span
+      className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${styles[state] ?? "bg-slate-200 text-slate-700"}`}
+    >
+      {state.replace("_", " ")}
+    </span>
+  );
+}
+
+/** Rendered from the server's own seconds-remaining, not from `release_at`
+ *  minus the browser clock — a laptop a few minutes off would otherwise
+ *  disagree with the backend about whether an order is due. Static per load;
+ *  this page fetches once on mount and does not tick. */
+function countdown(s: number | null): string {
+  if (s === null) return "—";
+  const v = Math.max(0, s);
+  const h = Math.floor(v / 3600);
+  const m = Math.floor((v % 3600) / 60);
+  return h ? `${h}h ${m}m` : `${m}m ${v % 60}s`;
 }
 
 // ------------------------------- FR-A3 -------------------------------------

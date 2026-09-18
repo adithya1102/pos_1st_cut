@@ -4,17 +4,22 @@ import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/widgets/neo_button.dart';
 
-/// Time-of-day bands used to label the arrival picker as the hour scrolls.
+/// Time-of-day bands used to label arrival and pickup times.
 ///
-/// ASSUMED RANGES — reasonable defaults, NOT confirmed with the product owner:
+/// CONFIRMED RANGES (these replaced the earlier assumed ones, which had no
+/// Midnight band at all and ran Evening to 20:59):
+///   Midnight   00:00–04:59
 ///   Morning    05:00–11:59
-///   Afternoon  12:00–16:59
-///   Evening    17:00–20:59
-///   Night      21:00–04:59  (wraps midnight)
+///   Afternoon  12:00–15:59
+///   Evening    16:00–18:59
+///   Night      19:00–23:59
 ///
-/// The wrap is why this is a function over a list of ranges rather than a
-/// simple lookup table: Night is the only band that spans the day boundary.
+/// No band wraps the day boundary any more — Midnight owns the small hours
+/// outright, so this is a straight ascending ladder. That is the whole reason
+/// Midnight exists: "12:00 AM (Night)" was the one label that could still be
+/// read as tonight when it meant the early hours of tomorrow.
 enum DayPart {
+  midnight('Midnight'),
   morning('Morning'),
   afternoon('Afternoon'),
   evening('Evening'),
@@ -26,12 +31,27 @@ enum DayPart {
   /// The band a 24-hour [hour] falls in.
   static DayPart forHour(int hour) {
     final h = hour % 24;
-    if (h >= 5 && h <= 11) return DayPart.morning;
-    if (h >= 12 && h <= 16) return DayPart.afternoon;
-    if (h >= 17 && h <= 20) return DayPart.evening;
-    return DayPart.night; // 21-23 and 0-4
+    if (h <= 4) return DayPart.midnight;    // 00:00–04:59
+    if (h <= 11) return DayPart.morning;    // 05:00–11:59
+    if (h <= 15) return DayPart.afternoon;  // 12:00–15:59
+    if (h <= 18) return DayPart.evening;    // 16:00–18:59
+    return DayPart.night;                   // 19:00–23:59
   }
 }
+
+/// "2:00 PM (Afternoon)" — the 12-hour clock plus the band that disambiguates it.
+///
+/// The parenthesised band is the point: on a 12-hour clock 12:00 AM and 12:00 PM
+/// are one character apart and mean opposite ends of the day, which is exactly
+/// the pair a customer is most likely to mis-set when scheduling a pickup. The
+/// AM/PM is kept rather than replaced because that is the form the rest of the
+/// app — and the phone's own locale formatting — already speaks.
+String formatWithDayPart(BuildContext context, TimeOfDay time) =>
+    '${time.format(context)} (${DayPart.forHour(time.hour).label})';
+
+/// Convenience for the common case of formatting a [DateTime].
+String formatDateTimeWithDayPart(BuildContext context, DateTime when) =>
+    formatWithDayPart(context, TimeOfDay.fromDateTime(when));
 
 /// Scrollable arrival-time selector, replacing Flutter's clock-dial
 /// `showTimePicker`.
@@ -195,7 +215,6 @@ class _ArrivalTimePickerState extends State<ArrivalTimePicker> {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final textTheme = Theme.of(context).textTheme;
-    final part = DayPart.forHour(_hour);
 
     return Container(
       decoration: BoxDecoration(
@@ -224,11 +243,16 @@ class _ArrivalTimePickerState extends State<ArrivalTimePicker> {
               style: textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w500),
             ),
             const SizedBox(height: 4),
-            // The live band label. Updates on every hour tick, so the wheel
-            // always says what part of the day it is pointing at.
+            // The live label. Updates on every tick, so the wheel always says
+            // both what time it is pointing at and what part of the day that
+            // is. The wheels themselves are 24-hour (00–23), which is
+            // unambiguous but not how anyone says a time out loud — this line
+            // is where the selection is echoed back in the 12-hour form the
+            // customer will actually recognise on their own clock.
             Text(
               key: const Key('arrival_day_part'),
-              part.label,
+              formatWithDayPart(
+                  context, TimeOfDay(hour: _hour, minute: _minute)),
               style: textTheme.titleMedium?.copyWith(
                 color: AppColors.brand,
                 fontWeight: FontWeight.w400,

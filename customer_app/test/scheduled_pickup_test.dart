@@ -410,4 +410,158 @@ void main() {
       expect(payload['declared_arrival_at'], isNotNull);
     });
   });
+
+
+  // ======================================================================
+  // ONE time entry, not two (the declared-arrival + scheduling overlap)
+  // ======================================================================
+  //
+  // Train/metro/tram ask "when does your train arrive?"; scheduled pickup asks
+  // "when do you want it?". Both blocks rendered unconditionally, so a train
+  // passenger who also tapped "Pick a time" was made to enter two times for one
+  // journey and keep them consistent by hand.
+  //
+  // The resolution is that the chosen slot IS the arrival. Safe on the server
+  // by construction rather than by convention: _estimated_arrival_at
+  // short-circuits on `requested_pickup_at is not None` and never reads
+  // declared_arrival_at for a scheduled order, so the feasibility gate is
+  // judged on the slot alone and the platform-to-door constant is not added on
+  // top of it.
+  group('declared arrival merges into the pickup slot', () {
+    MenuItem menuItem() => MenuItem.fromJson({
+          'id': 'i1', 'name': 'Masala Dosa', 'base_price': 120.0,
+          'is_veg': true, 'is_available': true, 'image_url': null,
+          'prep_time_minutes': 0, 'tags': const <String>[],
+          'customizations': const <dynamic>[],
+        });
+
+    /// An outlet offering exactly two modes: one that declares an arrival and
+    /// one that does not, so the same screen covers both branches.
+    Outlet trainOutlet() {
+      final close = DateTime.now().add(const Duration(hours: 4));
+      return Outlet.fromJson({
+        'id': 'o1', 'name': 'Test Kitchen', 'address': 'Somewhere',
+        'is_open': true, 'order_status': 'open',
+        'opening_time': '09:00', 'closing_time': _hhmm(close),
+        'transport_modes': [
+          {'code': 'train', 'label': 'Train', 'uses_declared_arrival': true},
+          {'code': 'walk', 'label': 'Walk', 'uses_declared_arrival': false},
+        ],
+      });
+    }
+
+    Widget host() {
+      SharedPreferences.setMockInitialValues({'carevo_access_token': 't'});
+      final api = ApiClient(client: MockClient((req) async =>
+          http.Response(jsonEncode(const []), 200,
+              headers: {'content-type': 'application/json'})));
+      final cart = CartState()
+        ..setOutlet(trainOutlet())
+        ..addItem(menuItem(), quantity: 1);
+      return MultiProvider(
+        providers: [
+          Provider<ApiClient>.value(value: api),
+          Provider<OrderService>(create: (_) => OrderService(api)),
+          Provider<CustomerService>(create: (_) => CustomerService(api)),
+          Provider<CashfreeService>(create: (_) => CashfreeService()),
+          // ChangeNotifierProvider, not Provider: LocationService is a
+          // Listenable, and tapping a transport chip reads it — which is
+          // what makes plain Provider assert here but not in the older
+          // group above, where no chip is ever tapped.
+          ChangeNotifierProvider<LocationService>(
+              create: (_) => LocationService()),
+          Provider<PlacesService>(create: (_) => PlacesService()),
+          ChangeNotifierProvider<CartState>.value(value: cart),
+          ChangeNotifierProvider(create: (_) => ThemeProvider()),
+        ],
+        child:
+            MaterialApp(theme: AppTheme.light(), home: const CheckoutScreen()),
+      );
+    }
+
+    Future<void> pump(WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1170, 3400);
+      tester.view.devicePixelRatio = 3.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(host());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+    }
+
+    /// [delta] is signed: positive scrolls DOWN the page, negative scrolls back
+    /// UP. Both directions are needed here — the schedule toggle is below the
+    /// transport chips, while the merged note REPLACES the arrival field above
+    /// it, so reaching the note after tapping the toggle means going back up.
+    Future<void> reveal(WidgetTester tester, Key key,
+        {double delta = 240}) async {
+      await tester.scrollUntilVisible(find.byKey(key), delta,
+          scrollable: find.byType(Scrollable).first);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+    }
+
+    /// Bounded pumps, never pumpAndSettle.
+    ///
+    /// Selecting a transport mode also kicks off location acquisition
+    /// (_selectMode, migration 030). In a test that future never completes, so
+    /// pumpAndSettle waits for a frame-quiet that never arrives and times out
+    /// on a feature that is working. Same shape as tapMode() in
+    /// transport_modes_server_driven_test.dart, and for the same reason.
+    Future<void> tapMode(WidgetTester tester, String label) async {
+      final target = find.text(label);
+      await tester.ensureVisible(target);
+      await tester.pump();
+      await tester.tap(target);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+    }
+
+    testWidgets('train alone still asks for an arrival time', (tester) async {
+      // The control case. Without this, a fix that simply deleted the arrival
+      // field would pass every test below.
+      await pump(tester);
+      await tapMode(tester, 'Train');
+      await reveal(tester, const Key('arrival_field'));
+      expect(find.byKey(const Key('arrival_field')), findsOneWidget);
+      expect(find.byKey(const Key('arrival_merged_into_pickup')), findsNothing);
+    });
+
+    testWidgets('choosing a pickup slot replaces the arrival field',
+        (tester) async {
+      await pump(tester);
+      await tapMode(tester, 'Train');
+      await reveal(tester, const Key('schedule_later'));
+      await tester.tap(find.byKey(const Key('schedule_later')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      // The picker opens on the same tap; dismiss it to inspect the page.
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.byKey(const Key('arrival_field')), findsNothing,
+          reason: 'the second time entry must be gone');
+      await reveal(tester, const Key('arrival_merged_into_pickup'), delta: -240);
+      expect(find.byKey(const Key('arrival_merged_into_pickup')), findsOneWidget,
+          reason: 'and its disappearance must be explained, not silent');
+    });
+
+    // NOT COVERED HERE: switching back to Order now and watching the merge
+    // note disappear. The assertion is sound but reaching it means driving a
+    // lazily-built ListView whose height changes when the arrival field is
+    // replaced, and repeated attempts measured the scroll harness rather than
+    // the feature. The reversibility itself is not untested — the control case
+    // above reaches the un-merged state by not scheduling at all, and
+    // `_scheduled` gates both branches of one `if`, so there is no third state
+    // for them to disagree about. Left as a known gap rather than a flaky test.
+
+    testWidgets('a non-declared mode shows neither the field nor the note',
+        (tester) async {
+      // Walk has a GPS origin, so it never had an arrival field to merge.
+      await pump(tester);
+      await tapMode(tester, 'Walk');
+      expect(find.byKey(const Key('arrival_field')), findsNothing);
+      expect(find.byKey(const Key('arrival_merged_into_pickup')), findsNothing);
+    });
+  });
 }

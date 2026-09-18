@@ -6790,3 +6790,85 @@ the behavioural ones would have been asleep for most of the day on their own,
 which is why both shapes are present.
 
 ---
+
+## 2026-09-18 — one time entry, day-part labels, and an admin view of the holds
+
+Four changes plus two diagnoses. The two diagnoses are the valuable part.
+
+### The duplicate time entry was two independent `if`s
+
+checkout_screen rendered the declared-arrival block on
+`usesDeclaredArrival` and the scheduling block on `_canSchedule`, neither
+excluding the other, and validation demanded BOTH. Train/metro/tram plus
+"Pick a time" therefore meant two picker sheets, two times, and the
+customer keeping them consistent by hand.
+
+Resolved by making the slot serve both: when scheduling is on the arrival
+card is replaced by a one-line note and the pickup time is sent as
+declared_arrival_at too.
+
+SAFE BY CONSTRUCTION, NOT BY CONVENTION. `_estimated_arrival_at` opens with
+`if requested_pickup_at is not None: return requested_pickup_at, "scheduled"`
+— a scheduled order's feasibility gate never reads declared_arrival_at at
+all, so the 8-minute platform-to-door constant is not added on top and no new
+409 is reachable. Scoped to declared-arrival modes only: sending it for
+car/bike/walk would flip predict_travel onto its customer_declared leg for
+modes that have a real GPS origin.
+
+### The admin page was not broken — but two things hid the order
+
+Production, order 7cf270d9 (Annapoorna): release log row EXISTS
+(decision="held", release_at=08:17:36Z, mu 324 + margin 420 = lead 744),
+order is row #1 of the admin top-50. Nothing prevented it existing or being
+returned.
+
+It was invisible because (a) the collapsed row shows Order/Outlet/Status/
+Risk/Events/Interval/Created — nothing scheduling-related, so you must
+expand the caret; and (b) even expanded, `decision`/`release_at` only render
+with 5db5326e, which is NOT yet deployed to carevo-admin-dashboard. Task 4
+removes the need to expand anything.
+
+### FOUND, NOT FIXED: auto_receive advances a HELD order
+
+`carevo_customer/controller.py:502` calls auto_receive on every paid order
+with no hold check — its docstring predates 031. So a held order goes
+PAID -> RECEIVED while release_at stays set: the status reads as accepted,
+the restaurant still cannot see it (queue filters on release_at — verified
+NO), and the deferred kitchen-trust events correctly have not fired. Order
+7cf270d9 is in that split state in production now. It appears to self-heal
+at release. Outside the six tasks, so flagged rather than changed.
+
+### DayPart already existed, with different bands
+
+It described its own ranges as "ASSUMED — NOT confirmed with the product
+owner", had no Midnight band, and ran Evening to 20:59. Replaced with the
+confirmed ladder (Midnight 00-04, Morning 05-11, Afternoon 12-15, Evening
+16-18, Night 19-23); no band wraps midnight any more. Format is now
+"2:00 PM (Afternoon)" via formatWithDayPart, on the picker's live label and
+both checkout chips. The picker's wheels are 24-hour, so that line is now
+where the selection is echoed back in the form the customer recognises.
+
+Pre-existing tests pinned the OLD bands and were updated deliberately.
+
+### The admin Scheduled Orders view does NOT re-derive
+
+`/admin/prediction/scheduled` on SUPER_ADMIN (no X-Testing-Key). Unlike
+`/testing/scheduled` it does not call refresh_scheduled_releases: that
+endpoint is a release TRIGGER by design, and an admin opening a page to look
+at the business must not hand orders to kitchens as a side effect. Asserted
+by test, because it is exactly the property a "just reuse the testing query"
+refactor would destroy silently.
+
+### Tests
+
+backend **492 pass / 0 fail** (+7), customer_app **553 pass / 0 fail**,
+admin_app tsc+lint+build clean, dashboard_app **55 pass / 0 fail**.
+
+KNOWN GAP, deliberate: a "switching back to Order now restores the arrival
+field" widget test was written and then removed. It kept measuring the lazy
+ListView scroll harness rather than the feature. Reversibility is still
+covered — the control case reaches the un-merged state by not scheduling, and
+`_scheduled` gates both branches of one `if`. A comment in the test file says
+so rather than leaving the absence to be discovered.
+
+---

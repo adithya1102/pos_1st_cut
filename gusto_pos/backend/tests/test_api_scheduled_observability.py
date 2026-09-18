@@ -401,3 +401,104 @@ class TestReleaseDecisionReachesTheAdminTimeline:
             f"{API}/admin/prediction/orders/{order['id']}/timeline",
             headers=seed["owner_auth"])
         assert as_owner.status_code == 403
+
+
+# ==========================================================================
+# the THIRD surface: admin_app's read-only Scheduled Orders view
+# ==========================================================================
+@pytest.mark.asyncio
+class TestAdminScheduledOrdersView:
+    """`/admin/prediction/scheduled` answers the same question as
+    `/testing/scheduled`, on admin_app's own SUPER_ADMIN auth rather than the
+    X-Testing-Key — no new gate was introduced.
+
+    The load-bearing difference is that this one is READ-ONLY: it does not call
+    refresh_scheduled_releases, so opening the admin page cannot hand an order
+    to a kitchen as a side effect. That is asserted directly below, because it
+    is the property a future "just reuse the testing query" refactor would
+    silently destroy.
+    """
+
+    async def _admin(self, client, seed, **params):
+        q = "&".join(f"{k}={v}" for k, v in params.items())
+        r = await client.get(
+            f"{API}/admin/prediction/scheduled" + (f"?{q}" if q else ""),
+            headers=seed["admin_auth"])
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    async def test_a_held_order_is_listed_with_what_the_view_shows(
+            self, client, seed):
+        order = await _scheduled_order(client, seed)
+        row = next(o for o in await self._admin(client, seed)
+                   if o["order_id"] == str(order["id"]))
+        assert row["state"] == "held"
+        assert row["outlet_name"], "the restaurant is named"
+        assert row["items"], "the items are listed"
+        assert row["requested_pickup_at"] is not None
+        assert row["release_at"] is not None
+
+    async def test_the_engine_numbers_come_along(self, client, seed):
+        order = await _scheduled_order(client, seed)
+        row = next(o for o in await self._admin(client, seed)
+                   if o["order_id"] == str(order["id"]))
+        assert row["mu_ready_s"] is not None
+        assert row["safety_margin_s"] > 0
+        assert row["lead_s"] == row["mu_ready_s"] + row["safety_margin_s"] \
+            or abs(row["lead_s"] - row["mu_ready_s"] - row["safety_margin_s"]) \
+            <= CarevoService.RELEASE_REDERIVE_DEADBAND_S
+        assert row["decisions"] >= 1
+
+    async def test_reading_it_does_NOT_release_a_due_order(
+            self, client, seed, db):
+        """The read-only guarantee, stated as the thing that would break it.
+
+        /testing/scheduled deliberately releases on read; this must not. An
+        admin opening a page to look at the business must not move orders.
+        """
+        order = await _scheduled_order(client, seed)
+        await _make_due(db, order["id"])
+
+        await self._admin(client, seed)          # the read under test
+
+        status, release_at = (await db.execute(text(
+            "SELECT status, release_at FROM customer_orders WHERE id=:o"),
+            {"o": order["id"]})).first()
+        assert status == "PAID", "the admin read must not advance the order"
+        assert release_at is not None, "nor clear its hold"
+
+    async def test_an_asap_order_never_appears(self, client, seed):
+        asap = await _asap_order(client, seed)
+        rows = await self._admin(client, seed)
+        assert all(o["order_id"] != str(asap["id"]) for o in rows)
+
+    async def test_held_orders_sort_before_finished_ones(self, client, seed, db):
+        done = await _scheduled_order(client, seed, minutes_ahead=150)
+        await _make_due(db, done["id"])
+        await _rows(client)                      # release it via the testing path
+        still_held = await _scheduled_order(client, seed, minutes_ahead=120)
+        ids = [o["order_id"] for o in await self._admin(client, seed)]
+        assert ids.index(str(still_held["id"])) < ids.index(str(done["id"]))
+
+    async def test_a_released_order_still_shows_its_reasoning(
+            self, client, seed, db):
+        order = await _scheduled_order(client, seed)
+        await _make_due(db, order["id"])
+        await _rows(client)                      # release via the testing path
+        row = next(o for o in await self._admin(client, seed)
+                   if o["order_id"] == str(order["id"]))
+        assert row["state"] == "released"
+        assert row["released_at"] is not None
+        assert row["mu_ready_s"] is not None
+
+    async def test_it_is_super_admin_gated_not_testing_key_gated(
+            self, client, seed):
+        anon = await client.get(f"{API}/admin/prediction/scheduled")
+        assert anon.status_code in (401, 403)
+        as_owner = await client.get(f"{API}/admin/prediction/scheduled",
+                                    headers=seed["owner_auth"])
+        assert as_owner.status_code == 403
+        with_testing_key = await client.get(
+            f"{API}/admin/prediction/scheduled", headers=HDR)
+        assert with_testing_key.status_code in (401, 403), \
+            "the testing key must not open an admin route"

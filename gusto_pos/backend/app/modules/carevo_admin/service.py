@@ -587,6 +587,122 @@ class AdminService:
         ]
 
     @staticmethod
+    async def scheduled_orders(db: AsyncSession, limit: int = 100) -> list[dict]:
+        """Every scheduled-pickup order across all outlets. STRICTLY READ-ONLY.
+
+        The same question the testing dashboard's /testing/scheduled answers, on
+        admin_app's own SUPER_ADMIN auth instead of the X-Testing-Key — no new
+        gate, and the two surfaces read the same columns and the same
+        prediction_log rows so they cannot drift into two accounts of one hold.
+
+        ## It does NOT re-derive, and that is the difference from /testing/scheduled
+
+        That endpoint deliberately calls refresh_scheduled_releases first, which
+        makes it a release TRIGGER as well as a reader — correct there, because
+        it exists to be watched while a free-tier poller sleeps. This one is
+        opened by an admin looking at the business, and a page that quietly
+        hands orders to kitchens because someone opened it is not a read-only
+        page. release_at here is therefore the last value the engine WROTE,
+        which may be a few seconds stale and is never wrong in a way that
+        matters: every derivation only moves it earlier, so the figure shown is
+        the latest committed decision rather than a live recomputation.
+
+        Ordered like the testing view — still-held first, soonest release at the
+        top — because this is read as a countdown.
+        """
+        rows = (await db.execute(text("""
+            SELECT co.id, co.outlet_id, co.status, co.payment_status,
+                   co.pickup_code, co.total_amount,
+                   co.requested_pickup_at, co.release_at, co.created_at,
+                   o.location_name AS outlet_name
+            FROM customer_orders co
+            LEFT JOIN outlets o ON o.id = co.outlet_id
+            WHERE co.requested_pickup_at IS NOT NULL
+            ORDER BY (co.release_at IS NULL), co.release_at ASC,
+                     co.requested_pickup_at DESC
+            LIMIT :lim
+        """), {"lim": max(1, min(limit, 500))})).fetchall()
+        if not rows:
+            return []
+
+        ids = [str(r.id) for r in rows]
+        items: dict[str, list] = {}
+        for it in (await db.execute(text("""
+            SELECT customer_order_id, name_snap, quantity
+            FROM customer_order_items WHERE customer_order_id = ANY(:ids)
+            ORDER BY created_at
+        """), {"ids": ids})).fetchall():
+            items.setdefault(str(it.customer_order_id), []).append(
+                {"name": it.name_snap, "quantity": it.quantity})
+
+        # The engine's own record of each hold — same DISTINCT ON the testing
+        # view uses, over the append-only log that IS the record.
+        latest = {str(r.order_id): r for r in (await db.execute(text("""
+            SELECT DISTINCT ON (order_id)
+                   order_id, predicted_at, mu_seconds, features, output
+            FROM prediction_log
+            WHERE predictor = 'release' AND order_id = ANY(:ids)
+            ORDER BY order_id, id DESC
+        """), {"ids": ids})).fetchall()}
+        agg = {str(r.order_id): r for r in (await db.execute(text("""
+            SELECT order_id, count(*) AS decisions,
+                   max(predicted_at) FILTER (
+                       WHERE output ->> 'decision' = 'released') AS released_at
+            FROM prediction_log
+            WHERE predictor = 'release' AND order_id = ANY(:ids)
+            GROUP BY order_id
+        """), {"ids": ids})).fetchall()}
+
+        now = datetime.now(timezone.utc)
+        out = []
+        for r in rows:
+            log = latest.get(str(r.id))
+            a = agg.get(str(r.id))
+            features = (log.features if log else None) or {}
+            decisions = int(a.decisions) if a else 0
+            released_at = a.released_at if a else None
+
+            # Same four states the testing view derives, from the same evidence.
+            if r.release_at is not None:
+                state = "held"
+            elif released_at is not None:
+                state = "released"
+            elif decisions:
+                state = "retired"
+            else:
+                state = "not_held"
+
+            lead_s = None
+            if r.release_at is not None and r.requested_pickup_at is not None:
+                lead_s = round(
+                    (r.requested_pickup_at - r.release_at).total_seconds())
+            secs_left = (round((r.release_at - now).total_seconds())
+                         if r.release_at is not None else None)
+
+            out.append({
+                "order_id": r.id,
+                "outlet_id": r.outlet_id,
+                "outlet_name": r.outlet_name,
+                "status": r.status,
+                "payment_status": r.payment_status,
+                "pickup_code": r.pickup_code,
+                "total_amount": float(r.total_amount) if r.total_amount is not None else 0.0,
+                "state": state,
+                "requested_pickup_at": r.requested_pickup_at,
+                "release_at": r.release_at,
+                "seconds_until_release": secs_left,
+                "is_due": secs_left is not None and secs_left <= 0,
+                "mu_ready_s": features.get("mu_ready_s"),
+                "safety_margin_s": features.get("safety_margin_s"),
+                "lead_s": lead_s,
+                "decisions": decisions,
+                "released_at": released_at,
+                "created_at": r.created_at,
+                "items": items.get(str(r.id), []),
+            })
+        return out
+
+    @staticmethod
     async def prediction_recent_orders(db: AsyncSession, limit: int = 50) -> list[dict]:
         """Recent orders that have an event stream — the list an admin drills
         into for FR-A1 timelines."""

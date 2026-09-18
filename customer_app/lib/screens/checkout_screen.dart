@@ -648,8 +648,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     // Surfaced as an inline message on the field, not a silently disabled Pay
     // button: a button that does nothing when tapped teaches the customer that
     // the app is broken, and gives them nothing to act on.
+    // NOT required when a pickup slot is being chosen: that slot IS the arrival
+    // (see _MergedArrivalNote and the payload below), the field is not on
+    // screen to answer, and demanding it would block Pay on a control the
+    // customer cannot see.
     final mode = _effectiveMode(cart.outlet);
-    if (mode.usesDeclaredArrival && _declaredArrival == null) {
+    if (mode.usesDeclaredArrival && !_scheduled && _declaredArrival == null) {
       setState(() => _arrivalMissing = true);
       return;
     }
@@ -677,8 +681,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               // code, matching the mutual exclusion the UI already enforces.
               couponCode: _offer == null ? _coupon.text : null,
               promotionId: _offer?.id,
-              declaredArrivalAt:
-                  mode.usesDeclaredArrival ? _declaredArrival : null,
+              // The chosen slot doubles as the declared arrival, so the one
+              // time the customer entered answers both questions. Scoped to
+              // declared-arrival modes on purpose: sending it for car/bike/walk
+              // would flip predict_travel onto its `customer_declared` leg for
+              // modes that have a real GPS origin to estimate from, which is a
+              // behaviour change well beyond the duplicate-entry this fixes.
+              declaredArrivalAt: mode.usesDeclaredArrival
+                  ? (_scheduled ? _requestedPickup : _declaredArrival)
+                  : null,
               // Only when the toggle is actually on: a stale _requestedPickup
               // left over from switching back to ASAP must not quietly hold
               // the order.
@@ -918,7 +929,33 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             // stated time, so a GPS origin would be collected and then ignored.
             // Effective, not raw: the arrival picker must never appear for a
             // mode the chip row did not offer.
-            if (_effectiveMode(cart.outlet).usesDeclaredArrival) ...[
+            if (_effectiveMode(cart.outlet).usesDeclaredArrival &&
+                _scheduled) ...[
+              // ONE TIME, NOT TWO.
+              //
+              // Train/metro/tram ask "when does your train arrive?"; scheduled
+              // pickup asks "when do you want it?". Both were rendered
+              // unconditionally, so a train passenger who also tapped "Pick a
+              // time" was made to enter two times for one journey — and then
+              // had to keep them consistent themselves, with nothing on screen
+              // saying they were related.
+              //
+              // When a slot is chosen it IS the arrival: the customer is
+              // telling us when they will be at the counter. The pickup time is
+              // sent as declared_arrival_at as well (see _placeOrder), so the
+              // travel model still gets its `customer_declared` leg.
+              //
+              // Safe on the server by construction, not by convention:
+              // _estimated_arrival_at short-circuits on
+              // `requested_pickup_at is not None` and never reads
+              // declared_arrival_at for a scheduled order, so the feasibility
+              // gate is judged on the slot alone — the platform-to-door
+              // constant is not added on top and no new refusal is possible.
+              _MergedArrivalNote(
+                key: const Key('arrival_merged_into_pickup'),
+                vehicleNoun: _effectiveMode(cart.outlet).vehicleNoun,
+              ),
+            ] else if (_effectiveMode(cart.outlet).usesDeclaredArrival) ...[
               // Named after the mode actually chosen. Asking a metro rider when
               // their "train" arrives is the kind of small wrongness that makes
               // someone doubt the app knows what they picked.
@@ -948,9 +985,13 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       child: Text(
                         _declaredArrival == null
                             ? 'Set arrival time'
-                            : '${DayPart.forHour(_declaredArrival!.hour).label}'
-                                ' · '
-                                '${TimeOfDay.fromDateTime(_declaredArrival!).format(context)}',
+                            // "2:00 PM (Afternoon)" — clock first, band in
+                            // parentheses. This used to lead with the band
+                            // ("Afternoon · 2:00 PM"), which reads as a
+                            // category with a time attached; the time is the
+                            // fact and the band only qualifies it.
+                            : formatDateTimeWithDayPart(
+                                context, _declaredArrival!),
                         style: textTheme.titleMedium?.copyWith(
                             color: _declaredArrival != null ? c.onAccent : c.ink),
                       ),
@@ -1067,7 +1108,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                           _requestedPickup == null
                               ? 'Set pickup time'
                               : 'Ready for '
-                                  '${TimeOfDay.fromDateTime(_requestedPickup!).format(context)}',
+                                  '${formatDateTimeWithDayPart(context, _requestedPickup!)}',
                           style: textTheme.titleMedium?.copyWith(
                               color: _requestedPickup != null
                                   ? c.onAccent
@@ -1445,6 +1486,46 @@ class _TransportChip extends StatelessWidget {
 /// stretch to fill the row rather than wrapping to their content, so the choice
 /// reads as a pair of alternatives rather than as the start of another list of
 /// chips the customer should scan for more options.
+/// Shown in place of the arrival field once a pickup slot is being chosen.
+///
+/// A STATUS, not a control — deliberately, and for the same reason the origin
+/// card became one in migration 030: a second tappable time control next to the
+/// pickup slot is exactly the duplication this replaces. It exists so the
+/// disappearance of the arrival field is explained rather than merely observed;
+/// a required field that vanishes without a word reads as a bug.
+class _MergedArrivalNote extends StatelessWidget {
+  const _MergedArrivalNote({super.key, required this.vehicleNoun});
+
+  final String vehicleNoun;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final textTheme = Theme.of(context).textTheme;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: c.surfaceAlt,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: c.border, width: 2),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.info_outline, size: 18, color: c.inkSoft),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Your pickup time below is when we\'ll expect you — no need to '
+              'enter your $vehicleNoun arrival separately.',
+              style: textTheme.bodySmall?.copyWith(color: c.inkSoft),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ScheduleChoice extends StatelessWidget {
   const _ScheduleChoice({
     super.key,

@@ -317,6 +317,22 @@ async def prediction_outlets(
     return await AdminService.prediction_outlets(db)
 
 
+@router.get("/prediction/scheduled")
+async def prediction_scheduled_orders(
+    limit: int = Query(default=100, ge=1, le=500),
+    _admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Scheduled-pickup orders across all outlets (migration 031). READ-ONLY.
+
+    Deliberately does NOT re-derive release_at the way /testing/scheduled does —
+    that endpoint is a release trigger by design, and an admin opening a page to
+    look at the business must not hand orders to kitchens as a side effect. See
+    AdminService.scheduled_orders.
+    """
+    return await AdminService.scheduled_orders(db, limit)
+
+
 @router.get("/prediction/orders")
 async def prediction_recent_orders(
     limit: int = Query(default=50, ge=1, le=200),

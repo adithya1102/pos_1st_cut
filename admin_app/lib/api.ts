@@ -409,6 +409,34 @@ export interface OutletQuality {
   shadow_mode: boolean;
 }
 
+/** One scheduled-pickup order (migration 031), as the admin view reads it.
+ *
+ *  `state` is derived server-side from evidence rather than stored:
+ *  held -> the hold is in place now; released -> it ran and the order reached
+ *  the restaurant; retired -> held, then left the live set before its release
+ *  (served early at the counter, or rejected); not_held -> paid, never held. */
+export interface ScheduledOrderRow {
+  order_id: string;
+  outlet_id: string | null;
+  outlet_name: string | null;
+  status: string;
+  payment_status: string;
+  pickup_code: string | null;
+  total_amount: number;
+  state: "held" | "released" | "retired" | "not_held" | string;
+  requested_pickup_at: string | null;
+  release_at: string | null;
+  seconds_until_release: number | null;
+  is_due: boolean;
+  mu_ready_s: number | null;
+  safety_margin_s: number | null;
+  lead_s: number | null;
+  decisions: number;
+  released_at: string | null;
+  created_at: string | null;
+  items: { name: string | null; quantity: number }[];
+}
+
 export interface PredictionOrderRow {
   order_id: string;
   status: string;
@@ -611,6 +639,11 @@ export const adminApi = {
     api.get<OutletQuality[]>("/api/v1/admin/prediction/outlets"),
   predictionOrders: (limit = 50) =>
     api.get<PredictionOrderRow[]>(`/api/v1/admin/prediction/orders?limit=${limit}`),
+  // Read-only. Unlike the testing dashboard's equivalent this does NOT
+  // re-derive release_at server-side, so opening the page never releases an
+  // order as a side effect.
+  scheduledOrders: (limit = 100) =>
+    api.get<ScheduledOrderRow[]>(`/api/v1/admin/prediction/scheduled?limit=${limit}`),
   orderTimeline: (orderId: string) =>
     api.get<OrderTimeline>(`/api/v1/admin/prediction/orders/${orderId}/timeline`),
 
