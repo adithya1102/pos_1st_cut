@@ -14,7 +14,30 @@ from app.modules.menu.schema import (
 from app.modules.menu.service import (
     MenuService, MenuCategoryService, MenuItemService, ItemModifierService
 )
+from app.modules.carevo_customer.deps import get_current_staff
 
+# PER-ROUTE, NOT ROUTER-WIDE — unlike the customers and outlets modules.
+#
+# This router is split: six of its routes are called by GustoPOS and
+# GustoWaiter, and those two apps send no Authorization header at all (there is
+# no login flow in either; `PinLoginResponse` exists as a model and is
+# referenced nowhere). Guarding the router would take the tills and the waiter
+# tablets offline the moment it deployed.
+#
+# So the fifteen routes with no caller anywhere in this repository are guarded
+# individually, and these six are deliberately left open until the desktop
+# clients can authenticate:
+#
+#     GET  /menus/zone/{outlet_id}/{zone}
+#     GET  /menus/{menu_id}
+#     GET  /menus/categories/menu/{menu_id}
+#     POST /menus/categories/
+#     POST /menus/items/
+#     PUT  /menus/items/{item_id}
+#
+# That list is asserted, not just written down: tests/test_legacy_route_auth.py
+# fails if any of the six starts returning 401, and equally if any of the
+# fifteen stops.
 router = APIRouter(prefix="/menus", tags=["menus"])
 
 DEFAULT_CUSTOMIZATIONS = [
@@ -44,7 +67,7 @@ class PriceRuleUpdate(BaseModel):
     is_available: bool = True
 
 
-@router.get("/by-zone/{outlet_id}/{zone}", response_model=MenuResponse)
+@router.get("/by-zone/{outlet_id}/{zone}", response_model=MenuResponse, dependencies=[Depends(get_current_staff)])
 async def get_menu_by_zone(outlet_id: str, zone: str, db: AsyncSession = Depends(get_db)):
     """Get the correct menu for a given zone (normal or fine_dine)."""
     menu_id = ZONE_MENU_MAP.get(zone, ZONE_MENU_MAP["normal"])
@@ -139,7 +162,7 @@ async def get_zone_menu(outlet_id: str, zone: str, db: AsyncSession = Depends(ge
     return {"zone": zone, "categories": list(categories.values())}
 
 
-@router.patch("/price-rule")
+@router.patch("/price-rule", dependencies=[Depends(get_current_staff)])
 async def update_price_rule(payload: PriceRuleUpdate, db: AsyncSession = Depends(get_db)):
     """Update a specific item's price or availability for a zone."""
     result = await db.execute(
@@ -158,7 +181,7 @@ async def update_price_rule(payload: PriceRuleUpdate, db: AsyncSession = Depends
 
 
 # Menu endpoints
-@router.post("/", response_model=MenuResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=MenuResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(get_current_staff)])
 async def create_menu(menu: MenuCreate, db: AsyncSession = Depends(get_db)):
     """Create a new menu."""
     return await MenuService.create_menu(db, menu)
@@ -173,13 +196,13 @@ async def get_menu(menu_id: UUID, db: AsyncSession = Depends(get_db)):
     return menu
 
 
-@router.get("/outlet/{outlet_id}", response_model=list[MenuResponse])
+@router.get("/outlet/{outlet_id}", response_model=list[MenuResponse], dependencies=[Depends(get_current_staff)])
 async def get_outlet_menus(outlet_id: UUID, db: AsyncSession = Depends(get_db)):
     """Get all menus for an outlet."""
     return await MenuService.get_menus_by_outlet(db, outlet_id)
 
 
-@router.put("/{menu_id}", response_model=MenuResponse)
+@router.put("/{menu_id}", response_model=MenuResponse, dependencies=[Depends(get_current_staff)])
 async def update_menu(menu_id: UUID, menu_update: MenuUpdate, db: AsyncSession = Depends(get_db)):
     """Update a menu."""
     menu = await MenuService.update_menu(db, menu_id, menu_update)
@@ -188,7 +211,7 @@ async def update_menu(menu_id: UUID, menu_update: MenuUpdate, db: AsyncSession =
     return menu
 
 
-@router.delete("/{menu_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{menu_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(get_current_staff)])
 async def delete_menu(menu_id: UUID, db: AsyncSession = Depends(get_db)):
     """Delete a menu."""
     if not await MenuService.delete_menu(db, menu_id):
@@ -202,7 +225,7 @@ async def create_category(category: MenuCategoryCreate, db: AsyncSession = Depen
     return await MenuCategoryService.create_category(db, category)
 
 
-@router.get("/categories/{category_id}", response_model=MenuCategoryResponse)
+@router.get("/categories/{category_id}", response_model=MenuCategoryResponse, dependencies=[Depends(get_current_staff)])
 async def get_category(category_id: UUID, db: AsyncSession = Depends(get_db)):
     """Get a menu category by ID."""
     category = await MenuCategoryService.get_category_by_id(db, category_id)
@@ -217,7 +240,7 @@ async def get_menu_categories(menu_id: UUID, db: AsyncSession = Depends(get_db))
     return await MenuCategoryService.get_categories_by_menu(db, menu_id)
 
 
-@router.delete("/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(get_current_staff)])
 async def delete_category(category_id: UUID, db: AsyncSession = Depends(get_db)):
     """Delete a menu category."""
     if not await MenuCategoryService.delete_category(db, category_id):
@@ -231,7 +254,7 @@ async def create_item(item: MenuItemCreate, db: AsyncSession = Depends(get_db)):
     return await MenuItemService.create_item(db, item)
 
 
-@router.get("/items/{item_id}", response_model=MenuItemResponse)
+@router.get("/items/{item_id}", response_model=MenuItemResponse, dependencies=[Depends(get_current_staff)])
 async def get_item(item_id: UUID, db: AsyncSession = Depends(get_db)):
     """Get a menu item by ID."""
     item = await MenuItemService.get_item_by_id(db, item_id)
@@ -240,7 +263,7 @@ async def get_item(item_id: UUID, db: AsyncSession = Depends(get_db)):
     return item
 
 
-@router.get("/items/category/{category_id}", response_model=list[MenuItemResponse])
+@router.get("/items/category/{category_id}", response_model=list[MenuItemResponse], dependencies=[Depends(get_current_staff)])
 async def get_category_items(category_id: UUID, db: AsyncSession = Depends(get_db)):
     """Get all items in a category."""
     return await MenuItemService.get_items_by_category(db, category_id)
@@ -255,7 +278,7 @@ async def update_item(item_id: UUID, item_update: MenuItemUpdate, db: AsyncSessi
     return item
 
 
-@router.delete("/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(get_current_staff)])
 async def delete_item(item_id: UUID, db: AsyncSession = Depends(get_db)):
     """Delete a menu item."""
     if not await MenuItemService.delete_item(db, item_id):
@@ -263,13 +286,13 @@ async def delete_item(item_id: UUID, db: AsyncSession = Depends(get_db)):
 
 
 # Item Modifier endpoints
-@router.post("/modifiers/{menu_item_id}", response_model=ItemModifierResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/modifiers/{menu_item_id}", response_model=ItemModifierResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(get_current_staff)])
 async def create_modifier(menu_item_id: UUID, modifier: ItemModifierCreate, db: AsyncSession = Depends(get_db)):
     """Create a new item modifier."""
     return await ItemModifierService.create_modifier(db, modifier, menu_item_id)
 
 
-@router.get("/modifiers/{modifier_id}", response_model=ItemModifierResponse)
+@router.get("/modifiers/{modifier_id}", response_model=ItemModifierResponse, dependencies=[Depends(get_current_staff)])
 async def get_modifier(modifier_id: UUID, db: AsyncSession = Depends(get_db)):
     """Get an item modifier by ID."""
     modifier = await ItemModifierService.get_modifier_by_id(db, modifier_id)
@@ -278,13 +301,13 @@ async def get_modifier(modifier_id: UUID, db: AsyncSession = Depends(get_db)):
     return modifier
 
 
-@router.get("/modifiers/item/{menu_item_id}", response_model=list[ItemModifierResponse])
+@router.get("/modifiers/item/{menu_item_id}", response_model=list[ItemModifierResponse], dependencies=[Depends(get_current_staff)])
 async def get_item_modifiers(menu_item_id: UUID, db: AsyncSession = Depends(get_db)):
     """Get all modifiers for a menu item."""
     return await ItemModifierService.get_modifiers_by_item(db, menu_item_id)
 
 
-@router.delete("/modifiers/{modifier_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/modifiers/{modifier_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(get_current_staff)])
 async def delete_modifier(modifier_id: UUID, db: AsyncSession = Depends(get_db)):
     """Delete an item modifier."""
     if not await ItemModifierService.delete_modifier(db, modifier_id):

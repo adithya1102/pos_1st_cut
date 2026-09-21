@@ -6,8 +6,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.modules.outlets.schema import OutletRead, OutletCreate, OutletUpdate
 from app.modules.outlets.service import OutletService
+from app.modules.carevo_customer.deps import get_current_staff
 
-router = APIRouter(prefix="/outlets")
+# STAFF-ONLY, ROUTER-WIDE. This whole file was reachable with no credentials,
+# `DELETE /outlets/{id}` included, and `OutletRead` hands back `phone_number`
+# and `organization_id` alongside the coordinates. Nothing in this repository
+# calls it: the admin app uses `/api/v1/admin/outlets/*` and the customer app
+# uses `/api/v1/customer/outlets`, both of which are separate, already-guarded
+# routers and are NOT affected by this change.
+#
+# Router-level for the same reason as the customers module: the guard should be
+# what a new route in this file inherits by default.
+router = APIRouter(prefix="/outlets", dependencies=[Depends(get_current_staff)])
 
 @router.get("/", response_model=list[OutletRead])
 async def list_outlets(db: AsyncSession = Depends(get_db)):

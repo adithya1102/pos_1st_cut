@@ -13,7 +13,18 @@ from app.modules.orders.schema import (
     OrderWithItemsRead, SettleResponse, BillResponse, ConfirmResponse,
 )
 from app.modules.orders.service import OrderService
+from app.modules.carevo_customer.deps import get_current_staff
 
+# PER-ROUTE, NOT ROUTER-WIDE — and the smallest change in this pass, because
+# this is the router GustoPOS and GustoWaiter lean on hardest: sixteen of its
+# routes are live call sites across the till and the waiter tablet (order
+# creation, billing, settlement, approve/cancel/confirm, the table views).
+# Neither app sends an Authorization header, so guarding the router would stop
+# service on the floor.
+#
+# Only the four with no caller anywhere in this repository are guarded here.
+# The rest — including POST /orders/ — stay open until the desktop clients can
+# authenticate. That is a known, deliberate gap, not an oversight.
 router = APIRouter(prefix="/orders")
 
 
@@ -40,7 +51,7 @@ async def get_combined_table_orders(table_id: str, db: AsyncSession = Depends(ge
     return await OrderService.get_combined_table_orders(db, table_id)
 
 
-@router.get("/history/{outlet_id}")
+@router.get("/history/{outlet_id}", dependencies=[Depends(get_current_staff)])
 async def get_order_history(outlet_id: str, date: str = None, table_id: str = None, db: AsyncSession = Depends(get_db)):
     from datetime import datetime
     import datetime as dt
@@ -73,7 +84,7 @@ async def get_order_history(outlet_id: str, date: str = None, table_id: str = No
     ]
 
 
-@router.get("/summary/{outlet_id}")
+@router.get("/summary/{outlet_id}", dependencies=[Depends(get_current_staff)])
 async def get_order_summary(outlet_id: str, date: str = None, db: AsyncSession = Depends(get_db)):
     from datetime import datetime
     import datetime as dt
@@ -203,7 +214,7 @@ async def update_order(item_id: UUID, payload: OrderUpdate, db: AsyncSession = D
     return obj
 
 
-@router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(get_current_staff)])
 async def delete_order(item_id: UUID, db: AsyncSession = Depends(get_db)):
     """Delete an order."""
     success = await OrderService.delete_order(db, item_id)
@@ -212,7 +223,7 @@ async def delete_order(item_id: UUID, db: AsyncSession = Depends(get_db)):
 
 
 
-@router.put("/{order_id}/items", response_model=OrderRead)
+@router.put("/{order_id}/items", response_model=OrderRead, dependencies=[Depends(get_current_staff)])
 async def update_order_items(order_id: UUID, payload: OrderItemsUpdate, db: AsyncSession = Depends(get_db)):
     """Replace all items in an order and recalculate total amount."""
     obj = await OrderService.replace_order_items(db, order_id, payload.items)

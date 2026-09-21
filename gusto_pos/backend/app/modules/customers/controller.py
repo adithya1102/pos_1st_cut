@@ -64,9 +64,23 @@ from app.core.database import get_db
 
 from app.modules.customers.schema import CustomerCreate, CustomerResponse, CustomerUpdate
 from app.modules.customers.service import CustomerService
+from app.modules.carevo_customer.deps import get_current_staff
 
 # 2. Removed tags=["customers"] to prevent double-prefixing in Swagger UI
-router = APIRouter(prefix="/customers")
+#
+# STAFF-ONLY, ROUTER-WIDE. Every route here was reachable with no credentials
+# at all, including `GET /customers/` (the entire customer table) and
+# `GET /customers/phone/{phone_number}` (a PII lookup keyed on exactly the
+# identifier a stranger is most likely to have). Nothing in this repository
+# calls any of them — the caller audit found the only `customers` references in
+# the apps are `/api/v1/admin/customers`, a different and already-authenticated
+# router, and a Next.js page path.
+#
+# Applied on the ROUTER rather than per route, deliberately: a per-route list
+# is a list someone can forget to extend, and the next endpoint added to this
+# file would be born unauthenticated. The guard is the default here now, and
+# opting out has to be a visible, deliberate act.
+router = APIRouter(prefix="/customers", dependencies=[Depends(get_current_staff)])
 
 
 @router.post("/", response_model=CustomerResponse)
