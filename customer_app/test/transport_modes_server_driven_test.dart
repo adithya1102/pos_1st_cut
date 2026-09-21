@@ -139,8 +139,13 @@ void main() {
 
       await tapMode(tester, 'Tram');
 
-      expect(find.byKey(const Key('arrival_field')), findsOneWidget);
-      expect(find.text('When does your tram arrive?'), findsOneWidget);
+      // The ONE time control, in its declared-arrival form. The page asks the
+      // question generically now — the vehicle noun moved into the sheet this
+      // card opens (asserted by the next test), because there is a single card
+      // serving all four (mode, order type) combinations and it cannot carry
+      // four different headings.
+      expect(find.byKey(const Key('time_field')), findsOneWidget);
+      expect(find.text('When do you arrive?'), findsOneWidget);
       // And no origin status line: a stated time replaces the origin entirely.
       expect(find.byKey(const Key('checkout_origin_status')), findsNothing);
     });
@@ -156,7 +161,7 @@ void main() {
       await tester.pumpAndSettle();
 
       await tapMode(tester, 'Tram');
-      await tester.tap(find.byKey(const Key('arrival_field')));
+      await tester.tap(find.byKey(const Key('time_field')));
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('arrival_day_part')), findsOneWidget);
@@ -216,9 +221,18 @@ void main() {
 
       await tapMode(tester, 'Ferry');
 
-      expect(find.byKey(const Key('arrival_field')), findsOneWidget,
+      expect(find.byKey(const Key('time_field')), findsOneWidget,
           reason: 'uses_declared_arrival travels with the mode');
-      expect(find.text('When does your ferry arrive?'), findsOneWidget,
+      expect(find.text('When do you arrive?'), findsOneWidget,
+          reason: 'the declared-arrival label, not the pickup-slot one');
+
+      // The server's own label still drives the copy — it just does so in the
+      // sheet now that the page asks the question generically. Opening it is
+      // the only place the ferry can still be named, so this is where the
+      // "no hardcoded switch" claim has to be proved.
+      await tester.tap(find.byKey(const Key('time_field')));
+      await tester.pumpAndSettle();
+      expect(find.text('When does your ferry arrive?'), findsWidgets,
           reason: 'copy is built from the server label, not a hardcoded switch');
     });
 
@@ -233,7 +247,10 @@ void main() {
 
       await tapMode(tester, 'Scooter');
 
-      expect(find.byKey(const Key('arrival_field')), findsNothing);
+      // GPS mode + Order now = no time control at all. The origin and the
+      // clock already answer "when will you be here?", so there is nothing
+      // left to ask.
+      expect(find.byKey(const Key('time_field')), findsNothing);
       expect(find.byKey(const Key('checkout_origin_status')), findsOneWidget);
     });
 

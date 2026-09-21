@@ -198,6 +198,24 @@ class _ArrivalTimePickerState extends State<ArrivalTimePicker> {
     return '$h:${t.minute.toString().padLeft(2, '0')} $suffix';
   }
 
+  /// The 12-hour face of a 0-23 wheel index: 12, 1, 2 … 11, then 12, 1, 2 … 11.
+  ///
+  /// THE ORDER IS THE CLOCK'S, NOT 1→12. A strict 1-12 ladder would put 12 at
+  /// the END of each pass, which on the AM pass means midnight sitting after
+  /// 11 AM — the wheel would jump backwards twelve hours mid-scroll. Real
+  /// clocks start each half at 12 for exactly this reason, and the wheel has to
+  /// stay chronological because [_tooSoon] and [_tooFar] bound it at both ends:
+  /// a non-monotonic wheel would show the bounds rejecting times that sit
+  /// between two accepted ones.
+  ///
+  /// The INDEX still equals the 24-hour hour, so this changes what is drawn and
+  /// nothing about the DateTime that comes out — `_hour` is assigned the raw
+  /// index exactly as before, and [_resolved] is untouched.
+  static String _hour12(int index) {
+    final h = index % 12;
+    return (h == 0 ? 12 : h).toString();
+  }
+
   /// "45 minutes" / "2 hours" / "1 hour 30 minutes". Replaces the old
   /// `maxAhead.inHours` interpolation, which rendered any sub-hour bound as
   /// "within the next 0 hours" — advice that cannot be followed.
@@ -245,10 +263,16 @@ class _ArrivalTimePickerState extends State<ArrivalTimePicker> {
             const SizedBox(height: 4),
             // The live label. Updates on every tick, so the wheel always says
             // both what time it is pointing at and what part of the day that
-            // is. The wheels themselves are 24-hour (00–23), which is
-            // unambiguous but not how anyone says a time out loud — this line
-            // is where the selection is echoed back in the 12-hour form the
-            // customer will actually recognise on their own clock.
+            // is.
+            //
+            // The hour wheel is still 24 POSITIONS, but it now wears a
+            // 12-hour FACE — 12, 1 … 11, then 12, 1 … 11 again (see
+            // [_hour12]) — so the digits alone cannot say which half of the
+            // day you are on. THIS LINE IS WHERE THAT IS RESOLVED: it carries
+            // the AM/PM and the band, which is why the face can stay as
+            // narrow as a real clock instead of repeating "AM"/"PM" down all
+            // 24 cells. Before the face changed, the wheel read 00–23 and
+            // this line was merely a convenience; it is now load-bearing.
             Text(
               key: const Key('arrival_day_part'),
               formatWithDayPart(
@@ -281,8 +305,15 @@ class _ArrivalTimePickerState extends State<ArrivalTimePicker> {
                         child: _Wheel(
                           key: const Key('arrival_hour_wheel'),
                           controller: _hourCtrl,
+                          // Still 24 positions — the wheel is the same length,
+                          // it just wears a 12-hour face. Which of the two
+                          // passes you are on is stated by the live label
+                          // directly above ("2:00 PM (Afternoon)"), rather than
+                          // repeated on all 24 cells where it would double the
+                          // width of every row to say what one line already
+                          // says unambiguously.
                           count: 24,
-                          format: (i) => i.toString().padLeft(2, '0'),
+                          format: _hour12,
                           onChanged: (i) => setState(() => _hour = i),
                         ),
                       ),

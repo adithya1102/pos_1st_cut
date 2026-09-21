@@ -6872,3 +6872,136 @@ covered — the control case reaches the un-merged state by not scheduling, and
 so rather than leaving the absence to be discovered.
 
 ---
+
+## 2026-09-21 — the checkout page finally has ONE time control, and the wheel reads like a clock
+
+Two changes that had been sitting uncommitted in the working tree since the
+18th, plus the test migration neither of them came with.
+
+### The consolidation: four cases, one widget
+
+The page had grown a THIRD place to answer a question about time. A standalone
+arrival card sat in its own section above the Order-now / Pick-a-time toggle,
+while the toggle and the pickup card below it both opened a picker of their
+own. On a GPS mode with "Pick a time" selected that was two tappable elements
+opening the same sheet; on a declared-arrival mode it was two different sheets
+writing two different fields.
+
+Replaced by `_timeControl(outlet)` — one function returning one record, so the
+four combinations are stated in one place instead of being implied by the
+interaction of separate `if`s:
+
+    GPS      + Order now    -> null (no time to ask for)
+    GPS      + Pick a time  -> "Set pickup time"     -> requested_pickup_at
+    Declared + Order now    -> "When do you arrive?"  -> declared_arrival_at
+    Declared + Pick a time  -> "Select pickup time"  -> requested_pickup_at
+                                                        + declared_arrival_at
+
+`_MergedArrivalNote` is gone with the card it explained. One `Key('time_field')`
+now serves all four, which is what makes "two cards" unrepresentable rather
+than merely absent.
+
+### The wheel wears a 12-hour face
+
+`_hour12(index)` draws 12, 1 … 11, then 12, 1 … 11 again. THE ORDER IS THE
+CLOCK'S, NOT 1->12: a strict 1-12 ladder puts 12 at the END of each pass, which
+on the AM pass means midnight sitting after 11 AM — the wheel would jump
+backwards twelve hours mid-scroll, and `_tooSoon`/`_tooFar` bound it at both
+ends so a non-monotonic wheel would show the bounds rejecting times that sit
+between two accepted ones.
+
+The INDEX still equals the 24-hour hour. Nothing about the emitted DateTime
+changed; only the paint did.
+
+### THREE real behaviour changes, not twenty key renames
+
+The tests were never migrated with the code. The estimate going in was 20 stale
+key references across three files — mechanical. The baseline run said
+**14 failing tests**, and only six were key renames. The other three causes had
+no key reference at all and would have been "fixed" into silence by a rename
+pass:
+
+  1. **"Pick a time" no longer opens the picker on the same tap** (5 tests). The
+     chip sets the ORDER TYPE only. The same-tap shortcut existed because the
+     pickup card used to sit far from the toggle; the card is now directly
+     beneath it, so the disconnect that justified the shortcut is gone — and
+     the shortcut itself was what made the chip a second time-entry element.
+  2. **The vehicle-noun page heading is gone** (4 tests). "When does your metro
+     arrive?" was a per-mode heading on the standalone card. One card serving
+     four cases cannot carry four headings, so the page asks generically and
+     the noun survives in the SHEET the card opens. Those tests now open the
+     sheet — the claim they defend (the noun tracks the currently selected
+     chip, not the first one tapped) is unchanged and still asserted.
+  3. **The 12-hour face broke `find.text('19')`** (1 test), which pinned the
+     w300 wheel digits by their 24-hour spelling.
+
+Lesson worth keeping: a key rename is a signal that BEHAVIOUR moved, not a
+mechanical substitution. Counting call sites underestimated this by 2.3x
+because the two largest causes touched no key at all.
+
+### CORRECTED: declared-arrival + scheduled sends BOTH fields, by design
+
+Went in believing the merged case should send `requested_pickup_at` alone. It
+does not, and must not. `_payNow` sends the slot as BOTH, carrying the same
+instant:
+
+    declaredArrivalAt: mode.usesDeclaredArrival
+        ? (_scheduled ? _requestedPickup : _declaredArrival)
+        : null,
+    requestedPickupAt: _scheduled ? _requestedPickup : null,
+
+The slot holds the order; the same instant is the declared arrival that keeps
+`predict_travel` on its `customer_declared` leg — the ONLY timing signal a
+train has, since there is no GPS origin to estimate from. A test asserting
+"only requested_pickup_at" would have passed only after a change that silently
+dropped train mode's sole timing input.
+
+Safe by construction, not convention, and unchanged from 031:
+`_estimated_arrival_at` opens with
+`if requested_pickup_at is not None: return requested_pickup_at, "scheduled"`
+and never reads `declared_arrival_at` for a scheduled order — so the
+platform-to-door constant is not added on top and no new 409 is reachable.
+Still scoped to declared-arrival modes: sending it for car/bike/walk would flip
+predict_travel onto its customer_declared leg for modes with a real origin.
+
+Now pinned by a wire-level test that drives the real Pay button and reads the
+captured POST body, rather than calling `toOrderPayload` with hand-picked
+arguments — the mapping under test belongs to `_payNow`, so a test that
+supplies its own arguments would assert its own idea of it.
+
+### Tests
+
+customer_app **567 pass / 0 fail** (was 553). The four touched files went
+84 -> 98 tests; 70 of those 84 passed at baseline.
+
+  * `the four-case time-control matrix` (6) — label per case. `expectOnlyLabel`
+    asserts the expected label present AND the other two absent, which is what
+    catches a card rendering twice. The GPS+now case scrolls the toggle into
+    view first so the absence is real and not a lazy ListView never building
+    that stretch of page.
+  * `the four cases on the wire` (5) — field-set per case, through Pay.
+  * `the hour wheel wears a 12-hour face` (5) — both AM/PM boundaries
+    (11 AM -> 12 PM, 11 PM -> 12 AM), all 24 indices walked, and index 23 still
+    resolving to hour 23 so a "fix" to `count: 12` fails loudly. Each pins the
+    DRAWN DIGIT and the RESULTING DateTime together; either alone misses one of
+    the two ways this breaks.
+
+The KNOWN GAP recorded on 2026-09-18 — "switching back to Order now restores
+the arrival field", removed then for measuring the scroll harness rather than
+the feature — is now CLOSED. It became reachable once one widget served both
+states instead of two widgets swapping: `switching order type back and forth
+never leaves two cards`. What made the old attempt flaky was the lazy ListView
+DISPOSING the chip row once the page scrolled to the time card, so
+`find.text('Train')` matched nothing; a `toTop` helper scrolls back before
+re-tapping a chip.
+
+Ran the four touched files 3x — 98/98 every time, no flake.
+
+### Also
+
+`arrival_time_picker.dart` still described its own wheels as "24-hour (00-23)"
+after the face changed. Corrected, and the comment now says why the live
+AM/PM + band line went from a convenience to load-bearing: the digits alone
+can no longer say which half of the day you are on.
+
+---

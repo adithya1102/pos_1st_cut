@@ -221,9 +221,213 @@ void main() {
 
       // "Thinner, not smaller" — the wheel digits carry w300 against the
       // app's usual w700.
-      final digits = tester.widgetList<Text>(find.text('19')).toList();
+      //
+      // '7', not '19': the wheel parked at index 19 now DRAWS a 12-hour face,
+      // so the cell reads 7. Scoped to the hour wheel because a bare find for
+      // a single digit would also reach the minute column.
+      final digits = tester
+          .widgetList<Text>(find.descendant(
+            of: find.byKey(const Key('arrival_hour_wheel')),
+            matching: find.text('7'),
+          ))
+          .toList();
       expect(digits, isNotEmpty);
       expect(digits.first.style?.fontWeight, FontWeight.w300);
+    });
+  });
+
+  // ==========================================================================
+  // The hour wheel's 12-hour face
+  // ==========================================================================
+  //
+  // The wheel used to draw "00".."23" and now draws a real clock face:
+  // 12, 1 … 11, then 12, 1 … 11 again. ONLY THE PAINT CHANGED — the wheel is
+  // still 24 positions long and position N still means hour N — so every test
+  // below pins the drawn digit and the resulting DateTime TOGETHER. Asserting
+  // either alone would miss the two ways this can break: renumbering the wheel
+  // to 12 positions (the DateTime moves, the digits look right), or drawing a
+  // 1→12 ladder instead of 12→11 (the digits look plausible, midnight lands
+  // after 11 AM).
+  group('the hour wheel wears a 12-hour face', () {
+    /// The live controller behind a wheel, reached through the ListWheel the
+    /// private _Wheel builds. jumpToItem is how these tests select an hour:
+    /// dragging by pixels would encode itemExtent into every assertion.
+    FixedExtentScrollController ctrl(WidgetTester tester, String key) =>
+        tester
+            .widget<ListWheelScrollView>(find.descendant(
+              of: find.byKey(Key(key)),
+              matching: find.byType(ListWheelScrollView),
+            ))
+            .controller! as FixedExtentScrollController;
+
+    /// Opens the real sheet, parks both wheels, confirms, and hands back what
+    /// the picker resolved to. Going through [ArrivalTimePicker.show] rather
+    /// than the bare widget is the point: the DateTime that reaches the caller
+    /// is the thing the 12-hour face must not have changed.
+    Future<DateTime?> pick(WidgetTester tester,
+        {required int hour, required int minute}) async {
+      DateTime? picked;
+      await tester.pumpWidget(MaterialApp(
+        theme: AppTheme.light(),
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => Center(
+              child: TextButton(
+                onPressed: () async {
+                  picked = await ArrivalTimePicker.show(
+                    context,
+                    initial: DateTime(2026, 9, 18, 9, 0),
+                    // A full day of headroom. _resolved rolls a past time
+                    // forward by at most one day, so every hour 0-23 lands
+                    // inside this ceiling no matter what time the suite runs
+                    // at — which keeps the confirm button enabled for all 24.
+                    maxAhead: const Duration(hours: 24),
+                  );
+                },
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+
+      ctrl(tester, 'arrival_hour_wheel').jumpToItem(hour);
+      ctrl(tester, 'arrival_minute_wheel').jumpToItem(minute);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('arrival_confirm')));
+      await tester.pumpAndSettle();
+      return picked;
+    }
+
+    /// What the hour column is currently showing in its centred cell, proved
+    /// by the day-part line rather than guessed from pixel positions.
+    String label(WidgetTester tester) =>
+        tester.widget<Text>(find.byKey(const Key('arrival_day_part'))).data!;
+
+    Finder inHourWheel(String text) => find.descendant(
+          of: find.byKey(const Key('arrival_hour_wheel')),
+          matching: find.text(text),
+        );
+
+    testWidgets('11 AM to 12 PM: the face turns over at noon, the hour climbs',
+        (tester) async {
+      // THE forward boundary. On a 12-hour face the digit goes 11 -> 12, which
+      // LOOKS like a step backwards; the DateTime must still step forwards.
+      await tester.pumpWidget(MaterialApp(
+        theme: AppTheme.light(),
+        home: Scaffold(
+          body: ArrivalTimePicker(
+            initial: DateTime(2026, 9, 18, 11, 30),
+            maxAhead: const Duration(hours: 24),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      expect(label(tester), '11:30 AM (Morning)');
+      expect(inHourWheel('11'), findsOneWidget);
+
+      ctrl(tester, 'arrival_hour_wheel').jumpToItem(12);
+      await tester.pumpAndSettle();
+
+      expect(label(tester), '12:30 PM (Afternoon)',
+          reason: 'index 12 is noon, not midnight');
+      expect(inHourWheel('12'), findsWidgets);
+    });
+
+    testWidgets('11 PM to 12 AM: the same turnover at the end of the day',
+        (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        theme: AppTheme.light(),
+        home: Scaffold(
+          body: ArrivalTimePicker(
+            initial: DateTime(2026, 9, 18, 23, 30),
+            maxAhead: const Duration(hours: 24),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      expect(label(tester), '11:30 PM (Night)');
+      expect(inHourWheel('11'), findsOneWidget);
+
+      ctrl(tester, 'arrival_hour_wheel').jumpToItem(0);
+      await tester.pumpAndSettle();
+
+      expect(label(tester), '12:30 AM (Midnight)',
+          reason: 'index 0 is midnight, and it draws 12 — not 00');
+      expect(inHourWheel('12'), findsWidgets);
+      expect(inHourWheel('00'), findsNothing,
+          reason: 'the 24-hour face is gone');
+    });
+
+    testWidgets('the DateTime that comes out is still the 24-hour index',
+        (tester) async {
+      // Both halves of the face, and both twelve-o-clocks, resolved for real.
+      expect((await pick(tester, hour: 11, minute: 30))?.hour, 11);
+      expect((await pick(tester, hour: 12, minute: 30))?.hour, 12);
+      expect((await pick(tester, hour: 23, minute: 30))?.hour, 23,
+          reason: 'index 23 must still exist — the wheel is 24 long, not 12');
+      expect((await pick(tester, hour: 0, minute: 30))?.hour, 0);
+      // The minute column was never touched by this change; pinned so a
+      // future edit to the shared _Wheel cannot quietly reformat it too.
+      expect((await pick(tester, hour: 14, minute: 5))?.minute, 5);
+    });
+
+    testWidgets('every one of the 24 positions keeps its own hour',
+        (tester) async {
+      // The exhaustive version of the two boundary tests: walks the whole
+      // wheel and checks the index->hour identity at each stop. A 1→12 ladder
+      // (12 at the END of each pass) fails here at index 0 and index 12.
+      await tester.pumpWidget(MaterialApp(
+        theme: AppTheme.light(),
+        home: Scaffold(
+          body: ArrivalTimePicker(
+            initial: DateTime(2026, 9, 18, 0, 0),
+            maxAhead: const Duration(hours: 24),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      const suffix = [
+        '12:00 AM', '1:00 AM', '2:00 AM', '3:00 AM', '4:00 AM', '5:00 AM',
+        '6:00 AM', '7:00 AM', '8:00 AM', '9:00 AM', '10:00 AM', '11:00 AM',
+        '12:00 PM', '1:00 PM', '2:00 PM', '3:00 PM', '4:00 PM', '5:00 PM',
+        '6:00 PM', '7:00 PM', '8:00 PM', '9:00 PM', '10:00 PM', '11:00 PM',
+      ];
+
+      for (var i = 0; i < 24; i++) {
+        ctrl(tester, 'arrival_hour_wheel').jumpToItem(i);
+        await tester.pumpAndSettle();
+        expect(label(tester), startsWith(suffix[i]), reason: 'index $i');
+        // …and the cell under the selection band draws the 12-hour digit.
+        expect(inHourWheel(suffix[i].split(':').first), findsWidgets,
+            reason: 'index $i draws ${suffix[i].split(':').first}');
+      }
+    });
+
+    testWidgets('the PM half never draws a 13-23 digit', (tester) async {
+      // The regression a face change is most likely to leave half-done.
+      await tester.pumpWidget(MaterialApp(
+        theme: AppTheme.light(),
+        home: Scaffold(
+          body: ArrivalTimePicker(
+            initial: DateTime(2026, 9, 18, 19, 30),
+            maxAhead: const Duration(hours: 24),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      for (final h in ['13', '15', '17', '19', '20', '21', '23']) {
+        expect(inHourWheel(h), findsNothing, reason: 'the wheel drew $h');
+      }
+      expect(inHourWheel('7'), findsOneWidget,
+          reason: '19:00 reads as 7 on a clock');
     });
   });
 }

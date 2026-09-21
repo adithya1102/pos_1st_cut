@@ -143,7 +143,10 @@ void main() {
       await tester.pumpWidget(_checkout(Outlet.fromJson(_outletJson(city: 'Madurai'))));
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('arrival_field')), findsNothing);
+      // A non-rail city offers only GPS modes, and the page opens on Order
+      // now — the one (mode, order type) pair that shows no time control at
+      // all. So the arrival question cannot be reached by any route.
+      expect(find.byKey(const Key('time_field')), findsNothing);
     });
 
     testWidgets('every mode is offered case-insensitively of stored city',
@@ -262,11 +265,16 @@ void main() {
       await tester.tap(find.text('Metro'));
       await tester.pumpAndSettle();
 
-      // The declared-arrival branch, and the copy names the METRO — telling a
-      // metro rider about their "train" is a small wrongness that costs trust.
-      expect(find.byKey(const Key('arrival_field')), findsOneWidget);
-      expect(find.text('When does your metro arrive?'), findsOneWidget);
-      expect(find.text('When does your train arrive?'), findsNothing);
+      // The declared-arrival branch of the ONE time control. The page asks it
+      // generically — the vehicle noun now lives in the sheet this card opens
+      // (proved by the next test), because a single card serves all four
+      // (mode, order type) combinations and cannot carry four headings.
+      expect(find.byKey(const Key('time_field')), findsOneWidget);
+      expect(find.text('When do you arrive?'), findsOneWidget);
+      // Not the pickup-slot wording: that would mean the page had read the
+      // order type wrong, which is the confusion this consolidation removed.
+      expect(find.text('Set pickup time'), findsNothing);
+      expect(find.text('Select pickup time'), findsNothing);
       // And no origin picker: Leg A is a stated time, so GPS would be
       // collected and then ignored.
       expect(find.byKey(const Key('checkout_use_gps')), findsNothing);
@@ -289,7 +297,7 @@ void main() {
       await tester.tap(find.text('Metro'));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const Key('arrival_field')));
+      await tester.tap(find.byKey(const Key('time_field')));
       await tester.pumpAndSettle();
 
       // The sheet is up: its own day-part label proves it, not the page.
@@ -309,7 +317,7 @@ void main() {
       await tester.tap(find.text('Train'));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const Key('arrival_field')));
+      await tester.tap(find.byKey(const Key('time_field')));
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('arrival_day_part')), findsOneWidget);
@@ -318,6 +326,20 @@ void main() {
 
     testWidgets('switching to Train restores the train wording',
         (tester) async {
+      // Asserted in the SHEET, once per mode, because the page heading is now
+      // the same generic question for both. The claim being defended is
+      // unchanged and still worth defending: the noun must track the chip that
+      // is currently selected, not the first one ever tapped.
+      Future<void> openSheetAndExpect(String vehicle) async {
+        await tester.tap(find.byKey(const Key('time_field')));
+        await tester.pumpAndSettle();
+        expect(find.text('When does your $vehicle arrive?'), findsWidgets);
+        // Back to the page, so the next mode can be chosen.
+        Navigator.of(tester.element(find.byKey(const Key('arrival_day_part'))))
+            .pop();
+        await tester.pumpAndSettle();
+      }
+
       await tester.pumpWidget(
           _checkout(Outlet.fromJson(_outletJson(city: 'Chennai'))));
       await tester.pumpAndSettle();
@@ -326,16 +348,17 @@ void main() {
       await tester.pump();
       await tester.tap(find.text('Metro'));
       await tester.pumpAndSettle();
-      expect(find.text('When does your metro arrive?'), findsOneWidget);
+      expect(find.text('When do you arrive?'), findsOneWidget);
+      await openSheetAndExpect('metro');
 
       // ensureVisible again: selecting Metro swapped the origin card for the
-      // arrival picker, which reflows the page under the chip row.
+      // time control, which reflows the page under the chip row.
       await tester.ensureVisible(find.text('Train'));
       await tester.pump();
       await tester.tap(find.text('Train'));
       await tester.pumpAndSettle();
-      expect(find.text('When does your train arrive?'), findsOneWidget);
-      expect(find.text('When does your metro arrive?'), findsNothing);
+      expect(find.text('When do you arrive?'), findsOneWidget);
+      await openSheetAndExpect('train');
     });
   });
 

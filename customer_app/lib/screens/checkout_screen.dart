@@ -349,6 +349,62 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     });
   }
 
+  /// The ONE time-entry control, resolved from (transport mode, order type).
+  ///
+  /// Returning a single record rather than rendering two conditional cards is
+  /// the whole point: there is exactly one widget, so no combination of mode
+  /// and order type can produce two tappable elements that open a picker. The
+  /// four cases are stated here once, in one place, instead of being implied by
+  /// the interaction of separate `if`s in the tree — which is precisely how
+  /// this page grew two of them twice in one day.
+  ///
+  ///   GPS mode      + Order now   -> null (no time to ask for)
+  ///   GPS mode      + Pick a time -> "Set pickup time"   -> requested_pickup_at
+  ///   Declared mode + Order now   -> "When do you arrive?" -> declared_arrival_at
+  ///   Declared mode + Pick a time -> "Select pickup time" -> requested_pickup_at
+  ///
+  /// The last case is this morning's merge: the slot doubles as the declared
+  /// arrival. That equivalence is NOT re-implemented here — _placeOrder sends
+  /// the slot as declared_arrival_at, and the server's _estimated_arrival_at
+  /// short-circuits on requested_pickup_at so the gate never reads the other
+  /// field for a scheduled order.
+  ({
+    String label,
+    String prefix,
+    String error,
+    DateTime? value,
+    bool missing,
+    VoidCallback onTap,
+  })? _timeControl(Outlet? outlet) {
+    final mode = _effectiveMode(outlet);
+    if (_scheduled) {
+      return (
+        // Named differently in the two scheduled cases on purpose: a train
+        // passenger is choosing between times they could arrive, which is a
+        // selection; a walk-in is simply stating one.
+        label: mode.usesDeclaredArrival ? 'Select pickup time' : 'Set pickup time',
+        prefix: 'Ready for ',
+        error: 'Choose a pickup time, or switch back to Order now.',
+        value: _requestedPickup,
+        missing: _pickupMissing,
+        onTap: () => _pickPickupTime(outlet),
+      );
+    }
+    if (mode.usesDeclaredArrival) {
+      return (
+        label: 'When do you arrive?',
+        prefix: 'Arriving ',
+        error: 'Set your arrival time before paying — we cannot time '
+            'the kitchen without it.',
+        value: _declaredArrival,
+        missing: _arrivalMissing,
+        onTap: _pickArrivalTime,
+      );
+    }
+    // GPS mode ordering now: the origin and the clock already answer it.
+    return null;
+  }
+
   /// Whether this outlet can be asked for a future slot at all.
   ///
   /// Offered while the outlet is open OR closing soon — closing_soon is the
@@ -649,7 +705,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     // button: a button that does nothing when tapped teaches the customer that
     // the app is broken, and gives them nothing to act on.
     // NOT required when a pickup slot is being chosen: that slot IS the arrival
-    // (see _MergedArrivalNote and the payload below), the field is not on
+    // (see _timeControl and the payload below), the field is not on
     // screen to answer, and demanding it would block Pay on a control the
     // customer cannot see.
     final mode = _effectiveMode(cart.outlet);
@@ -925,103 +981,23 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               ],
             ),
             const SizedBox(height: 24),
-            // Train and Metro replace the origin picker entirely: Leg A is a
-            // stated time, so a GPS origin would be collected and then ignored.
-            // Effective, not raw: the arrival picker must never appear for a
-            // mode the chip row did not offer.
-            if (_effectiveMode(cart.outlet).usesDeclaredArrival &&
-                _scheduled) ...[
-              // ONE TIME, NOT TWO.
-              //
-              // Train/metro/tram ask "when does your train arrive?"; scheduled
-              // pickup asks "when do you want it?". Both were rendered
-              // unconditionally, so a train passenger who also tapped "Pick a
-              // time" was made to enter two times for one journey — and then
-              // had to keep them consistent themselves, with nothing on screen
-              // saying they were related.
-              //
-              // When a slot is chosen it IS the arrival: the customer is
-              // telling us when they will be at the counter. The pickup time is
-              // sent as declared_arrival_at as well (see _placeOrder), so the
-              // travel model still gets its `customer_declared` leg.
-              //
-              // Safe on the server by construction, not by convention:
-              // _estimated_arrival_at short-circuits on
-              // `requested_pickup_at is not None` and never reads
-              // declared_arrival_at for a scheduled order, so the feasibility
-              // gate is judged on the slot alone — the platform-to-door
-              // constant is not added on top and no new refusal is possible.
-              _MergedArrivalNote(
-                key: const Key('arrival_merged_into_pickup'),
-                vehicleNoun: _effectiveMode(cart.outlet).vehicleNoun,
-              ),
-            ] else if (_effectiveMode(cart.outlet).usesDeclaredArrival) ...[
-              // Named after the mode actually chosen. Asking a metro rider when
-              // their "train" arrives is the kind of small wrongness that makes
-              // someone doubt the app knows what they picked.
-              Text(
-                  'When does your '
-                  '${_effectiveMode(cart.outlet).vehicleNoun} arrive?',
-                  style: textTheme.headlineSmall),
-              const SizedBox(height: 6),
-              Text(
-                  'Required — it is the only timing signal '
-                  '${_effectiveMode(cart.outlet).vehicleNoun} mode has.',
-                  style: textTheme.bodyMedium?.copyWith(color: c.inkSoft)),
-              const SizedBox(height: 12),
-              NeoCard(
-                key: const Key('arrival_field'),
-                onTap: _pickArrivalTime,
-                color: _declaredArrival != null ? c.accent : c.surface,
-                // A red border, not a red field: the control is incomplete, not
-                // wrong, and it stays readable while it is being corrected.
-                borderColor: _arrivalMissing ? AppColors.tomato : null,
-                child: Row(
-                  children: [
-                    Icon(Icons.schedule,
-                        color: _declaredArrival != null ? c.onAccent : c.ink),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Text(
-                        _declaredArrival == null
-                            ? 'Set arrival time'
-                            // "2:00 PM (Afternoon)" — clock first, band in
-                            // parentheses. This used to lead with the band
-                            // ("Afternoon · 2:00 PM"), which reads as a
-                            // category with a time attached; the time is the
-                            // fact and the band only qualifies it.
-                            : formatDateTimeWithDayPart(
-                                context, _declaredArrival!),
-                        style: textTheme.titleMedium?.copyWith(
-                            color: _declaredArrival != null ? c.onAccent : c.ink),
-                      ),
-                    ),
-                    Icon(Icons.edit,
-                        size: 18,
-                        color: _declaredArrival != null ? c.onAccent : c.inkSoft),
-                  ],
-                ),
-              ),
-              if (_arrivalMissing) ...[
-                const SizedBox(height: 8),
-                Row(
-                  key: const Key('arrival_required_error'),
-                  children: [
-                    Icon(Icons.error_outline,
-                        size: 18, color: AppColors.tomato),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Set your arrival time before paying — we cannot time '
-                        'the kitchen without it.',
-                        style: textTheme.bodyMedium
-                            ?.copyWith(color: AppColors.tomato),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ] else ...[
+            // The standalone arrival-time card is GONE.
+            //
+            // It was a THIRD place on this page to answer a question about
+            // time, sitting in its own section above the Order-now / Pick-a-
+            // time toggle, while the toggle and the pickup card below both
+            // opened a picker of their own. On a GPS mode with "Pick a time"
+            // selected that meant two tappable elements opening the same sheet;
+            // on a declared-arrival mode it meant two different sheets setting
+            // two different fields. Every combination now routes through the
+            // ONE control below the toggle — see _timeControl.
+            //
+            // What survives here is the origin STATUS for GPS modes, which is
+            // not a time control and never was: it reports what the app knows
+            // about location and offers nothing to tap. Declared-arrival modes
+            // have no origin to report (Leg A is a stated time), so they get
+            // nothing in this slot at all.
+            if (!_effectiveMode(cart.outlet).usesDeclaredArrival) ...[
               // The separate "Your starting point" card is GONE (migration 030).
               //
               // It was a second, disconnected place to answer a question the
@@ -1051,8 +1027,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               const SizedBox(height: 6),
               Text(
                 _scheduled
-                    ? 'We\'ll hold your order and send it to the kitchen so '
-                        'it\'s ready when you arrive.'
+                    ? "We'll hold your order and send it to the kitchen so "
+                        "it's ready when you arrive."
                     : 'Order now, or pick a time later today.',
                 style: textTheme.bodyMedium?.copyWith(color: c.inkSoft),
               ),
@@ -1079,68 +1055,74 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       label: 'Pick a time',
                       icon: Icons.schedule,
                       selected: _scheduled,
-                      onTap: () {
-                        setState(() => _scheduled = true);
-                        // Opening the picker on the same tap: choosing "Pick a
-                        // time" and then having to find a second control to
-                        // actually pick one is the disconnect that lost the
-                        // origin card its origins (migration 030).
-                        _pickPickupTime(cart.outlet);
-                      },
+                      // Sets the ORDER TYPE and nothing else. It used to open
+                      // the picker on the same tap, which is what made this a
+                      // second time-entry element alongside the card below —
+                      // two tappable things opening one sheet. The card is now
+                      // the only way in, and it sits immediately beneath this
+                      // row rather than in a far-off section, so the disconnect
+                      // that justified the same-tap shortcut no longer exists.
+                      onTap: () => setState(() => _scheduled = true),
                     ),
                   ),
                 ],
               ),
-              if (_scheduled) ...[
-                const SizedBox(height: 12),
-                NeoCard(
-                  key: const Key('pickup_time_field'),
-                  onTap: () => _pickPickupTime(cart.outlet),
-                  color: _requestedPickup != null ? c.accent : c.surface,
-                  borderColor: _pickupMissing ? AppColors.tomato : null,
-                  child: Row(
-                    children: [
-                      Icon(Icons.schedule,
-                          color: _requestedPickup != null ? c.onAccent : c.ink),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Text(
-                          _requestedPickup == null
-                              ? 'Set pickup time'
-                              : 'Ready for '
-                                  '${formatDateTimeWithDayPart(context, _requestedPickup!)}',
-                          style: textTheme.titleMedium?.copyWith(
-                              color: _requestedPickup != null
-                                  ? c.onAccent
-                                  : c.ink),
-                        ),
+            ],
+            // THE one time-entry control. Its label, the field it writes and
+            // whether it appears at all are decided by (transport mode, order
+            // type) in _timeControl — four combinations, one widget, so no
+            // combination can render two of them.
+            //
+            // Deliberately OUTSIDE the _canSchedule block above: a
+            // declared-arrival mode needs its arrival time even at an outlet
+            // that cannot be scheduled at all, and nesting this inside would
+            // silently drop the only timing signal train mode has.
+            if (_timeControl(cart.outlet) case final ctl?) ...[
+              const SizedBox(height: 12),
+              NeoCard(
+                key: const Key('time_field'),
+                onTap: ctl.onTap,
+                color: ctl.value != null ? c.accent : c.surface,
+                // A red border, not a red field: the control is incomplete, not
+                // wrong, and it stays readable while it is being corrected.
+                borderColor: ctl.missing ? AppColors.tomato : null,
+                child: Row(
+                  children: [
+                    Icon(Icons.schedule,
+                        color: ctl.value != null ? c.onAccent : c.ink),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Text(
+                        ctl.value == null
+                            ? ctl.label
+                            : '${ctl.prefix}'
+                                '${formatDateTimeWithDayPart(context, ctl.value!)}',
+                        style: textTheme.titleMedium?.copyWith(
+                            color: ctl.value != null ? c.onAccent : c.ink),
                       ),
-                      Icon(Icons.edit,
-                          size: 18,
-                          color: _requestedPickup != null
-                              ? c.onAccent
-                              : c.inkSoft),
-                    ],
-                  ),
+                    ),
+                    Icon(Icons.edit,
+                        size: 18,
+                        color: ctl.value != null ? c.onAccent : c.inkSoft),
+                  ],
                 ),
-                if (_pickupMissing) ...[
-                  const SizedBox(height: 8),
-                  Row(
-                    key: const Key('pickup_required_error'),
-                    children: [
-                      Icon(Icons.error_outline,
-                          size: 18, color: AppColors.tomato),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Choose a pickup time, or switch back to Order now.',
-                          style: textTheme.bodyMedium
-                              ?.copyWith(color: AppColors.tomato),
-                        ),
+              ),
+              if (ctl.missing) ...[
+                const SizedBox(height: 8),
+                Row(
+                  key: const Key('time_required_error'),
+                  children: [
+                    Icon(Icons.error_outline, size: 18, color: AppColors.tomato),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        ctl.error,
+                        style: textTheme.bodyMedium
+                            ?.copyWith(color: AppColors.tomato),
                       ),
-                    ],
-                  ),
-                ],
+                    ),
+                  ],
+                ),
               ],
             ],
             const SizedBox(height: 24),
@@ -1486,46 +1468,6 @@ class _TransportChip extends StatelessWidget {
 /// stretch to fill the row rather than wrapping to their content, so the choice
 /// reads as a pair of alternatives rather than as the start of another list of
 /// chips the customer should scan for more options.
-/// Shown in place of the arrival field once a pickup slot is being chosen.
-///
-/// A STATUS, not a control — deliberately, and for the same reason the origin
-/// card became one in migration 030: a second tappable time control next to the
-/// pickup slot is exactly the duplication this replaces. It exists so the
-/// disappearance of the arrival field is explained rather than merely observed;
-/// a required field that vanishes without a word reads as a bug.
-class _MergedArrivalNote extends StatelessWidget {
-  const _MergedArrivalNote({super.key, required this.vehicleNoun});
-
-  final String vehicleNoun;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    final textTheme = Theme.of(context).textTheme;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: c.surfaceAlt,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: c.border, width: 2),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.info_outline, size: 18, color: c.inkSoft),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              'Your pickup time below is when we\'ll expect you — no need to '
-              'enter your $vehicleNoun arrival separately.',
-              style: textTheme.bodySmall?.copyWith(color: c.inkSoft),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _ScheduleChoice extends StatelessWidget {
   const _ScheduleChoice({
     super.key,
