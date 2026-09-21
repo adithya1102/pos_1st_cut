@@ -1,0 +1,4 @@
+# Pinned to 2.x: FastMCP was renamed to MCPServer in mcp 2.0, and server.py
+# imports the new name. A `mcp<2` environment will fail at import, loudly,
+# rather than silently running against a different API.
+mcp>=2.1.1,<3

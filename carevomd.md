@@ -7131,3 +7131,108 @@ customer_app **567 pass / 0 fail**. Build-config-only change, verified rather
 than assumed.
 
 ---
+
+## 2026-09-21 (later still) — a read-only MCP server, built from nothing
+
+Asked to "extend the read-only MCP server from the prior handoff" with an
+about-us tool, leaving its Tasks 1-4 menu/location work alone.
+
+### There was no prior MCP server
+
+Nothing in the tree, no file with `mcp` in its path in any commit on any
+branch, and no mention in this log — which is the strongest signal of the
+three, since this log is updated on every change. The only `mcp` matches in
+the repo are `"mcpServer": true` inside `admin_app/.next/` build artifacts, an
+unrelated Next.js config flag. Whatever the earlier handoff was, it produced
+no artifacts here. Reported rather than papered over, and the server was built
+fresh at the user's direction.
+
+### Built: mcp_server/
+
+Python with the official SDK, matching the FastAPI backend the future
+read-only tools will call. Installed `mcp` is **2.1.1**, where `FastMCP` was
+renamed to `MCPServer` and the model fields went snake_case (`input_schema`,
+`is_error`, `structured_content`, `server_info`). Written against the
+installed API and pinned `mcp>=2.1.1,<3`, so a v1 environment fails loudly at
+import instead of running against a different API.
+
+    mcp_server/
+    ├── carevo_mcp/{__init__,__main__,info,server}.py
+    ├── tests/test_client.py
+    ├── pyproject.toml, requirements.txt, README.md
+
+`__init__.py` is deliberately EMPTY. Re-exporting `server.mcp` there makes
+`python -m carevo_mcp.server` import the module twice — once as a package
+attribute, once as `__main__` — which Python warns about and which would give
+the tool decorator two chances to register the same tool. `__main__.py` is the
+documented entry point instead.
+
+ONE tool so far: `get_carevo_info()`, no parameters, no auth, answering from a
+plain Python literal in `info.py` — not a DB read, not an API call. Static
+about-us copy has no reason to acquire a latency budget, a failure mode and an
+auth question. It also means the tool works with the backend down and does not
+wait on the endpoint audit.
+
+Read-only is enforced by CONSTRUCTION, not convention: a tool that is not
+registered cannot be called. `tests/test_client.py` additionally asserts that
+`create_order`, `place_order`, `checkout`, `get_customer` and friends are
+ABSENT from `list_tools()`, so adding one later fails a test rather than
+slipping through.
+
+### The contact number was NOT taken from the repo
+
+The brief said to use a public contact number if the repo stated one,
+otherwise ask. The repo states none. What a naive grep surfaces is all
+disqualified:
+
+  * `carevomd.md:1371`, `:6063` — digit runs inside SHA-256 hashes
+  * `carevomd.md:4939`+ — `9198765432`, the documented autofill TRUNCATION bug
+  * `carevomd.md:3577`, `:3579` — `+919499956612` / `+916374304790`, customer
+    account rows from a production data cleanup, and this log already says
+    only the EMAIL row was verifiably Adi's
+
+Publishing either of the last two would have meant guessing, and sourcing a
+published contact from production customer records — against the brief's own
+no-PII rule. Asked instead; the founder supplied them directly.
+
+FLAGGING THE NEAR-MISS CAUGHT A TYPO. The number first supplied for calls was
+`8374304790`, one digit from the `6374304790` in this log. Reported the
+discrepancy before committing rather than trusting "use verbatim"; it was
+indeed a typo and was corrected to `6374304790`. Verbatim is the right rule,
+and it is exactly why a near-miss has to be surfaced rather than silently
+accepted OR silently "fixed".
+
+### No country code, deliberately
+
+Numbers are stored as plain digits. The brief said to match an existing
+customer-facing display convention only if one existed. It does not: the only
+`+91` in the codebase is a fixed prefix chip beside the login input
+(`login_screen.dart:301`) and the E.164 normaliser feeding Firebase
+(`firebase_otp_service.dart:87`) — both INPUT/STORAGE conventions for a
+customer typing their own number, neither a convention for displaying a CareVo
+contact number. No customer-facing copy publishes one at all.
+
+Minor unresolved discrepancy: the founder email is `@carevo.co.in`, while the
+backend's only domain reference is `EMAIL_FROM = "no-reply@carevo.app"`
+(`core/config.py:92`). Sending domain vs contact domain may legitimately
+differ; noted, not changed.
+
+### Verified as a client, not as a function
+
+`tests/test_client.py` spawns the server as a subprocess and speaks MCP over
+stdio — the path Developer Mode uses. Calling `get_carevo_info()` directly
+would prove nothing about REGISTRATION, which is the part that actually breaks
+(a decorator that silently did not apply, a tool missing from `list_tools`, a
+return value the protocol cannot serialise). Also asserts the response is
+isolated: the tool returns a copy, so one caller mutating the payload cannot
+change the next caller's response.
+
+All checks pass. `list_tools() -> ['get_carevo_info']`.
+
+### Still gated
+
+`list_outlets` / `get_menu` and the rest are NOT built. They read from
+`gusto_pos/backend`, and wiring them up depends on the endpoint audit's auth
+findings. Order placement stays out entirely until those are resolved.
+
+---

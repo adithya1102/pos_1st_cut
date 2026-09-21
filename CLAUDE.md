@@ -12,6 +12,9 @@ Four main components:
 - `gusto_pos/GustoPOS/` — .NET MAUI Windows Desktop application for the Cashier/Management terminal.
 - `gusto_pos/GustoWaiter/` — .NET MAUI Windows Tablet application for floor staff to manage tables and approve orders.
 
+Plus one auxiliary component:
+- `mcp_server/` — read-only MCP server (Python, official `mcp` SDK ≥2.1.1) exposing public CareVo / Gusto Skip information. Currently one tool, `get_carevo_info`, answering from a static literal. **No order placement, no payment, no customer PII** — enforced by what is registered, and asserted in `mcp_server/tests/test_client.py`. Menu/location tools are not built yet; they depend on the backend endpoint audit. Run with `cd mcp_server && python -m carevo_mcp`.
+
 ## Commands
 
 ### Backend
