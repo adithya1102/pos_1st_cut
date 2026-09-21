@@ -2,6 +2,7 @@
 
 import { useCart } from '@/lib/cart-store';
 import { createOrder } from '@/lib/api';
+import { API_BASE } from '@/lib/config';
 import { createCustomerWS } from '@/lib/websocket';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState, useEffect, Suspense } from 'react';
@@ -81,8 +82,7 @@ function CartContent() {
     let stopped = false;
     const poll = async () => {
       try {
-        const base = process.env.NEXT_PUBLIC_API_URL || 'https://pos-1st-cut.onrender.com';
-        const res = await fetch(`${base}/api/v1/orders/table/${encodeURIComponent(tableId)}`);
+        const res = await fetch(`${API_BASE}/api/v1/orders/table/${encodeURIComponent(tableId)}`);
         if (res.ok) {
           const orders = await res.json();
           const current = Array.isArray(orders)

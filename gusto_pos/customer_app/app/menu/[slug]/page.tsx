@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { API_BASE } from '@/lib/config';
 
-const API = `${process.env.NEXT_PUBLIC_API_URL || 'https://pos-1st-cut.onrender.com'}/api/v1`;
+const API = `${API_BASE}/api/v1`;
 
 type Step = 'loading' | 'details' | 'otp' | 'error';
 

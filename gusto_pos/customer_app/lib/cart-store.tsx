@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { CartItem } from './types';
+import { OUTLET_ID } from './config';
 
 function parseAddonPrice(option: string): number {
   const match = option.match(/\+₹(\d+)/);
@@ -44,9 +45,9 @@ const CartContext = createContext<CartContextType | null>(null);
 
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
-  const [outletId, setOutletId] = useState(
-    process.env.NEXT_PUBLIC_OUTLET_ID || '0b8a8349-6144-41a8-b028-b9089bd8eaea'
-  );
+  // Seed only — the QR/menu flow overwrites this via setOutletId once the real
+  // outlet is resolved from the table token.
+  const [outletId, setOutletId] = useState(OUTLET_ID);
   const [tableId, setTableId] = useState('1');
 
   // Persist cart to localStorage

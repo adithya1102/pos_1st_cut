@@ -1,6 +1,9 @@
 import { API_BASE } from './api';
 
-export const WS_BASE = (process.env.NEXT_PUBLIC_API_URL || API_BASE)
+// API_BASE already resolves NEXT_PUBLIC_API_URL (and throws if unset), so the
+// old `process.env.NEXT_PUBLIC_API_URL || API_BASE` chain compared a value
+// against itself.
+export const WS_BASE = API_BASE
   .replace(/^http:/, 'ws:')
   .replace(/^https:/, 'wss:')
   .replace(/\/api\/v1\/?$/, '')

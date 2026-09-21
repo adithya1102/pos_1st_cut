@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
+import { API_BASE } from '@/lib/config';
 
 type PageState = 'loading' | 'error';
 
@@ -21,7 +22,6 @@ export default function QRHashPage() {
   async function validateAndRedirect() {
     setState('loading');
     try {
-      const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://pos-1st-cut.onrender.com';
       const res = await fetch(`${API_BASE}/api/v1/tables/validate/${qrHash}`);
 
       if (!res.ok) {

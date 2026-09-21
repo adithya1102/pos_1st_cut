@@ -32,6 +32,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...opting in: the example carries no secrets and documents the three required
+# vars that lib/config.ts now refuses to build without.
+!.env.local.example
 
 # vercel
 .vercel

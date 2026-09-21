@@ -1,8 +1,10 @@
-export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://pos-1st-cut.onrender.com';
+import { API_BASE, MENU_ID } from './config';
 
-const DEFAULT_MENU_ID = process.env.NEXT_PUBLIC_MENU_ID || '1cde6491-e17a-45be-91e1-e905bcce7732';
+export { API_BASE };
 
-export async function fetchMenu(menuId: string = DEFAULT_MENU_ID) {
+// No callers as of this writing — kept because it is an exported entry point.
+// If it stays unused, deleting it also drops the NEXT_PUBLIC_MENU_ID requirement.
+export async function fetchMenu(menuId: string = MENU_ID) {
   const res = await fetch(`${API_BASE}/api/v1/menus/${menuId}`);
   if (!res.ok) throw new Error('Failed to fetch menu');
   return res.json();

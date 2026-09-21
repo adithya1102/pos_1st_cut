@@ -3,8 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { API_BASE } from '@/lib/api';
-
-const OUTLET_ID = process.env.NEXT_PUBLIC_OUTLET_ID || '0b8a8349-6144-41a8-b028-b9089bd8eaea';
+import { OUTLET_ID } from '@/lib/config';
 
 type Session = {
   token: string;
