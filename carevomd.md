@@ -7005,3 +7005,129 @@ AM/PM + band line went from a convenience to load-bearing: the digits alone
 can no longer say which half of the day you are on.
 
 ---
+
+## 2026-09-21 (later) — R8 was already on; what was actually missing was one attribute
+
+Went in to "enable and tune R8, add keep rules for Firebase / Cashfree /
+Places." Almost none of that turned out to be real. Recording the diagnosis
+because the wrong version of it is easy to re-derive and expensive to act on.
+
+### minifyEnabled is set by FLUTTER, not by build.gradle.kts
+
+`android/app/build.gradle.kts` has no `minifyEnabled`, no `shrinkResources`,
+no `proguardFiles` — and never has (checked with `git log -S`). R8 still runs
+on release with full obfuscation. The Flutter Gradle Plugin does it
+(`FlutterPlugin.kt:214-226`):
+
+    if (FlutterPluginUtils.shouldShrinkResources(project)) {
+        releaseBuildType.isMinifyEnabled = true
+        releaseBuildType.isShrinkResources = FlutterPluginUtils.isBuiltAsApp(project)
+        releaseBuildType.proguardFiles.add(getDefaultProguardFile("proguard-android-optimize.txt"))
+        releaseBuildType.proguardFiles.add(flutterProguardRules)
+        val proguardRulesPro = File("${project.projectDir}/proguard-rules.pro")
+        if (proguardRulesPro.exists()) { releaseBuildType.proguardFiles.add(proguardRulesPro) }
+    }
+
+Three consequences worth remembering. It picks the OPTIMIZING default file,
+not the neutered `proguard-android.txt`. Debug is untouched, so iteration
+stays fast. And `proguard-rules.pro` is wired in BY EXISTENCE — creating the
+file is the whole integration, no Gradle edit.
+
+NOT an AGP 9 default change. AGP 9.0 release notes confirm `minifyEnabled` /
+`shrinkResources` defaults are unchanged; what AGP 9.0.1 does flip on is
+`r8.optimizedResourceShrinking` and `r8.strictFullModeForKeepRules`, so this
+build is already more aggressive than an AGP 8 one. flutter/flutter#184410 is
+migrating the plugin's legacy-API wiring to the new AGP 9 DSL — another reason
+not to hand-write `minifyEnabled` here and create a future conflict.
+
+### Nothing was missing from the keep rules
+
+All three SDKs ship consumer rules inside their AARs, and AGP merges them
+automatically. Read off the merged `configuration.txt`, not off blog posts:
+
+  * Cashfree — `-keep class com.cashfree.pg.{api,ui.api,core}.**`,
+    `CFPaymentGatewayService`, `CashfreeCoreContentProvider`
+  * Places — `-keep class com.google.android.libraries.places.** { *; }`
+    (it arrives PRE-OBFUSCATED upstream) plus Guava/Flogger/gRPC `-dontwarn`s
+    and proto field retention
+  * Firebase — `firebase-auth-24.2.0`, `firebase-common-22.2.0`, plus
+    `play-services-auth`, `credentials`, `googleid`, `play-services-fido`
+
+Several search results recommend `-keep class com.google.firebase.** { *; }`.
+Do NOT add it. Google's own keep-rules guidance says the opposite — "use keep
+rules that are as specific as possible" — and a broad wildcard would LOWER the
+obfuscation rate while adding nothing, because the vendors' narrower rules are
+already in force. It would also hide a real breakage behind a rule that looks
+protective.
+
+### There is no safe headroom, and that is the finding
+
+49.3% of classes renamed (4,305 of 8,739). The un-renamed half is vendor-
+mandated, not slack:
+
+    3,007  com.google.android    Places pre-obfuscated + explicit -keep;
+                                 Play Services reflection
+      494  com.cashfree.pg       explicit -keep from Cashfree's own AAR
+       96  kotlin.jvm.internal
+       18  com.google.firebase
+       11  io.flutter.plugins
+
+Raising that number means overriding a payment SDK's keep rules. The symptom
+would be a release-only crash in checkout. R8 emitted no `missing_rules.txt`,
+so nothing is currently under-kept either.
+
+### CORRECTED: line-number retrace was already working
+
+Added `proguard-rules.pro` believing release crash traces had no line numbers.
+Wrong. A/B build, file present vs moved aside:
+
+                      classes.dex   DEBUG_INFO_ITEM   b"SourceFile"   mapping.txt
+    with rules          6,009,104         797              1          307,113 line entries
+    without             6,010,144         788              0          307,113 line entries
+
+Identical residual line-range data either way — R8 9.0.32 retains retrace-able
+line numbers unaided. What WAS genuinely absent is the SourceFile attribute
+itself (0 -> 1 interned string), which is what lets a runtime frame print
+`SourceFile:NN` instead of `Unknown Source`, the shape Play Console and
+Crashlytics deobfuscation expect.
+
+Cost came out NEGATIVE, not positive. `-renamesourcefileattribute` collapses
+every distinct source filename into one interned string; dropping those
+filenames saves more than the nine extra debug items cost, so classes.dex
+shrinks 1,040 bytes. The APK is byte-identical at 61,490,542 — a 1 KB delta
+vanishes into ZIP alignment on a 58 MB artifact dominated by native .so files.
+
+Kept anyway: near-zero cost, real tooling benefit, and the file now exists as
+the documented home for a narrowly-scoped rule if a release-only failure ever
+proves one is needed. Committed as 9ff43d65.
+
+### Builds are deterministic, which is worth knowing
+
+The control rebuild reproduced the pre-rules APK hash exactly
+(`1C96134E6CEB0A77…`) and the final rebuild reproduced the with-rules hash
+exactly (`C46898CE3E1DA742…`). Any future hash change is a real change.
+
+### Operational: this machine is under-provisioned for release builds
+
+First release build died with `Native memory allocation (mmap) failed to map
+2013265920 bytes` — Gradle daemon JVM OOM. 15.2 GB physical RAM, 1.8 GB free,
+ten JVMs alive, and `android/gradle.properties` asks for `-Xmx8G` plus
+`-XX:MaxMetaspaceSize=4G`. Oversubscribed; it had been succeeding on luck.
+`./android/gradlew --stop` before a release build clears it. Left
+gradle.properties alone — lowering `-Xmx` is the real fix if it recurs.
+
+### STILL UNVERIFIED: no release build has been device-tested
+
+Full R8 has been active since at least the Sep 7 AAB, and AGP 9's
+`strictFullModeForKeepRules` no longer implicitly keeps default constructors
+on kept classes — a genuine hazard for reflection-instantiated Firebase and
+Cashfree types. Nobody has exercised login, payment and Places search on a
+release build. That test is outstanding and predates today's change; the
+release APK is built and signed with the upload key, ready to sideload.
+
+### Tests
+
+customer_app **567 pass / 0 fail**. Build-config-only change, verified rather
+than assumed.
+
+---
