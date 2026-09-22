@@ -105,20 +105,49 @@ STUB_MENU = {
 }
 
 
+# Two outlet ids that make the stub answer 429, with the two DIFFERENT bodies a
+# real 429 can carry. The point of the pair is that a client which merely
+# "handles 429" treats them identically, and one which surfaces the body can
+# tell an operator which system actually refused the request.
+LIMITER_429_ID = "22222222-2222-4222-8222-222222222222"
+PLATFORM_429_ID = "33333333-3333-4333-8333-333333333333"
+
+# Byte-for-byte what app/modules/public/service.py returns, verified by tripping
+# the real limiter at request #301: body and Retry-After both.
+LIMITER_429_BODY = '{"detail":"Too many requests, try later"}'
+LIMITER_429_RETRY_AFTER = "3600"
+
+# A platform block instead — long, HTML, and with no Retry-After, which is also
+# what exercises the truncation path.
+PLATFORM_429_BODY = (
+    "<!DOCTYPE html><html><head><title>429 Too Many Requests</title>"
+    "<style>" + ("body{font-family:sans-serif;padding:2rem}" * 12) + "</style>"
+    "</head><body><h1>Error 1015</h1>"
+    "<p>You are being rate limited by the edge network.</p></body></html>"
+)
+
+
 class _StubHandler(BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802  (stdlib naming)
+        ctype, extra = "application/json", {}
         if self.path == "/api/v1/public/outlets":
-            body, code = STUB_OUTLETS, 200
+            raw, code = json.dumps(STUB_OUTLETS).encode(), 200
         elif self.path == f"/api/v1/public/outlets/{STUB_OUTLET_ID}/menu":
-            body, code = STUB_MENU, 200
+            raw, code = json.dumps(STUB_MENU).encode(), 200
+        elif self.path == f"/api/v1/public/outlets/{LIMITER_429_ID}/menu":
+            raw, code = LIMITER_429_BODY.encode(), 429
+            extra = {"Retry-After": LIMITER_429_RETRY_AFTER}
+        elif self.path == f"/api/v1/public/outlets/{PLATFORM_429_ID}/menu":
+            raw, code, ctype = PLATFORM_429_BODY.encode(), 429, "text/html"
         else:
             # Anything else — including a request that tried to reach a
             # non-public path — is a 404, matching the real backend.
-            body, code = {"detail": "Outlet not found"}, 404
-        raw = json.dumps(body).encode()
+            raw, code = json.dumps({"detail": "Outlet not found"}).encode(), 404
         self.send_response(code)
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(raw)))
+        for k, v in extra.items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(raw)
 
@@ -361,6 +390,82 @@ async def _run(base_url: str) -> int:
                 "unknown outlet returns a usable message, not a crash",
                 bool(bad_payload.get("error")) and bad_payload.get("categories") == [],
                 f"got {bad_payload}",
+            )
+
+            print("\n429 ATTRIBUTION")
+            # The two 429s below are indistinguishable to any client that only
+            # catches the status code. That was the actual failure: a real 429
+            # came back through the connector and could not afterwards be
+            # attributed to our limiter or to the platform, because the body
+            # had been thrown away. These two checks are what make the next one
+            # answerable.
+            ours = await session.call_tool("get_menu", {"outlet_id": LIMITER_429_ID})
+            ours_msg = (ours.structured_content
+                        or json.loads(ours.content[0].text)).get("error", "")
+            print(f"  our-limiter 429 -> {ours_msg}")
+            check(
+                "our limiter's 429 surfaces its exact body",
+                LIMITER_429_BODY in ours_msg,
+                f"body missing from {ours_msg!r}",
+            )
+            check(
+                "our limiter's 429 surfaces Retry-After",
+                f"Retry-After: {LIMITER_429_RETRY_AFTER}" in ours_msg,
+                f"got {ours_msg!r}",
+            )
+            check(
+                "our limiter's 429 surfaces Content-Type: application/json",
+                "application/json" in ours_msg,
+                f"got {ours_msg!r}",
+            )
+
+            plat = await session.call_tool("get_menu", {"outlet_id": PLATFORM_429_ID})
+            plat_msg = (plat.structured_content
+                        or json.loads(plat.content[0].text)).get("error", "")
+            print(f"  platform 429    -> {plat_msg}")
+            # NOT asserting "Error 1015" appears. The fixture deliberately
+            # buries that line behind ~700 bytes of inline CSS, and front
+            # truncation cuts it — which is exactly why content-type is in the
+            # message. This assertion is written against what actually survives
+            # a hostile body, not against a convenient one.
+            check(
+                "a platform 429 is identifiable by Content-Type: text/html",
+                "text/html" in plat_msg,
+                f"got {plat_msg!r}",
+            )
+            check(
+                "a platform 429 surfaces ITS body, visibly not ours",
+                "<!DOCTYPE html>" in plat_msg,
+                f"got {plat_msg!r}",
+            )
+            check(
+                "a platform 429 does NOT claim our limiter's body",
+                LIMITER_429_BODY not in plat_msg,
+                f"got {plat_msg!r}",
+            )
+            check(
+                "a platform 429 reports no Retry-After when none was sent",
+                "Retry-After:" not in plat_msg,
+                f"got {plat_msg!r}",
+            )
+
+            # The actual requirement: the two are TELLABLE APART. Both are 429s
+            # and both are caught; only the message distinguishes them.
+            check(
+                "the two 429s produce different messages",
+                ours_msg != plat_msg and bool(ours_msg) and bool(plat_msg),
+                "identical messages — attribution is still impossible",
+            )
+            # A block page is kilobytes of HTML; the message must stay readable.
+            check(
+                "a long upstream body is truncated, not dumped whole",
+                len(plat_msg) < 600 and "truncated" in plat_msg,
+                f"len={len(plat_msg)}",
+            )
+            check(
+                "both still report categories: [] so the tool shape is stable",
+                (ours.structured_content or {}).get("categories") == []
+                and (plat.structured_content or {}).get("categories") == [],
             )
 
             print("\nIDEMPOTENCE / ISOLATION")

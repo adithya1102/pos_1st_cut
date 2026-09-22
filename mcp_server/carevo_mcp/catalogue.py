@@ -41,6 +41,64 @@ class CatalogueError(RuntimeError):
     """A backend read failed. Message is safe to show a user."""
 
 
+# A 429 can arrive from two entirely different places, and telling them apart
+# is the whole diagnosis:
+#
+#   the backend's own limiter   app/modules/public/service.py, per-IP, 300/hr.
+#                               Body is exactly
+#                               {"detail":"Too many requests, try later"}
+#                               with Retry-After: 3600.
+#   the platform in front of it Render sits behind Cloudflare; either can
+#                               refuse a request before it ever reaches the
+#                               app, with a body of their own.
+#
+# This used to raise a fixed sentence and never look at the response, which
+# discarded the only evidence that separates "raise our limit" from "the limit
+# is irrelevant, it is the platform". A real 429 was observed through the
+# connector and could not be attributed afterwards, because by then the body
+# was gone. So the body is carried out verbatim.
+_MAX_BODY_CHARS = 300
+
+
+def _rate_limited_message(
+    body: str, retry_after: str | None, content_type: str | None = None
+) -> str:
+    """Build a 429 message that names its own source.
+
+    Three signals, in decreasing robustness:
+
+      content-type  Survives truncation, and separates the two sources on its
+                    own: our limiter answers application/json, an edge block
+                    page answers text/html. This is here because truncation
+                    alone turned out not to be enough — see below.
+      Retry-After   Our limiter always sends 3600; an edge block may send
+                    nothing.
+      body          The definitive evidence when it is short.
+
+    The body is whitespace-collapsed and truncated from the FRONT, which is
+    right for our limiter's 41 bytes of JSON but is not a general guarantee: a
+    block page can carry hundreds of bytes of doctype and inline CSS before the
+    line that actually identifies it, and the identifying part is then the part
+    that gets cut. Truncating is still correct — the alternative is pasting
+    kilobytes of stylesheet into a model's context — so content-type carries
+    the attribution when the body cannot.
+    """
+    snippet = " ".join((body or "").split())
+    if len(snippet) > _MAX_BODY_CHARS:
+        snippet = snippet[:_MAX_BODY_CHARS] + "… (truncated)"
+
+    parts = ["Rate limited by the CareVo backend (HTTP 429)."]
+    if content_type:
+        parts.append(f"Content-Type: {content_type}.")
+    if retry_after:
+        parts.append(f"Retry-After: {retry_after}.")
+    parts.append(
+        f"Upstream response body: {snippet}" if snippet
+        else "Upstream response body was empty."
+    )
+    return " ".join(parts)
+
+
 async def _get(path: str) -> Any:
     """GET `_PUBLIC_PREFIX + path` and return parsed JSON.
 
@@ -65,7 +123,11 @@ async def _get(path: str) -> Any:
         raise CatalogueError("No such outlet, or it is not publicly listed.")
     if resp.status_code == 429:
         raise CatalogueError(
-            "Rate limited by the CareVo backend. Wait a little and retry."
+            _rate_limited_message(
+                resp.text,
+                resp.headers.get("retry-after"),
+                resp.headers.get("content-type"),
+            )
         )
     if resp.status_code >= 400:
         raise CatalogueError(
