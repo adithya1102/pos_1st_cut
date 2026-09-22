@@ -34,7 +34,24 @@ class Settings(BaseSettings):
     # of data that is public by definition. The limit exists to blunt scraping
     # and accidental hot loops, not to ration normal use. A busy MCP client
     # listing outlets and then fetching several menus should never see it.
-    PUBLIC_API_RATE_LIMIT_PER_HOUR: int = 300
+    #
+    # 300 -> 1000 because "per IP" is not "per user" for the traffic that
+    # actually arrives here. The MCP server is the only caller of /public/* in
+    # this repository, and it is a single shared proxy on one Render egress IP,
+    # so EVERY connector user's calls land in ONE bucket. The cap is therefore
+    # a ceiling on the whole user base at once, not on any individual, and it
+    # tightens as adoption grows rather than staying put.
+    #
+    # This is headroom, not a fix for that shape. Per-user keying would need an
+    # identifier the MCP session does not carry, and a client-supplied one is
+    # spoofable; neither is worth building without evidence of real contention.
+    # An investigation found none — a 40-call burst through the live connector
+    # returned 40/40 clean, so the bucket was nowhere near its cap.
+    #
+    # Note also what this does NOT protect against: the limiter is in-process,
+    # so the real ceiling is this number times the worker count, and a restart
+    # forgets every bucket.
+    PUBLIC_API_RATE_LIMIT_PER_HOUR: int = 1000
 
     # Master switch for the customer OTP login path. Set false on any publicly
     # reachable deploy while OTP_STUB_MODE is still on, otherwise anyone can mint

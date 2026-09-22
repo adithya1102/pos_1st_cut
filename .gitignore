@@ -28,5 +28,18 @@ venv/
 gusto_pos/**/bin/
 gusto_pos/**/obj/
 
+# Python packaging output for mcp_server.
+#
+# `pip install .` makes setuptools copy the package into build/lib/ and write
+# carevo_mcp.egg-info/ beside the source. Both are regenerated on every build
+# and neither was ever committed — unlike the .NET case above, this rule is
+# purely preventative, so there is no index to clean up.
+#
+# Worth having anyway: build/lib/ holds a FROZEN copy of every module, and a
+# stale one already caused a wrong answer during a grep for callers of
+# /api/v1/public/* — the same file appearing twice, one of them out of date.
+mcp_server/build/
+mcp_server/*.egg-info/
+
 # Claude Code worktrees (ephemeral, not part of source)
 .claude/worktrees/

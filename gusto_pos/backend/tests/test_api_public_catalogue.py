@@ -173,7 +173,9 @@ async def test_only_get_is_exposed(client, seed):
 async def test_rate_limiter_is_wired_and_per_ip(client, seed, monkeypatch):
     """Trips at the configured cap, and one IP's spend does not affect another.
 
-    The limit is monkeypatched down rather than sending 300 real requests.
+    The limit is monkeypatched down rather than sending a full quota of real
+    requests, so this stays fast and stays correct when the configured cap
+    changes — it asserts the limiter's BEHAVIOUR, never a particular number.
     """
     from app.modules.public import service as svc
 
