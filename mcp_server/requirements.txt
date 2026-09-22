@@ -1,4 +1,29 @@
+# MUST STAY IN SYNC WITH pyproject.toml's `dependencies`. The constraints below
+# are the same strings, deliberately — not a tighter pin and not a looser one.
+#
+# They drifted once: httpx and uvicorn were added to pyproject.toml when the
+# catalogue tools and the HTTP transport landed, and this file was not touched.
+# `pip install -r requirements.txt` then installed an mcp-only environment in
+# which `import carevo_mcp.server` died on `ModuleNotFoundError: No module
+# named 'httpx'`. It was invisible on a development machine, where httpx is
+# already present for the backend, and would only have surfaced on a clean
+# deploy build.
+#
+# `pip install .` reads pyproject.toml and is the authoritative path. This file
+# exists for the `pip install -r` habit and must produce the same environment.
+
 # Pinned to 2.x: FastMCP was renamed to MCPServer in mcp 2.0, and server.py
 # imports the new name. A `mcp<2` environment will fail at import, loudly,
 # rather than silently running against a different API.
 mcp>=2.1.1,<3
+
+# The catalogue tools (list_outlets, get_menu) read the backend's public HTTP
+# endpoints through carevo_mcp/catalogue.py. Imported at module scope, so a
+# missing httpx breaks the server outright — including the stdio transport and
+# the static get_carevo_info tool, which otherwise need no network at all.
+httpx>=0.27
+
+# Only the streamable-http transport needs this; the MCP SDK calls uvicorn
+# internally rather than exposing it. A stdio-only run never imports it, but it
+# is listed unconditionally so one requirements file covers both transports.
+uvicorn>=0.24
