@@ -47,4 +47,41 @@ CAREVO_INFO: dict[str, Any] = {
         "whatsapp": "9499956612",
         "phone": "6374304790",
     },
+    # Keyed by what the link IS rather than held in a list, so a caller can
+    # reach for `links["android_app"]` without matching on display text. Key
+    # order is insertion order and survives JSON serialisation, so the reading
+    # order below is also the order a consumer sees.
+    #
+    # carevo.co.in and gustoskip.carevo.co.in were both checked and answer 200.
+    #
+    # The Play Store entry is the exception, and `status` is why. The URL is
+    # correctly FORMED — its package id matches `applicationId` in
+    # customer_app/android/app/build.gradle.kts exactly — but the listing is
+    # not public yet: it returns 404, while a known-published app returns 200
+    # through an identical request, so this is a real "not on the store", not
+    # a client being filtered. The consumer of this tool is a language model
+    # that will otherwise tell a real person to go and install from a dead
+    # page. Delete the `status` key when the app goes live; nothing else here
+    # needs to change.
+    "links": {
+        "company": {
+            "label": "About our company",
+            "url": "https://carevo.co.in",
+        },
+        "product": {
+            "label": "Gusto Skip",
+            "url": "https://gustoskip.carevo.co.in",
+        },
+        "android_app": {
+            "label": "Get the app on Google Play",
+            "url": (
+                "https://play.google.com/store/apps/details"
+                "?id=com.carevo.customer_app"
+            ),
+            "status": (
+                "Not yet published on Google Play — this link will 404 until "
+                "the app goes live. Do not direct anyone to install from it."
+            ),
+        },
+    },
 }

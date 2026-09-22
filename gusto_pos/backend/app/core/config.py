@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     PICKUP_MISS_LIMIT: int = 10
     PICKUP_MISS_WINDOW_SECONDS: int = 300
 
+    # Per-IP cap on the UNAUTHENTICATED /public/* catalogue reads, per hour.
+    # Set far above OTP/REGISTER (5/hr): those guard an action with a cost
+    # attached — an SMS, a new organization — while these are cacheable reads
+    # of data that is public by definition. The limit exists to blunt scraping
+    # and accidental hot loops, not to ration normal use. A busy MCP client
+    # listing outlets and then fetching several menus should never see it.
+    PUBLIC_API_RATE_LIMIT_PER_HOUR: int = 300
+
     # Master switch for the customer OTP login path. Set false on any publicly
     # reachable deploy while OTP_STUB_MODE is still on, otherwise anyone can mint
     # a customer token for an arbitrary phone number with the stub code.

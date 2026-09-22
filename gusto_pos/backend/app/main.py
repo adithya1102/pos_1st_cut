@@ -152,6 +152,12 @@ app.include_router(promotions_admin_router, prefix="/api/v1")
 app.include_router(promotions_pos_router, prefix="/api/v1")
 app.include_router(promotions_customer_router, prefix="/api/v1")
 
+# Unauthenticated catalogue for the MCP server and any other public reader.
+# Open by design, and safe only because every field it serves is named in a
+# hand-written response model — see app/modules/public/controller.py.
+from app.modules.public.controller import router as public_router  # noqa: E402
+app.include_router(public_router, prefix="/api/v1")
+
 @app.get("/")
 async def root():
     return {"status": "active", "system": "Gusto POS Backend"}

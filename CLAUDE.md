@@ -13,7 +13,7 @@ Four main components:
 - `gusto_pos/GustoWaiter/` — .NET MAUI Windows Tablet application for floor staff to manage tables and approve orders.
 
 Plus one auxiliary component:
-- `mcp_server/` — read-only MCP server (Python, official `mcp` SDK ≥2.1.1) exposing public CareVo / Gusto Skip information. Currently one tool, `get_carevo_info`, answering from a static literal. **No order placement, no payment, no customer PII** — enforced by what is registered, and asserted in `mcp_server/tests/test_client.py`. Menu/location tools are not built yet; they depend on the backend endpoint audit. Run with `cd mcp_server && python -m carevo_mcp`.
+- `mcp_server/` — read-only MCP server (Python, official `mcp` SDK ≥2.1.1) exposing public CareVo / Gusto Skip information. Three tools: `get_carevo_info` (static about-us literal), `list_outlets` and `get_menu(outlet_id)` (live reads of the backend's `/api/v1/public/*` catalogue). **No order placement, no payment, no customer PII** — enforced by what is registered, and asserted in `mcp_server/tests/test_client.py`, which pins the tool set exactly and rejects any tool name beginning with a write verb. The catalogue client can only construct `/api/v1/public` URLs and sends no credentials, so the server cannot reach an authenticated route even by mistake. Two transports from one tool definition: stdio (default, what Claude Desktop launches) and streamable-http for remote deployment — see `CAREVO_MCP_TRANSPORT` and the DNS-rebinding note on `_transport_security` in `server.py`. Run with `cd mcp_server && python -m carevo_mcp`.
 
 ## Commands
 

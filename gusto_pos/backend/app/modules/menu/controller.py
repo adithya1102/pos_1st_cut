@@ -35,7 +35,7 @@ from app.modules.carevo_customer.deps import get_current_staff
 #     POST /menus/items/
 #     PUT  /menus/items/{item_id}
 #
-# That list is asserted, not just written down: tests/test_legacy_route_auth.py
+# That list is asserted, not just written down: tests/test_api_legacy_route_auth.py
 # fails if any of the six starts returning 401, and equally if any of the
 # fifteen stops.
 router = APIRouter(prefix="/menus", tags=["menus"])

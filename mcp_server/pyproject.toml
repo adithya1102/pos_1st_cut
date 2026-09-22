@@ -3,7 +3,10 @@ name = "carevo-mcp"
 version = "0.1.0"
 description = "Read-only MCP server for public CareVo / Gusto Skip information"
 requires-python = ">=3.11"
-dependencies = ["mcp>=2.1.1,<3"]
+# httpx: the catalogue tools read the backend's public HTTP endpoints.
+# uvicorn: only needed for the streamable-http transport; the MCP SDK calls it
+# internally, and a stdio-only install never imports it.
+dependencies = ["mcp>=2.1.1,<3", "httpx>=0.27", "uvicorn>=0.24"]
 
 [project.scripts]
 carevo-mcp = "carevo_mcp.server:main"
