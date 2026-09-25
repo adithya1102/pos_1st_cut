@@ -6,8 +6,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.modules.products.schema import ProductRead  # Ensure you have this schema
 from app.modules.products.service import ProductService
+from app.modules.carevo_customer.deps import get_current_staff
 
-router = APIRouter(prefix="/products")
+
+# STAFF-ONLY, ROUTER-WIDE.
+#
+# Every route in this file was reachable with no credentials at all. A caller
+# audit across GustoPOS, GustoWaiter, admin_app, owner_app, customer_app,
+# gusto_pos/customer_app, dashboard_app and mcp_server found NOTHING calling
+# /products — which is what makes closing it router-wide safe here, where the
+# same change on orders/ or menus/ would take the tills offline.
+#
+# Applied on the ROUTER rather than per route, matching customers/ and
+# outlets/: a per-route list is a list someone can forget to extend, and the
+# next endpoint added to this file would be born unauthenticated.
+#
+# Exposed before this change: product CRUD.
+router = APIRouter(prefix="/products", dependencies=[Depends(get_current_staff)])
 
 @router.get("/", response_model=list[ProductRead])
 async def list_products(db: AsyncSession = Depends(get_db)):

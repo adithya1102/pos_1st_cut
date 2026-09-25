@@ -74,6 +74,57 @@ GUARDED = [
     ("GET",    f"{API}/orders/summary/{rid()}"),
     ("DELETE", f"{API}/orders/{rid()}"),
     ("PUT",    f"{API}/orders/{rid()}/items"),
+
+    # ---- closed in the SECOND pass (security audit follow-up) --------------
+    # Eight whole routers, guarded router-wide. The caller audit for this pass
+    # enumerated every `{Base}/...` path in both MAUI ApiService files and
+    # grepped admin_app, owner_app, customer_app, gusto_pos/customer_app,
+    # dashboard_app and mcp_server. Nothing calls any of these.
+    #
+    # users/* was the worst of the eight and the reason the pass happened:
+    # POST /users/ accepted arbitrary role_ids with no credential, so anyone
+    # could mint themselves a privileged account and then log into it.
+    ("GET",    f"{API}/users/"),
+    ("GET",    f"{API}/users/{rid()}"),
+    ("POST",   f"{API}/users/"),
+    ("PUT",    f"{API}/users/{rid()}"),
+    ("DELETE", f"{API}/users/{rid()}"),
+    # roles/* — the JSONB permission sets, previously writable anonymously.
+    ("GET",    f"{API}/roles/"),
+    ("GET",    f"{API}/roles/{rid()}"),
+    ("POST",   f"{API}/roles/"),
+    ("PUT",    f"{API}/roles/{rid()}"),
+    ("DELETE", f"{API}/roles/{rid()}"),
+    # organizations/* — top of the tenancy hierarchy, DELETE included.
+    ("GET",    f"{API}/organizations/"),
+    ("GET",    f"{API}/organizations/{rid()}"),
+    ("POST",   f"{API}/organizations/"),
+    ("PUT",    f"{API}/organizations/{rid()}"),
+    ("DELETE", f"{API}/organizations/{rid()}"),
+]
+
+# --- never mounted, therefore never reachable ------------------------------
+# A correction to the security audit that prompted this pass. The audit scanned
+# CONTROLLER FILES and counted every @router decorator it found; it did not
+# check app/main.py for which routers are actually include_router'd. These five
+# are not, so they answered 404 to everyone and always have — they were never
+# an exposure at all.
+#
+# Their controllers now carry the router-level guard anyway, so that mounting
+# one later cannot quietly reintroduce an open surface. That is defence in
+# depth, not a fix, and this list says so rather than letting the GUARDED list
+# take credit for closing something that was never open.
+NOT_MOUNTED = [
+    ("GET",    f"{API}/order-items/"),
+    ("POST",   f"{API}/order-items/"),
+    ("GET",    f"{API}/inventory/"),
+    ("POST",   f"{API}/inventory/"),
+    ("GET",    f"{API}/products/"),
+    ("POST",   f"{API}/products/"),
+    ("GET",    f"{API}/sync-logs/"),
+    ("POST",   f"{API}/sync-logs/"),
+    ("GET",    f"{API}/audit-logs/"),
+    ("POST",   f"{API}/audit-logs/"),
 ]
 
 # --- deliberately still open: MUST NOT 401 ---------------------------------
@@ -103,6 +154,57 @@ STILL_OPEN = [
     ("POST",   f"{API}/orders/{rid()}/cancel"),                 # Waiter :409
     ("POST",   f"{API}/orders/{rid()}/confirm"),                # Waiter :86
     ("PATCH",  f"{API}/orders/{rid()}/items/{rid()}/serve"),    # Waiter :765
+
+    # ---- ADDED in the second pass, and this addition is a FINDING ----------
+    # These were on the audit's "guard everything" list. They are NOT guarded,
+    # because enumerating every `{Base}/...` literal in the two MAUI
+    # ApiService files proved the tills and tablets call them — which the
+    # first pass's list had missed. Guarding them is correct eventually and
+    # blocked on exactly one thing: both apps already run a PIN login and
+    # already store the token (SecureStorage.SetAsync("auth_token")), but
+    # never attach it to a request. There is no Authorization header anywhere
+    # in either codebase.
+    #
+    # The worst entry here by a distance is PUT /staff/{id}/pin — resetting
+    # any staff member's PIN with no credential, which then yields a token via
+    # /auth/pin-login. It stays open ONLY because GustoPOS calls it.
+    ("GET",    f"{API}/analytics/free-tables"),                 # POS
+    ("GET",    f"{API}/analytics/total-tables"),                # POS
+    ("GET",    f"{API}/analytics/top-dish"),                    # POS
+    ("GET",    f"{API}/analytics/todays-revenue"),              # POS
+    ("GET",    f"{API}/config/{rid()}"),                        # POS config/{id}
+    ("GET",    f"{API}/payments/"),                             # POS payments/
+    ("GET",    f"{API}/staff/"),                                # POS staff/
+    ("POST",   f"{API}/staff/"),                                # POS staff/
+    ("PUT",    f"{API}/staff/{rid()}"),                         # POS staff/{id}
+    ("DELETE", f"{API}/staff/{rid()}"),                         # POS staff/{id}
+    ("PUT",    f"{API}/staff/{rid()}/pin"),                     # POS staff/{id}/pin
+    ("POST",   f"{API}/sessions/waiter/action"),                # Waiter
+    ("POST",   f"{API}/tables/open"),                           # POS tables/open
+    ("POST",   f"{API}/tables/close/{rid()}"),                  # POS tables/close/{id}
+    # Customer browser (gusto_pos/customer_app), no token by design.
+    ("GET",    f"{API}/menus/zone/{rid()}/normal"),             # also POS/Waiter
+    ("GET",    f"{API}/tables/resolve"),
+    ("POST",   f"{API}/sessions/send-otp"),
+    ("POST",   f"{API}/sessions/verify-otp"),
+]
+
+# --- open, but their handler touches a table the test DB does not create ----
+# tables/* and sessions/* read `table_sessions`, `customer_sessions` and
+# `waiter_notifications` — legacy tables the CareVo test fixture never builds,
+# because no CareVo test needs them. Hitting these anonymously therefore raises
+# a ProgrammingError from asyncpg instead of returning a status code.
+#
+# That is still a usable auth assertion, and a strict one: a router-level guard
+# rejects BEFORE the handler runs and before any query is issued, so reaching
+# the database at all proves the request was not gated. The test below accepts
+# either "answered something that is not 401" or "got far enough to fail on a
+# missing table", and rejects a clean 401.
+STILL_OPEN_DB_BACKED = [
+    ("GET", f"{API}/tables/all"),                              # POS tables/all
+    ("GET", f"{API}/tables/validate/{rid()}"),                 # customer browser
+    ("GET", f"{API}/sessions/status/{rid()}"),                 # customer browser
+    ("GET", f"{API}/sessions/waiter/notifications/{rid()}"),   # Waiter
 ]
 
 
@@ -181,4 +283,45 @@ async def test_tier2_route_still_open(client, method, path):
     assert r.status_code != 401, (
         f"{method} {path} now returns 401, but GustoPOS/GustoWaiter call it "
         f"and send no Authorization header — this breaks the restaurant floor"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method,path", NOT_MOUNTED,
+                         ids=[f"{m} {p}" for m, p in NOT_MOUNTED])
+async def test_unmounted_router_is_unreachable(client, method, path):
+    """404, because app/main.py never include_router's these.
+
+    Pinned so the correction stays true: if someone mounts one of these
+    modules later, this test fails and points them at the fact that it now
+    needs a deliberate auth decision rather than inheriting one by accident.
+    (The guard is already on the router, so mounting is safe — but the change
+    should still be conscious.)
+    """
+    r = await call(client, method, path)
+    assert r.status_code == 404, (
+        f"{method} {path} answered {r.status_code} — this router is supposed "
+        f"to be unmounted. If it was just mounted, confirm its guard is right "
+        f"and move it from NOT_MOUNTED into GUARDED."
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method,path", STILL_OPEN_DB_BACKED,
+                         ids=[f"{m} {p}" for m, p in STILL_OPEN_DB_BACKED])
+async def test_db_backed_route_still_open(client, method, path):
+    """Same regression guard as above, for handlers that hit absent tables.
+
+    Reaching the query layer is the proof of no-auth-gate; a guard would have
+    returned 401 without ever opening a connection.
+    """
+    from sqlalchemy.exc import SQLAlchemyError
+
+    try:
+        r = await call(client, method, path)
+    except SQLAlchemyError:
+        return  # got into the handler and past any guard — that is the assertion
+    assert r.status_code != 401, (
+        f"{method} {path} now returns 401, but GustoPOS/GustoWaiter or the "
+        f"customer browser call it with no Authorization header"
     )
