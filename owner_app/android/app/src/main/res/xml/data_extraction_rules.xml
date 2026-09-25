@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12+ (API 31) backup/transfer rules.
+
+  android:allowBackup="false" already blocks this on every API level, and
+  android:fullBackupContent="false" covers API 23-30. This file is what API 31+
+  reads instead, and it is declared so the intent survives a future decision to
+  re-enable backup for something innocuous: the exclusions below would still
+  stand.
+
+  What is being kept out, and why:
+
+    * The staff JWT. It now lives in flutter_secure_storage (Android Keystore),
+      but the legacy plaintext copy in FlutterSharedPreferences is migrated on
+      first read, so a backup taken before an owner next opens the app can
+      still contain it. A bearer token is 24h of full owner access with no
+      server-side revocation.
+
+    * FlutterSecureStorage's own keyset. Backing up the Keystore alias metadata
+      alongside the ciphertext is how "encrypted" storage gets restored, intact
+      and readable, onto an attacker's device.
+
+  cloud-backup covers Google's automatic backup; device-transfer covers the
+  direct phone-to-phone copy, which is a separate path and is frequently
+  forgotten.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="FlutterSharedPreferences.xml"/>
+        <exclude domain="sharedpref" path="FlutterSecureStorage.xml"/>
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="FlutterSharedPreferences.xml"/>
+        <exclude domain="sharedpref" path="FlutterSecureStorage.xml"/>
+    </device-transfer>
+</data-extraction-rules>

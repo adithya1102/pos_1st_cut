@@ -42,7 +42,13 @@ dependencies:
   http: ^1.2.2
 
   # Local persistence (auth token)
+  # Still present ONLY so readToken()/clearToken() can migrate the staff JWT
+  # out of the old plaintext store. Nothing writes a token here any more.
   shared_preferences: ^2.3.2
+
+  # Staff JWT storage: Android Keystore / iOS Keychain. A bearer token in
+  # SharedPreferences is readable on a rooted device and swept up by backups.
+  flutter_secure_storage: ^9.2.2
 
   # Dish image picking (uploaded to Cloudinary via unsigned preset)
   image_picker: ^1.1.2
