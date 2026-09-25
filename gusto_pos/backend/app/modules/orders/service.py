@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 import asyncio
 import os
+import re
 import json as _json
 from sqlalchemy import select, update, delete as sa_delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -781,9 +782,26 @@ class OrderService:
             "bills",
         )
         os.makedirs(bills_dir, exist_ok=True)
-        safe_table = table_id.replace("-", "")
+        # `table_id` reaches here straight off the wire. It used to be passed
+        # through `.replace("-", "")`, which strips hyphens and nothing else —
+        # not "/", not ".." — so a table_id of "../../../../tmp/pwn" produced
+        # a path outside bills_dir entirely. The reachable route is
+        # POST /orders/bill/combined, which takes table_id from a JSON BODY and
+        # so is not constrained by URL routing the way /orders/bill/{table_id}
+        # is (Starlette refuses an encoded slash in a path parameter).
+        #
+        # Whitelist rather than blacklist: anything outside [A-Za-z0-9_] is
+        # dropped, so there is no separator left to traverse with on any OS.
+        safe_table = re.sub(r"[^A-Za-z0-9_]", "", table_id)
         filename = f"bill_{safe_table}_{now.strftime('%Y%m%d_%H%M%S')}.pdf"
         pdf_path = os.path.join(bills_dir, filename)
+
+        # Belt and braces: prove the resolved path really is inside bills_dir
+        # before handing it to a writer. The sanitiser above is what prevents
+        # traversal; this is what catches a future edit that weakens it.
+        if os.path.commonpath([os.path.realpath(bills_dir),
+                               os.path.realpath(pdf_path)]) != os.path.realpath(bills_dir):
+            raise ValueError(f"refusing to write a bill outside {bills_dir!r}")
 
         # ?? Build PDF (80mm receipt) ????????????????????????????
         page_width = 80 * mm
