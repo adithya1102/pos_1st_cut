@@ -54,19 +54,59 @@ from app.modules.promotions.controller import (
 )
 
 
-app = FastAPI(title="Gusto POS", version="2.0.0")
+# Interactive docs are a development convenience, not a production surface.
+# /docs enumerates all ~220 routes, their schemas and their auth requirements,
+# which is a map of the API handed to anyone who asks — including every legacy
+# route that is still deliberately unauthenticated.
+#
+# Opt-IN rather than opt-out: docs appear only when APP_ENV is explicitly a
+# local/dev value, so a deploy that forgets to set anything gets the closed
+# behaviour. Set APP_ENV=development locally to get Swagger back.
+_DEV_ENVS = {"dev", "development", "local", "test"}
+_DOCS_ENABLED = os.getenv("APP_ENV", "production").strip().lower() in _DEV_ENVS
+
+app = FastAPI(
+    title="Gusto POS",
+    version="2.0.0",
+    docs_url="/docs" if _DOCS_ENABLED else None,
+    redoc_url="/redoc" if _DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if _DOCS_ENABLED else None,
+)
 
 # Serve kitchen display HTML
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 os.makedirs(static_dir, exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+# CORS: an explicit allowlist, not a wildcard.
+#
+# `allow_origins=["*"]` with `allow_credentials=True` does NOT collapse to a
+# literal "*" in Starlette — it REFLECTS whatever Origin the request carried
+# and still sends Access-Control-Allow-Credentials: true. Verified against the
+# installed Starlette: an Origin of https://evil.example came back as
+# Access-Control-Allow-Origin: https://evil.example. Every route was readable
+# cross-origin from any page on the internet, /api/v1/admin/* included.
+#
+# Only BROWSERS are constrained by this. The Flutter apps (customer_app,
+# owner_app) and the .NET MAUI tills send no Origin header and are unaffected,
+# so tightening it cannot take the floor or the phones offline — the risk here
+# is limited to the two web front ends named below.
+ALLOWED_ORIGINS = [
+    "https://gustoskip.carevo.co.in",              # customer web
+    "https://carevo-admin-dashboard.onrender.com",  # admin_app
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    # The verbs the clients actually use. Enumerated from the two MAUI
+    # ApiService files (Post/Put/Patch/Delete) plus GET; OPTIONS is the
+    # preflight itself and has to be here for any of the others to work.
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    # Authorization for the bearer token, Content-Type for the JSON bodies.
+    # Nothing else is sent by a browser client.
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 @app.on_event("startup")
