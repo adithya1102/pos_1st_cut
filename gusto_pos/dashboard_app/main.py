@@ -44,14 +44,32 @@ def _template(name: str) -> str:
         return f.read()
 
 
-app = FastAPI(title="Gusto Testing Dashboard")
+# Docs off outside a dev environment, matching the backend. Opt-IN, so a deploy
+# that sets nothing gets the closed behaviour.
+_DEV_ENVS = {"dev", "development", "local", "test"}
+_DOCS_ENABLED = os.getenv("APP_ENV", "production").strip().lower() in _DEV_ENVS
+
+app = FastAPI(
+    title="Gusto Testing Dashboard",
+    docs_url="/docs" if _DOCS_ENABLED else None,
+    redoc_url="/redoc" if _DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if _DOCS_ENABLED else None,
+)
 # Signed-cookie session. The secret is server-side only; the cookie carries no
 # readable data, just a signed marker that the user logged in.
 app.add_middleware(
     SessionMiddleware,
     secret_key=_env("SESSION_SECRET", "dev-only-insecure-secret"),
     session_cookie="gusto_dash_session",
-    https_only=False,  # Render terminates TLS; the app sees http internally.
+    # https_only controls the cookie's Secure attribute — it is an instruction
+    # to the BROWSER, not a claim about what scheme this process sees. The old
+    # comment ("Render terminates TLS; the app sees http internally") explained
+    # a real fact that is simply not what this flag reads: Starlette never
+    # inspects the request scheme here, it just sets the attribute. With it
+    # false the session cookie was sent over plain HTTP too, so anyone on the
+    # path could lift it. The browser always speaks HTTPS to Render, so this is
+    # safe regardless of how TLS is terminated behind it.
+    https_only=True,
     same_site="lax",
 )
 

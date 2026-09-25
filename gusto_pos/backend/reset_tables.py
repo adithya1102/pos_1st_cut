@@ -3,6 +3,7 @@ Reset table_sessions: truncate and reseed N-1..N-10 (normal) + A-1..A-4 (ac).
 Run from the backend/ folder: python reset_tables.py
 """
 import asyncio
+import os
 import random
 import string
 import uuid
@@ -10,7 +11,20 @@ from datetime import datetime, timedelta
 
 import asyncpg
 
-DSN = "postgresql://neondb_owner:npg_FNVST1qQshi6@ep-frosty-fire-aobvdei1.c-2.ap-southeast-1.aws.neon.tech/neondb?ssl=require"
+# Read from the environment. A live Neon DSN was hardcoded here and committed
+# to a PUBLIC GitHub repository; treat that credential as compromised
+# regardless of whether its project still exists. Nothing in this file should
+# ever again know a password.
+#
+# asyncpg wants a plain postgresql:// URL, so the SQLAlchemy +asyncpg marker is
+# stripped if DATABASE_URL carries one.
+DSN = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
+if not DSN:
+    raise SystemExit(
+        "DATABASE_URL is not set. This script TRUNCATES table_sessions, so it "
+        "refuses to guess a target rather than risk running against the wrong "
+        "database."
+    )
 OUTLET_ID = "0b8a8349-6144-41a8-b028-b9089bd8eaea"
 TTL_HOURS = 24
 

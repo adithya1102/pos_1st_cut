@@ -13,7 +13,12 @@ services:
     branch: "21_7"
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /docs
+    # `/`, not `/docs`. Swagger is now gated off unless APP_ENV names a dev
+    # environment (app/main.py), so /docs 404s in production and a health check
+    # pointed at it would mark a perfectly healthy service as down. `/` is the
+    # better probe anyway: it is a real handler returning
+    # {"status": "active", ...} rather than a generated documentation page.
+    healthCheckPath: /
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.9"

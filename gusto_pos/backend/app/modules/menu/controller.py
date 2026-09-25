@@ -84,9 +84,24 @@ async def get_zone_menu(outlet_id: str, zone: str, db: AsyncSession = Depends(ge
     Scopes to the single ``is_latest`` menu for the outlet so that each
     category appears exactly once, and uses explicit eager-loading to
     prevent lazy-load / serialisation errors.
+
+    ``outlet_id`` is typed ``str`` rather than ``UUID`` so that a malformed
+    value is answered by this handler instead of by the Postgres driver. Left
+    as-is, a non-UUID reached the comparison against a uuid column and asyncpg
+    raised, which FastAPI surfaced as a 500 — an input error reported as a
+    server fault, on a route the customer browser calls unauthenticated with an
+    id taken straight from a scanned QR code.
     """
     from sqlalchemy.orm import selectinload
     from app.modules.menu.model import Menu, MenuCategory, MenuItem
+
+    try:
+        UUID(outlet_id)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(
+            status_code=422,
+            detail=f"outlet_id must be a UUID, got {outlet_id!r}",
+        )
 
     # 1. Load the single active menu with full eager-loading chain.
     menu_result = await db.execute(

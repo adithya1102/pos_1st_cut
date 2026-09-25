@@ -1,6 +1,6 @@
-import traceback
+import logging
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, status, Body
 from fastapi.responses import FileResponse
 from sqlalchemy import select
@@ -14,6 +14,8 @@ from app.modules.orders.schema import (
 )
 from app.modules.orders.service import OrderService
 from app.modules.carevo_customer.deps import get_current_staff
+
+logger = logging.getLogger(__name__)
 
 # PER-ROUTE, NOT ROUTER-WIDE — and the smallest change in this pass, because
 # this is the router GustoPOS and GustoWaiter lean on hardest: sixteen of its
@@ -144,14 +146,33 @@ async def cancel_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
     return result
 
 
+def _fail(exc: Exception, what: str) -> HTTPException:
+    """Log the real error server-side, hand the caller only a correlation id.
+
+    `detail=str(exc)` was being returned directly. On a SQLAlchemy error that
+    string carries the failing statement, the bound parameter values and the
+    schema names — handed to an unauthenticated caller, since POST /orders/ has
+    no guard (GustoPOS calls it without a token).
+
+    The id is the only thing shared: it appears in both the response and the
+    logged traceback, so a report of "error a1b2c3d4" is enough to find the
+    exact stack without the stack ever leaving the server.
+    """
+    correlation_id = uuid4().hex[:8]
+    logger.exception("[%s] %s failed", correlation_id, what)
+    return HTTPException(
+        status_code=500,
+        detail=f"{what} failed (error {correlation_id})",
+    )
+
+
 @router.post("/", response_model=OrderRead, status_code=status.HTTP_201_CREATED)
 async def create_order(payload: OrderCreate, db: AsyncSession = Depends(get_db)):
     """Create a new order."""
     try:
         return await OrderService.create_order(db, payload)
     except Exception as exc:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise _fail(exc, "Order creation")
 
 
 @router.post("/bill/combined")
@@ -201,8 +222,7 @@ async def settle_table(table_id: str, db: AsyncSession = Depends(get_db)):
             message=f"Table {table_id} settled. {count} orders totalling Rs.{total:.0f}",
         )
     except Exception as exc:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise _fail(exc, "Table settlement")
 
 
 @router.put("/{item_id}", response_model=OrderRead)
