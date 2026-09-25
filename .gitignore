@@ -43,3 +43,47 @@ mcp_server/*.egg-info/
 
 # Claude Code worktrees (ephemeral, not part of source)
 .claude/worktrees/
+# --- Credentials and machine-local config --------------------------------
+# Added after a security audit found live secrets committed to this PUBLIC
+# repository. These rules stop FUTURE additions; they do not remove what git
+# already tracks, and they do not rewrite history. Anything that was pushed
+# must still be treated as compromised and rotated.
+
+# Claude Code local settings. Machine-specific, and the repo-root copy carried
+# the live production Neon DSN — user, host and password — in five places.
+.claude/settings.local.json
+**/.claude/settings.local.json
+
+# Firebase / Google service configs.
+#
+# SUFFIX-TOLERANT ON PURPOSE. customer_app/android/.gitignore already listed
+# `/app/google-services.json` by exact name, and a copy saved as
+# `google-services.json.json` sailed straight past it carrying a live Android
+# API key (AIzaSy...) for project carevo-5d24c. An exact-name rule only ever
+# catches the spelling you thought of.
+google-services.json*
+**/google-services.json*
+GoogleService-Info.plist
+**/GoogleService-Info.plist
+serviceAccount*.json
+**/serviceAccount*.json
+
+# Android signing material.
+key.properties
+**/key.properties
+
+# .NET app settings for GustoPOS / GustoWaiter — nothing tracked today, so this
+# is purely pre-emptive.
+**/appsettings.json
+**/appsettings.*.json
+
+# Env files as a GLOB, not the two exact names that were here before. .env.prod,
+# .env.staging and friends were all tracked-eligible until now.
+.env.*
+**/.env.*
+# ...but the committed placeholder templates are the point of being in git, so
+# re-admit them explicitly. These contain no real values.
+!.env.example
+!**/.env.example
+!.env.local.example
+!**/.env.local.example
