@@ -61,6 +61,19 @@ class PaymentGateway(ABC):
 
     name: str = "base"
 
+    #: Is this a REAL money path whose webhooks may be trusted at all?
+    #:
+    #: The stub is not. It exists so the customer flow is walkable without
+    #: credentials, which means nothing it receives on a webhook proves a
+    #: payment happened — there is no counterparty to have signed it. An
+    #: endpoint that flips orders to PAID is only as trustworthy as the thing
+    #: vouching for the request, so a non-live gateway must not be given one.
+    #:
+    #: Read by /customer/payment/webhook, which 503s rather than parsing a body
+    #: it has no way to authenticate. /customer/payment/simulate is unaffected:
+    #: it is customer-authenticated, stub-only, and never pretends otherwise.
+    is_live: bool = False
+
     @abstractmethod
     async def create_order(self, amount_rupees: float, currency: str = "INR",
                            receipt: Optional[str] = None,
@@ -130,10 +143,20 @@ class StubRazorpayGateway(PaymentGateway):
 
     def verify_webhook_signature(self, body: bytes, signature: Optional[str],
                                  *, timestamp: Optional[str] = None) -> bool:
-        # Stub mode: if no webhook secret configured, accept everything.
-        if not self.webhook_secret:
-            return True
-        if not signature:
+        """FAILS CLOSED, exactly like CashfreeGateway's verifier.
+
+        This used to `return True` when no webhook secret was configured — and
+        RAZORPAY_WEBHOOK_SECRET is unset on every deploy that has not
+        deliberately set it. Combined with parse_webhook resolving outcome=PAID
+        from the mere presence of an `order_id`, that made
+        POST /customer/payment/webhook {"order_id": "<own order>"} a free-money
+        endpoint reachable by anyone, with no credential and no signature.
+
+        Absent config now denies rather than admits. A webhook that cannot be
+        authenticated is not a payment, and guessing otherwise is the one
+        mistake in this file that moves money.
+        """
+        if not self.webhook_secret or not signature:
             return False
         expected = hmac.new(self.webhook_secret.encode(), body, hashlib.sha256).hexdigest()
         return hmac.compare_digest(expected, signature)
@@ -177,6 +200,7 @@ class CashfreeGateway(PaymentGateway):
     """
 
     name = "cashfree"
+    is_live = True
     API_VERSION = "2023-08-01"
     SANDBOX_BASE = "https://sandbox.cashfree.com/pg"
     PROD_BASE = "https://api.cashfree.com/pg"

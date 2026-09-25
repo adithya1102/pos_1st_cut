@@ -438,6 +438,23 @@ async def payment_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     timestamp = h.get("x-webhook-timestamp")    # Cashfree only
 
     gw = get_gateway()
+
+    # No live gateway selected => no webhook is accepted AT ALL.
+    #
+    # Checked before the signature, because under the stub there is nothing
+    # that could produce a valid one: the stub has no counterparty, so a body
+    # arriving here is unauthenticated by construction. Refusing the route
+    # outright is narrower than trusting a verifier to say no on every path.
+    #
+    # PAYMENT_GATEWAY is the only selector (see get_gateway), so a typo in it
+    # lands here too — which is the safe direction for a typo to fail in.
+    if not gw.is_live:
+        raise HTTPException(
+            status_code=503,
+            detail="Payment webhooks are not accepted: no live payment gateway "
+                   "is configured on this deployment",
+        )
+
     # The raw bytes are what gets verified — re-serialising the parsed JSON
     # would reorder keys and invalidate the digest.
     if not gw.verify_webhook_signature(body, signature, timestamp=timestamp):

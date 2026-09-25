@@ -204,20 +204,31 @@ async def run():
         check(r.status_code == 200 and r.json()["pickup_code"] == pc1, "simulate idempotent (same pickup_code)")
         check(await paid_txn_count(order_main) == 1, "no duplicate PAID transaction after re-simulate")
 
-        # ---- Case 5b: real webhook path with stub-signed payload
+        # ---- Case 5b: the webhook REFUSES to run under the stub gateway
+        #
+        # This case used to assert the opposite: that an unsigned body flipped
+        # the order to PAID, on the reasoning "webhook secret unset -> stub
+        # gateway accepts any signature". That was the bug, not the contract —
+        # it made POST /customer/payment/webhook {"order_id": ...} a free-order
+        # endpoint for anyone who could read their own order id.
+        #
+        # The stub has no counterparty and therefore cannot authenticate
+        # anything, so the endpoint now 503s outright rather than parsing a
+        # body it cannot trust. Paying in the suite goes through
+        # /customer/payment/simulate, which is customer-authenticated and
+        # stub-only by design (Case 5 above already covers it).
         r = await x.post(f"{BASE}/customer/orders", headers=custA, json={
             "outlet_id": OUTLET_ID, "items": [{"menu_item_id": ITEM_ID, "quantity": 1}]})
         order_wh = r.json()["id"]
         gw_pay_id = "pay_" + uuid.uuid4().hex[:16]
         payload = {"event": "payment.captured", "order_id": order_wh,
                    "payload": {"payment": {"entity": {"id": gw_pay_id, "method": "card"}}}}
-        # webhook secret unset -> stub gateway accepts any signature; send one anyway
         r = await x.post(f"{BASE}/customer/payment/webhook", json=payload,
                          headers={"X-Razorpay-Signature": "stub_sig"})
-        check(r.status_code == 200 and r.json().get("status") == "PAID", "webhook -> PAID")
-        pcw = r.json().get("pickup_code")
-        check(bool(pcw) and len(pcw) == 6, f"webhook pickup_code 6 chars ({pcw})")
-        check(await paid_txn_count(order_wh) == 1, "webhook produced exactly one PAID txn")
+        check(r.status_code == 503, f"stub webhook refused ({r.status_code})")
+        check(await paid_txn_count(order_wh) == 0, "refused webhook produced no PAID txn")
+        r = await x.get(f"{BASE}/customer/orders/{order_wh}", headers=custA)
+        check(r.json().get("payment_status") != "PAID", "order not resurrected by refused webhook")
 
         # ---- Case 6: get order shows pickup_code + owner-scoped
         print("\n[Case 6] get order + owner scope")
