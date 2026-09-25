@@ -99,7 +99,16 @@ def _env_and_backend(monkeypatch):
 
 
 def _client():
-    return TestClient(main.app, follow_redirects=False)
+    # base_url is HTTPS deliberately. The session cookie is set with
+    # https_only=True (Secure), so a client talking to http://testserver is
+    # handed the cookie and silently discards it — every subsequent request
+    # arrives unauthenticated and every page assertion sees the body of a 303.
+    #
+    # Pointing the test client at https:// models what the browser actually
+    # does (Render serves the dashboard over TLS) rather than relaxing the
+    # cookie to suit the harness.
+    return TestClient(main.app, base_url="https://testserver",
+                      follow_redirects=False)
 
 
 def _login(c):
@@ -354,28 +363,75 @@ class TestScheduledSectionIsWiredIntoThePage:
 class TestReadyButtonIsWired:
     """The page is served as a static template with no JS test harness, so the
     wiring is asserted at the source level: the button must be gated on the
-    server-computed can_ready and must call the /ready route."""
+    server-computed can_ready and must call the /ready route.
+
+    The buttons are now built by a `btn(action, label)` helper and dispatched
+    by a delegated listener, rather than each carrying an inline
+    `onclick="fn('<id>')"`. The old assertions looked for the literal
+    `>Ready</button>`, which only existed while the label was inlined into the
+    template string. Intent is unchanged: gated on the server flag, wired to
+    the right route, all four present.
+    """
 
     def test_dashboard_renders_a_ready_button_gated_on_can_ready(self):
         c = _client(); _login(c)
         page = c.get("/").text
         assert "o.can_ready" in page, \
             "the Ready button must be gated on the server flag, not the status text"
-        assert ">Ready</button>" in page
+        assert "btn('ready'" in page, "the Ready button is no longer built"
+        assert "'Ready'" in page
         assert "/ready'" in page or "/ready\"" in page
 
     def test_dashboard_renders_a_delivered_button_gated_on_can_deliver(self):
         c = _client(); _login(c)
         page = c.get("/").text
         assert "o.can_deliver" in page
-        assert ">Delivered</button>" in page
+        assert "btn('deliver'" in page, "the Delivered button is no longer built"
+        assert "'Delivered'" in page
         assert "/deliver'" in page or "/deliver\"" in page
 
     def test_all_four_actions_are_present(self):
         c = _client(); _login(c)
         page = c.get("/").text
-        for label in ("Approve", "Ready", "Delivered", "Reject"):
-            assert f">{label}</button>" in page, f"{label} button is missing"
+        for action, label in (("approve", "Approve"), ("ready", "Ready"),
+                              ("deliver", "Delivered"), ("reject", "Reject")):
+            assert f"btn('{action}'" in page, f"{label} button is missing"
+            assert f"'{label}'" in page, f"{label} label is missing"
+        # Every action must be reachable from the dispatch table, or the button
+        # renders and does nothing.
+        for action in ("approve", "ready", "deliver", "reject"):
+            assert f"{action}:" in page, f"{action} is not in the ACTIONS map"
+
+    def test_order_ids_never_reach_a_javascript_parsing_context(self):
+        """Regression guard for the XSS shape this pass removed.
+
+        `onclick="approveOrder('${esc(o.order_id)}')"` put server data inside a
+        JS string literal nested in an HTML attribute. esc() did not escape ',
+        so a quote in order_id closed the literal and the rest ran as script.
+
+        Adding ' to esc() does NOT fix that context — the browser HTML-decodes
+        an attribute value before the JS parser sees it, so &#39; decodes back
+        to ' and breaks out identically. The fix was structural, and this
+        asserts the structure rather than the escaping.
+        """
+        c = _client(); _login(c)
+        page = c.get("/").text
+        # Strip JS line comments so the explanatory note in the template (which
+        # quotes the old shape verbatim) does not trip this.
+        code = "\n".join(l for l in page.splitlines()
+                         if not l.lstrip().startswith("//"))
+        assert "onclick=\"approveOrder(" not in code
+        assert "${esc(o.order_id)}')" not in code, \
+            "an order id is being interpolated into an onclick again"
+        assert "data-order-id=" in code, "buttons no longer carry the id as data"
+        assert "closest('button[data-act][data-order-id]')" in code, \
+            "the delegated dispatcher is gone"
+
+    def test_esc_escapes_single_quotes(self):
+        """Defence in depth for the ordinary attribute contexts."""
+        c = _client(); _login(c)
+        page = c.get("/").text
+        assert "&#39;" in page, "esc() no longer escapes single quotes"
 
 
 class TestFlatTableAndDayPicker:

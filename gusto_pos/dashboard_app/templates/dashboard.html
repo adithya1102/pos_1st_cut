@@ -186,8 +186,13 @@
         throw new Error(path + ' → ' + res.status);
       }
     }
-    const esc = s => (s ?? '').toString().replace(/[<&>"]/g,
-      c => ({ '<':'&lt;','&':'&amp;','>':'&gt;','"':'&quot;' }[c]));
+    // ' is escaped too, so single-quoted attribute values are safe as well as
+    // double-quoted ones. This is defence in depth for the ordinary HTML
+    // contexts (data-ident=, value=, table cells); it is NOT what makes the
+    // action buttons safe — see the note on actionButtons below for why
+    // escaping alone cannot fix data interpolated into an onclick.
+    const esc = s => (s ?? '').toString().replace(/[<&>"']/g,
+      c => ({ '<':'&lt;','&':'&amp;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
     const pill = (cls, label) => `<span class="pill ${esc(cls)}">${esc(label)}</span>`;
 
     async function saveLabel(input) {
@@ -244,20 +249,49 @@
         refreshAll();
       } catch (e) { alert('Delivered failed: ' + e.message); }
     }
+    // Buttons carry their order id in a DATA ATTRIBUTE and are dispatched by
+    // the delegated listener below — they do NOT build an onclick string.
+    //
+    // The old shape was `onclick="approveOrder('${esc(o.order_id)}')"`, which
+    // interpolates server data into a JS string literal nested inside an HTML
+    // attribute. esc() escapes < & > " but not ', so a single quote in
+    // order_id closed the literal and everything after it ran as script.
+    //
+    // Note that simply adding ' to esc() would NOT have fixed this one. The
+    // browser HTML-decodes an attribute value BEFORE the JS parser sees it, so
+    // &#39; decodes straight back to ' and breaks out exactly as before. The
+    // only reliable fix is to stop putting data into a JS parsing context,
+    // which is what this does: the id now only ever lands in a quoted
+    // attribute value, where escaping " is sufficient and true.
+    const ACTIONS = {
+      approve:  o => approveOrder(o),
+      ready:    o => readyOrder(o),
+      deliver:  o => deliverOrder(o),
+      reject:   o => rejectOrder(o),
+    };
     const actionButtons = o => {
       const b = [];
-      if (o.can_approve)
-        b.push(`<button onclick="approveOrder('${esc(o.order_id)}')">Approve</button>`);
+      const btn = (act, label, cls) =>
+        `<button${cls ? ` class="${cls}"` : ''} data-act="${act}" ` +
+        `data-order-id="${esc(o.order_id)}">${label}</button>`;
+      if (o.can_approve) b.push(btn('approve', 'Approve'));
       // Never alongside Approve: can_ready is PREPARING-only and can_approve
       // stops before it, so the two are mutually exclusive server-side.
-      if (o.can_ready)
-        b.push(`<button onclick="readyOrder('${esc(o.order_id)}')">Ready</button>`);
-      if (o.can_deliver)
-        b.push(`<button onclick="deliverOrder('${esc(o.order_id)}')">Delivered</button>`);
-      if (o.can_reject)
-        b.push(`<button class="ghost" onclick="rejectOrder('${esc(o.order_id)}')">Reject</button>`);
+      if (o.can_ready)   b.push(btn('ready',   'Ready'));
+      if (o.can_deliver) b.push(btn('deliver', 'Delivered'));
+      if (o.can_reject)  b.push(btn('reject',  'Reject', 'ghost'));
       return b.join(' ') || '<span class="muted">—</span>';
     };
+
+    // One delegated listener for every action button, present and future —
+    // rows are re-rendered wholesale on each refresh, so per-element binding
+    // would have to be redone every time.
+    document.addEventListener('click', ev => {
+      const el = ev.target.closest('button[data-act][data-order-id]');
+      if (!el) return;
+      const fn = ACTIONS[el.dataset.act];
+      if (fn) fn(el.dataset.orderId);
+    });
 
     // ONE table, every restaurant mixed together, newest first.
     //

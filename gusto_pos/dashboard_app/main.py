@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import os
 import secrets
+from urllib.parse import quote, urlencode
 
 import httpx
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
@@ -157,7 +158,10 @@ async def api_outlets(_=Depends(require_session)):
 async def api_orders(day: str = "", _=Depends(require_session)):
     # `day` (YYYY-MM-DD, IST) is passed straight through; the backend validates
     # it and decides the default, so the two never disagree about "today".
-    return await _proxy("GET", f"/orders?day={day}" if day else "/orders")
+    # urlencode, not interpolation: `day` is a query value off the wire, and
+    # an unencoded "&" or "#" in it would end the parameter and let the
+    # caller append parameters of their own to the upstream request.
+    return await _proxy("GET", f"/orders?{urlencode({'day': day})}" if day else "/orders")
 
 
 @app.get("/api/scheduled")
@@ -165,7 +169,8 @@ async def api_scheduled(day: str = "", _=Depends(require_session)):
     # Scheduled-pickup holds + the prediction engine's live release reasoning.
     # `day` is passed straight through exactly as /api/orders does, so the two
     # sections always agree about which day they are showing.
-    return await _proxy("GET", f"/scheduled?day={day}" if day else "/scheduled")
+    # Encoded exactly as /api/orders above, for the same reason.
+    return await _proxy("GET", f"/scheduled?{urlencode({'day': day})}" if day else "/scheduled")
 
 
 @app.get("/api/compliance")
@@ -217,13 +222,19 @@ async def api_add_tester(request: Request, _=Depends(require_session)):
 
 @app.delete("/api/testers/{identifier:path}")
 async def api_remove_tester(identifier: str, _=Depends(require_session)):
-    return await _proxy("DELETE", f"/testers/{identifier}")
+    # quote(safe="") because the route is {identifier:path}, which MATCHES
+    # SLASHES. Interpolated raw, an identifier of "x/../../compliance" or
+    # one carrying "?" reshaped the upstream path — the caller chose which
+    # backend endpoint this proxy hit, with the X-Testing-Key attached.
+    # Same pattern mcp_server/carevo_mcp/catalogue.py already uses.
+    return await _proxy("DELETE", f"/testers/{quote(identifier, safe='')}")
 
 
 @app.patch("/api/labels/{identifier:path}")
 async def api_set_label(identifier: str, request: Request,
                         _=Depends(require_session)):
-    return await _proxy("PATCH", f"/labels/{identifier}",
+    # Encoded as /api/testers above — same {identifier:path} exposure.
+    return await _proxy("PATCH", f"/labels/{quote(identifier, safe='')}",
                         json_body=await request.json())
 
 
