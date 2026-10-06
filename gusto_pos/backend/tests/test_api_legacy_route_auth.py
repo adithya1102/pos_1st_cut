@@ -69,6 +69,13 @@ GUARDED = [
     ("GET",    f"{API}/categories/"),
     ("GET",    f"{API}/categories/{rid()}"),
     ("POST",   f"{API}/categories/"),
+    # staff/{id}/pin — closed in the hardening pass. It writes
+    # users.hashed_password (the staff LOGIN credential), so anonymous access
+    # meant anyone knowing a staff id could take the account over and then
+    # collect a real JWT from /auth/login. Authorisation beyond "is staff" is
+    # covered in detail by test_api_staff_pin_auth.py; here we only assert the
+    # 401 floor and that a staff token is not rejected with 401.
+    ("PUT",    f"{API}/staff/{rid()}/pin"),
     # orders/* — the 4 with no caller, out of 20.
     ("GET",    f"{API}/orders/history/{rid()}"),
     ("GET",    f"{API}/orders/summary/{rid()}"),
@@ -178,7 +185,17 @@ STILL_OPEN = [
     ("POST",   f"{API}/staff/"),                                # POS staff/
     ("PUT",    f"{API}/staff/{rid()}"),                         # POS staff/{id}
     ("DELETE", f"{API}/staff/{rid()}"),                         # POS staff/{id}
-    ("PUT",    f"{API}/staff/{rid()}/pin"),                     # POS staff/{id}/pin
+    # PUT /staff/{id}/pin is NO LONGER HERE — closed, and now asserted in
+    # GUARDED above. It was the worst entry in this list: it writes
+    # users.hashed_password, so an anonymous caller could overwrite a staff
+    # login credential and then collect a real JWT from /auth/login. Verified
+    # end to end against a live server before closing it.
+    #
+    # The caller audit for that change found NOTHING in owner_app calls it
+    # (owner_app authenticates with /auth/login + username/password only). The
+    # single caller is GustoPOS ApiService.cs:850, which sends no Authorization
+    # header on any request — so this breaks that button, deliberately and
+    # with the breakage recorded in carevomd.md.
     ("POST",   f"{API}/sessions/waiter/action"),                # Waiter
     ("POST",   f"{API}/tables/open"),                           # POS tables/open
     ("POST",   f"{API}/tables/close/{rid()}"),                  # POS tables/close/{id}
