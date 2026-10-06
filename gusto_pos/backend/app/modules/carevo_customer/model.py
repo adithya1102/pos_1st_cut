@@ -7,7 +7,9 @@ existing mappings are untouched.
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import String, ForeignKey, DECIMAL, Integer, Boolean, DateTime
+from sqlalchemy import (
+    String, ForeignKey, DECIMAL, Integer, Boolean, DateTime, Text,
+)
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -74,6 +76,53 @@ class CustomerOrder(Base):
     coupon_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("coupons.id", ondelete="SET NULL"), nullable=True
     )
+    # --- refund flag + manual acceptance (migration 032) --------------------
+    #
+    # !! DEPLOY ORDER. These are MAPPED, which means SQLAlchemy puts them in
+    # !! every SELECT against customer_orders. Shipping this code to an
+    # !! environment where 032 has NOT been applied makes every order query
+    # !! fail with UndefinedColumn. 032 must run on prod BEFORE this deploys.
+    # !!
+    # !! Note the contrast with migration 031: requested_pickup_at/release_at
+    # !! were deliberately left UNMAPPED and are read with raw text() SQL in
+    # !! service.py, precisely to avoid that coupling. These are mapped because
+    # !! they are read and written on nearly every acceptance path and raw SQL
+    # !! for all of it would be worse; the cost is the ordering constraint
+    # !! above.
+    #
+    # refund_required is the queryable form of "a human owes this customer
+    # money". It is NOT a gateway integration — nothing in this repository
+    # calls a Cashfree refund API — and clearing it is an explicit admin act.
+    refund_required: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    refund_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    refund_flagged_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # NULL = not in a manual-acceptance flow, which is every order at every
+    # outlet whose acceptance_mode is still 'auto' (the default). A SEPARATE
+    # axis from `status` on purpose — see the migration header: status is
+    # enumerated as a closed set by the TTL sweeper, the terminal-status guard,
+    # the reject gate and advance_status, and adding a twelfth value risks
+    # silently missing one of them.
+    acceptance_state: Mapped[str | None] = mapped_column(Text, nullable=True)
+    acceptance_deadline_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    prep_minutes_committed: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+    # Persisted rather than in-memory so the alert ladder survives a redeploy.
+    alert_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_alert_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     # Base already defines created_at; override to timestamptz to match DDL.
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
