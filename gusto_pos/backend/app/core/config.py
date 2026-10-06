@@ -18,6 +18,15 @@ class Settings(BaseSettings):
     # auto-abandoned (check-on-read), freeing its pickup_code for reuse.
     PICKUP_TTL_MINUTES: int = 45
 
+    # STAFF login throttle, shared by /auth/login and /auth/pin-login. Counted
+    # per claimed-identifier AND per client IP, over a sliding window.
+    #
+    # Neither endpoint had any limit, and a staff PIN is 4 digits — 10,000
+    # values, exhaustible in minutes against a known username. 10 attempts per
+    # 5 minutes is far above anything a human typing their own PIN produces.
+    LOGIN_RATE_LIMIT_ATTEMPTS: int = 10
+    LOGIN_RATE_LIMIT_WINDOW_SECONDS: int = 300
+
     # SQLAlchemy engine echo. Was hardcoded True in core/database.py, which
     # logged every statement WITH its bound parameters — customer phone
     # numbers, pickup codes and token subjects into the platform log stream.

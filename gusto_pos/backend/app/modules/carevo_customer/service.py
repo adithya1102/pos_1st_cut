@@ -45,6 +45,18 @@ _register_hits: dict[str, list[float]] = defaultdict(list)
 # guessing of codes at one counter, and every request already arrives with an
 # authenticated staff account whose outlet_id is the natural bucket.
 _pickup_miss_hits: dict[str, list[float]] = defaultdict(list)
+# STAFF LOGIN limiter, shared by /auth/login and /auth/pin-login. Same pattern,
+# same single-process caveat.
+#
+# Keyed on BOTH the claimed identifier and the client IP, each counted in its
+# own bucket, because the two attacks are different shapes: one attacker
+# grinding many PINs at one account is caught by the username bucket, and one
+# attacker spraying one PIN across many accounts is caught by the IP bucket.
+# Either bucket filling is enough to refuse.
+#
+# A 4-digit PIN is 10,000 values; without this, nothing at all stood between an
+# attacker and exhausting that space against a known username.
+_login_hits: dict[str, list[float]] = defaultdict(list)
 
 # Default categories seeded for every self-registered outlet, so the owner has
 # real options in the dish form's category picker immediately. Order = display.
@@ -167,6 +179,58 @@ class CarevoService:
             )
         hits.append(now)
         _otp_hits[phone_number] = hits
+
+    @staticmethod
+    def check_login_rate_limit(identifier: str, client_ip: str | None) -> None:
+        """Throttle STAFF login attempts. Shared by /auth/login and /auth/pin-login.
+
+        Two independent buckets per attempt — the claimed identifier and the
+        caller's IP — because the two attacks have different shapes:
+
+          * many PINs against one known account  -> caught by the identifier bucket
+          * one PIN sprayed across many accounts -> caught by the IP bucket
+
+        Either bucket being full refuses the request, and a refusal does NOT
+        consume further budget in the other bucket.
+
+        Counted on every ATTEMPT, not only on failures. Counting failures alone
+        lets an attacker reset their own budget with one correct login, and a
+        human typing their own PIN does not come close to the cap anyway.
+
+        In-process, like every other limiter here: the real ceiling is this
+        number times the worker count, and a restart forgets every bucket. That
+        is a known and documented limitation, not a claim of completeness.
+        """
+        now = time.time()
+        window = float(settings.LOGIN_RATE_LIMIT_WINDOW_SECONDS)
+        cap = settings.LOGIN_RATE_LIMIT_ATTEMPTS
+
+        keys = [f"user:{(identifier or '').strip().lower()}"]
+        if client_ip:
+            keys.append(f"ip:{client_ip}")
+
+        pruned: dict[str, list[float]] = {}
+        for key in keys:
+            hits = [t for t in _login_hits[key] if now - t < window]
+            pruned[key] = hits
+            if len(hits) >= cap:
+                _login_hits[key] = hits
+                retry_after = max(1, int(window - (now - hits[0])) + 1)
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail={
+                        "error": "too_many_login_attempts",
+                        "message": (
+                            "Too many sign-in attempts. "
+                            f"Try again in about {retry_after} seconds."
+                        ),
+                        "retry_after_seconds": retry_after,
+                    },
+                    headers={"Retry-After": str(retry_after)},
+                )
+        for key, hits in pruned.items():
+            hits.append(now)
+            _login_hits[key] = hits
 
     @staticmethod
     def request_otp(phone_number: str) -> dict:
