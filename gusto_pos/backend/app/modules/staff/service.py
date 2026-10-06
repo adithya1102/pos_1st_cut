@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.users.model import User
 from app.modules.roles.model import Role
 from app.modules.staff.schema import PinLoginRequest, PinLoginResponse, StaffProfile, StaffCreate, StaffUpdate
-from app.core.security import verify_password, get_password_hash
+from app.core.security import verify_and_rehash, get_password_hash
 from app.core.auth import create_access_token
 import uuid
 
@@ -16,7 +16,17 @@ class StaffService:
     async def pin_login(db: AsyncSession, request: PinLoginRequest) -> PinLoginResponse | None:
         result = await db.execute(select(User).where(User.is_active == True))
         for user in result.scalars().all():
-            if verify_password(request.pin, user.hashed_password):
+            ok, new_hash = verify_and_rehash(request.pin, user.hashed_password)
+            if ok:
+                # Upgrade a deprecated hash while the PIN is in hand — the only
+                # moment it can be done. Best-effort: never fail a correct login
+                # because the rewrite did not stick.
+                if new_hash:
+                    try:
+                        user.hashed_password = new_hash
+                        await db.commit()
+                    except Exception:
+                        await db.rollback()
                 role = user.roles[0].name if user.roles else "Waiter"
                 token = create_access_token(subject=str(user.id))
                 return PinLoginResponse(
