@@ -157,7 +157,15 @@ def _fail(exc: Exception, what: str) -> HTTPException:
     The id is the only thing shared: it appears in both the response and the
     logged traceback, so a report of "error a1b2c3d4" is enough to find the
     exact stack without the stack ever leaving the server.
+
+    An HTTPException passes STRAIGHT THROUGH. The server-side price resolution
+    raises 400 for an unknown menu item and 409 for an unorderable one, and
+    those are deliberate answers to the caller — flattening them into an opaque
+    500 would turn "you asked for a dish that does not exist" into "the server
+    is broken", which is both wrong and unactionable.
     """
+    if isinstance(exc, HTTPException):
+        return exc
     correlation_id = uuid4().hex[:8]
     logger.exception("[%s] %s failed", correlation_id, what)
     return HTTPException(

@@ -6,6 +6,7 @@ import asyncio
 import os
 import re
 import json as _json
+from fastapi import HTTPException
 from sqlalchemy import select, update, delete as sa_delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -73,6 +74,51 @@ class OrderService:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def _resolve_item_prices(db: AsyncSession, items):
+        """Map requested lines to their SERVER-SIDE price and name.
+
+        Returns [(line, {"name":…, "price":…}), …] in the caller's order.
+
+        Deliberately mirrors the CareVo customer path rather than inventing a
+        second pricing rule: one SELECT over every id in the payload, 400 for
+        an id that does not exist, 409 for one that is not orderable. Keeping
+        the two paths identical is the point — a discount or price-rule change
+        made in one place should not silently diverge here.
+
+        Note this reads `base_price` only. Zone price_rules are NOT applied,
+        because the legacy orders table has no zone column to apply them
+        against (the `zone` field on OrderCreate rides the event payloads only,
+        per its own comment). That is unchanged behaviour: nothing in this path
+        ever consulted price_rules.
+        """
+        from app.modules.menu.model import MenuItem  # local: avoids a cycle
+
+        ids = [line.menu_item_id for line in items]
+        rows = (await db.execute(
+            select(MenuItem.id, MenuItem.name, MenuItem.base_price,
+                   MenuItem.is_active)
+            .where(MenuItem.id.in_(ids))
+        )).all()
+        by_id = {str(r.id): r for r in rows}
+
+        resolved = []
+        for line in items:
+            r = by_id.get(str(line.menu_item_id))
+            if r is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unknown menu item {line.menu_item_id}",
+                )
+            if not r.is_active:
+                raise HTTPException(
+                    status_code=409, detail=f"Item unavailable: {r.name}")
+            resolved.append((line, {
+                "name": r.name,
+                "price": float(r.base_price) if r.base_price is not None else 0.0,
+            }))
+        return resolved
+
+    @staticmethod
     async def create_order(db: AsyncSession, payload: OrderCreate):
         # "One Active Table = One Active Order" — merge into existing open order if present.
         existing = None
@@ -108,23 +154,38 @@ class OrderService:
             db.add(obj)
             await db.flush()
 
-        # Append new items and accumulate their total
+        # Append new items and accumulate their total.
+        #
+        # PRICES ARE RESOLVED SERVER-SIDE from menu_items, never taken from the
+        # request. This used to read item_data.unit_price straight off the wire,
+        # which (with POST /orders/ unauthenticated) made the declared price the
+        # real price — five of a dish at 0.002 each was accepted and stored.
+        #
+        # Same shape as the CareVo customer path: one SELECT for every id in the
+        # payload, 400 for an unknown id, 409 for one that is not orderable.
         notif_items = []
         new_items_total = 0.0
         if payload.items:
-            for item_data in payload.items:
+            priced = await OrderService._resolve_item_prices(db, payload.items)
+            for item_data, mi in priced:
+                notes = ", ".join(
+                    (item_data.customizations or [])
+                    + ([item_data.custom_note] if item_data.custom_note else [])
+                )
                 db.add(OrderItem(
                     order_id=obj.id,
-                    name_snap=item_data.name,
-                    price_snap=item_data.unit_price,
+                    # name_snap comes from the MENU ROW, not the request — a
+                    # caller cannot relabel what they bought.
+                    name_snap=mi["name"],
+                    price_snap=mi["price"],
                     quantity=item_data.quantity,
-                    item_notes=", ".join((item_data.customizations or []) + ([item_data.custom_note] if item_data.custom_note else [])),
+                    item_notes=notes,
                 ))
-                new_items_total += item_data.unit_price * item_data.quantity
+                new_items_total += mi["price"] * item_data.quantity
                 notif_items.append({
-                    "name": item_data.name,
+                    "name": mi["name"],
                     "quantity": item_data.quantity,
-                    "unit_price": item_data.unit_price,
+                    "unit_price": mi["price"],
                     "customizations": item_data.customizations or [],
                     "custom_note": item_data.custom_note or "",
                 })
@@ -476,22 +537,45 @@ class OrderService:
     @staticmethod
     async def replace_order_items(db: AsyncSession, order_id: UUID, items: List[OrderItemCreate]):
         """Delete all existing order items, insert the new list, and recalculate total_amount."""
-        order = await OrderService.get_order_by_id(db, order_id)
+        # Loaded WITHOUT its items relationship, deliberately.
+        #
+        # This used to call get_order_by_id, which eager-loads Order.items via
+        # selectinload. The bulk `sa_delete` below then left those loaded
+        # OrderItem instances in the session marked deleted, and the later
+        # `db.add(order)` cascaded save-update across the stale collection:
+        #
+        #   InvalidRequestError: Instance '<OrderItem …>' has been deleted.
+        #   Use the make_transient() function to send this object back …
+        #
+        # A PRE-EXISTING bug, not introduced here — PUT /orders/{id}/items was
+        # never exercised with a real body by any test (the auth suite sends an
+        # empty one and stops at 422), so nothing had reached this line before.
+        # Surfaced by the repricing test added alongside this change.
+        order = (await db.execute(
+            select(Order).where(Order.id == order_id)
+        )).scalar_one_or_none()
         if not order:
             return None
+        # Resolve prices BEFORE deleting anything: an unknown or unorderable id
+        # raises, and doing that first means a bad payload leaves the order's
+        # existing lines intact rather than wiping them and then failing.
+        priced = await OrderService._resolve_item_prices(db, items)
+
         await db.execute(sa_delete(OrderItem).where(OrderItem.order_id == order_id))
         total = 0.0
-        for item_data in items:
+        for item_data, mi in priced:
             db.add(OrderItem(
                 order_id=order_id,
-                name_snap=item_data.name,
-                price_snap=item_data.unit_price,
+                name_snap=mi["name"],
+                price_snap=mi["price"],
                 quantity=item_data.quantity,
                 item_notes=", ".join((item_data.customizations or []) + ([item_data.custom_note] if item_data.custom_note else [])),
             ))
-            total += item_data.unit_price * item_data.quantity
+            total += mi["price"] * item_data.quantity
+        # `order` is already persistent, so the assignment is tracked; the
+        # explicit db.add() that used to sit here is what triggered the cascade
+        # over the deleted collection described above.
         order.total_amount = total
-        db.add(order)
         await db.commit()
         result = await db.execute(
             select(Order).options(selectinload(Order.items)).where(Order.id == order_id)

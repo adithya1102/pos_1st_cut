@@ -80,6 +80,18 @@ async def create() -> None:
     from app.models.base import Base                           # noqa: E402
     import app.modules.carevo_customer.model                   # noqa: E402,F401
     import app.modules.audit_logs.model                        # noqa: E402,F401
+    # Legacy POS tables: table_sessions, customer_sessions, otp_records and
+    # waiter_notifications. Previously left out because no CareVo test touched
+    # them — test_api_legacy_route_auth.py documents that absence and even
+    # relies on it, treating "reached the database and failed on a missing
+    # table" as proof a route was not auth-gated.
+    #
+    # Now needed: OrderService.create_order writes a WaiterNotification on
+    # every legacy POST /orders/, so the server-side pricing tests cannot reach
+    # their assertions without it. Creating these makes the test schema a
+    # closer match to prod, which is the stated goal of this file.
+    import app.modules.sessions.models                         # noqa: E402,F401
+    import app.modules.tables.models                           # noqa: E402,F401
 
     engine = create_async_engine(TEST_URL, echo=False)
     async with engine.begin() as c:
