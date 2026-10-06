@@ -2191,8 +2191,33 @@ class CarevoService:
         return order
 
     @staticmethod
-    async def advance_status(db: AsyncSession, order_id: uuid.UUID, target: Optional[str] = None) -> CustomerOrder:
-        res = await db.execute(select(CustomerOrder).where(CustomerOrder.id == order_id))
+    async def advance_status(db: AsyncSession, order_id: uuid.UUID,
+                             target: Optional[str] = None,
+                             *, outlet_id: Optional[uuid.UUID] = None) -> CustomerOrder:
+        """Move one order's visible status.
+
+        `outlet_id`, when given, SCOPES the lookup — the order must belong to
+        that outlet or this raises 404. It is keyword-only and optional because
+        the internal callers (auto_receive, the release path, the roster
+        processor) already hold an order they resolved themselves and are not
+        acting on behalf of a request; only the staff-facing endpoint needs the
+        check, and it passes it.
+
+        Why it exists: POST /customer/orders/{id}/advance took
+        `_staff=Depends(get_current_staff)` and never read the result, and the
+        query below filtered on the order id alone. Any authenticated staff
+        account at ANY outlet could therefore drive ANY order's status —
+        including marking another restaurant's order READY, which fires the
+        customer's "come and get it" push.
+
+        404 rather than 403 for a cross-outlet id, matching lookup-pickup:
+        telling a caller that an order exists but belongs to someone else
+        leaks the existence of other outlets' orders.
+        """
+        conditions = [CustomerOrder.id == order_id]
+        if outlet_id is not None:
+            conditions.append(CustomerOrder.outlet_id == outlet_id)
+        res = await db.execute(select(CustomerOrder).where(*conditions))
         order = res.scalars().first()
         if not order:
             raise HTTPException(status_code=404, detail="Order not found")

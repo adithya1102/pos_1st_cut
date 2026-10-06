@@ -385,11 +385,19 @@ async def get_order(
 async def advance_order(
     order_id: uuid.UUID,
     payload: s.AdvanceStatusIn | None = None,
-    _staff=Depends(get_current_staff),
+    staff=Depends(get_current_staff),
     db: AsyncSession = Depends(get_db),
 ):
+    # SCOPED TO THE CALLER'S OUTLET. This was `_staff=Depends(...)` — the
+    # dependency ran, so the request was authenticated, but the resulting user
+    # was never read and advance_status filtered on the order id alone. Any
+    # staff account at any outlet could advance any order in the system.
+    if not staff.outlet_id:
+        raise HTTPException(
+            status_code=403, detail="Staff account is not assigned to an outlet")
     target = payload.status if payload else None
-    order = await CarevoService.advance_status(db, order_id, target)
+    order = await CarevoService.advance_status(
+        db, order_id, target, outlet_id=staff.outlet_id)
     total = float(order.total_amount or 0)
     discount = float(order.discount_amount or 0)
     return {
