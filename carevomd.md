@@ -7359,3 +7359,77 @@ keytool -printcert -jarfile build/app/outputs/bundle/release/app-release.aab
 Confirmed gitignored by `git check-ignore -v`, not by reading the file:
 `owner_app/android/key.properties` -> `owner_app/android/.gitignore:12`;
 `**/*.jks` -> `owner_app/android/.gitignore:14`.
+
+---
+
+## 2026-10-07 — Migrations 032 and 033 (schema only; logic NOT built)
+
+Both applied to the LOCAL `carevo_test` only and re-applied to prove
+idempotency. **Neither applied to prod** — there is no prod access in this run
+(the DSN in `gusto_pos/backend/.env` is rotated: Neon answers
+`InvalidPasswordError: password authentication failed for user 'neondb_owner'`).
+Suite stayed at 722 passed / 1 xfailed across both, which is the point: both
+migrations are inert until something opts in.
+
+### Premise that proved FALSE — Task 6.2 reservation TTL
+
+Specified as "the reservation TTL = the existing payment-retry grace window
+(report its value; do not shorten it)". **There is no such window in the
+code.** Literal evidence:
+
+- `CarevoService.COMPLETED_GRACE = timedelta(minutes=30)`
+  (`carevo_customer/service.py:134`) — how long a VERIFIED PICKUP lingers in
+  the owner queue before dropping out of the feed. Nothing to do with payment.
+- `AppConfig.coldRetryTimeout = Duration(seconds: 60)`
+  (`customer_app/lib/config/app_config.dart:110`) — a cold-start HTTP retry
+  timeout. Not an order clock.
+- customer_app payment retry **reopens the SAME payment session** and has no
+  expiry of its own (`pickup_screen.dart:64`, `:1201`:
+  "Retry never creates a new order"; "Retry reopens the SAME session").
+- There is **no sweeper for unpaid orders at all**. `_LIVE_STATUSES` is
+  `{PAID, RECEIVED, PREPARING, READY}`, so the 45-minute
+  `_expire_stale_pickups` never touches a `CREATED`/`PENDING` order. (The brief
+  anticipated this — "the 45-minute sweeper does not cover unpaid orders" — but
+  the window it was told to inherit still does not exist.)
+
+So there is nothing to inherit and nothing to avoid shortening. Migration 033
+creates `stock_reservations.expires_at` as `NOT NULL`, so a hold can never be
+written without a deadline, and **the TTL value is left as an open decision**
+rather than guessed. It needs to be picked deliberately: too short and a
+customer who alt-tabs to their UPI app loses their held units mid-payment; too
+long and one abandoned cart holds the last unit of a dish for that duration.
+
+### Pre-check to run in the Neon console BEFORE applying 033 to prod
+
+`customer_orders_live_pickup_code_uidx` is a UNIQUE index and **will fail to
+build if prod already contains a duplicate**. On `carevo_test` this returned
+**0 duplicate groups**; prod is unverified.
+
+```sql
+SELECT outlet_id, pickup_code, count(*) AS n,
+       array_agg(id) AS order_ids
+  FROM customer_orders
+ WHERE pickup_code IS NOT NULL
+   AND status NOT IN ('COMPLETED', 'CANCELLED', 'ABANDONED')
+ GROUP BY outlet_id, pickup_code
+HAVING count(*) > 1
+ ORDER BY n DESC;
+```
+
+Zero rows -> safe to apply. Any rows -> resolve them first (the live duplicate
+is a real pickup-code collision, so decide which order keeps the code before
+forcing the index).
+
+### Deploy-order constraint introduced by 032
+
+The nine `customer_orders` columns are **MAPPED** on `CustomerOrder`, so
+SQLAlchemy puts them in every SELECT against that table. **Migration 032 must
+be applied to prod BEFORE this code deploys**, or every order query fails with
+`UndefinedColumn`.
+
+The three `outlets` columns are deliberately **NOT** mapped. `Outlet` maps none
+of its later-migration columns — `is_visible` (002), `phone_number` is mapped
+but `opens_at`/`closes_at`/`is_manually_closed` (024) and `locality` are all
+read with raw `text()` SQL — and migration 031's
+`requested_pickup_at`/`release_at` were left unmapped for exactly this coupling
+reason. Three reads do not justify taking the ordering constraint on twice.
