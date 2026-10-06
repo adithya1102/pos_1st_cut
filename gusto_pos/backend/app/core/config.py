@@ -58,7 +58,20 @@ class Settings(BaseSettings):
     # a customer token for an arbitrary phone number with the stub code.
     CUSTOMER_AUTH_ENABLED: bool = True
 
-    PAYMENT_GATEWAY: str = "stub"
+    # Default is a NON-GATEWAY sentinel, not "stub".
+    #
+    # "stub" as the default meant a deploy that simply forgot to set this got
+    # working-looking fake payments: orders created, checkout opened, nothing
+    # charged. That is exactly what happened on 2026-09-08, and the record of
+    # it is 71 payment_transactions rows carrying gateway='razorpay'.
+    #
+    # get_gateway() still returns the stub for any non-"cashfree" value, so
+    # local development is unchanged — set PAYMENT_GATEWAY=stub explicitly and
+    # everything behaves as before. The difference is that choosing fake
+    # payments is now a deliberate act rather than what you get by omission,
+    # and /customer/payment/webhook refuses to run at all unless a LIVE gateway
+    # is named (see PaymentGateway.is_live).
+    PAYMENT_GATEWAY: str = "unset"
     PAYMENT_GATEWAY_SHAPE: str = "razorpay"
     RAZORPAY_KEY_ID: Optional[str] = None
     RAZORPAY_KEY_SECRET: Optional[str] = None
