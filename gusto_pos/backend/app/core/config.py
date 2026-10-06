@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     # auto-abandoned (check-on-read), freeing its pickup_code for reuse.
     PICKUP_TTL_MINUTES: int = 45
 
+    # SQLAlchemy engine echo. Was hardcoded True in core/database.py, which
+    # logged every statement WITH its bound parameters — customer phone
+    # numbers, pickup codes and token subjects into the platform log stream.
+    # Opt-in, so a deploy that sets nothing is quiet.
+    SQL_ECHO: bool = False
+
     # Cap on CONSECUTIVE pickup-code misses per outlet, over a short sliding
     # window. A miss is a code (or order id) that resolves to no order of the
     # caller's own outlet — i.e. lookup-pickup returning found:false and
