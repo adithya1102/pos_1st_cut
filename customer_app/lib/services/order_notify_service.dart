@@ -28,7 +28,14 @@ class OrderNotifyClient {
 
   /// Derive the WS endpoint from [AppConfig.baseUrl]: strip the `/api/v1`
   /// suffix and swap the http(s) scheme for ws(s).
-  static Uri buildUri(String orderId) {
+  ///
+  /// [token] is appended as a QUERY PARAMETER, which the server requires and
+  /// verifies against the order's owner before accepting the handshake. It is
+  /// a query parameter rather than an Authorization header because this app
+  /// has a web target and the browser WebSocket API cannot set request
+  /// headers — there is no portable header channel on a WS handshake. In
+  /// production the URL is wss://, so the token travels inside TLS.
+  static Uri buildUri(String orderId, {String? token}) {
     var base = AppConfig.baseUrl;
     if (base.endsWith('/')) base = base.substring(0, base.length - 1);
     const apiSuffix = '/api/v1';
@@ -40,13 +47,17 @@ class OrderNotifyClient {
     } else if (base.startsWith('http')) {
       base = base.replaceFirst('http', 'ws');
     }
-    return Uri.parse('$base/ws/order/$orderId');
+    final uri = Uri.parse('$base/ws/order/$orderId');
+    if (token == null || token.isEmpty) return uri;
+    return uri.replace(queryParameters: {...uri.queryParameters, 'token': token});
   }
 
-  void connect() {
+  /// Opens the socket. [token] is the customer's bearer token; without it the
+  /// server closes the handshake with 4401 and no events arrive.
+  void connect({String? token}) {
     if (_channel != null) return;
     try {
-      final channel = WebSocketChannel.connect(buildUri(orderId));
+      final channel = WebSocketChannel.connect(buildUri(orderId, token: token));
       _channel = channel;
       _sub = channel.stream.listen(
         _onMessage,

@@ -25,7 +25,13 @@ dependencies:
   geolocator: ^13.0.2
 
   # Persistence (token + theme)
+  # Retained ONLY so loadToken()/clearToken() can migrate the customer JWT out
+  # of the old plaintext store. Nothing writes a token here any more.
   shared_preferences: ^2.3.2
+
+  # Customer JWT storage: Android Keystore / iOS Keychain. A bearer token in
+  # SharedPreferences is readable on a rooted device and swept up by backups.
+  flutter_secure_storage: ^9.2.2
   web_socket_channel: ^3.0.3
 
   # UPI intent deep-link (upi://pay) to open the user's UPI app

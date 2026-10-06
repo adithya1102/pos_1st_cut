@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../config/app_config.dart';
 import '../models/order.dart';
 import '../models/order_notify.dart';
+import '../services/api_client.dart';
 import '../services/cashfree_service.dart';
 import '../services/location_service.dart';
 import '../services/order_notify_service.dart';
@@ -384,7 +385,12 @@ class _PickupScreenState extends State<PickupScreen>
     final client = OrderNotifyClient(widget.orderId);
     _notifyClient = client;
     _notifySub = client.notifications.listen(_onNotify);
-    client.connect();
+    // The socket is authenticated and ownership-scoped server-side: without a
+    // token the handshake is closed with 4401, and with someone else's token
+    // it is closed with 4403. Read from the same ApiClient every HTTP call
+    // uses, so the socket and the REST calls can never disagree about who is
+    // signed in.
+    client.connect(token: context.read<ApiClient>().token);
   }
 
   void _onNotify(OrderNotify notify) {

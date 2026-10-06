@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -90,20 +91,56 @@ class ApiClient {
   String? get token => _token;
   bool get isAuthenticated => _token != null && _token!.isNotEmpty;
 
-  /// Restore a persisted token at startup.
+  // --- token persistence ----------------------------------------------------
+  //
+  // flutter_secure_storage (Android Keystore / iOS Keychain), not
+  // SharedPreferences. The customer JWT is a bearer credential: whoever holds
+  // it IS that customer for the life of the token, which is 24h with no
+  // server-side revocation. SharedPreferences is a plain XML file on Android —
+  // readable on a rooted device and swept into adb/cloud backups.
+
+  static const _secure = FlutterSecureStorage(
+    // Keystore-backed rather than the legacy plaintext fallback on old Android.
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+  );
+
+  /// Restore a persisted token at startup, migrating it out of
+  /// SharedPreferences the first time.
+  ///
+  /// READS THEN DELETES. Writing only to the new store would leave every
+  /// already-signed-in customer's token sitting in the old plaintext file —
+  /// the exact value this change exists to remove — while the app looked
+  /// fixed. The delete is what makes this a migration and not a second copy.
   Future<void> loadToken() async {
+    final secure = await _secure.read(key: _tokenKey);
+    if (secure != null && secure.isNotEmpty) {
+      _token = secure;
+      return;
+    }
+
     final prefs = await SharedPreferences.getInstance();
-    _token = prefs.getString(_tokenKey);
+    final legacy = prefs.getString(_tokenKey);
+    if (legacy == null || legacy.isEmpty) {
+      _token = null;
+      return;
+    }
+    // Write to the Keystore BEFORE dropping the plaintext copy, so an
+    // interruption between the two cannot sign the customer out.
+    await _secure.write(key: _tokenKey, value: legacy);
+    await prefs.remove(_tokenKey);
+    _token = legacy;
   }
 
   Future<void> setToken(String token) async {
     _token = token;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_tokenKey, token);
+    await _secure.write(key: _tokenKey, value: token);
   }
 
   Future<void> clearToken() async {
     _token = null;
+    await _secure.delete(key: _tokenKey);
+    // Clear the legacy key too, so signing out on a device that never happened
+    // to call loadToken() still removes the plaintext copy.
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_tokenKey);
   }
