@@ -157,6 +157,35 @@ class HomeState extends ChangeNotifier {
     }
   }
 
+  /// Sets or clears a dish's limited quantity for today (migration 033).
+  ///
+  /// [quantity] of null turns tracking OFF (unlimited). NOT optimistic, unlike
+  /// toggleItemAvailability: the server decides the resulting availability as
+  /// well as the count — 0 hides the dish, a positive number on a sold-out
+  /// dish brings it back — and guessing that locally would flicker the wrong
+  /// state onto a dish the kitchen is looking at. The round trip is one tap on
+  /// a settings row, not something in a hot path.
+  Future<bool> setItemStock(String itemId, int? quantity) async {
+    final index = _items.indexWhere((i) => i.id == itemId);
+    if (index < 0) return false;
+    final original = _items[index];
+
+    try {
+      final result = await _menuService.setStock(itemId, quantity);
+      _items[index] = original.copyWith(
+        stockRemaining: result.stockRemaining,
+        clearStock: result.stockRemaining == null,
+        isAvailable: result.isAvailable,
+      );
+      notifyListeners();
+      return true;
+    } catch (_) {
+      _error = 'Could not update stock for "${original.name}".';
+      notifyListeners();
+      return false;
+    }
+  }
+
   // --------------------------- Menu CRUD ---------------------------------
   List<Category> _categories = [];
   List<Category> get categories => List.unmodifiable(_categories);

@@ -35,6 +35,15 @@ class _DishEditScreenState extends State<DishEditScreen> {
   bool _loadingCategories = true;
   String? _error;
 
+  /// Limited quantity (migration 033). Separate from the form's other fields
+  /// because it is written by its own endpoint rather than by _save — stock is
+  /// a live number the kitchen changes during service, not an attribute of the
+  /// dish, and bundling it into Save would make an unrelated edit (a price
+  /// typo, say) silently reset the count.
+  late final TextEditingController _stock;
+  bool _stockTracked = false;
+  bool _savingStock = false;
+
   @override
   void initState() {
     super.initState();
@@ -47,7 +56,65 @@ class _DishEditScreenState extends State<DishEditScreen> {
     _isVeg = it?.isVeg ?? true;
     _imageUrl = it?.imageUrl;
     _categoryId = it?.categoryId;
+    _stockTracked = it?.isStockTracked ?? false;
+    _stock = TextEditingController(text: it?.stockRemaining?.toString() ?? '');
     _loadCategories();
+  }
+
+  /// Turning the switch ON does NOT write anything yet — it reveals the field
+  /// so the owner can type a number and press Update. Turning it OFF writes
+  /// immediately, because "unlimited" needs no number and making them press
+  /// Update to un-limit a dish would be a pointless second tap.
+  Future<void> _onStockToggled(BuildContext context, bool on) async {
+    if (on) {
+      setState(() => _stockTracked = true);
+      return;
+    }
+    setState(() => _savingStock = true);
+    final ok = await context.read<HomeState>().setItemStock(widget.item!.id, null);
+    if (!mounted) return;
+    setState(() {
+      _savingStock = false;
+      if (ok) {
+        _stockTracked = false;
+        _stock.clear();
+      }
+    });
+    if (!ok && context.mounted) {
+      _showStockError(context);
+    }
+  }
+
+  Future<void> _saveStock(BuildContext context) async {
+    final raw = _stock.text.trim();
+    final qty = int.tryParse(raw);
+    if (qty == null || qty < 0) {
+      setState(() => _error = 'Enter a whole number of portions (0 or more).');
+      return;
+    }
+    setState(() => _savingStock = true);
+    final ok = await context.read<HomeState>().setItemStock(widget.item!.id, qty);
+    if (!mounted) return;
+    setState(() => _savingStock = false);
+    if (!context.mounted) return;
+    if (ok) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(qty == 0
+            // Said plainly: 0 does not just stop orders, it takes the dish off
+            // the customer's menu, and an owner needs to know that before they
+            // wonder why it vanished.
+            ? 'Marked sold out — customers can no longer see it.'
+            : '$qty left today.'),
+      ));
+    } else {
+      _showStockError(context);
+    }
+  }
+
+  void _showStockError(BuildContext context) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Could not update the quantity.')),
+    );
   }
 
   Future<void> _loadCategories() async {
@@ -74,6 +141,7 @@ class _DishEditScreenState extends State<DishEditScreen> {
     _name.dispose();
     _price.dispose();
     _prep.dispose();
+    _stock.dispose();
     super.dispose();
   }
 
@@ -249,6 +317,68 @@ class _DishEditScreenState extends State<DishEditScreen> {
                     value: _isVeg,
                     onChanged: (v) => setState(() => _isVeg = v),
                   ),
+
+                  // LIMITED QUANTITY (migration 033). Edit-only: stock is set
+                  // against an existing dish through its own endpoint, not
+                  // carried in the create payload. Offering it on the add form
+                  // would imply the number is saved with the dish, and it is
+                  // not — a separate call writes it, and that call needs the
+                  // id this form does not have yet.
+                  if (widget.isEdit) ...[
+                    SwitchListTile(
+                      key: const Key('dish_limited_quantity_toggle'),
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Limited quantity today'),
+                      subtitle: Text(
+                        _stockTracked
+                            ? 'Customers cannot order more than the number below.'
+                            : 'Off — unlimited, as usual.',
+                      ),
+                      value: _stockTracked,
+                      onChanged: _savingStock
+                          ? null
+                          : (v) => _onStockToggled(context, v),
+                    ),
+                    if (_stockTracked)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextFormField(
+                                key: const Key('dish_stock_field'),
+                                controller: _stock,
+                                decoration: const InputDecoration(
+                                  labelText: 'Remaining today',
+                                  // Named "remaining", not "quantity": this is
+                                  // the LIVE count and it goes down as orders
+                                  // land. An owner who reads it as "how many I
+                                  // started with" would re-type the original
+                                  // number and silently restock.
+                                  helperText:
+                                      'Live count — drops as orders come in.',
+                                ),
+                                keyboardType: TextInputType.number,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            FilledButton(
+                              key: const Key('dish_stock_save'),
+                              onPressed: _savingStock
+                                  ? null
+                                  : () => _saveStock(context),
+                              child: _savingStock
+                                  ? const SizedBox(
+                                      height: 18, width: 18,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2))
+                                  : const Text('Update'),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+
                   const SizedBox(height: 24),
                   FilledButton(
                     onPressed: _saving ? null : _save,

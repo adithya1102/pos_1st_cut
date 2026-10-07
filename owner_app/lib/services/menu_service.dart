@@ -80,4 +80,25 @@ class MenuService {
     final map = data as Map<String, dynamic>;
     return (map['is_available'] as bool?) ?? isAvailable;
   }
+
+  /// `POST /pos/menu-items/{id}/stock` — set or clear today's limited quantity.
+  ///
+  /// [quantity] of null means UNTRACKED (unlimited), not zero. The server also
+  /// flips `is_available` as a side effect — 0 hides the dish, and a positive
+  /// number on a sold-out dish brings it back — so the response carries both
+  /// and the caller should use them rather than assuming.
+  Future<({int? stockRemaining, bool isAvailable})> setStock(
+    String itemId,
+    int? quantity,
+  ) async {
+    final data = await _client.post(
+      '/pos/menu-items/$itemId/stock',
+      body: {'quantity': quantity},
+    );
+    final map = data as Map<String, dynamic>;
+    return (
+      stockRemaining: (map['stock_remaining'] as num?)?.toInt(),
+      isAvailable: (map['is_available'] as bool?) ?? true,
+    );
+  }
 }

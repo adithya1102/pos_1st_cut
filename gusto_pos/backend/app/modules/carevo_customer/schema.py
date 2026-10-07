@@ -546,6 +546,10 @@ class OwnerMenuItemOut(BaseModel):
     is_veg: bool = True
     prep_time_minutes: Optional[int] = None
     image_url: Optional[str] = None
+    #: Limited quantity (migration 033). None = UNTRACKED (unlimited), which is
+    #: every item until an owner sets a number — and the reason this is
+    #: Optional rather than defaulting to 0, since 0 means "sold out".
+    stock_remaining: Optional[int] = None
     category_id: Optional[uuid.UUID] = None
     category_name: Optional[str] = None
 

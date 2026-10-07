@@ -22,6 +22,15 @@ class DishRow extends StatelessWidget {
     final dimmed = !item.isAvailable;
     final subtitleParts = <String>[
       item.isAvailable ? 'Available' : 'Unavailable',
+      // LIVE REMAINING COUNT (migration 033), shown only for a tracked dish.
+      // An untracked one says nothing extra, so the row is unchanged for
+      // every dish until an owner opts it in.
+      //
+      // Worth showing here rather than only in the editor: a counter watching
+      // this list needs to see "2 left" without opening anything, and
+      // "Unavailable · 0 left" is the difference between a dish someone
+      // switched off and one that genuinely ran out.
+      if (item.isStockTracked) '${item.stockRemaining} left',
       if (item.categoryName != null && item.categoryName!.isNotEmpty) item.categoryName!,
       if (item.prepTimeMinutes != null) '${item.prepTimeMinutes} min',
     ];

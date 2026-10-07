@@ -2981,6 +2981,9 @@ class CarevoService:
     _OWNER_ITEM_COLS = """
         mi.id, mi.name, mi.is_available, mi.is_active, mi.base_price,
         mi.is_veg, mi.prep_time_minutes, mi.image_url,
+        -- Limited quantity (migration 033). NULL = untracked, which is every
+        -- item until an owner sets a number.
+        mi.stock_remaining,
         c.id AS category_id, c.name AS category_name
     """
 
@@ -2995,6 +2998,7 @@ class CarevoService:
             "is_veg": bool(r.is_veg),
             "prep_time_minutes": r.prep_time_minutes,
             "image_url": r.image_url,
+            "stock_remaining": r.stock_remaining,
             "category_id": r.category_id,
             "category_name": r.category_name,
         }
