@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import text
 
 from app.core.config import settings
@@ -418,6 +419,39 @@ class TestAdminScheduledOrdersView:
     is the property a future "just reuse the testing query" refactor would
     silently destroy.
     """
+
+    @pytest_asyncio.fixture(autouse=True)
+    async def _isolate_from_accumulated_rows(self, db):
+        """Retire every PRE-EXISTING scheduled order before each test here.
+
+        WHY THIS EXISTS. /admin/prediction/scheduled selects
+        `WHERE requested_pickup_at IS NOT NULL`, orders by
+        `(release_at IS NULL), release_at ASC, requested_pickup_at DESC`, and
+        LIMITs — default 100, server-capped at 500. The tests below create one
+        scheduled order and then assert it is present in the response.
+
+        The local carevo_test database is a long-lived throwaway that
+        accumulates across runs; it passed 400 scheduled rows during this
+        pass. Once the set exceeds the limit, a newly created order can sort
+        outside the returned page and these tests fail with StopIteration or a
+        ValueError from `.index()` — which looks exactly like a regression in
+        the view and is not one. That misdiagnosis already happened once in
+        this session: the four failures were reproduced with every production
+        change stashed, proving they were data volume, not code.
+
+        Raising the limit is not the fix — 500 is the server's own cap and the
+        row count is already close to it. Narrowing the fixture is, and
+        clearing requested_pickup_at is non-destructive here: these are
+        finished orders from earlier tests, nothing reads the column on a
+        terminal order, and the database is a throwaway.
+        """
+        await db.execute(text(
+            "UPDATE customer_orders SET requested_pickup_at = NULL, "
+            "release_at = NULL WHERE requested_pickup_at IS NOT NULL"))
+        await db.execute(text(
+            "DELETE FROM auto_advance_schedule WHERE kind = 'release'"))
+        await db.commit()
+        yield
 
     async def _admin(self, client, seed, **params):
         q = "&".join(f"{k}={v}" for k, v in params.items())

@@ -667,6 +667,19 @@ class TestAdminSurfaces:
         await _force_deadline_past(db, order["id"])
         await AcceptanceService.process_acceptance_deadlines(db, order_id=order["id"])
 
+        # Clear every OTHER flagged order first.
+        #
+        # The endpoint is oldest-flagged-first with a limit, which is correct
+        # (it is a queue of obligations). But every expiry and reject in this
+        # file flags one, so by the time this test runs the shared throwaway DB
+        # holds well over the default 100 and the order just created sits
+        # outside the first page. Narrowing the fixture is the right fix; raising
+        # the limit would only postpone the same flake.
+        await db.execute(text(
+            "UPDATE customer_orders SET refund_required = false WHERE id <> :i"),
+            {"i": order["id"]})
+        await db.commit()
+
         r = await client.get(f"{API}/admin/orders/refund-due",
                              headers=seed["admin_auth"])
         assert r.status_code == 200, r.text
