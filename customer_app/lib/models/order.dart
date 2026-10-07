@@ -172,6 +172,9 @@ class OrderStatus {
     this.waitEstimate,
     this.originalAmount = 0,
     this.discountAmount = 0,
+    this.acceptanceState,
+    this.acceptanceDeadlineAt,
+    this.refundRequired = false,
   });
 
   final String id;
@@ -190,6 +193,53 @@ class OrderStatus {
   final String? createdAt;
   final String? updatedAt;
   final WaitEstimate? waitEstimate;
+
+  /// Manual acceptance (backend migration 032).
+  ///
+  /// NULL for every order at an outlet on automatic acceptance, which is every
+  /// outlet until one opts in. Its PRESENCE — not any status value — is the
+  /// signal that this restaurant has to confirm the order, because an awaiting
+  /// order's [status] is `PAID`, exactly like an auto order's. Gating on null
+  /// is therefore the only correct test, and [requiresConfirmation] is the one
+  /// place that decision lives.
+  ///
+  /// AWAITING | ACCEPTED | REJECTED | EXPIRED.
+  final String? acceptanceState;
+
+  /// When the restaurant's window to confirm runs out. Exposed so the screen
+  /// can count down rather than spin indefinitely — "waiting" with no visible
+  /// end is the worst version of this screen.
+  final String? acceptanceDeadlineAt;
+
+  /// Money was taken and no food is coming.
+  final bool refundRequired;
+
+  /// True only for an outlet that requires manual confirmation.
+  ///
+  /// Every acceptance-aware branch in the UI hangs off this, so an auto-mode
+  /// order can never take one: the field is null there and this is false.
+  bool get requiresConfirmation =>
+      acceptanceState != null && acceptanceState!.isNotEmpty;
+
+  /// Paid, but nobody at the restaurant has confirmed it yet.
+  bool get isAwaitingConfirmation =>
+      acceptanceState?.toUpperCase() == 'AWAITING';
+
+  /// The restaurant confirmed it. From here the screen is the ordinary one.
+  bool get isConfirmed => acceptanceState?.toUpperCase() == 'ACCEPTED';
+
+  /// Nobody answered in time. Distinct from a REJECTED order — the customer
+  /// was not turned down, they were ignored — but the outcome for them is the
+  /// same, so the copy does not labour the difference.
+  bool get isConfirmationExpired =>
+      acceptanceState?.toUpperCase() == 'EXPIRED';
+
+  /// The pickup code exists but must NOT be shown yet.
+  ///
+  /// A code shown before confirmation is an invitation to walk to a restaurant
+  /// that has not agreed to make the food, so it is withheld until ACCEPTED
+  /// even though the server has already allocated it.
+  bool get pickupCodeHidden => isAwaitingConfirmation;
 
   factory OrderStatus.fromJson(Map<String, dynamic> json) {
     final total = (json['total_amount'] as num?)?.toDouble() ?? 0;
@@ -210,6 +260,11 @@ class OrderStatus {
       waitEstimate: json['wait_estimate'] is Map<String, dynamic>
           ? WaitEstimate.fromJson(json['wait_estimate'] as Map<String, dynamic>)
           : null,
+      // Absent on an older backend and on every auto-mode order, which is why
+      // these are read defensively rather than required.
+      acceptanceState: json['acceptance_state']?.toString(),
+      acceptanceDeadlineAt: json['acceptance_deadline_at']?.toString(),
+      refundRequired: (json['refund_required'] as bool?) ?? false,
     );
   }
 

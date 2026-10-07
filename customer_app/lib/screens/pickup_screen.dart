@@ -34,12 +34,21 @@ class PickupScreen extends StatefulWidget {
     this.paymentOrder,
     this.paymentReason,
     this.fromHistory = false,
+    this.outletName,
     this.graceWindow = defaultGraceWindow,
     this.confirmPollInterval = defaultConfirmPollInterval,
   });
 
   final String orderId;
   final double? amount;
+
+  /// The restaurant's name, used only by the manual-acceptance waiting copy
+  /// ("Waiting for {restaurant} to confirm").
+  ///
+  /// Optional, and the copy falls back to "the restaurant" when it is absent —
+  /// every existing call site omits it and none of them can reach that copy
+  /// anyway, since an auto-mode order has no acceptance_state.
+  final String? outletName;
 
   /// True when reached from Order History rather than straight from checkout.
   ///
@@ -461,6 +470,14 @@ class _PickupScreenState extends State<PickupScreen>
     final step = status?.stepIndex ?? 0;
     final isPaid = status?.paymentStatus.toUpperCase() == 'PAID';
     final completed = status?.isCompleted ?? false;
+
+    // Manual acceptance (migration 032). ALL THREE are false for an auto-mode
+    // order, because OrderStatus.acceptanceState is null there — so every
+    // branch guarded by them is unreachable at an outlet that has not opted
+    // in, and this screen renders exactly as it did before.
+    final awaitingConfirmation = status?.isAwaitingConfirmation ?? false;
+    final confirmationExpired = status?.isConfirmationExpired ?? false;
+    final refundDue = status?.refundRequired ?? false;
     final estimate = status?.waitEstimate;
 
     // Inline payment-confirmation state. Only ever true while unpaid, so it
@@ -493,24 +510,36 @@ class _PickupScreenState extends State<PickupScreen>
                   // telling someone walking away with their food to go collect
                   // it.
                   Text(
-                    completed
-                        ? 'Enjoy your\nfood!'
-                        : (step >= 2
-                            ? 'Ready to\ncollect!'
-                            : (isPaid ? 'Order\nconfirmed.' : 'Almost\nthere.')),
+                    // AWAITING is checked FIRST, before `completed` and before
+                    // the stepper. An unconfirmed order's status is PAID, so
+                    // every branch below would otherwise claim it is confirmed
+                    // — the one thing it is not.
+                    awaitingConfirmation
+                        ? 'Just a\nmoment.'
+                        : confirmationExpired
+                            ? 'Order\ncancelled.'
+                            : completed
+                                ? 'Enjoy your\nfood!'
+                                : (step >= 2
+                                    ? 'Ready to\ncollect!'
+                                    : (isPaid ? 'Order\nconfirmed.' : 'Almost\nthere.')),
                     style: textTheme.displaySmall,
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    completed
-                        ? 'Collected — that\'s everything. Thanks for skipping the line.'
-                        : (isPaid
-                            ? 'Show or say your pickup code at the counter.'
-                            : retrying
-                                ? 'The payment didn\'t go through — you can try '
-                                    'again below.'
-                                : 'Confirming your payment — this is usually '
-                                    'instant.'),
+                    awaitingConfirmation
+                        ? kAwaitingConfirmationBody(widget.outletName)
+                        : (confirmationExpired || refundDue)
+                            ? kRefundCopyTodo
+                            : completed
+                                ? 'Collected — that\'s everything. Thanks for skipping the line.'
+                                : (isPaid
+                                    ? 'Show or say your pickup code at the counter.'
+                                    : retrying
+                                        ? 'The payment didn\'t go through — you can try '
+                                            'again below.'
+                                        : 'Confirming your payment — this is usually '
+                                            'instant.'),
                     style: textTheme.bodyLarge?.copyWith(color: c.inkSoft),
                   ),
                   const SizedBox(height: 20),
@@ -530,7 +559,12 @@ class _PickupScreenState extends State<PickupScreen>
                     )
                   else
                     _PickupCodeCard(
-                      code: status?.pickupCode,
+                      // WITHHELD, not absent — the server has already
+                      // allocated it. Showing a code before the restaurant has
+                      // agreed to make the food invites someone to walk there
+                      // for nothing.
+                      code: awaitingConfirmation ? null : status?.pickupCode,
+                      awaitingConfirmation: awaitingConfirmation,
                       // Stop highlighting once collected: the code has been used
                       // and no longer needs to pull the eye.
                       highlight: step >= 2 && !completed,
@@ -882,16 +916,49 @@ class _WaitFeedbackCard extends StatelessWidget {
   }
 }
 
+/// Customer-facing refund copy. ONE constant, deliberately.
+///
+/// PLACEHOLDER AWAITING APPROVAL — the `REFUND_COPY_TODO:` prefix is there so
+/// it cannot ship unnoticed. The wording commits the restaurant to returning
+/// money the app never sees move: there is no gateway refund call anywhere in
+/// the backend, refunds are settled by a human off-app, so whatever this says
+/// has to match what that human will actually do. That is not a decision to
+/// take in a UI file.
+///
+/// Kept as a single constant so approving the final wording is a one-line
+/// change rather than a hunt through widgets. The current text deliberately
+/// promises no timeline.
+const String kRefundCopyTodo =
+    'REFUND_COPY_TODO: Your payment is being refunded. Please contact the '
+    'restaurant if you need it sooner.';
+
+/// Body copy while a manual-acceptance restaurant has not yet confirmed.
+String kAwaitingConfirmationBody(String? restaurant) {
+  final who = (restaurant == null || restaurant.trim().isEmpty)
+      ? 'the restaurant'
+      : restaurant.trim();
+  return 'Waiting for $who to confirm your order.';
+}
+
+/// Replaces the pickup code while the order is unconfirmed.
+const String kCodeHiddenUntilConfirmed = 'Appears once the restaurant confirms';
+
 class _PickupCodeCard extends StatelessWidget {
   const _PickupCodeCard({
     required this.code,
     required this.highlight,
     required this.paid,
     this.completed = false,
+    this.awaitingConfirmation = false,
   });
   final String? code;
   final bool highlight;
   final bool paid;
+
+  /// Manual acceptance (migration 032): the code is withheld rather than
+  /// missing. Changes only the placeholder copy — "Appears after payment"
+  /// would be a lie here, since the payment has already succeeded.
+  final bool awaitingConfirmation;
 
   /// Already handed over. The code stays visible as a receipt, but every piece
   /// of copy switches out of the imperative — nothing here is an instruction
@@ -942,7 +1009,14 @@ class _PickupCodeCard extends StatelessWidget {
             Icon(Icons.lock_clock, color: t.inkSoft, size: 38),
             const SizedBox(height: 8),
             Text(
-              'Appears after payment',
+              // "Appears after payment" would be a lie once the payment has
+              // succeeded and the restaurant simply has not confirmed yet.
+              awaitingConfirmation
+                  ? kCodeHiddenUntilConfirmed
+                  : 'Appears after payment',
+              key: awaitingConfirmation
+                  ? const Key('pickup_code_hidden_awaiting')
+                  : null,
               textAlign: TextAlign.center,
               style: TextStyle(
                   color: t.ink, fontSize: 16, fontWeight: FontWeight.w700),
@@ -954,7 +1028,12 @@ class _PickupCodeCard extends StatelessWidget {
                 ? 'Handed over. Hope it was worth skipping the line for.'
                 : hasCode
                     ? (highlight ? 'Your food is ready!' : 'Keep this handy')
-                    : 'The restaurant will confirm your payment shortly.',
+                    : awaitingConfirmation
+                        // The payment is NOT in question here — only whether
+                        // the kitchen has accepted the order.
+                        ? 'Your payment went through. The restaurant is '
+                            'confirming now.'
+                        : 'The restaurant will confirm your payment shortly.',
             textAlign: TextAlign.center,
             style: TextStyle(color: t.inkSoft, fontSize: 14),
           ),

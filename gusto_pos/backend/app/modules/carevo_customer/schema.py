@@ -354,6 +354,25 @@ class OrderOut(BaseModel):
     requested_pickup_at: Optional[datetime] = None
     release_at: Optional[datetime] = None
 
+    # Manual acceptance + refunds (migration 032). ADDITIVE in both directions:
+    # None/False for every order at an acceptance_mode='auto' outlet — which is
+    # every outlet until one opts in — and an already-installed build ignores
+    # unknown fields.
+    #
+    # acceptance_state is what the app GATES ON. Its presence is the signal
+    # that this outlet requires confirmation, which is why the client must test
+    # for null rather than for a status: an awaiting order's status is PAID,
+    # exactly like an auto order's, so status alone cannot tell them apart.
+    #
+    # acceptance_deadline_at is exposed so the app can show a countdown rather
+    # than an indefinite spinner — "waiting" with no visible end is the worst
+    # version of this screen.
+    acceptance_state: Optional[str] = None
+    acceptance_deadline_at: Optional[datetime] = None
+    #: True when money was taken and no food will be delivered. Drives the
+    #: customer-facing refund message.
+    refund_required: bool = False
+
 
 # ---------------------------- Payment ---------------------------------------
 class SimulatePaymentIn(BaseModel):

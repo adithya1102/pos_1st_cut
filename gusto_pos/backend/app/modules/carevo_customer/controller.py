@@ -364,6 +364,12 @@ async def get_order(
         "picked_up": progress["picked_up"],
         "requested_pickup_at": sched.requested_pickup_at if sched else None,
         "release_at": sched.release_at if sched else None,
+        # Manual acceptance + refund (032). Read off the ORM object because,
+        # unlike the 031 columns above, these ARE mapped — see the migration
+        # commit for why that trade-off was taken here and not there.
+        "acceptance_state": order.acceptance_state,
+        "acceptance_deadline_at": order.acceptance_deadline_at,
+        "refund_required": bool(order.refund_required),
         "items": [
             {
                 "id": it.id,

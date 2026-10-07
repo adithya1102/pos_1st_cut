@@ -35,6 +35,26 @@ import 'api_client.dart';
 /// Android is trying to keep cheap, and anything touching app state would be
 /// writing to an isolate that the UI cannot see. The app re-reads its data on
 /// resume anyway, which is the correct place for it.
+/// ## Manual acceptance (backend migration 032) adds nothing here
+///
+/// Checked rather than assumed. The two new push kinds — `NEW_ORDER_PENDING`
+/// and `ORDER_RESOLVED` — are STAFF-addressed: `PushService.send_staff` reads
+/// `users.fcm_token`, while everything this app receives goes through `send`
+/// and `customers.fcm_token`. A customer device is never a recipient of either,
+/// so there is no new kind to branch on.
+///
+/// What a customer DOES receive when an order expires unaccepted is the
+/// ordinary `ORDER_STATUS` push for `CANCELLED`, which already has its own
+/// copy (`_ORDER_STATUS_COPY` in the backend) and already reaches them through
+/// `_broadcast_status` — the single choke point every status transition uses.
+/// That copy was written for the staff-reject case and is correct for this one
+/// too: from the customer's side "they said no" and "nobody answered" are the
+/// same event.
+///
+/// The screen state is driven by `acceptance_state` on the order payload and
+/// the existing 4-second poll, not by push. That is deliberate: a push can be
+/// dropped (these carry ttl=60s), and the waiting screen must not depend on
+/// one arriving.
 @pragma('vm:entry-point')
 Future<void> customerBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
