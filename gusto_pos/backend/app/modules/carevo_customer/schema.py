@@ -589,7 +589,40 @@ class OwnerOrderOut(BaseModel):
     #: stops being returned once that window closes (CarevoService.
     #: COMPLETED_GRACE), so the app never has to time the removal itself.
     pickup_verified_at: Optional[datetime] = None
+    #: Manual acceptance (migration 032). ADDITIVE and Optional: None for every
+    #: order at an `acceptance_mode='auto'` outlet, which is every outlet until
+    #: one opts in — so an owner_app build that does not know these fields
+    #: exist is unaffected.
+    acceptance_state: Optional[str] = None
+    acceptance_deadline_at: Optional[datetime] = None
     items: list[OwnerOrderLineOut] = []
+
+
+class AcceptOrderIn(BaseModel):
+    """`prep_minutes` is the restaurant's OWN estimate, and is required.
+
+    Required rather than defaulted because the whole point of a manual accept
+    is that a human looked at the order and formed a view; a silent default
+    would record a promise nobody made. It is stored in
+    prep_minutes_committed for later comparison against order_outcome — the
+    customer-facing ETA still comes from the prediction engine, not from this.
+    """
+
+    prep_minutes: int = Field(..., gt=0, le=240)
+
+
+class AcceptOrderOut(BaseModel):
+    order_id: uuid.UUID
+    status: str
+    acceptance_state: str
+    prep_minutes: int
+
+
+class AlertAckOut(BaseModel):
+    order_id: uuid.UUID
+    #: False when the order was no longer AWAITING — an ack racing the
+    #: resolution it describes is normal, not an error.
+    acknowledged: bool
 
 
 class LookupPickupOut(BaseModel):

@@ -1389,9 +1389,31 @@ class CarevoService:
         if order_id is not None:
             clauses.append("id = :iid")
             params["iid"] = str(order_id)
+        # refund_required is set HERE, in the same UPDATE, for any order that
+        # had actually been paid (migration 032).
+        #
+        # This is the discrepancy the flag was added to make visible. The
+        # comment beside ORDER_ABANDONED describes this sweeper as expiring
+        # "an order nobody paid for" — but _LIVE_STATUSES is
+        # {PAID, RECEIVED, PREPARING, READY}, so the predicate above has always
+        # abandoned PAID orders too. A customer whose paid food was never
+        # collected within the TTL is owed their money whether or not the copy
+        # said so, and before this there was no queryable record of it.
+        #
+        # Conditional in SQL rather than in a second pass, so the flag can
+        # never disagree with the status transition that caused it.
         rows = (await db.execute(text(
-            "UPDATE customer_orders SET status='ABANDONED', updated_at=now() "
-            "WHERE " + " AND ".join(clauses) + " RETURNING id, outlet_id"
+            "UPDATE customer_orders SET status='ABANDONED', updated_at=now(), "
+            "    refund_required = CASE WHEN payment_status = 'PAID' "
+            "                           THEN true ELSE refund_required END, "
+            "    refund_reason = CASE WHEN payment_status = 'PAID' "
+            "                         AND NOT refund_required "
+            "                         THEN 'ttl_abandoned' ELSE refund_reason END, "
+            "    refund_flagged_at = CASE WHEN payment_status = 'PAID' "
+            "                             AND NOT refund_required "
+            "                             THEN now() ELSE refund_flagged_at END "
+            "WHERE " + " AND ".join(clauses)
+            + " RETURNING id, outlet_id, payment_status"
         ), params)).fetchall()
         if rows:
             # FR-E1: one ORDER_ABANDONED per expired order, same transaction.
@@ -1400,7 +1422,12 @@ class CarevoService:
                     db, r.id, pe.ORDER_ABANDONED,
                     actor_type="system", source="system", outlet_id=r.outlet_id,
                     payload={"reason": "pickup_ttl_expired",
-                             "ttl_minutes": settings.PICKUP_TTL_MINUTES},
+                             "ttl_minutes": settings.PICKUP_TTL_MINUTES,
+                             # Records whether this abandonment took money with
+                             # it, which is what distinguishes the two very
+                             # different things this one event has always meant.
+                             "was_paid": (r.payment_status or "").upper() == "PAID",
+                             "refund_required": (r.payment_status or "").upper() == "PAID"},
                 )
             await db.commit()
             # PE Step 4: score terminal (abandoned) orders too, best-effort.
@@ -1592,7 +1619,20 @@ class CarevoService:
         # trusted_order_count, and trusted_order_count feeds straight back into
         # sigma — the first scheduled orders would poison the very statistic the
         # engine uses to size its own uncertainty.
-        if not held:
+        # ALSO not for a MANUAL-acceptance outlet (migration 032). There, the
+        # same reasoning applies for a different cause: nobody has accepted the
+        # order yet, so inferring "accepted, and cooking started" from payment
+        # would be a plain untruth — and the same compute_outcome arithmetic
+        # would charge the restaurant's median_prep_s with however long the
+        # tablet sat unanswered. The events are emitted on the Accept tap
+        # instead (AcceptanceService.accept), in the identical pair and order.
+        #
+        # An AUTO outlet — every outlet until someone opts in — takes this
+        # branch exactly as before.
+        from app.modules.carevo_customer.acceptance import AcceptanceService
+        manual = await AcceptanceService.is_manual(db, order.outlet_id)
+
+        if not held and not manual:
             await pe.write_event(
                 db, order.id, pe.ORDER_ACCEPTED,
                 actor_type="system", source="inferred", outlet_id=order.outlet_id,
@@ -1603,6 +1643,13 @@ class CarevoService:
                 actor_type="system", source="inferred", outlet_id=order.outlet_id,
                 payload={"derived_from": "mark_paid"},
             )
+
+        # Manual + immediate: start the acceptance clock in THIS transaction,
+        # atomically with the PAID transition. A held order does NOT start its
+        # clock here — _release_held_order does it at release, because a pickup
+        # three hours out would otherwise expire before the kitchen saw it.
+        if manual and not held:
+            await AcceptanceService.begin_awaiting(db, order, reason="payment")
 
         # Loyalty accrual (migration 010), in the SAME transaction as the PAID
         # transition: points are earned iff the payment is recorded, and the two
@@ -1754,11 +1801,38 @@ class CarevoService:
         order.status = "CANCELLED"
         order.updated_at = datetime.now(timezone.utc)
 
+        # A rejected PAID order owes the customer money (migration 032). This
+        # is the flag's primary writer and the reason it exists: before it, the
+        # only record was an ORDER_REJECTED event nobody queried, so "who are
+        # we paying back" had to be reconstructed from the event log by hand.
+        #
+        # Guarded on payment_status so rejecting an unpaid order — which the
+        # REJECTABLE_STATUSES gate permits — does not flag a refund for money
+        # that never arrived.
+        was_paid = (order.payment_status or "").upper() == "PAID"
+        if was_paid and not order.refund_required:
+            order.refund_required = True
+            order.refund_reason = "order_rejected"
+            order.refund_flagged_at = datetime.now(timezone.utc)
+
+        # Settle the ACCEPTANCE axis in the SAME transaction as the status, for
+        # a manual-mode order. If these were separate, the deadline sweeper
+        # could expire an order a human had just rejected and the order would
+        # carry two terminal causes. Returns False for an auto-mode order
+        # (acceptance_state NULL), which is the common case and not an error.
+        from app.modules.carevo_customer.acceptance import AcceptanceService
+        was_awaiting = await AcceptanceService.cas_reject(db, order.id)
+        if was_awaiting:
+            # Any decision proves the outlet is answering again.
+            await AcceptanceService._reset_expiries(db, order.outlet_id)
+
         await pe.write_event(
             db, order.id, pe.ORDER_REJECTED,
             actor_type="staff", source="tap", outlet_id=order.outlet_id,
             actor_id=actor_user_id,
-            payload={"reason": reason, "from_status": current},
+            payload={"reason": reason, "from_status": current,
+                     "was_awaiting_acceptance": was_awaiting,
+                     "refund_required": bool(was_paid)},
         )
         await db.commit()
         await db.refresh(order)
@@ -1766,6 +1840,11 @@ class CarevoService:
         # Same choke point every other transition uses, so the customer's WS
         # banner and the FCM push both fire from one place.
         await CarevoService._broadcast_status(order, db)
+
+        # Stop the OTHER devices ringing. Only meaningful when this reject
+        # settled a pending acceptance — in auto mode nothing was alarming.
+        if was_awaiting:
+            await AcceptanceService._announce_resolved(db, order, outcome="rejected")
         return {
             "order_id": order.id,
             "status": order.status,
@@ -2149,6 +2228,29 @@ class CarevoService:
         await db.execute(text(
             "UPDATE customer_orders SET release_at = NULL WHERE id = :id"),
             {"id": str(order_id)})
+
+        # MANUAL-ACCEPTANCE OUTLET: release means "the kitchen may now SEE it",
+        # not "the kitchen has it". The hold is cleared and the schedule row
+        # swapped from kind='release' to kind='acceptance', but the inferred
+        # event pair is still withheld and the order does NOT advance to
+        # RECEIVED — a human has to tap Accept, and the clock starts HERE
+        # rather than at payment. Starting it at payment would expire a
+        # three-hours-out pickup before the restaurant ever saw it, which is
+        # the whole reason this branch exists.
+        from app.modules.carevo_customer.acceptance import AcceptanceService
+        if await AcceptanceService.is_manual(db, order.outlet_id):
+            await AcceptanceService.begin_awaiting(
+                db, order, reason="scheduled_release")
+            await CarevoService._log_release_decision(
+                db, order_id=order_id, outlet_id=order.outlet_id, mu=mu,
+                sigma=sigma, requested_pickup_at=requested_pickup_at,
+                release_at=datetime.now(timezone.utc), decision="released",
+                margin_s=margin_s)
+            await db.commit()
+            await db.refresh(order)
+            await AcceptanceService.send_first_alert(db, order)
+            return order
+
         # The events mark_paid deliberately withheld. source='inferred' and the
         # same payload shape as the mark_paid pair, so nothing downstream has to
         # learn a new event type — only their TIMING changed, which is the whole
@@ -3047,6 +3149,21 @@ class CarevoService:
             await CarevoService._notify_kitchen_for_due_trains(db, outlet_id=outlet_id)
         except Exception:
             await db.rollback()
+        # Manual acceptance (032): advance the alert ladder and expire anything
+        # past its deadline, on the SAME check-on-read principle.
+        #
+        # This is not a backup for the durable poller, it is a co-equal driver.
+        # owner_app polls here every 15 seconds while the tablet is open, and a
+        # free-tier instance that has gone to sleep runs no poller at all — so
+        # for a 180-second deadline, the staff poll is frequently the only
+        # thing that can fire it. Both drivers are safe to overlap because
+        # every transition in AcceptanceService is a compare-and-set.
+        try:
+            from app.modules.carevo_customer.acceptance import AcceptanceService
+            await AcceptanceService.process_acceptance_deadlines(
+                db, outlet_id=outlet_id)
+        except Exception:
+            await db.rollback()
         # A verified pickup lingers for COMPLETED_GRACE, then drops out on its
         # own. It used to vanish the instant staff tapped verify, which left no
         # window to notice a mistake — and no way to confirm the right order was
@@ -3061,7 +3178,11 @@ class CarevoService:
         # order log still shows all of them. See CarevoService.RENAME_CUTOFF.
         orders = (await db.execute(text("""
             SELECT id, status, payment_status, is_locked, total_amount,
-                   created_at, pickup_verified_at
+                   created_at, pickup_verified_at,
+                   -- Manual acceptance (032). ADDITIVE: NULL for every order
+                   -- at an auto outlet, so the rows owner_app already renders
+                   -- are byte-identical.
+                   acceptance_state, acceptance_deadline_at
             FROM customer_orders
             WHERE outlet_id = :oid
               AND created_at >= :rename_cutoff
@@ -3126,6 +3247,11 @@ class CarevoService:
                 "total_amount": float(o.total_amount) if o.total_amount is not None else 0.0,
                 "created_at": o.created_at,
                 "pickup_verified_at": o.pickup_verified_at,
+                # Manual acceptance (032), additive. NULL/None at an auto
+                # outlet, which is what keeps owner_app's existing rendering
+                # unchanged until it learns to read them.
+                "acceptance_state": o.acceptance_state,
+                "acceptance_deadline_at": o.acceptance_deadline_at,
                 "items": by_order.get(str(o.id), []),
             }
             for o in orders

@@ -57,6 +57,39 @@ ORDER_REJECTED = "ORDER_REJECTED"
 # event and is not emitted by this path at all.
 KITCHEN_START_NOTIFIED = "KITCHEN_START_NOTIFIED"
 
+# --- manual acceptance (migration 032) --------------------------------------
+# The outlet has been ALERTED that a paid order is waiting for a human to
+# accept it. Emitted once when the order enters acceptance_state='AWAITING',
+# not on each rung of the re-push ladder — the ladder is a delivery detail and
+# lives in alert_count/last_alert_at, whereas this is the fact that the clock
+# started. A second ORDER_ALERTED for one order would make "time from alert to
+# decision" ambiguous.
+#
+# Purely a notification, like KITCHEN_START_NOTIFIED: it does not move the
+# status and does not imply acceptance.
+ORDER_ALERTED = "ORDER_ALERTED"
+
+# Nobody tapped Accept before acceptance_deadline_at, so the order was
+# cancelled by the system.
+#
+# A FOURTH distinct terminal cause, and the distinctions matter because they
+# answer different questions about the same final status:
+#   ORDER_ABANDONED  — the TTL sweeper expired it (pickup window elapsed)
+#   PAYMENT_FAILED   — the gateway declined
+#   ORDER_REJECTED   — a human said no
+#   ORDER_EXPIRED    — a human said NOTHING AT ALL
+# Only the last two are a restaurant-side failure, and only ORDER_EXPIRED
+# counts toward outlets.consecutive_expiries and the auto-close at 3.
+ORDER_EXPIRED = "ORDER_EXPIRED"
+
+# An admin recorded that a refund owed on this order has been settled.
+#
+# NOT a gateway event. Nothing in this repository calls a payment-provider
+# refund API; money moves off-app, and this is the audit trail of a human
+# saying it happened — hence actor_id is mandatory in practice at the call
+# site, so "who cleared this" is always answerable.
+ORDER_REFUND_MARKED = "ORDER_REFUND_MARKED"
+
 # actor_type ∈ {customer, staff, system}; source ∈ {tap, geofence, system, inferred}
 
 

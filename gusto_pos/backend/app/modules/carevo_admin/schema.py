@@ -330,3 +330,45 @@ class CityRenameOut(BaseModel):
     #: outlets.city is a varchar, NOT a FK to cities.id — nothing cascades, so
     #: the rename has to carry them explicitly or they are orphaned.
     outlets_updated: int
+
+
+# ---------------------- refunds + acceptance (migration 032) ----------------
+class RefundDueOut(BaseModel):
+    """One order on the "we owe this customer money" worklist."""
+
+    order_id: uuid.UUID
+    outlet_id: uuid.UUID
+    outlet_name: Optional[str] = None
+    total_amount: float
+    #: order_rejected | ttl_abandoned | acceptance_expired
+    refund_reason: Optional[str] = None
+    refund_flagged_at: Optional[datetime] = None
+    status: str
+    payment_status: Optional[str] = None
+    created_at: Optional[datetime] = None
+    #: Present so an admin can contact the customer about an off-app refund.
+    #: This is the ONE admin surface that deliberately carries it — the owner
+    #: queue is name-free by design.
+    customer_phone: Optional[str] = None
+
+
+class RefundMarkedOut(BaseModel):
+    order_id: uuid.UUID
+    #: True when the order was already cleared, so a double-tap is a no-op
+    #: rather than a second ORDER_REFUND_MARKED event.
+    already: bool
+    refund_required: bool
+
+
+class AcceptanceConfigIn(BaseModel):
+    mode: Literal["auto", "manual"]
+    #: Bounded to match the DB CHECK (30..1800). A 10-second deadline would
+    #: expire orders faster than a tablet can wake; an hour is not a deadline.
+    timeout_s: Optional[int] = Field(default=None, ge=30, le=1800)
+
+
+class AcceptanceConfigOut(BaseModel):
+    outlet_id: uuid.UUID
+    acceptance_mode: str
+    acceptance_timeout_s: int
+    consecutive_expiries: int

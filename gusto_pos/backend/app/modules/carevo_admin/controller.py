@@ -361,3 +361,63 @@ async def list_audit_logs(
     db: AsyncSession = Depends(get_db),
 ):
     return await AdminService.list_audit_logs(db, limit)
+
+
+# ---------------------- refunds + acceptance (migration 032) ----------------
+@router.get("/orders/refund-due", response_model=list[s.RefundDueOut])
+async def list_refund_due(
+    limit: int = Query(default=100, ge=1, le=500),
+    _admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Orders where money was taken and no food was delivered.
+
+    Three causes reach this list, all of which take payment and then fail:
+    a staff reject of a paid order, a TTL abandonment of a paid order, and an
+    acceptance deadline passing with nobody answering. The `refund_reason`
+    column distinguishes them.
+
+    THIS IS NOT A GATEWAY INTEGRATION. Nothing in this codebase calls a
+    Cashfree refund API; settling is manual and off-app. This endpoint is the
+    worklist, and mark-refunded below is the record that a human did it.
+    """
+    return await AdminService.list_refund_due(db, limit=limit)
+
+
+@router.post("/orders/{order_id}/refund-marked", response_model=s.RefundMarkedOut)
+async def mark_refund_done(
+    order_id: uuid.UUID,
+    admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Record that an owed refund has been settled off-app.
+
+    Writes ORDER_REFUND_MARKED with the acting admin, so "who cleared this and
+    when" is always answerable — that audit trail is the entire reason this is
+    an endpoint rather than a direct UPDATE. Idempotent: marking an already
+    cleared order answers 200 with already=true rather than writing a second
+    event.
+    """
+    return await AdminService.mark_refund_done(db, order_id, actor=admin)
+
+
+@router.patch("/outlets/{outlet_id}/acceptance", response_model=s.AcceptanceConfigOut)
+async def set_outlet_acceptance(
+    outlet_id: uuid.UUID,
+    payload: s.AcceptanceConfigIn,
+    _admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Switch one outlet between automatic and manual order acceptance.
+
+    SUPER_ADMIN only, and deliberately not an owner-facing setting: turning
+    manual mode on means orders can now be CANCELLED and refunded because
+    nobody tapped a button, which is a commercial decision about that
+    restaurant rather than a preference.
+
+    Switching to 'auto' does NOT retroactively accept orders already sitting in
+    AWAITING — they keep their deadline and resolve normally. Anything else
+    would make the switch a bulk silent accept.
+    """
+    return await AdminService.set_acceptance_config(
+        db, outlet_id, mode=payload.mode, timeout_s=payload.timeout_s)

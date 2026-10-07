@@ -1500,3 +1500,121 @@ class AdminService:
             "city_type": new_type,
             "modes": (await AdminService.city_modes_map(db)).get(str(city_id), {}),
         }
+
+    # ------------------ refunds + acceptance (migration 032) ----------------
+    @staticmethod
+    async def list_refund_due(db: AsyncSession, *, limit: int = 100) -> list[dict]:
+        """The refund worklist, oldest flag first.
+
+        Oldest first because this is a queue of obligations, not a feed: the
+        customer who has been waiting longest for their money is the one to
+        settle next. (Every other admin list in this file is newest-first, so
+        the deviation is deliberate.)
+
+        Served by the partial index customer_orders_refund_due_idx, which
+        covers exactly `WHERE refund_required`.
+        """
+        rows = (await db.execute(text("""
+            SELECT o.id, o.outlet_id, ou.location_name AS outlet_name,
+                   o.total_amount, o.refund_reason, o.refund_flagged_at,
+                   o.status, o.payment_status, o.created_at,
+                   c.phone_number AS customer_phone
+              FROM customer_orders o
+              LEFT JOIN outlets ou ON ou.id = o.outlet_id
+              LEFT JOIN customers c ON c.id = o.customer_id
+             WHERE o.refund_required
+             ORDER BY o.refund_flagged_at ASC NULLS LAST
+             LIMIT :lim
+        """), {"lim": limit})).fetchall()
+        return [
+            {
+                "order_id": r.id,
+                "outlet_id": r.outlet_id,
+                "outlet_name": r.outlet_name,
+                "total_amount": float(r.total_amount or 0),
+                "refund_reason": r.refund_reason,
+                "refund_flagged_at": r.refund_flagged_at,
+                "status": r.status,
+                "payment_status": r.payment_status,
+                "created_at": r.created_at,
+                "customer_phone": r.customer_phone,
+            }
+            for r in rows
+        ]
+
+    @staticmethod
+    async def mark_refund_done(db: AsyncSession, order_id, *, actor) -> dict:
+        """Clear the refund flag and record WHO cleared it.
+
+        Compare-and-set on refund_required, so a double-tap from two admins
+        writes exactly one ORDER_REFUND_MARKED. The second caller gets
+        already=true rather than an error — concurrent admins clearing the same
+        row is a race, not a mistake.
+
+        The event is the point of the endpoint. Money moves off-app; without an
+        actor-stamped event there would be no answer to "who said this was
+        paid back".
+        """
+        from app.modules.prediction import events as pe
+
+        row = (await db.execute(text(
+            "SELECT outlet_id, refund_required FROM customer_orders WHERE id = :i"
+        ), {"i": str(order_id)})).first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Order not found")
+
+        res = await db.execute(text("""
+            UPDATE customer_orders
+               SET refund_required = false
+             WHERE id = :i AND refund_required
+        """), {"i": str(order_id)})
+        if res.rowcount != 1:
+            await db.rollback()
+            return {"order_id": order_id, "already": True, "refund_required": False}
+
+        await pe.write_event(
+            db, order_id, pe.ORDER_REFUND_MARKED,
+            actor_type="staff", source="tap", outlet_id=row[0],
+            actor_id=getattr(actor, "id", None),
+            payload={"settled_by": getattr(actor, "username", None)},
+        )
+        await db.commit()
+        return {"order_id": order_id, "already": False, "refund_required": False}
+
+    @staticmethod
+    async def set_acceptance_config(
+        db: AsyncSession, outlet_id, *, mode: str, timeout_s=None
+    ) -> dict:
+        """Set acceptance_mode (and optionally the timeout) for one outlet.
+
+        timeout_s is optional so a caller can flip the mode without restating
+        a timeout they did not come to change; omitted leaves it as-is.
+
+        Deliberately does NOT touch orders already in AWAITING. Switching to
+        'auto' with a pending order would otherwise have to either accept it
+        (a bulk silent accept nobody tapped) or expire it (punishing the
+        customer for an admin's config change). Letting it resolve on its own
+        existing deadline is the only option that surprises nobody.
+        """
+        sets = ["acceptance_mode = :mode"]
+        params: dict = {"mode": mode, "oid": str(outlet_id)}
+        if timeout_s is not None:
+            sets.append("acceptance_timeout_s = :t")
+            params["t"] = int(timeout_s)
+
+        row = (await db.execute(text(f"""
+            UPDATE outlets SET {', '.join(sets)}
+             WHERE id = :oid
+            RETURNING id, acceptance_mode, acceptance_timeout_s,
+                      consecutive_expiries
+        """), params)).first()
+        if row is None:
+            await db.rollback()
+            raise HTTPException(status_code=404, detail="Outlet not found")
+        await db.commit()
+        return {
+            "outlet_id": row[0],
+            "acceptance_mode": row[1],
+            "acceptance_timeout_s": row[2],
+            "consecutive_expiries": row[3],
+        }

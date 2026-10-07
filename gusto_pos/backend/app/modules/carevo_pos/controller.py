@@ -228,6 +228,61 @@ async def list_active_orders(
 # the UPI-intent fallback should it ever be re-enabled deliberately.
 
 
+@router.post("/orders/{order_id}/accept", response_model=s.AcceptOrderOut)
+async def accept_order(
+    order_id: uuid.UUID,
+    payload: s.AcceptOrderIn,
+    staff: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Accept a pending order (manual-acceptance outlets only, migration 032).
+
+    Exists ONLY for `outlets.acceptance_mode='manual'`. At an auto outlet no
+    order is ever in AWAITING, so every call here 409s — which is the honest
+    answer: there is nothing to accept, the order was accepted on payment.
+
+    Compare-and-set on acceptance_state='AWAITING', so of two devices tapping
+    Accept, or an Accept arriving as the deadline sweeper expires the order,
+    exactly one wins and the loser gets 409 with the state that beat it.
+    Outlet-scoped: another outlet's order id is 404, not 403.
+
+    The events written are DELIBERATELY the same pair auto mode writes —
+    ORDER_ACCEPTED then PREP_STARTED — so nothing in prediction/ needs to
+    change. Only `source` ('tap' instead of 'inferred'), the staff actor and
+    the prep_minutes payload differ, all of which are fields that stream
+    already carries. The single genuinely new datum is accepted_at.
+    """
+    from app.modules.carevo_customer.acceptance import AcceptanceService
+
+    return await AcceptanceService.accept(
+        db, order_id, _require_outlet(staff),
+        prep_minutes=payload.prep_minutes, actor_user_id=staff.id,
+    )
+
+
+@router.post("/orders/{order_id}/alert-ack", response_model=s.AlertAckOut)
+async def acknowledge_alert(
+    order_id: uuid.UUID,
+    staff: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """"I have seen this alert" — stops the re-push ladder for one order.
+
+    Does NOT accept the order and does NOT stop the deadline. A restaurant that
+    has seen the alert and then done nothing must still expire, otherwise
+    acknowledging would become a way to park orders indefinitely while the
+    customer waits.
+
+    Answers 200 with acknowledged=false when the order is no longer AWAITING,
+    rather than 409: an ack racing the accept/reject/expiry it describes is the
+    normal case on a tablet with several devices, not a client error.
+    """
+    from app.modules.carevo_customer.acceptance import AcceptanceService
+
+    return await AcceptanceService.acknowledge(
+        db, order_id, _require_outlet(staff))
+
+
 @router.post("/orders/{order_id}/reject", response_model=s.RejectOrderOut)
 async def reject_order(
     order_id: uuid.UUID,

@@ -522,8 +522,30 @@ async def payment_webhook(request: Request, db: AsyncSession = Depends(get_db)):
             return {"ok": True, "outcome": "PAID", "applied": False,
                     "status": order.status, "pickup_code": order.pickup_code}
 
-        # No human gate: a paid order is an accepted order. Staff are pushed
-        # about it and may reject, but the order never waits to be noticed.
+        # MANUAL-ACCEPTANCE OUTLETS take a different path here (migration 032).
+        #
+        # mark_paid has already set acceptance_state='AWAITING' and stamped the
+        # deadline, in the same transaction as the PAID transition. What must
+        # NOT happen now is auto_receive: moving the order to RECEIVED would
+        # tell the customer "the restaurant has your order" before any human
+        # had seen it, and would take the order out of the state the Accept
+        # endpoint compares against.
+        #
+        # The alert replaces notify_outlet_new_order rather than joining it:
+        # two buzzes for one arrival, one of which says "intervene if wrong"
+        # and the other "accept or it expires", is how staff learn to ignore
+        # both. Different kind, too, so the new-order idempotency check cannot
+        # suppress the acceptance ladder's later rungs.
+        from app.modules.carevo_customer.acceptance import AcceptanceService
+        if (order.acceptance_state or "") == "AWAITING":
+            await AcceptanceService.send_first_alert(db, order)
+            return {"ok": True, "outcome": "PAID", "applied": True,
+                    "status": order.status, "pickup_code": order.pickup_code,
+                    "acceptance_state": order.acceptance_state}
+
+        # AUTO outlets — the default, and unchanged. No human gate: a paid
+        # order is an accepted order. Staff are pushed about it and may reject,
+        # but the order never waits to be noticed.
         order = await CarevoService.auto_receive(db, order)
         # Tell the outlet a new paid order landed. Best-effort — a push failure
         # must never affect a payment that already succeeded.
@@ -563,4 +585,17 @@ async def simulate_payment(
         raise HTTPException(status_code=403, detail="Simulation disabled (real gateway active)")
     order = await CarevoService.get_order(db, payload.order_id, customer)
     order = await CarevoService.mark_paid(db, order, method=payload.method)
-    return {"status": order.status, "pickup_code": order.pickup_code}
+
+    # Manual-acceptance outlets: mark_paid put the order into AWAITING, so the
+    # outlet has to be alerted from here too.
+    #
+    # Note this path never called auto_receive or notify_outlet_new_order even
+    # in auto mode — it is the stub payment used by the suite and by local
+    # walkthroughs, and the webhook is what drives the real cascade. Only the
+    # alert is added, so auto-mode behaviour through simulate is unchanged.
+    if (order.acceptance_state or "") == "AWAITING":
+        from app.modules.carevo_customer.acceptance import AcceptanceService
+        await AcceptanceService.send_first_alert(db, order)
+
+    return {"status": order.status, "pickup_code": order.pickup_code,
+            "acceptance_state": order.acceptance_state}

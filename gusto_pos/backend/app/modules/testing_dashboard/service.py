@@ -851,6 +851,32 @@ class TestingService:
                 except Exception:
                     pass
 
+        # --- acceptance rows: no switch either (migration 032) ----------------
+        #
+        # Same reasoning as release rows, and for a sharper reason: an
+        # acceptance deadline that silently never fires leaves a real
+        # customer's paid order waiting forever on a restaurant that is not
+        # answering, with no refund flagged. AUTO_ADVANCE_ROSTER_ORDERS is a
+        # TESTING kill switch and is off in production, so gating this on it
+        # would mean manual acceptance never expires anything in prod.
+        #
+        # Deliberately NOT restricted to due rows only. process_acceptance_
+        # deadlines also drives the re-push ladder, whose rungs fall at 30s
+        # intervals BEFORE the deadline — selecting `due_at <= now` would mean
+        # the poller never sent rungs 2 and 3, only the expiry. The whole
+        # AWAITING set is swept instead, bounded by the partial index
+        # customer_orders_awaiting_acceptance_idx and by AWAITING being a
+        # transient state holding a handful of rows per outlet.
+        try:
+            from app.modules.carevo_customer.acceptance import AcceptanceService
+            res = await AcceptanceService.process_acceptance_deadlines(db)
+            processed += res.get("expired", 0) + res.get("alerted", 0)
+        except Exception:
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+
         if not settings.AUTO_ADVANCE_ROSTER_ORDERS:
             return processed
         due = (await db.execute(text(

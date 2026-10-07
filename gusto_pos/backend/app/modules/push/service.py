@@ -50,6 +50,18 @@ KIND_ITEM_UNAVAILABLE = "ITEM_UNAVAILABLE"
 # staff can tell "an order arrived" from "an order is due to start", and so
 # the two can never suppress each other's idempotency check.
 KIND_TRAIN_START_DUE = "TRAIN_START_DUE"
+# --- manual acceptance (migration 032) --------------------------------------
+# "A paid order is WAITING for you to accept it, and it will expire." Distinct
+# from STAFF_NEW_ORDER, which is the auto-mode "an order arrived, intervene if
+# it is wrong" buzz. Keeping them apart matters twice over: staff must be able
+# to tell a deadline from an FYI, and notify_outlet_new_order's idempotency
+# check keys on kind, so sharing one would make the first alert suppress the
+# ladder's later rungs.
+KIND_NEW_ORDER_PENDING = "NEW_ORDER_PENDING"
+# "That pending order is settled — stop ringing." Sent to the whole outlet on
+# accept, reject and expiry, because several devices may be alarming at once
+# and only the one that was tapped knows it is over.
+KIND_ORDER_RESOLVED = "ORDER_RESOLVED"
 
 # Matches ACTIVITY_ACTIVE_MAX_DAYS in carevo_admin.service — the same "gone
 # quiet" definition the admin dashboard shows, so the two never disagree about
@@ -140,14 +152,49 @@ class PushService:
             return False, "no access token (service account unreadable or google-auth missing)"
 
         url = FCM_ENDPOINT.format(project=settings.FIREBASE_PROJECT_ID)
-        payload = {
-            "message": {
-                "token": token,
-                "notification": {"title": title, "body": body},
-                # Data values must be strings in FCM v1.
-                "data": {k: str(v) for k, v in data.items()},
-            }
-        }
+        data_str = {k: str(v) for k, v in data.items()}
+        kind = data_str.get("kind", "")
+
+        # DATA-ONLY for the two acceptance kinds; notification+data for the rest.
+        #
+        # This is not a style choice. Per Firebase's own documentation, a
+        # message that carries a `notification` block is rendered by the
+        # Android system tray while the app is backgrounded or killed, and the
+        # Dart `onBackgroundMessage` handler is NOT invoked for it — the
+        # handler only runs for data-only messages (or, for mixed messages,
+        # only once the app is foregrounded). owner_app's whole acceptance
+        # alert depends on that handler running: it has to raise an INSISTENT
+        # local notification and, on resolution, CANCEL it. A system-rendered
+        # message cannot do either.
+        #
+        # Everything else keeps its notification block, so customer-facing
+        # status pushes continue to render with zero client work — those do not
+        # need code to run, only to be seen.
+        _DATA_ONLY_KINDS = {KIND_NEW_ORDER_PENDING, KIND_ORDER_RESOLVED}
+
+        message: dict = {"token": token, "data": data_str}
+        if kind not in _DATA_ONLY_KINDS:
+            message["notification"] = {"title": title, "body": body}
+        else:
+            # The copy still has to reach the device, since the client builds
+            # the local notification itself. Carried as data rather than as a
+            # notification block.
+            message["data"] = {**data_str, "title": title, "body": body}
+
+        # HIGH priority + a short TTL, for every kind.
+        #
+        # priority=high is what lifts the message out of Doze on an idle
+        # device; without it a counter tablet that has been asleep may hold the
+        # push until the next maintenance window, which for a 180-second
+        # acceptance deadline means it arrives after the order has expired.
+        #
+        # ttl=60s because all of these messages are only worth delivering NOW.
+        # An acceptance alert that surfaces after the deadline is worse than
+        # nothing: staff tap Accept, get a 409, and distrust the app. Letting
+        # FCM drop it is the correct outcome.
+        message["android"] = {"priority": "high", "ttl": "60s"}
+
+        payload = {"message": message}
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 r = await client.post(
@@ -306,6 +353,103 @@ class PushService:
             if res["status"] == "sent":
                 sent += 1
         return {"sent": sent, "recipients": len(rows)}
+
+    @staticmethod
+    async def _outlet_staff_ids(db: AsyncSession, outlet_id) -> list:
+        """Every active staff user at an outlet that has a token.
+
+        One outlet can have several logins and there is no way to know which
+        phone is in someone's hand, so acceptance alerts fan out to all of them.
+        """
+        rows = (await db.execute(text("""
+            SELECT id FROM users
+            WHERE outlet_id = :oid AND fcm_token IS NOT NULL AND is_active = true
+        """), {"oid": str(outlet_id)})).fetchall()
+        return [r[0] for r in rows]
+
+    @staticmethod
+    async def alert_outlet_order_pending(
+        db: AsyncSession, order, *, attempt: int, seconds_left: int | None = None
+    ) -> dict:
+        """One rung of the manual-acceptance alert ladder.
+
+        DELIBERATELY NOT IDEMPOTENT PER ORDER, unlike notify_outlet_new_order.
+        That one de-duplicates on (order_id, kind) because a retried webhook
+        must not buzz three times for one arrival. Here repetition is the
+        entire feature: the order is sitting unanswered and each rung is a new,
+        louder attempt. `attempt` is carried in the payload so the client can
+        tell rung 3 from rung 1, and the ladder's bound lives in
+        customer_orders.alert_count, not here.
+
+        Sent data-only at the transport layer (see _transmit) so owner_app's
+        background isolate actually runs and can raise an insistent local
+        notification — a message carrying a `notification` block is rendered by
+        the system and never reaches the Dart handler while backgrounded.
+        """
+        outlet_id = getattr(order, "outlet_id", None)
+        if not outlet_id:
+            return {"sent": 0, "recipients": 0}
+
+        staff_ids = await PushService._outlet_staff_ids(db, outlet_id)
+        amount = float(getattr(order, "total_amount", 0) or 0)
+        title = "Accept this order?"
+        if seconds_left is not None:
+            body = ("₹{:g} — {}s left to accept, or it is cancelled and "
+                    "refunded.".format(amount, max(0, int(seconds_left))))
+        else:
+            body = "₹{:g} — accept or reject it now.".format(amount)
+
+        sent = 0
+        for uid in staff_ids:
+            res = await PushService.send_staff(
+                db, user_id=uid, kind=KIND_NEW_ORDER_PENDING,
+                title=title, body=body, order_id=order.id,
+                data={
+                    "order_status": getattr(order, "status", "") or "",
+                    "acceptance_state": getattr(order, "acceptance_state", "") or "",
+                    "attempt": str(attempt),
+                    "seconds_left": str(seconds_left if seconds_left is not None else ""),
+                    "total_amount": "{:g}".format(amount),
+                },
+            )
+            if res["status"] == "sent":
+                sent += 1
+        return {"sent": sent, "recipients": len(staff_ids)}
+
+    @staticmethod
+    async def notify_outlet_order_resolved(
+        db: AsyncSession, order, *, outcome: str
+    ) -> dict:
+        """"Stop ringing" for an order that is no longer pending.
+
+        Fans out to the whole outlet rather than just the device that acted,
+        because the point is the OTHER phones: several may be alarming on the
+        same order, and only the one that was tapped knows it is settled.
+
+        `outcome` ∈ {accepted, rejected, expired}. Data-only, same reason as
+        the alert — the handler has to run to cancel the ongoing notification,
+        and a system-rendered message would not wake it.
+        """
+        outlet_id = getattr(order, "outlet_id", None)
+        if not outlet_id:
+            return {"sent": 0, "recipients": 0}
+
+        staff_ids = await PushService._outlet_staff_ids(db, outlet_id)
+        sent = 0
+        for uid in staff_ids:
+            res = await PushService.send_staff(
+                db, user_id=uid, kind=KIND_ORDER_RESOLVED,
+                title="Order settled", body=f"This order was {outcome}.",
+                order_id=order.id,
+                data={
+                    "outcome": outcome,
+                    "order_status": getattr(order, "status", "") or "",
+                    "acceptance_state": getattr(order, "acceptance_state", "") or "",
+                },
+            )
+            if res["status"] == "sent":
+                sent += 1
+        return {"sent": sent, "recipients": len(staff_ids)}
 
     @staticmethod
     async def notify_outlet_train_due(db: AsyncSession, order_id, outlet_id) -> dict:
