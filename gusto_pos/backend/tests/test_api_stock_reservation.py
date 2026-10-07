@@ -2,11 +2,13 @@
 
 THE THREE THAT MATTER
 ---------------------
-1. `test_fifty_concurrent_orders_for_two_units` — 50 simultaneous orders
-   against 2 units. Exactly 2 may succeed, stock must land on 0, and it must
-   never go negative at any point. This is the assertion the whole conditional
-   -UPDATE design exists to satisfy; a read-then-write implementation
-   oversells here.
+1. `test_five_hundred_concurrent_orders_for_two_units` — 500 simultaneous
+   orders against 2 units. Exactly 2 may succeed, stock must land on 0, and it
+   must never go negative at any point. This is the assertion the whole
+   conditional-UPDATE design exists to satisfy; a read-then-write
+   implementation oversells here. 500 because the read-to-write window is
+   microseconds wide and a small racer count can miss it even against a broken
+   implementation.
 
 2. `test_opposing_item_orders_do_not_deadlock` — carts [A,B] and [B,A] placed
    concurrently. Both must resolve. Rows are locked in ascending menu_item_id
@@ -302,18 +304,33 @@ class TestCommitAndRelease:
 
 @pytest.mark.asyncio
 class TestConcurrencyProofs:
-    async def test_fifty_concurrent_orders_for_two_units(
+    async def test_five_hundred_concurrent_orders_for_two_units(
             self, client, seed, db):
-        """THE headline proof. 50 racers, 2 units: exactly 2 win.
+        """THE headline proof. 500 racers, 2 units: exactly 2 win.
 
         A read-then-write implementation oversells here. The conditional
         UPDATE's WHERE clause is what makes it correct.
+
+        500 rather than a token handful: the window between "read the stock"
+        and "write the stock" is microseconds wide, so a small racer count can
+        pass against a broken implementation purely by not landing in it. The
+        requests are issued with a single asyncio.gather and every one of them
+        contends for the SAME row, so they serialise on Postgres's row lock
+        rather than on anything in the test.
+
+        They do NOT all hold a DB connection at once — the engine pool is
+        5+10 — so several hundred queue for one. That is fine and is still a
+        genuine race: the ordering is decided by the lock, not by the test, and
+        a pool wait cannot manufacture a second winner. Any QueuePool timeout
+        would surface in `errors` and fail rather than be counted as a refusal,
+        so a starved run cannot masquerade as a passing one.
         """
+        racers = 500
         await _set_stock(db, seed["menu_item_id"], 2)
 
         results = await asyncio.gather(*[
             _place_one(client, seed, seed["menu_item_id"], qty=1)
-            for _ in range(50)
+            for _ in range(racers)
         ], return_exceptions=True)
 
         ok = [r for r in results
@@ -326,7 +343,12 @@ class TestConcurrencyProofs:
         assert len(ok) == 2, (
             f"{len(ok)} orders succeeded against 2 units — oversold by "
             f"{len(ok) - 2}")
-        assert len(sold_out) == 48, f"{len(sold_out)} refusals, expected 48"
+        assert len(sold_out) == racers - 2, (
+            f"{len(sold_out)} refusals, expected {racers - 2}")
+        # Nothing fell between the two buckets: every racer was answered.
+        assert len(ok) + len(sold_out) == racers, (
+            f"{racers - len(ok) - len(sold_out)} racers got neither a 200 nor "
+            f"a 409 — an unanswered request hides an oversell")
 
         remaining = await _stock(db, seed["menu_item_id"])
         assert remaining == 0, f"stock landed on {remaining}, expected 0"
