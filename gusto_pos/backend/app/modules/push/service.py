@@ -63,6 +63,26 @@ KIND_NEW_ORDER_PENDING = "NEW_ORDER_PENDING"
 # and only the one that was tapped knows it is over.
 KIND_ORDER_RESOLVED = "ORDER_RESOLVED"
 
+# The owner_app notification channel the acceptance alert must be raised on.
+#
+# Must match OrderAlertNotifications.channelId in
+# owner_app/lib/services/order_alert_notifications.dart, where the channel is
+# created at Importance.max with the bundled alert sound. On Android 8+ a
+# channel's importance and sound are FROZEN at creation, so the id carries the
+# "max importance" property — changing the constants later does nothing on a
+# device that already has the channel, and the only remedies are a NEW id or a
+# reinstall. Hence the _v1 suffix on the client side.
+#
+# CARRIED IN `data`, NOT IN `android.notification`. That is the whole point and
+# it is easy to get wrong: android.notification is a system-rendered
+# notification spec, and attaching one would make this a notification message,
+# which means Dart's onBackgroundMessage would NOT run — and that handler is
+# what raises the insistent local notification, re-alerts at 30s/60s and
+# cancels on resolution. Setting the channel the "obvious" way would therefore
+# disable the entire alert it is meant to configure. The client reads this
+# value and passes it to its own local-notification call.
+OWNER_ALERT_CHANNEL_ID = "new_orders_v1"
+
 # Matches ACTIVITY_ACTIVE_MAX_DAYS in carevo_admin.service — the same "gone
 # quiet" definition the admin dashboard shows, so the two never disagree about
 # who is lapsing.
@@ -179,7 +199,18 @@ class PushService:
             # The copy still has to reach the device, since the client builds
             # the local notification itself. Carried as data rather than as a
             # notification block.
-            message["data"] = {**data_str, "title": title, "body": body}
+            #
+            # The channel id rides along for the same reason: the client needs
+            # to know WHICH channel to raise this on, and it cannot come via
+            # android.notification without turning this into a notification
+            # message and killing the background handler. See
+            # OWNER_ALERT_CHANNEL_ID.
+            message["data"] = {
+                **data_str,
+                "title": title,
+                "body": body,
+                "channel_id": OWNER_ALERT_CHANNEL_ID,
+            }
 
         # HIGH priority + a short TTL, for every kind.
         #

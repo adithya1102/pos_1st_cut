@@ -20,6 +20,8 @@ These tests therefore drive _transmit directly with a patched HTTP client.
 from __future__ import annotations
 
 import json
+import pathlib
+import re
 import uuid
 
 import pytest
@@ -30,7 +32,7 @@ from app.core.security import get_password_hash
 from app.modules.push import service as push_mod
 from app.modules.push.service import (
     KIND_NEW_ORDER_PENDING, KIND_ORDER_RESOLVED, KIND_ORDER_STATUS,
-    KIND_STAFF_NEW_ORDER, PushService,
+    KIND_STAFF_NEW_ORDER, OWNER_ALERT_CHANNEL_ID, PushService,
 )
 from tests.conftest import API
 
@@ -132,6 +134,86 @@ async def test_other_kinds_keep_their_notification_block(capture_push, kind):
     """Customer-facing pushes must still render with zero client work."""
     msg = await _transmit(kind)
     assert msg["notification"] == {"title": "A title", "body": "A body"}
+
+
+# ------------------------ 4.1b the alert channel id ---------------------------
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", [KIND_NEW_ORDER_PENDING, KIND_ORDER_RESOLVED])
+async def test_acceptance_kinds_carry_the_alert_channel_id(capture_push, kind):
+    """The client has to know WHICH channel to raise the alert on.
+
+    It travels in `data` because the alternative — android.notification.
+    channel_id — is a system-rendered notification spec, and attaching one
+    would make this a notification message and stop the Dart background
+    handler running. Configuring the channel the obvious way would disable the
+    alert it configures.
+    """
+    msg = await _transmit(kind)
+    assert msg["data"]["channel_id"] == OWNER_ALERT_CHANNEL_ID
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", [KIND_NEW_ORDER_PENDING, KIND_ORDER_RESOLVED])
+async def test_the_channel_id_never_rides_in_the_android_block(capture_push, kind):
+    """The regression guard for the trap above.
+
+    `android` must stay exactly priority+ttl. An `android.notification` key of
+    any shape turns a data-only message into a notification message, and the
+    failure is silent: pushes still arrive, the tray still shows something, and
+    the insistent re-alert and its cancellation both quietly stop working.
+    """
+    msg = await _transmit(kind)
+    assert "notification" not in msg["android"], (
+        "android.notification would make this a notification message and kill "
+        "the background handler"
+    )
+    assert set(msg["android"]) == {"priority", "ttl"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", [KIND_ORDER_STATUS, KIND_STAFF_NEW_ORDER])
+async def test_customer_kinds_do_not_get_the_owner_channel(capture_push, kind):
+    """Scoped to the owner_app kinds on purpose.
+
+    `new_orders_v1` exists only in owner_app. Stamping it on a customer-facing
+    push would name a channel the receiving app has never created, and on
+    Android 8+ a notification on an unknown channel is not displayed at all —
+    so this would silently suppress customer status notifications.
+    """
+    msg = await _transmit(kind)
+    assert "channel_id" not in msg["data"]
+
+
+def test_the_channel_id_matches_the_owner_app_constant():
+    """Pins the Python constant to the Dart one that actually creates it.
+
+    These two live in different languages and different repos-within-a-repo,
+    and nothing else connects them. If they drift, the server names a channel
+    the client never created: on Android 8+ that notification is dropped, so
+    the alert fails silently with no error on either side.
+
+    Android also FREEZES a channel's importance and sound at creation, which is
+    why the id is versioned (`_v1`) — so a drift here cannot be fixed by
+    editing constants, only by a new id or a reinstall.
+    """
+    dart = (
+        pathlib.Path(__file__).resolve().parents[3]
+        / "owner_app" / "lib" / "services" / "order_alert_notifications.dart"
+    )
+    if not dart.exists():  # pragma: no cover - owner_app absent from a checkout
+        pytest.skip(f"owner_app source not present at {dart}")
+
+    m = re.search(
+        r"""static\s+const\s+String\s+channelId\s*=\s*['"]([^'"]+)['"]""",
+        dart.read_text(encoding="utf-8"),
+    )
+    assert m, f"could not find channelId in {dart}"
+    assert m.group(1) == OWNER_ALERT_CHANNEL_ID, (
+        f"owner_app raises alerts on channel {m.group(1)!r} but the server "
+        f"sends {OWNER_ALERT_CHANNEL_ID!r} — the push would name a channel the "
+        f"app never created and Android would silently drop it"
+    )
 
 
 @pytest.mark.asyncio
