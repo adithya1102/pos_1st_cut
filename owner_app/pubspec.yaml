@@ -67,6 +67,9 @@ dependencies:
   # resolution; the plugin versions below are the contract.
   firebase_core: ^4.12.1
   firebase_messaging: ^16.5.0
+  flutter_local_notifications: ^22.3.1
+  audioplayers: ^6.8.1
+  wakelock_plus: ^1.5.2
 
 dev_dependencies:
   flutter_test:
