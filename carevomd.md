@@ -7571,3 +7571,135 @@ a live duplicate, and prod is still unverified.
   `/users/*`, `/roles/*`, `/orders/*` CRUD). Both WebSockets are now closed, so
   `test_api_legacy_route_auth.py`'s `STILL_OPEN_DB_BACKED` proxy mechanism is
   weaker than it looks — it treats "reached the DB" as "was not auth-gated".
+
+---
+
+## 2026-10-07 (later still) — the stock-hold TTL is set: 600s, wired end to end
+
+Closes the "STILL OPEN, deliberately" item from the entry above. The TTL value
+was left unset because the premise it was specified to inherit — "the existing
+payment-retry grace window" — does not exist in this codebase.
+
+### The value
+
+`STOCK_HOLD_TTL_SECONDS = 600`, replacing `STOCK_RESERVATION_TTL_MINUTES = 15`
+(900s). In SECONDS deliberately: the value now has a second consumer — the
+Cashfree order expiry — and a unit conversion between the two is exactly where
+a 15-vs-900 mistake lives. Single writer: `stock.py:112`.
+
+### Correction to the previous entry — the sweeper call-site claim
+
+`sweep_expired`'s own docstring said it was "called from order creation and from
+the owner queue poll". **The order-creation half was not true** — the only
+caller was `list_active_orders`, so lapsed holds came back only while an owner
+happened to have the app open. It is now called from `get_menu` (the frequent
+customer read) and from `create_order` as well.
+
+### A real ordering bug, found by the tests and not by reading
+
+The obvious place for the sweep in `create_order` is next to
+`reserve_for_order`. That is WRONG and the tests caught it:
+`reserve_for_order` sets `is_available = false` when an item hits zero, and the
+`menu_items` snapshot query ~80 lines EARLIER reads `is_available` and refuses
+the order on it. Sweeping next to the reservation reclaims the units a moment
+too late to be allowed to use them — the customer is told the dish is off the
+menu while its stock sits in a lapsed hold. The sweep therefore runs before the
+snapshot. Two tests failed with `409 Item unavailable` until it moved.
+
+`commit=False` was added for this: `create_order` is mid-transaction with a
+half-built order, and `sweep_expired` committed internally. It also makes the
+release atomic with the reservation that follows.
+
+### Hoarding cap — why a TTL alone is not a limit
+
+One live UNPAID hold per customer per outlet. Without it the TTL is a loophole:
+nothing stopped one account placing and abandoning orders in a loop, each taking
+a fresh 600-second hold, so a handful of free requests could hold a dish's whole
+stock indefinitely. **No payment is ever required to do it.**
+
+Not a rate limit, deliberately — the resource being protected is the
+restaurant's stock, so the cap is on concurrent holds, not on request frequency.
+Runs AFTER the sweep so a customer is never blocked by their own lapsed hold,
+and excludes PAID and terminal orders so a customer with food on the way can
+order again at once.
+
+`customer_orders` has **no `readable_id`** (that column is on the legacy
+`orders` table) and `pickup_code` is NULL before payment, so an unpaid order's
+only identifier is its uuid. The uuid therefore travels as DATA (`order_id`)
+and stays out of the prose.
+
+### The concurrency proofs now use DISTINCT customers
+
+They always modelled N different people racing for the same units; one seeded
+customer firing N orders is a different scenario, and one the cap legitimately
+refuses. `test_opposing_item_orders_do_not_deadlock` failed outright (`15 == 8`).
+The 500-racer proof passed either way — but only because the cap could not see
+its siblings' uncommitted holds, i.e. **a pass by timing luck**. New `_customers`
+helper inserts N customers in one round trip via `unnest`.
+
+**500-racer re-run: PASSES.** Exactly 2 of 500 succeed, 498 refused, stock lands
+on 0, 2 units HELD, 1.80s.
+
+### Cashfree expiry — VERIFIED, not guessed
+
+`order_expiry_time = now + TTL` is now sent. Cashfree's floor, quoted verbatim:
+
+> "Set order expiry time: Minimum 5 minutes, maximum 30 days."
+> — cashfree.com/docs/payments/online/resources/payment-lifecycle
+
+(The Create Order API reference documents the field but states **no** bound, so
+the lifecycle page is the citation.) 600s clears the floor, so the value is sent
+rather than skipped. Clamped to 300 instead of passed straight through: a short
+local TTL would otherwise make every checkout a hard create-order failure, and
+clamping degrades to "the gateway outlives the hold", which the late-payment
+path already handles.
+
+### Late payment — already built, now proven
+
+`service.py:1763` already re-acquired or cancelled-and-flagged, and `mark_paid`
+already had three idempotency guards. Left as found; what was missing was
+evidence. Now covered, including the nastiest replay (a second delivery against
+an order the first already cancelled and flagged — the terminal guard is what
+stops a refunded order being resurrected and cooked).
+
+### CORRECTION — "backend pytest prints no summary line" was WRONG
+
+The previous entry stated the backend suite prints no `N passed` summary. It
+does:
+
+```
+865 passed, 1 xfailed in 311.94s (0:05:11)
+```
+
+The error came from reading a capture piped through `tail -20`: pytest's
+CR-terminated progress dots filled the window and pushed the summary out. The
+files written with a plain redirect had it all along. `--junit-xml` is still the
+most robust way to get counts, but it is not required. Full-suite wall time is
+~5 minutes idle; the 35-minute run recorded earlier was CPU contention with
+`flutter test`, not a hang.
+
+### Suites
+
+| Suite | Before | After |
+|---|---|---|
+| backend | 840 passed / 1 xfailed | **865 passed / 1 xfailed** |
+| customer_app | 590 | **597** |
+| owner_app | 147 | **147** |
+| dashboard_app | 57 | **57** |
+
+### No schema change
+
+Nothing needed one — `expires_at` already existed and is already NOT NULL. **No
+migration was written or applied in this pass**, and 032/033 remain applied to
+local `carevo_test` only, NOT to prod. The deploy-ordering constraint from the
+previous entry is unchanged: **032 must reach prod before this code does.**
+
+### Still open
+
+- `STOCK_HOLD_TTL_SECONDS` is a global, not per-outlet. A dark kitchen and a
+  sit-down restaurant plausibly want different numbers; that needs an `outlets`
+  column and is a deliberate scope call, not an oversight.
+- Nothing reconciles a Cashfree order that expired at the gateway with the local
+  order, which stays `CREATED` until the 45-minute pickup sweeper or a manual
+  cancel. Harmless today (the hold is already reclaimed on the clock) but it
+  means "expired at the gateway" is not a state the app can show.
