@@ -100,9 +100,22 @@
 
 <script>
   // ── CONFIG ─────────────────────────────────────────────
-  const OUTLET_ID = new URLSearchParams(window.location.search).get('outlet_id')
-    || prompt('Enter Outlet ID:');
-  const WS_URL = `ws://127.0.0.1:8000/ws/kitchen/${OUTLET_ID}`;
+  const PARAMS = new URLSearchParams(window.location.search);
+  const OUTLET_ID = PARAMS.get('outlet_id') || prompt('Enter Outlet ID:');
+  // The socket is authenticated and outlet-scoped, so this page needs a STAFF
+  // token for the same outlet. Taken from ?token=, falling back to one stashed
+  // in localStorage by a previous visit, and prompted for only as a last
+  // resort — a token in the address bar lands in browser history.
+  //
+  // The browser WebSocket API cannot set an Authorization header, which is why
+  // it rides the query string; see _authorize in kitchen/router.py.
+  const TOKEN = PARAMS.get('token')
+    || localStorage.getItem('gusto_staff_token')
+    || prompt('Paste a staff token for this outlet:')
+    || '';
+  if (TOKEN) localStorage.setItem('gusto_staff_token', TOKEN);
+  const WS_URL =
+    `ws://127.0.0.1:8000/ws/kitchen/${OUTLET_ID}?token=${encodeURIComponent(TOKEN)}`;
   const API_URL = `http://127.0.0.1:8000/api/v1`;
   // ───────────────────────────────────────────────────────
 
