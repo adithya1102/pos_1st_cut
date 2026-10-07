@@ -57,6 +57,12 @@ _pickup_miss_hits: dict[str, list[float]] = defaultdict(list)
 # A 4-digit PIN is 10,000 values; without this, nothing at all stood between an
 # attacker and exhausting that space against a known username.
 _login_hits: dict[str, list[float]] = defaultdict(list)
+# Per-STAFF-USER limiter for the self-service test push. Same pattern, same
+# single-process caveat. Keyed on the authenticated user id rather than an IP,
+# because the endpoint only ever pushes to the CALLER's own device — there is
+# no way to aim it at anyone else, so the thing being rationed is one person
+# spamming their own tablet (and our FCM quota), not an attack.
+_test_push_hits: dict[str, list[float]] = defaultdict(list)
 
 # Default categories seeded for every self-registered outlet, so the owner has
 # real options in the dish form's category picker immediately. Order = display.
@@ -231,6 +237,34 @@ class CarevoService:
         for key, hits in pruned.items():
             hits.append(now)
             _login_hits[key] = hits
+
+    @staticmethod
+    def check_test_push_rate_limit(user_id: str) -> None:
+        """3 test pushes per minute per staff user.
+
+        Low on purpose. The button exists to answer "does this tablet actually
+        receive alerts", which one press settles; a staff member tapping it
+        twenty times is either confused or bored, and each press costs an FCM
+        send against a shared project quota.
+        """
+        now = time.time()
+        window = 60.0
+        key = str(user_id)
+        hits = [t for t in _test_push_hits[key] if now - t < window]
+        if len(hits) >= 3:
+            _test_push_hits[key] = hits
+            retry_after = max(1, int(window - (now - hits[0])) + 1)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={
+                    "error": "too_many_test_pushes",
+                    "message": f"Try again in about {retry_after} seconds.",
+                    "retry_after_seconds": retry_after,
+                },
+                headers={"Retry-After": str(retry_after)},
+            )
+        hits.append(now)
+        _test_push_hits[key] = hits
 
     @staticmethod
     def request_otp(phone_number: str) -> dict:

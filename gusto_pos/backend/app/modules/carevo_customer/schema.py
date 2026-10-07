@@ -625,6 +625,21 @@ class AlertAckOut(BaseModel):
     acknowledged: bool
 
 
+class TestPushOut(BaseModel):
+    """Result of POST /pos/devices/test-push.
+
+    Returns the TRANSPORT outcome rather than a bare ok, because 'skipped'
+    with a reason is the useful case: "no fcm_token" (this device never
+    registered — grant notification permission), "push disabled" (an operator
+    problem, stop investigating) and a 4xx from FCM have three different fixes,
+    and a plain success/failure cannot tell them apart.
+    """
+
+    #: sent | skipped | failed
+    status: str
+    detail: Optional[str] = None
+
+
 class LookupPickupOut(BaseModel):
     """Result of a pickup-code lookup.
 

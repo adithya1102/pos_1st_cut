@@ -353,3 +353,40 @@ async def mark_items_unavailable(
     return await CarevoService.mark_items_unavailable(
         db, order_id, _require_outlet(staff), payload.item_ids
     )
+
+
+@router.post("/devices/test-push", response_model=s.TestPushOut)
+async def send_test_push(
+    staff: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send a real push to the CALLER'S OWN device. Rate-limited 3/min.
+
+    Exists because "are alerts working on this tablet?" is otherwise only
+    answerable by waiting for a real order, and the answer matters most on the
+    devices that have never received one. It is the button behind owner_app's
+    Settings -> Send test alert.
+
+    Aimed at the caller's own users.fcm_token and nothing else — there is no
+    parameter that could point it at another device, so it cannot be used to
+    buzz a colleague.
+
+    Returns the TRANSPORT RESULT rather than a bare ok. 'skipped' with a reason
+    is the common and useful case: it distinguishes "this device never
+    registered a token" from "push is disabled on this deployment" from "FCM
+    rejected it", and those have three different fixes. A staff member reading
+    "no fcm_token" knows to grant notification permission; "push disabled"
+    is an operator problem they should stop investigating.
+    """
+    from app.modules.push.service import PushService, KIND_NEW_ORDER_PENDING
+
+    CarevoService.check_test_push_rate_limit(staff.id)
+
+    res = await PushService.send_staff(
+        db, user_id=staff.id, kind=KIND_NEW_ORDER_PENDING,
+        title="Test alert",
+        body="If you can see and hear this, order alerts are working.",
+        data={"test": "true", "attempt": "1"},
+    )
+    await db.commit()
+    return {"status": res["status"], "detail": res.get("detail")}
