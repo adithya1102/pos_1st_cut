@@ -18,6 +18,26 @@ class Settings(BaseSettings):
     # auto-abandoned (check-on-read), freeing its pickup_code for reuse.
     PICKUP_TTL_MINUTES: int = 45
 
+    # How long an UNPAID stock reservation is held (migration 033).
+    #
+    # CHOSEN, NOT INHERITED. This was specified as "the existing payment-retry
+    # grace window", and no such window exists in this codebase — verified:
+    # COMPLETED_GRACE (30m) governs how long a VERIFIED PICKUP lingers in the
+    # owner queue; AppConfig.coldRetryTimeout (60s) is an HTTP retry; a
+    # customer_app payment retry reopens the SAME payment session with no
+    # expiry of its own; and there is no sweeper for CREATED/PENDING orders at
+    # all, since _LIVE_STATUSES is {PAID,RECEIVED,PREPARING,READY}.
+    #
+    # 15 minutes is the trade-off between two real failures:
+    #   * too short — a customer who taps Pay, switches to their UPI app,
+    #     authenticates, and switches back loses the units mid-payment and
+    #     gets ITEM_SOLD_OUT for food they were in the middle of buying;
+    #   * too long  — one abandoned cart holds the last portion of a dish for
+    #     that whole duration, and every other customer is told it is gone.
+    # It also sits inside Cashfree's own payment-session validity, so a session
+    # that is still usable is never backed by a reservation that has lapsed.
+    STOCK_RESERVATION_TTL_MINUTES: int = 15
+
     # STAFF login throttle, shared by /auth/login and /auth/pin-login. Counted
     # per claimed-identifier AND per client IP, over a sliding window.
     #

@@ -1061,6 +1061,22 @@ class CarevoService:
                 item_notes=line.item_notes,
             ))
 
+        # STOCK RESERVATION (migration 033), in THIS transaction, before any
+        # payment exists. Untracked items (stock_remaining IS NULL) are skipped
+        # entirely, so this is a no-op for every item until a restaurant sets a
+        # number.
+        #
+        # Reserving here rather than at payment is deliberate: the alternative
+        # lets a customer complete checkout for a dish that sold out while they
+        # were typing, and they have then been CHARGED for food that does not
+        # exist. A 409 before payment is recoverable; a refund is not.
+        #
+        # Raises 409 ITEM_SOLD_OUT with the real remaining count. Because it is
+        # the same transaction, a refusal rolls the whole order back — there is
+        # no state where an order exists with a partial hold.
+        from app.modules.carevo_customer.stock import StockService
+        await StockService.reserve_for_order(db, order.id, payload.items)
+
         gross = round(total, 2)
 
         # Coupon (migration 010). Applied BEFORE the gateway order is created so
@@ -1463,6 +1479,12 @@ class CarevoService:
                              "was_paid": (r.payment_status or "").upper() == "PAID",
                              "refund_required": (r.payment_status or "").upper() == "PAID"},
                 )
+            # STOCK (033): an abandoned order's hold comes back. HELD-only, so
+            # a paid-and-collected order's COMMITTED rows are left alone.
+            from app.modules.carevo_customer.stock import StockService
+            for r in rows:
+                await StockService.release_for_order(
+                    db, r.id, reason="ttl_abandoned")
             await db.commit()
             # PE Step 4: score terminal (abandoned) orders too, best-effort.
             for r in rows:
@@ -1495,6 +1517,47 @@ class CarevoService:
             if not row:
                 return code
         raise HTTPException(status_code=500, detail="Could not allocate pickup code")
+
+    @staticmethod
+    async def _assign_pickup_code(db: AsyncSession, order) -> str:
+        """Allocate a code and survive losing the race for it (migration 033).
+
+        _generate_pickup_code above checks-then-returns, with no lock between
+        the two, so two concurrent payments at one outlet could be handed the
+        same code. Migration 033 adds a partial UNIQUE index that now REFUSES
+        the second one — turning a silent collision into an IntegrityError,
+        which is strictly better but still has to be handled.
+
+        Handled by retrying: generate, try to write, and on a unique violation
+        generate a fresh code and try again. The retry is cheap (8^6 space, a
+        handful of live orders per outlet) and the loop is bounded, so the
+        failure mode is a clean 500 rather than an infinite spin.
+
+        Returns the code that actually committed.
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        for _ in range(5):
+            code = await CarevoService._generate_pickup_code(db, order.outlet_id)
+            try:
+                # A SAVEPOINT, so a unique violation rolls back only this
+                # attempt and leaves the caller's transaction — which is
+                # carrying the PAID transition — intact. Without the nested
+                # block the first collision would abort the payment too.
+                async with db.begin_nested():
+                    await db.execute(text(
+                        "UPDATE customer_orders SET pickup_code = :c "
+                        "WHERE id = :id"),
+                        {"c": code, "id": str(order.id)})
+                order.pickup_code = code
+                return code
+            except IntegrityError:
+                logger.info(
+                    "pickup code %s collided at outlet %s; regenerating",
+                    code, order.outlet_id)
+                continue
+        raise HTTPException(status_code=500,
+                            detail="Could not allocate a unique pickup code")
 
     @staticmethod
     async def mark_paid(
@@ -1584,7 +1647,10 @@ class CarevoService:
         order.payment_status = "PAID"
         order.status = "PAID"
         if not order.pickup_code:
-            order.pickup_code = await CarevoService._generate_pickup_code(db, order.outlet_id)
+            # Collision-safe since migration 033 added the partial unique
+            # index: this retries on a unique violation inside a SAVEPOINT, so
+            # losing the race for a code cannot take the payment down with it.
+            await CarevoService._assign_pickup_code(db, order)
         order.updated_at = datetime.now(timezone.utc)
 
         # --- scheduled pickup: take the hold IN THIS TRANSACTION (031) -------
@@ -1684,6 +1750,35 @@ class CarevoService:
         # three hours out would otherwise expire before the kitchen saw it.
         if manual and not held:
             await AcceptanceService.begin_awaiting(db, order, reason="payment")
+
+        # STOCK (migration 033): the hold taken at order creation becomes a
+        # spend, in the same transaction as the PAID transition.
+        #
+        # The LATE-WEBHOOK case is handled first. If the sweeper (or a cancel)
+        # already gave the units back and the payment then landed, the money is
+        # real — so the order either gets its stock back or is cancelled and
+        # refunded. Quietly proceeding would promise food the restaurant does
+        # not have, which is the one outcome worse than a refund.
+        from app.modules.carevo_customer.stock import StockService
+        if not await StockService.rereserve_for_order(db, order.id):
+            logger.warning(
+                "order %s paid but its released stock could not be re-taken; "
+                "cancelling and flagging a refund", order.id)
+            order.status = "CANCELLED"
+            order.refund_required = True
+            order.refund_reason = "stock_gone_after_payment"
+            order.refund_flagged_at = datetime.now(timezone.utc)
+            await pe.write_event(
+                db, order.id, pe.ORDER_REJECTED,
+                actor_type="system", source="system", outlet_id=order.outlet_id,
+                payload={"reason": "stock_gone_after_payment",
+                         "refund_required": True},
+            )
+            await db.commit()
+            await db.refresh(order)
+            await CarevoService._broadcast_status(order, db)
+            return order
+        await StockService.commit_for_order(db, order.id)
 
         # Loyalty accrual (migration 010), in the SAME transaction as the PAID
         # transition: points are earned iff the payment is recorded, and the two
@@ -1854,6 +1949,12 @@ class CarevoService:
         # could expire an order a human had just rejected and the order would
         # carry two terminal causes. Returns False for an auto-mode order
         # (acceptance_state NULL), which is the common case and not an error.
+        # STOCK (033): give the units back. Only HELD rows move, so this is
+        # idempotent and a COMMITTED reservation on a paid order is untouched —
+        # the food was made, the stock is genuinely gone.
+        from app.modules.carevo_customer.stock import StockService
+        await StockService.release_for_order(db, order.id, reason="rejected")
+
         from app.modules.carevo_customer.acceptance import AcceptanceService
         was_awaiting = await AcceptanceService.cas_reject(db, order.id)
         if was_awaiting:
@@ -2379,6 +2480,23 @@ class CarevoService:
         # retry needs no resurrection logic.
         order.payment_status = "FAILED"
         order.updated_at = datetime.now(timezone.utc)
+
+        # STOCK (033): the hold is DELIBERATELY NOT RELEASED here.
+        #
+        # A DEVIATION, recorded rather than silently taken. Releasing on
+        # payment failure is the obvious symmetry with cancel/reject/expire,
+        # and it is wrong for this path specifically: this order is still
+        # LIVE and retryable (see the comment above — that is the existing and
+        # intended design). Giving the units back would mean the customer taps
+        # "Retry payment", the retry reserves again, and they are told
+        # ITEM_SOLD_OUT for their own order — losing the sale to a hold that
+        # was theirs seconds earlier.
+        #
+        # The hold is not leaked either. It carries expires_at, and
+        # StockService.sweep_expired reclaims HELD rows on UNPAID orders, which
+        # this now is. So a customer who retries within the window keeps their
+        # units and a customer who walks away releases them on the clock —
+        # which is what the TTL is for.
 
         await pe.write_event(
             db, order.id, pe.PAYMENT_FAILED,
@@ -3196,6 +3314,16 @@ class CarevoService:
             from app.modules.carevo_customer.acceptance import AcceptanceService
             await AcceptanceService.process_acceptance_deadlines(
                 db, outlet_id=outlet_id)
+        except Exception:
+            await db.rollback()
+        # Stock reservations (033): reclaim HELD holds on UNPAID orders past
+        # their expiry. Same check-on-read slot and the same reason — there is
+        # no sweeper for unpaid orders anywhere else, because _LIVE_STATUSES
+        # excludes CREATED, so without this an abandoned checkout holds the
+        # last portion of a dish until the process restarts.
+        try:
+            from app.modules.carevo_customer.stock import StockService
+            await StockService.sweep_expired(db, outlet_id=outlet_id)
         except Exception:
             await db.rollback()
         # A verified pickup lingers for COMPLETED_GRACE, then drops out on its

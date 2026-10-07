@@ -625,6 +625,28 @@ class AlertAckOut(BaseModel):
     acknowledged: bool
 
 
+class SetStockIn(BaseModel):
+    """`quantity=None` means UNTRACKED (unlimited), not zero.
+
+    The distinction is the whole design: NULL is "we do not count this dish",
+    which is every item today and therefore the inert default; 0 is "we counted
+    and there are none left". Collapsing them would make turning tracking off
+    indistinguishable from selling out.
+    """
+
+    quantity: Optional[int] = Field(default=None, ge=0, le=100000)
+
+
+class SetStockOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    #: None = untracked.
+    stock_remaining: Optional[int] = None
+    #: Echoed because setting stock can flip it — 0 hides the dish, and a
+    #: positive number on a sold-out dish brings it back.
+    is_available: bool
+
+
 class TestPushOut(BaseModel):
     """Result of POST /pos/devices/test-push.
 

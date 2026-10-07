@@ -478,6 +478,10 @@ class AcceptanceService:
         await db.execute(text(
             "DELETE FROM auto_advance_schedule WHERE order_id = :id "
             "AND kind = 'acceptance'"), {"id": str(r.id)})
+        # STOCK (033): nobody is cooking this, so the units go back. Same
+        # transaction as the cancellation, so the two can never diverge.
+        from app.modules.carevo_customer.stock import StockService
+        await StockService.release_for_order(db, r.id, reason="acceptance_expired")
         await db.commit()
 
         # The outlet's strike count, and the auto-close at three.

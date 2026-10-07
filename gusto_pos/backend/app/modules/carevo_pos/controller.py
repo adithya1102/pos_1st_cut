@@ -390,3 +390,30 @@ async def send_test_push(
     )
     await db.commit()
     return {"status": res["status"], "detail": res.get("detail")}
+
+
+@router.post("/menu-items/{item_id}/stock", response_model=s.SetStockOut)
+async def set_item_stock(
+    item_id: uuid.UUID,
+    payload: s.SetStockIn,
+    staff: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set or clear an item's limited quantity for today (migration 033).
+
+    `quantity: null` means UNTRACKED — unlimited, which is how every item
+    behaves today and the escape hatch for a restaurant that turned counting on
+    and regretted it. A number starts tracking it.
+
+    Outlet-scoped through the menu_items -> categories -> menus -> outlet chain,
+    so one restaurant cannot set another's stock.
+
+    Setting a positive number on a sold-out item also flips is_available back
+    on, because "there are 5 again" and "it is orderable" are one statement
+    from the owner's point of view; making them two taps is how a dish ends up
+    hidden with stock sitting behind it.
+    """
+    from app.modules.carevo_customer.stock import StockService
+
+    return await StockService.set_stock(
+        db, item_id, _require_outlet(staff), payload.quantity)
