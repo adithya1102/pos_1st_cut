@@ -81,7 +81,7 @@ class StockService:
         payment instead would mean a customer can complete checkout for a dish
         that sold out while they were typing, which is the worse failure: they
         have been charged. The cost is that an abandoned unpaid order holds
-        units for STOCK_RESERVATION_TTL_MINUTES, which the sweeper reclaims.
+        units for STOCK_HOLD_TTL_SECONDS, which the sweeper reclaims.
 
         THE CART NEVER RESERVES. /customer/cart/check is a read — it reports
         what is available and holds nothing. A cart that reserved would let any
@@ -110,7 +110,7 @@ class StockService:
             return []
 
         expires_at = _utcnow() + timedelta(
-            minutes=settings.STOCK_RESERVATION_TTL_MINUTES)
+            seconds=settings.STOCK_HOLD_TTL_SECONDS)
 
         held: list[dict] = []
         # ASCENDING id order — see the module docstring. The ORDER BY above is
@@ -271,7 +271,8 @@ class StockService:
 
     # ------------------------------ sweeper --------------------------------
     @staticmethod
-    async def sweep_expired(db: AsyncSession, *, outlet_id=None) -> int:
+    async def sweep_expired(db: AsyncSession, *, outlet_id=None,
+                            commit: bool = True) -> int:
         """Reclaim HELD reservations on UNPAID orders past their expiry.
 
         WHY THIS IS NOT COVERED BY THE 45-MINUTE PICKUP TTL:
@@ -284,10 +285,31 @@ class StockService:
 
         Scoped to UNPAID orders only. A PAID order's hold is the restaurant's
         commitment and is released by a terminal transition, never by a clock.
+        The predicate carries that guard itself (`co.payment_status <> 'PAID'`)
+        rather than trusting callers, and it only ever moves HELD rows, so a
+        COMMITTED hold is doubly out of reach.
 
-        Check-on-read, like every other sweeper here: called from order
-        creation (so the stock you are about to reserve against is current) and
-        from the owner queue poll.
+        IDEMPOTENT. The UPDATE's own WHERE clause is the whole mechanism: a
+        second run matches zero rows because the first already moved them out
+        of HELD, so no unit is ever returned twice. Safe to call from any number
+        of read paths at any frequency.
+
+        Check-on-read, like every other sweeper here. Called from:
+          * get_menu — the frequently-hit customer read, and the path where a
+            stale hold does visible damage (a dish reads sold out because of
+            somebody's abandoned cart);
+          * create_order — so the stock about to be reserved against is
+            current;
+          * list_active_orders — the owner queue poll.
+
+        `commit=False` runs the sweep inside the CALLER's transaction instead of
+        committing on its own. create_order needs that: it is mid-transaction
+        with a half-built order, and an internal commit there would persist a
+        partial order. It also makes the release and the reservation that
+        follows it atomic, so the units this sweep frees cannot be taken by
+        anyone else in between. The trade is that a later rollback in that
+        transaction also undoes the sweep — acceptable precisely because this is
+        idempotent and the next read sweeps again.
         """
         clauses = ["sr.state = :st", "sr.expires_at <= now()",
                    "co.payment_status <> 'PAID'"]
@@ -314,7 +336,8 @@ class StockService:
                                            ELSE is_available END
                  WHERE id = :id AND stock_remaining IS NOT NULL
             """), {"q": int(r.qty), "id": str(r.menu_item_id)})
-        await db.commit()
+        if commit:
+            await db.commit()
         logger.info("swept %s expired stock reservation(s)", len(rows))
         return len(rows)
 

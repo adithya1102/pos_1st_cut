@@ -13,6 +13,7 @@ import hmac
 import json
 import secrets
 from abc import ABC, abstractmethod
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional
 
@@ -205,6 +206,20 @@ class CashfreeGateway(PaymentGateway):
     SANDBOX_BASE = "https://sandbox.cashfree.com/pg"
     PROD_BASE = "https://api.cashfree.com/pg"
 
+    # Cashfree's own floor for order_expiry_time, VERIFIED against their docs
+    # rather than assumed: "Set order expiry time: Minimum 5 minutes, maximum
+    # 30 days" — cashfree.com/docs/payments/online/resources/payment-lifecycle.
+    # (The Create Order API reference itself documents the field but states no
+    # bound, so the lifecycle page is the citation.)
+    #
+    # The expiry is clamped to this rather than passed straight through: a
+    # STOCK_HOLD_TTL_SECONDS below 300 is a legitimate thing to set for local
+    # testing, and letting it reach Cashfree would turn every checkout into a
+    # hard create-order failure. Clamping degrades to "the gateway outlives the
+    # hold", which is exactly the case mark_paid's late-payment path already
+    # handles.
+    MIN_ORDER_EXPIRY_SECONDS = 300
+
     def __init__(self):
         self.app_id = settings.CASHFREE_APP_ID
         self.secret_key = settings.CASHFREE_SECRET_KEY
@@ -226,6 +241,27 @@ class CashfreeGateway(PaymentGateway):
             "x-api-version": self.API_VERSION,
             "Content-Type": "application/json",
         }
+
+    @classmethod
+    def expiry_seconds(cls) -> int:
+        """The gateway expiry actually sent, after clamping to Cashfree's floor.
+
+        Separated from the timestamp so it can be asserted on directly: the
+        interesting property is "this equals the hold TTL unless the TTL is
+        below Cashfree's minimum", and that is awkward to test through a
+        formatted string.
+        """
+        return max(int(settings.STOCK_HOLD_TTL_SECONDS),
+                   cls.MIN_ORDER_EXPIRY_SECONDS)
+
+    @classmethod
+    def _expiry_iso(cls) -> str:
+        """now + expiry_seconds(), as an offset-aware ISO 8601 string.
+
+        `timespec="seconds"` because Cashfree's parser rejects microseconds.
+        """
+        at = datetime.now(timezone.utc) + timedelta(seconds=cls.expiry_seconds())
+        return at.isoformat(timespec="seconds")
 
     async def create_order(self, amount_rupees: float, currency: str = "INR",
                            receipt: Optional[str] = None,
@@ -256,6 +292,18 @@ class CashfreeGateway(PaymentGateway):
                 **({"notify_url": settings.CASHFREE_NOTIFY_URL}
                    if settings.CASHFREE_NOTIFY_URL else {}),
             },
+            # Die at the same moment the stock hold does (migration 033).
+            #
+            # Without this the gateway order outlived the reservation, so a
+            # customer could sit on a live payment page long after their units
+            # had been swept back into stock, pay, and land in the
+            # re-acquire-or-refund path for no reason other than a clock
+            # mismatch. Matching the two means the common case is a payment
+            # page that is already dead, which is a plain "this order expired"
+            # instead of a successful charge followed by a refund.
+            #
+            # ISO 8601 WITH an offset — Cashfree rejects a naive timestamp.
+            "order_expiry_time": self._expiry_iso(),
         }
 
         async with httpx.AsyncClient(timeout=20) as client:

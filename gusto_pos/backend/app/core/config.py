@@ -28,15 +28,29 @@ class Settings(BaseSettings):
     # expiry of its own; and there is no sweeper for CREATED/PENDING orders at
     # all, since _LIVE_STATUSES is {PAID,RECEIVED,PREPARING,READY}.
     #
-    # 15 minutes is the trade-off between two real failures:
+    # 600 SECONDS (10 minutes) is the trade-off between two real failures:
     #   * too short — a customer who taps Pay, switches to their UPI app,
     #     authenticates, and switches back loses the units mid-payment and
     #     gets ITEM_SOLD_OUT for food they were in the middle of buying;
     #   * too long  — one abandoned cart holds the last portion of a dish for
     #     that whole duration, and every other customer is told it is gone.
-    # It also sits inside Cashfree's own payment-session validity, so a session
-    # that is still usable is never backed by a reservation that has lapsed.
-    STOCK_RESERVATION_TTL_MINUTES: int = 15
+    #
+    # Expressed in SECONDS, not minutes, because the value has to be comparable
+    # with the gateway's own expiry without a unit conversion in between: the
+    # Cashfree order is created with order_expiry_time = now + this, so the
+    # payment page dies at the same moment the hold does. Cashfree's documented
+    # floor is 5 minutes ("Set order expiry time: Minimum 5 minutes, maximum 30
+    # days" — cashfree.com/docs/payments/online/resources/payment-lifecycle),
+    # so 600s clears it with room to spare. Anything set below 300 here will be
+    # REFUSED by Cashfree at order creation, which is why the gateway clamps
+    # rather than passing it straight through.
+    #
+    # Lowering this is safe for correctness but not for conversion: a hold that
+    # lapses mid-payment is recovered by the late-payment path in mark_paid,
+    # which re-acquires the units if they are still there and flags a refund if
+    # they are not. Nobody is ever oversold; some customers just get refunded
+    # instead of fed.
+    STOCK_HOLD_TTL_SECONDS: int = 600
 
     # STAFF login throttle, shared by /auth/login and /auth/pin-login. Counted
     # per claimed-identifier AND per client IP, over a sliding window.

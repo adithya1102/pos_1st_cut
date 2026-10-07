@@ -730,6 +730,30 @@ class CarevoService:
     # ------------------------------ Menu -----------------------------------
     @staticmethod
     async def get_menu(db: AsyncSession, outlet_id: uuid.UUID) -> dict:
+        # STOCK (033): reclaim lapsed holds BEFORE reading availability.
+        #
+        # This is the frequently-hit customer read and the one place a stale
+        # hold does visible damage: reserve_for_order flips is_available to
+        # false when stock hits zero, so somebody's abandoned cart makes a dish
+        # read "sold out" to every other customer until the hold lapses. The
+        # sweep gives the units back and restores is_available, so the menu
+        # below reflects what is genuinely orderable.
+        #
+        # Check-on-read by design — there is no worker. _expire_stale_pickups
+        # is wired the same way for the same reason, and the sweep is
+        # idempotent, so being called on every menu load costs one UPDATE that
+        # matches nothing in the normal case.
+        #
+        # Best-effort: a failure here must not take down the menu, which is the
+        # app's main screen. A missed sweep self-heals on the next read.
+        from app.modules.carevo_customer.stock import StockService
+        try:
+            await StockService.sweep_expired(db, outlet_id=outlet_id)
+        except Exception:
+            logger.warning("stock sweep failed during get_menu for outlet %s",
+                           outlet_id, exc_info=True)
+            await db.rollback()
+
         # Categories of the latest menu for this outlet.
         #
         # `is_active` still filters (a deleted item should not exist for the
@@ -1001,6 +1025,25 @@ class CarevoService:
             declared_arrival_at=getattr(payload, "declared_arrival_at", None),
             requested_pickup_at=requested_pickup_at)
 
+        # STOCK (033): reclaim lapsed holds BEFORE anything reads availability.
+        #
+        # Position matters and is the whole reason this is here rather than next
+        # to reserve_for_order below. reserve_for_order flips is_available to
+        # false when an item hits zero, so somebody's abandoned cart leaves the
+        # dish reading "unavailable" — and the snapshot query immediately below
+        # reads is_available and refuses the order on it. Sweeping after that
+        # gate would reclaim the units a moment too late to be allowed to use
+        # them, and the customer would be told the dish is off the menu while
+        # its stock sat in a lapsed hold.
+        #
+        # commit=False is required, not cosmetic: this is mid-transaction and an
+        # internal commit would persist a partially built order. It also makes
+        # the release atomic with the reservation taken further down, so units
+        # this frees cannot be taken by anyone else in the gap.
+        from app.modules.carevo_customer.stock import StockService
+        await StockService.sweep_expired(db, outlet_id=payload.outlet_id,
+                                         commit=False)
+
         # Snapshot name + price from menu_items.
         item_ids = [str(i.menu_item_id) for i in payload.items]
         rows = (await db.execute(text("""
@@ -1074,7 +1117,63 @@ class CarevoService:
         # Raises 409 ITEM_SOLD_OUT with the real remaining count. Because it is
         # the same transaction, a refusal rolls the whole order back — there is
         # no state where an order exists with a partial hold.
-        from app.modules.carevo_customer.stock import StockService
+        # HOARDING CAP: one live UNPAID hold per customer per outlet.
+        #
+        # Without it, the TTL is a loophole rather than a limit. Nothing stops
+        # one account placing orders in a loop and abandoning each, and because
+        # each attempt takes a fresh 600-second hold, a handful of requests can
+        # hold a dish's entire stock for ten minutes at a time, indefinitely,
+        # at zero cost — no payment is ever required to do it.
+        #
+        # Deliberately NOT a rate limit. The resource being protected is the
+        # restaurant's stock, not the endpoint, so the cap is "how many of your
+        # holds may exist at once" rather than "how often you may ask".
+        #
+        # Runs AFTER the sweep so a lapsed hold can never block its own owner,
+        # and before reserve_for_order so no units are taken on a request that
+        # is about to be refused.
+        #
+        # PAID orders are untouched: payment_status is excluded below, so a
+        # customer with food on the way can order again immediately. Terminal
+        # orders are excluded too — a cancel releases its hold, so this is
+        # belt-and-braces against a hold that outlived its order.
+        existing_hold = (await db.execute(text("""
+            SELECT co.id
+              FROM stock_reservations sr
+              JOIN customer_orders co ON co.id = sr.order_id
+             WHERE sr.state = 'HELD'
+               AND sr.expires_at > now()
+               AND sr.order_id <> :self_id
+               AND co.customer_id = :cid
+               AND co.outlet_id = :oid
+               AND co.payment_status <> 'PAID'
+               AND upper(coalesce(co.status, '')) <> ALL(:terminal)
+             LIMIT 1
+        """), {"self_id": str(order.id), "cid": str(customer.id),
+               "oid": str(payload.outlet_id),
+               "terminal": list(_TERMINAL_STATUSES)})).first()
+        if existing_hold is not None:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "UNPAID_ORDER_PENDING",
+                    # DATA, for the app to deep-link the customer to the order
+                    # it is talking about. customer_orders has no readable_id
+                    # (that column is on the legacy `orders` table) and
+                    # pickup_code is NULL until payment, so the uuid is the only
+                    # identifier an unpaid order has — which is exactly why it
+                    # stays out of the prose below.
+                    "order_id": str(existing_hold[0]),
+                    # Phrased as the action the customer can take. "One order at
+                    # a time" alone reads as a refusal with no way out.
+                    "message": (
+                        "You already have an unpaid order at this restaurant. "
+                        "Finish paying for it, or cancel it, before placing "
+                        "another."
+                    ),
+                },
+            )
+
         await StockService.reserve_for_order(db, order.id, payload.items)
 
         gross = round(total, 2)

@@ -87,16 +87,50 @@ async def _second_item(db, seed) -> str:
     return str(iid)
 
 
-async def _place(client, seed, items, **extra):
+async def _customers(db, n: int) -> list[dict]:
+    """`n` distinct signed-in customers, as Authorization headers.
+
+    The concurrency proofs model `n` DIFFERENT people racing for the same
+    units. One customer placing `n` orders is a different scenario, and since
+    the hoarding cap (one live unpaid hold per customer per outlet) it is one
+    the server legitimately refuses — so the proofs now spell out what they
+    always meant rather than leaning on a single seeded customer.
+
+    Inserted in ONE round trip via unnest: at 500 racers, 500 sequential
+    INSERTs would dominate a test whose whole point is the timing of what comes
+    after. The CASTs are required — asyncpg cannot infer an array type from a
+    bare parameter.
+    """
+    from app.modules.carevo_customer.deps import create_customer_token
+    ids = [str(uuid.uuid4()) for _ in range(n)]
+    await db.execute(text("""
+        INSERT INTO customers (id, phone_number, name, points_balance,
+                               created_at)
+        SELECT c.id, c.phone, c.name, 0, now()
+          FROM unnest(CAST(:ids AS uuid[]),
+                      CAST(:phones AS text[]),
+                      CAST(:names AS text[])) AS c(id, phone, name)
+    """), {
+        "ids": ids,
+        # Unique per row and inside phone_number's varchar(20).
+        "phones": [f"+9170{i[:8]}" for i in ids],
+        "names": [f"TEST_CAREVO_racer_{n_}" for n_ in range(n)],
+    })
+    await db.commit()
+    return [{"Authorization": f"Bearer {create_customer_token(i)}"} for i in ids]
+
+
+async def _place(client, seed, items, *, auth=None, **extra):
     return await client.post(f"{API}/customer/orders",
-                             headers=seed["customer_auth"],
+                             headers=auth or seed["customer_auth"],
                              json={"outlet_id": seed["outlet_id"],
                                    "items": items, **extra})
 
 
-async def _place_one(client, seed, item_id, qty=1):
+async def _place_one(client, seed, item_id, qty=1, *, auth=None):
     return await _place(client, seed,
-                        [{"menu_item_id": item_id, "quantity": qty}])
+                        [{"menu_item_id": item_id, "quantity": qty}],
+                        auth=auth)
 
 
 # ============================ untracked is inert =============================
@@ -327,10 +361,14 @@ class TestConcurrencyProofs:
         """
         racers = 500
         await _set_stock(db, seed["menu_item_id"], 2)
+        # 500 DISTINCT customers. One customer firing 500 orders is a different
+        # test — the hoarding cap refuses it — and relying on the cap not seeing
+        # its siblings' uncommitted holds would make this pass by timing luck.
+        auths = await _customers(db, racers)
 
         results = await asyncio.gather(*[
-            _place_one(client, seed, seed["menu_item_id"], qty=1)
-            for _ in range(racers)
+            _place_one(client, seed, seed["menu_item_id"], qty=1, auth=a)
+            for a in auths
         ], return_exceptions=True)
 
         ok = [r for r in results
@@ -365,10 +403,12 @@ class TestConcurrencyProofs:
             self, client, seed, db):
         """Uneven quantities, where an off-by-one in the predicate surfaces."""
         await _set_stock(db, seed["menu_item_id"], 10)
+        quantities = [3, 4, 2, 5, 1, 3, 4, 2, 6, 1]
+        auths = await _customers(db, len(quantities))
 
         results = await asyncio.gather(*[
-            _place_one(client, seed, seed["menu_item_id"], qty=q)
-            for q in [3, 4, 2, 5, 1, 3, 4, 2, 6, 1]
+            _place_one(client, seed, seed["menu_item_id"], qty=q, auth=a)
+            for q, a in zip(quantities, auths)
         ], return_exceptions=True)
 
         assert [r for r in results if isinstance(r, Exception)] == []
@@ -406,10 +446,11 @@ class TestConcurrencyProofs:
         ba = [{"menu_item_id": b, "quantity": 1},
               {"menu_item_id": a, "quantity": 1}]
 
+        auths = await _customers(db, 12)
         results = await asyncio.wait_for(
             asyncio.gather(
-                *[_place(client, seed, ab) for _ in range(6)],
-                *[_place(client, seed, ba) for _ in range(6)],
+                *[_place(client, seed, ab, auth=auths[i]) for i in range(6)],
+                *[_place(client, seed, ba, auth=auths[6 + i]) for i in range(6)],
                 return_exceptions=True,
             ),
             timeout=60,
@@ -434,8 +475,9 @@ class TestConcurrencyProofs:
 
         items = [{"menu_item_id": a, "quantity": 1},
                  {"menu_item_id": b, "quantity": 1}]
+        auths = await _customers(db, 10)
         results = await asyncio.gather(
-            *[_place(client, seed, items) for _ in range(10)],
+            *[_place(client, seed, items, auth=a_) for a_ in auths],
             return_exceptions=True)
 
         assert [r for r in results if isinstance(r, Exception)] == []
