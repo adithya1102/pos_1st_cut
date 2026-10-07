@@ -94,6 +94,10 @@ class OrdersState extends ChangeNotifier {
     try {
       _orders = await _orderService.getOrders();
       _noteArrivals();
+      // Follow the data: speed up to 5s while something is awaiting a
+      // decision, drop back to 15s once nothing is. Done here rather than in
+      // the UI so a screen cannot forget it.
+      _retunePolling();
     } catch (_) {
       _error = 'Could not load orders. Pull to retry.';
     } finally {
@@ -128,11 +132,62 @@ class OrdersState extends ChangeNotifier {
   /// Clears a delivered alert so it cannot fire twice.
   void consumeAlert() => newOrderAlert.value = null;
 
+  /// How often the queue refreshes while an order is WAITING to be accepted.
+  ///
+  /// 5s rather than the usual 15. The acceptance deadline defaults to 180
+  /// seconds, so a 15-second poll is up to a 15-second lie about how long is
+  /// left — and, worse, up to 15 seconds of alarm after another device has
+  /// already settled the order. The faster rate only applies while something
+  /// is actually pending, so the steady-state request cost is unchanged.
+  static const Duration pendingPollInterval = Duration(seconds: 5);
+
+  /// Overridable for tests, same reason as [pollInterval].
+  Duration get pendingPoll => pendingPollInterval;
+
+  /// The order currently awaiting a human decision, if any.
+  ///
+  /// Plain state rather than a one-shot ValueNotifier like [newOrderAlert],
+  /// and the difference matters: a new-order chime is an EVENT that happens
+  /// once, whereas this is a CONDITION that persists until the server says
+  /// otherwise. Modelling it as an event would mean a dismissed-and-rebuilt
+  /// modal never came back for an order still waiting.
+  ///
+  /// Null at an auto outlet, always, because Order.isPending is false there.
+  Order? get pendingOrder {
+    for (final o in _orders) {
+      if (o.isPending) return o;
+    }
+    return null;
+  }
+
+  /// True while any order needs deciding — what drives the alarm.
+  bool get hasPendingOrder => pendingOrder != null;
+
+  /// Tracks which cadence the timer is currently running at, so [load] can
+  /// switch rates without restarting the timer on every single tick.
+  Duration? _activeInterval;
+
   /// Begin foreground polling. Idempotent — calling it twice does not double
   /// the request rate.
   void startPolling() {
+    _startTimer(hasPendingOrder ? pendingPoll : pollInterval);
+  }
+
+  void _startTimer(Duration every) {
+    if (_activeInterval == every && _poll != null) return;
     _poll?.cancel();
-    _poll = Timer.periodic(pollInterval, (_) => load(silent: true));
+    _activeInterval = every;
+    _poll = Timer.periodic(every, (_) => load(silent: true));
+  }
+
+  /// Re-evaluate the poll rate after a load.
+  ///
+  /// Called from [load] rather than from the UI so the cadence follows the
+  /// DATA. A screen that forgot to call this would silently keep polling every
+  /// 15s through a 180-second deadline.
+  void _retunePolling() {
+    if (_poll == null) return; // not polling at all; nothing to retune
+    _startTimer(hasPendingOrder ? pendingPoll : pollInterval);
   }
 
   /// Stop polling. Called when the app leaves the foreground: this alert is
@@ -141,7 +196,38 @@ class OrdersState extends ChangeNotifier {
   void stopPolling() {
     _poll?.cancel();
     _poll = null;
+    // Cleared, or a later startPolling() at the SAME cadence would match the
+    // cached value, take the early return in _startTimer, and never recreate
+    // the timer — polling would silently stay dead.
+    _activeInterval = null;
   }
+
+  /// Accept a pending order with a committed prep time (migration 032).
+  ///
+  /// Returns null on success, or a staff-facing message. A 409 is NOT an error
+  /// to hide: it means another device got there first, or the deadline passed,
+  /// and the person who just tapped needs to be told which — otherwise they
+  /// will stand there expecting food to be made.
+  Future<String?> acceptPending(String orderId, int prepMinutes) async {
+    try {
+      await _orderService.accept(orderId, prepMinutes: prepMinutes);
+      await load();
+      return null;
+    } on ApiException catch (e) {
+      await load(); // re-sync: whatever beat us is now the truth
+      if (e.statusCode == 409) {
+        return 'That order was already dealt with.';
+      }
+      return 'Could not accept the order. Check the connection and try again.';
+    } catch (_) {
+      return 'Could not accept the order. Check the connection and try again.';
+    }
+  }
+
+  /// Tell the server this device has SEEN the alert, which stops the re-push
+  /// ladder. Does not accept the order and does not stop its deadline.
+  Future<void> acknowledgePending(String orderId) =>
+      _orderService.acknowledgeAlert(orderId);
 
   /// Wipes the queue and the alert baseline.
   ///

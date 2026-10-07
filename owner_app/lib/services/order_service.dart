@@ -134,6 +134,55 @@ class OrderService {
   // behind it, a staff-tappable "mark as paid" is a button that marks UNPAID
   // orders paid, which is why it is deleted rather than hidden.
 
+  /// `POST /pos/orders/{id}/accept` — take a pending order (migration 032).
+  ///
+  /// [prepMinutes] is the restaurant's OWN estimate and is required by the
+  /// server; the customer-facing ETA still comes from the prediction engine,
+  /// so this is recorded for comparison rather than shown to them.
+  ///
+  /// Throws ApiException(409) when the order is no longer AWAITING — someone
+  /// else accepted it, rejected it, or the deadline passed. That is a NORMAL
+  /// outcome on a counter with several devices, not an error to hide: the
+  /// caller should tell the staff member what happened to it, which is why the
+  /// server returns the state that won.
+  Future<String> accept(String orderId, {required int prepMinutes}) async {
+    final data = await _client.post(
+      '/pos/orders/$orderId/accept',
+      body: {'prep_minutes': prepMinutes},
+    );
+    return ((data as Map?)?['acceptance_state'] ?? 'ACCEPTED').toString();
+  }
+
+  /// `POST /pos/orders/{id}/alert-ack` — "I have seen this".
+  ///
+  /// Stops the server re-pushing the alert. Does NOT accept the order and does
+  /// NOT stop the deadline — acknowledging must not become a way to park
+  /// orders while the customer waits.
+  ///
+  /// Best-effort and never throws into the caller: this is a courtesy to the
+  /// push ladder, and failing it must not block the modal from opening.
+  Future<void> acknowledgeAlert(String orderId) async {
+    try {
+      await _client.post('/pos/orders/$orderId/alert-ack');
+    } catch (_) {
+      // Swallowed deliberately — see above.
+    }
+  }
+
+  /// `POST /pos/devices/test-push` — send a real push to THIS device.
+  ///
+  /// Returns the transport status ('sent' | 'skipped' | 'failed') and its
+  /// detail, because 'skipped — no fcm_token' and 'skipped — push disabled'
+  /// have different fixes and a boolean cannot tell them apart.
+  Future<({String status, String? detail})> sendTestPush() async {
+    final data = await _client.post('/pos/devices/test-push');
+    final map = (data as Map?) ?? const {};
+    return (
+      status: (map['status'] ?? 'unknown').toString(),
+      detail: map['detail']?.toString(),
+    );
+  }
+
   /// `POST /pos/orders/{id}/reject` — refuse a paid order.
   ///
   /// There is deliberately no matching accept: a paid order is accepted

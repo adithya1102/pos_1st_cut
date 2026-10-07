@@ -6,8 +6,10 @@ import 'package:provider/provider.dart';
 import '../models/menu_item.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../models/order.dart';
 import '../models/outlet.dart';
 import '../services/alert_feedback.dart';
+import '../services/order_alarm.dart';
 import '../services/cloudinary_service.dart';
 import '../services/staff_push_service.dart';
 import '../state/auth_state.dart';
@@ -15,6 +17,7 @@ import '../state/home_state.dart';
 import '../state/offers_state.dart';
 import '../state/orders_state.dart';
 import '../widgets/dish_row.dart';
+import '../widgets/order_acceptance_modal.dart';
 import '../widgets/menu_import_empty_state.dart';
 import 'change_password_screen.dart';
 import 'outlet_settings_screen.dart';
@@ -66,6 +69,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   late OrdersState _orders;
   late StaffPushService _push;
 
+  /// The looping acceptance alarm. Owned by this screen rather than by
+  /// OrdersState so the audio lifecycle follows the WIDGET — a state object
+  /// that outlives the screen would keep a player alive after logout.
+  final OrderAlarm _alarm = OrderAlarm();
+
+  /// Guards against stacking modals. The pending condition is re-evaluated on
+  /// every 5-second poll, so without this each tick would push another sheet
+  /// onto the navigator for the same order.
+  bool _modalOpen = false;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -86,6 +99,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       // alert baseline (the queue already on the counter is not news) and the
       // poll started after it is what makes an arrival audible.
       _orders.newOrderAlert.addListener(_onNewOrder);
+      // Manual acceptance (migration 032): a CONDITION rather than an event,
+      // so it rides the ordinary notifyListeners rather than the one-shot
+      // alert channel — a modal dismissed and rebuilt must come back while the
+      // order is still waiting.
+      _orders.addListener(_onOrdersChanged);
       _orders.load();
       _orders.startPolling();
 
@@ -121,6 +139,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _orders.startPolling();
     } else {
       _orders.stopPolling();
+      // Hand the alarm over to the SYSTEM notification on the way out.
+      //
+      // The in-app looping tone belongs to a screen nobody is looking at once
+      // backgrounded, and leaving it playing would be an alarm with no visible
+      // way to silence it — the modal is gone. The insistent notification
+      // raised by staffBackgroundHandler is the backgrounded equivalent and it
+      // keeps its own sound, so the order is still audible.
+      unawaited(_alarm.stop());
     }
   }
 
@@ -129,6 +155,60 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     setState(() => _index = _ordersTab);
     _orders.load();                       // the pushed order may be brand new
     _push.openOrderId.value = null;       // consume once
+  }
+
+  /// Raise (or tear down) the acceptance modal as the server state moves.
+  ///
+  /// Driven by the 5-second pending poll rather than by push, deliberately: a
+  /// push can be dropped (these carry ttl=60s) and must not be the only thing
+  /// that opens this. The push exists to wake a BACKGROUNDED device; this is
+  /// what happens while someone is actually looking.
+  void _onOrdersChanged() {
+    if (!mounted) return;
+    final pending = _orders.pendingOrder;
+
+    if (pending == null) {
+      // Settled — on this device or another. Stop the alarm and close the
+      // sheet if it is still up, which is the ORDER_RESOLVED case from the
+      // other end: whoever did not tap must stop ringing.
+      unawaited(_alarm.stop());
+      if (_modalOpen) {
+        _modalOpen = false;
+        Navigator.of(context, rootNavigator: true).maybePop();
+      }
+      return;
+    }
+
+    unawaited(_alarm.start());
+    if (_modalOpen) return;            // already deciding this one
+    _modalOpen = true;
+    // Tell the server we have seen it, so the re-push ladder stops buzzing
+    // every other device in the building. Does not stop the deadline.
+    unawaited(_orders.acknowledgePending(pending.orderId));
+    unawaited(_showAcceptance(pending));
+  }
+
+  Future<void> _showAcceptance(Order pending) async {
+    final decision = await showOrderAcceptanceModal(context, pending);
+    _modalOpen = false;
+    await _alarm.stop();
+    if (!mounted || decision == null) return;
+
+    String? err;
+    switch (decision) {
+      case AcceptDecision(prepMinutes: final mins):
+        err = await _orders.acceptPending(pending.orderId, mins);
+      case RejectDecision():
+        err = await _orders.reject(pending.orderId,
+            reason: decision.serverReason);
+    }
+    if (!mounted || err == null) return;
+    // A 409 lands here: someone else got there first, or it expired. Said out
+    // loud rather than swallowed — the person who just tapped is otherwise
+    // left expecting food to be made.
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(err)));
   }
 
   /// A paid order just appeared in the feed: chime, buzz, and say which one.
@@ -172,6 +252,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _orders.newOrderAlert.removeListener(_onNewOrder);
+    _orders.removeListener(_onOrdersChanged);
+    unawaited(_alarm.dispose());
     // Leaving this running would keep hitting the server from a screen that no
     // longer exists — and, on logout, for an outlet nobody is signed into.
     _orders.stopPolling();

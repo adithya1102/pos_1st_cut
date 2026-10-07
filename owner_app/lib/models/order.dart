@@ -43,6 +43,21 @@ class Order {
 
   final List<OrderLineItem> items;
 
+  /// Manual acceptance (backend migration 032).
+  ///
+  /// NULL for every order at an outlet on automatic acceptance, which is every
+  /// outlet until a SUPER_ADMIN opts one in. Its PRESENCE — not any status
+  /// value — is what marks an order as needing a human, because an awaiting
+  /// order's [status] is `PAID`, identical to an auto order's. [isPending] is
+  /// the single place that decision lives.
+  ///
+  /// AWAITING | ACCEPTED | REJECTED | EXPIRED.
+  final String? acceptanceState;
+
+  /// When the window to accept runs out. Drives the countdown on the modal —
+  /// an alarm with no visible deadline tells staff nothing about urgency.
+  final String? acceptanceDeadlineAt;
+
   const Order({
     required this.orderId,
     required this.status,
@@ -52,10 +67,30 @@ class Order {
     required this.createdAt,
     required this.items,
     this.pickupVerifiedAt,
+    this.acceptanceState,
+    this.acceptanceDeadlineAt,
   });
 
   /// True once staff have confirmed payment (manual UPI-intent tick).
   bool get isPaid => paymentStatus.toUpperCase() == 'PAID';
+
+  /// Waiting for a human to accept or reject it. THE gate for the alert.
+  ///
+  /// False at an auto outlet because [acceptanceState] is null there, so the
+  /// modal and the alarm are unreachable until one opts in.
+  bool get isPending => acceptanceState?.toUpperCase() == 'AWAITING';
+
+  /// Seconds until the deadline, floored at zero. Null when not pending or
+  /// the timestamp is absent/unparseable — the modal then shows no countdown
+  /// rather than a fabricated one.
+  int? get secondsToDeadline {
+    final raw = acceptanceDeadlineAt;
+    if (raw == null || raw.isEmpty) return null;
+    final at = DateTime.tryParse(raw);
+    if (at == null) return null;
+    final s = at.toUtc().difference(DateTime.now().toUtc()).inSeconds;
+    return s < 0 ? 0 : s;
+  }
 
   /// Collected, and inside its grace window — the only reason a COMPLETED
   /// order is in this feed at all.
@@ -82,6 +117,11 @@ class Order {
       totalAmount: _toDouble(json['total_amount']),
       createdAt: (json['created_at'] as String?) ?? '',
       pickupVerifiedAt: json['pickup_verified_at']?.toString(),
+      // Absent on an auto outlet and on an older backend. Read defensively so
+      // either reads as "no confirmation needed", which is the safe default —
+      // it leaves the order on the ordinary queue rather than alarming.
+      acceptanceState: json['acceptance_state']?.toString(),
+      acceptanceDeadlineAt: json['acceptance_deadline_at']?.toString(),
       items: rawItems
           .map((e) => OrderLineItem.fromJson(e as Map<String, dynamic>))
           .toList(),

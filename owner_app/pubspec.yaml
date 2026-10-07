@@ -125,6 +125,19 @@ flutter:
     # build-time input for flutter_launcher_icons and must NOT ship in the APK.
     - assets/brand/gusto_logo.png
 
+    # The order-acceptance alarm tone, played IN-APP by OrderAlarm via
+    # audioplayers.
+    #
+    # DELIBERATELY DUPLICATED with android/app/src/main/res/raw/order_alert.wav,
+    # which looks redundant and is not: the two have different consumers that
+    # cannot read each other's location. The res/raw copy is referenced by the
+    # NOTIFICATION CHANNEL as a RawResourceAndroidNotificationSound, resolved by
+    # the Android framework, which cannot see Flutter's asset bundle. This copy
+    # is read by audioplayers through the asset bundle, which cannot see
+    # res/raw. Both are generated from the same synthesis script, so replacing
+    # the tone means replacing both files.
+    - assets/audio/order_alert.wav
+
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
 
