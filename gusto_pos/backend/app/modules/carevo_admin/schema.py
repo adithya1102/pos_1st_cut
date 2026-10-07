@@ -111,6 +111,12 @@ class AdminOrderOut(BaseModel):
     # "unknown" and "at the restaurant" must not render identically.
     distance_km: Optional[float] = None
 
+    # Refund flag (migration 032). Additive and defaulted, so an admin_app
+    # build that does not know about them is unaffected.
+    refund_required: bool = False
+    #: order_rejected | ttl_abandoned | acceptance_expired
+    refund_reason: Optional[str] = None
+
 
 class AdminOrderPageOut(BaseModel):
     total: int

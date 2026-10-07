@@ -312,6 +312,38 @@ export interface AdminOrder {
   promotion_discount: number | null;
   /** Null when the customer never shared an origin — render "—", not 0. */
   distance_km: number | null;
+  /**
+   * Migration 032. True when money was taken and no food was delivered:
+   * a staff reject of a paid order, a TTL abandonment of a paid order, or an
+   * acceptance deadline passing unanswered.
+   *
+   * NOT a gateway refund — nothing in the backend calls a payment-provider
+   * refund API. This is a worklist flag, cleared by an admin recording that
+   * they settled it off-app.
+   */
+  refund_required: boolean;
+  /** order_rejected | ttl_abandoned | acceptance_expired */
+  refund_reason: string | null;
+}
+
+/**
+ * One row of the refund worklist (GET /admin/orders/refund-due).
+ *
+ * Deliberately a narrower shape than AdminOrder: this view answers "who are we
+ * paying back, how much, and how do we reach them", so it carries the phone
+ * number and omits items/promotions/distance entirely.
+ */
+export interface RefundDueOrder {
+  order_id: string;
+  outlet_id: string;
+  outlet_name: string | null;
+  total_amount: number;
+  refund_reason: string | null;
+  refund_flagged_at: string | null;
+  status: string;
+  payment_status: string | null;
+  created_at: string | null;
+  customer_phone: string | null;
 }
 
 export interface AdminOrderPage {
@@ -593,6 +625,24 @@ export const adminApi = {
 
   orders: (limit = 50, offset = 0) =>
     api.get<AdminOrderPage>(`/api/v1/admin/orders?limit=${limit}&offset=${offset}`),
+
+  /**
+   * The refund worklist (GET /admin/orders/refund-due), oldest flag first.
+   *
+   * A separate endpoint rather than a query param on `orders`, because it is a
+   * different question: `orders` is a paginated log of everything, this is a
+   * short list of obligations served by a partial index. It returns a bare
+   * array, not a page.
+   */
+  refundDue: (limit = 100) =>
+    api.get<RefundDueOrder[]>(`/api/v1/admin/orders/refund-due?limit=${limit}`),
+
+  /** Record that an owed refund was settled off-app. Writes an audit event. */
+  markRefunded: (orderId: string) =>
+    api.post<{ order_id: string; already: boolean; refund_required: boolean }>(
+      `/api/v1/admin/orders/${orderId}/refund-marked`,
+      {},
+    ),
 
   // Windowed by days rather than paginated: paging a tree can split one
   // restaurant's days across two pages, producing a group that looks complete

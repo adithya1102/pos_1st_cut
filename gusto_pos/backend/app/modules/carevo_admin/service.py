@@ -861,6 +861,9 @@ class AdminService:
             SELECT co.id, co.pickup_code, co.status, co.payment_status,
                    co.total_amount, co.discount_amount, co.created_at,
                    co.origin_lat, co.origin_lng,
+                   -- Refund flag (migration 032). Additive: false/NULL for
+                   -- every order until something flags one.
+                   co.refund_required, co.refund_reason,
                    c.name  AS customer_name,
                    c.phone_number AS customer_phone,
                    c.email AS customer_email,
@@ -924,6 +927,8 @@ class AdminService:
                 "promotion_discount": (float(r.promotion_discount)
                                        if r.promotion_discount is not None else None),
                 "distance_km": distance,
+                "refund_required": bool(r.refund_required),
+                "refund_reason": r.refund_reason,
             })
         return {"total": int(total), "limit": limit, "offset": offset, "orders": out}
 
