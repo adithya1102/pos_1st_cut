@@ -7433,3 +7433,141 @@ but `opens_at`/`closes_at`/`is_manually_closed` (024) and `locality` are all
 read with raw `text()` SQL — and migration 031's
 `requested_pickup_at`/`release_at` were left unmapped for exactly this coupling
 reason. Three reads do not justify taking the ordering constraint on twice.
+
+---
+
+## 2026-10-07 (later) — Tasks 1-6 logic SHIPPED, and the hang that stopped the run
+
+Supersedes the "schema only; logic NOT built" framing of the entry above. That
+entry was written at 03:14 after migrations 032/033 landed and was never
+updated; the logic went in between 09:29 and 15:47 the same day, in eight
+commits none of which this log mentioned. Recorded now, with the gaps that were
+still open after them.
+
+### What had actually landed before the hang
+
+| Commit | Scope |
+|---|---|
+| `87cf1644` | `carevo_customer/acceptance.py` (601 lines) — per-outlet manual acceptance, refund flagging, admin surface |
+| `2137a618` | made the scheduled + refund views volume-independent |
+| `5977ffdd` | admin_app Refund-due column and filter |
+| `24988058` | push: `android` priority=high + ttl=60s, data-only acceptance kinds, test-push endpoint |
+| `a11d1ce4` | `carevo_customer/stock.py` (365 lines) — reservation at order creation + concurrency proofs |
+| `ecad0391` | customer_app waiting / confirmed / refund states |
+| `17d4d621` | owner_app "Limited quantity today" toggle |
+| `fc52e296` | owner_app insistent acceptance notification + synthesized alert tone |
+
+### THE HANG — an async return, not an environment problem
+
+The run died in `owner_app/test/order_acceptance_modal_test.dart` (untracked, so
+there was no last-good state to revert to). It did not fail and it did not time
+out: it **blocked for ever on the first widget test**, with the runner's own
+`--timeout` unable to fire and near-zero CPU. Two defects, both in the test:
+
+1. **Async return flattening — the actual hang.** The helper was
+
+   ```dart
+   Future<AcceptanceDecision?> _open(...) async { ...; return result; }
+   ```
+
+   where `result` is the modal's own future. Dart **flattens** a future returned
+   from an `async` function into the outer one, so `await _open(...)` waited for
+   the sheet **to be answered** — which, in a test that only wants to inspect the
+   open sheet, never happens. Fixed by returning the future inside a record.
+
+2. **`pumpAndSettle` cannot settle this widget.** The sheet rebuilds itself every
+   second from a `Timer.periodic` to redraw the countdown, so the tree never
+   reaches a frame-less state. Replaced with a fixed 400 ms pump throughout.
+
+   The same file's "cannot be dismissed" test also awaited
+   `handlePopRoute().timeout(2s)` against `PopScope(canPop: false)`. That future
+   never completes, and inside `testWidgets` **the clock is fake**, so the
+   `.timeout()` never fires either. Now asserted on `PopScope.canPop`.
+
+One assertion was simply wrong rather than unlucky: `find.text('10 min')` matches
+both the preset chip and the stepper value, so it reads through the `prep_value`
+key now.
+
+Lesson worth keeping: in `flutter_test`, a never-completing future is a SILENT
+infinite hang, not a failure. `flutter test` also runs files concurrently, so the
+test name on the progress line is whichever test is *active*, **not** the one
+that is stuck — bisect per-file before trusting that label.
+
+### Gaps that were still open after the eight commits, now closed
+
+| Gap | Fix |
+|---|---|
+| `/ws/kitchen/{outlet_id}` had **no auth at all** — 7d38e094 closed only the customer socket | `6fdf9da4` staff `?token=` + `is_active` + outlet scoping, 10 tests |
+| `SQL_ECHO` had no test | `4c51ceb2` 11 tests, incl. a source check that `echo` is not re-hardcoded |
+| push payload carried **no channel id** | `a3d702a8` in `data`, never `android.notification` — see below |
+| oversell proof used 50 racers, spec said 500 | `78a640c3` 500 racers, exactly 2 win, 1.83s |
+| release signing had no test | `ff98a782` 5 tests on the gradle wiring + keystore ignores |
+| owner_app foreground acceptance UI uncommitted | `8681952b` modal + alarm + 5s pending poll |
+
+### The channel-id trap, recorded because the obvious fix is the broken one
+
+`android.notification.channel_id` is the natural place for it and is **wrong**.
+`android.notification` is a system-rendered notification spec, so attaching one
+turns a data-only message into a notification message — and Dart's
+`onBackgroundMessage` is then never invoked. That handler is the entire owner_app
+alert: it raises the insistent notification, re-alerts at 30s/60s and cancels on
+resolution. Setting the channel the obvious way disables the alert it configures.
+The id therefore travels in `data`, and a test asserts `android` stays exactly
+`{priority, ttl}`.
+
+It is also scoped to the two owner_app kinds only: `new_orders_v1` does not exist
+in customer_app, and on Android 8+ a notification naming an unknown channel is
+not displayed at all, so stamping it on customer status pushes would silently
+suppress them. A cross-language test pins the Python constant to the Dart one —
+nothing else connects them, and a drift fails silently on both sides.
+
+### Test baselines — the numbers in the brief were stale
+
+Measured this pass, all four suites green:
+
+| Suite | Brief said | Before this pass | After |
+|---|---|---|---|
+| backend | 682 | 812 passed / 1 xfailed | **840 passed / 1 xfailed** |
+| customer_app | 567 | 590 | **590** |
+| owner_app | 103 | 142 (once unhung) | **147** |
+| dashboard_app | 57 | 57 | **57** |
+
+`gusto_pos/backend` pytest prints **no summary line** — progress dots then
+nothing, exit 0. Counts above come from `--junit-xml`, not from counting dots.
+Note also `pytest.ini` has `python_files = test_api_*.py`, so `test_carevo_skip.py`
+is never collected; "the suite is green" says nothing about it.
+
+### Migrations 032 and 033 — state re-verified, NOT changed
+
+Both remain **APPLIED to local `carevo_test` only** and **NOT applied to prod**.
+Verified by querying `information_schema` / `pg_indexes` / `pg_constraint`
+rather than by assuming: 13/13 columns, `stock_reservations` present, 6/6
+indexes, 7/7 CHECK constraints. Live pickup-code duplicate groups on
+`carevo_test`: **0**. No migration was applied anywhere in this pass.
+
+**032 must be applied to prod BEFORE this code deploys** — the nine
+`customer_orders` columns are MAPPED on `CustomerOrder`, so SQLAlchemy puts them
+in every SELECT against that table and a deploy without them fails every order
+query with `UndefinedColumn`. 033 is safe either way (the `menu_items` column is
+read defensively and `stock_reservations` is only touched once a dish has a
+number), but run the duplicate-pickup-code pre-check in the 033 header first:
+the partial UNIQUE index **will fail to build** on a database that already holds
+a live duplicate, and prod is still unverified.
+
+### Still open, deliberately
+
+- **`stock_reservations.expires_at` TTL value is still unset.** The premise it
+  was meant to inherit — "the existing payment-retry grace window" — still does
+  not exist in the code (see the previous entry for the four things that are not
+  it). The column stays `NOT NULL` so a hold cannot be written without a
+  deadline; the value needs a deliberate decision, not a guess.
+- **owner_app release builds remain DEBUG-SIGNED.** Signing is wired, no
+  keystore was added. `ff98a782` now fails if the ignore patterns or the debug
+  fallback are removed.
+- **The bin/obj deletions in `git status` were left unstaged.** They are MAUI
+  build artifacts that are committed in the first place; un-committing them is a
+  separate hygiene decision, not part of this work.
+- **Legacy dine-in routes are still unauthenticated** (`/customers/*`,
+  `/users/*`, `/roles/*`, `/orders/*` CRUD). Both WebSockets are now closed, so
+  `test_api_legacy_route_auth.py`'s `STILL_OPEN_DB_BACKED` proxy mechanism is
+  weaker than it looks — it treats "reached the DB" as "was not auth-gated".
