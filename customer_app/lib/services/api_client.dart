@@ -381,18 +381,54 @@ class ApiClient {
       await clearToken();
       authFailures.value++;
       throw AuthExpiredException(
-        body is Map && body['detail'] != null
-            ? body['detail'].toString()
-            : 'Your session has expired. Please sign in again.',
+        _detailMessage(body) ??
+            'Your session has expired. Please sign in again.',
       );
     }
 
-    final detail = body is Map && body['detail'] != null
-        ? body['detail'].toString()
-        : (body is Map && body['message'] != null
+    final detail = _detailMessage(body)
+        ?? (body is Map && body['message'] != null
             ? body['message'].toString()
             : 'Request failed (${res.statusCode}).');
     throw ApiException(detail, statusCode: res.statusCode);
+  }
+
+  /// The human-readable part of a FastAPI `detail`, or null if there is none.
+  ///
+  /// `detail` is NOT always a string. The server raises structured details for
+  /// the cases a customer most needs explained — `ITEM_SOLD_OUT` carries the
+  /// item name and remaining count, `UNPAID_ORDER_PENDING` carries the order
+  /// number — and a bare `.toString()` on that Map renders Dart's debug form
+  /// straight into the UI:
+  ///
+  ///   {error: ITEM_SOLD_OUT, menu_item_id: 9f2…, name: Masala Dosa,
+  ///    requested: 2, remaining: 1, message: Masala Dosa: only 1 left, …}
+  ///
+  /// Every structured detail carries a `message` written for the customer, so
+  /// that is preferred; `error` is the fallback for a detail that has none, and
+  /// is at least a short code rather than a dump. A plain string detail is
+  /// returned unchanged, which is the common case.
+  String? _detailMessage(dynamic body) {
+    if (body is! Map) return null;
+    final detail = body['detail'];
+    if (detail == null) return null;
+    if (detail is Map) {
+      final message = detail['message'];
+      if (message != null && message.toString().trim().isNotEmpty) {
+        return message.toString();
+      }
+      final error = detail['error'];
+      if (error != null && error.toString().trim().isNotEmpty) {
+        return error.toString();
+      }
+      // A Map with neither key is not worth dumping at the customer.
+      return null;
+    }
+    // FastAPI validation errors arrive as a LIST of per-field objects. Their
+    // 'msg' values are framework prose ("field required"), so the list is not
+    // rendered either — the generic fallback is more honest than pretending.
+    if (detail is List) return null;
+    return detail.toString();
   }
 
   dynamic _tryDecode(String s) {
