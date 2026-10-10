@@ -45,6 +45,20 @@ android {
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
+        // REQUIRED by flutter_local_notifications 22.3.1, which the acceptance
+        // alert depends on. Its AAR declares the requirement, so without this
+        // the debug build fails at :app:checkDebugAarMetadata with
+        // "Dependency ':flutter_local_notifications' requires core library
+        // desugaring to be enabled for :app" — not at runtime, at build time.
+        //
+        // Needed even though this app never calls zonedSchedule(): the plugin
+        // has relied on desugaring for backwards-compatible scheduling since
+        // v10, and the requirement is on the dependency, not on which of its
+        // APIs you use (see its README, "Gradle setup").
+        //
+        // Pairs with the coreLibraryDesugaring dependency below; both are
+        // required and neither works alone.
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -88,6 +102,20 @@ android {
             }
         }
     }
+}
+
+// The desugared JDK library itself. Version 2.1.4 is the one
+// flutter_local_notifications 22.3.1 names in its own README and ships in its
+// example app, so it is matched exactly rather than floated — a desugar version
+// skew against the plugin's AAR is the kind of mismatch that surfaces as an
+// obscure D8 failure rather than a clear one.
+//
+// `coreLibraryDesugaring` is its own configuration, not an implementation
+// dependency: it supplies the backported java.time/java.util.stream classes D8
+// rewrites calls onto. It does nothing unless
+// isCoreLibraryDesugaringEnabled is set in compileOptions above.
+dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }
 
 kotlin {
