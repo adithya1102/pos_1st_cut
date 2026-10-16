@@ -215,7 +215,7 @@ class _Brand extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         const Text(
-          'Gusto Owner',
+          'Gusto Restaurant',
           style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 4),

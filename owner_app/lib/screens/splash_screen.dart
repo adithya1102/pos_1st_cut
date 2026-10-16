@@ -79,8 +79,13 @@ class _SplashScreenState extends State<SplashScreen> {
             // is what tells the person holding a tablet that they opened the
             // staff app instead. It sits where customer_app puts its
             // "SKIP THE LINE" tagline, so the two screens still rhyme.
+            //
+            // Says RESTAURANT rather than OWNER because the app is now called
+            // Gusto Restaurant everywhere else — launcher, task switcher,
+            // login header. A splash that disagreed with the icon the staff
+            // member just tapped would undo the one job this label has.
             Text(
-              'OWNER',
+              'RESTAURANT',
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     color: const Color(AppConfig.brandInk),
                     fontWeight: FontWeight.w700,

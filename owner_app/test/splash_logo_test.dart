@@ -71,14 +71,14 @@ void main() {
     await tester.pumpAndSettle(const Duration(seconds: 2));
   });
 
-  testWidgets('labels itself OWNER, since the lockup reads "Gusto Skip"',
+  testWidgets('labels itself RESTAURANT, since the lockup reads "Gusto Skip"',
       (tester) async {
     // Without this the staff app and the customer app show the same words on
     // launch, and the tablet gives no hint which one opened.
     await tester.pumpWidget(_host());
     await tester.pump();
 
-    expect(find.text('OWNER'), findsOneWidget);
+    expect(find.text('RESTAURANT'), findsOneWidget);
 
     await tester.pumpAndSettle(const Duration(seconds: 2));
   });

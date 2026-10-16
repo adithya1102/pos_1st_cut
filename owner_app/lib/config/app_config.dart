@@ -1,4 +1,4 @@
-/// Global, swappable configuration for the Gusto Owner App.
+/// Global, swappable configuration for the Gusto Restaurant app.
 ///
 /// Change [baseUrl] in one place to point the app at a different backend.
 /// Targets the deployed backend on Render. For a local backend use
@@ -13,7 +13,7 @@ class AppConfig {
   /// App display name. Mirrors customer_app's AppConfig.appName. Used for the
   /// MaterialApp title and as the splash logo's semantic label — the lockup is
   /// artwork, so this is the only thing announcing the app to a screen reader.
-  static const String appName = 'Gusto Owner';
+  static const String appName = 'Gusto Restaurant';
 
   /// Brand palette (used lightly for accents only).
   static const int brandPurple = 0xFF6B2FB3;
