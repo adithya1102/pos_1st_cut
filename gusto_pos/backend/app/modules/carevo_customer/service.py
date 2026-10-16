@@ -14,6 +14,7 @@ from datetime import datetime, time as dtime, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
 
+import httpx
 from fastapi import HTTPException, status
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,7 +29,11 @@ from app.modules.carevo_customer.model import (
     PaymentTransaction,
     PointTransaction,
 )
-from app.modules.carevo_payments.gateway import get_gateway
+from app.modules.carevo_payments.gateway import (
+    GatewayConfigError,
+    GatewayRequestError,
+    get_gateway,
+)
 from app.modules.prediction import events as pe
 # Safe at module level: promotions.service imports only its own schema, so this
 # closes no cycle (promotions.controller reaches back into carevo_customer.deps,
@@ -1232,15 +1237,113 @@ class CarevoService:
         # call, and running it synchronously would block the event loop.
         # `receipt` carries OUR order id, which Cashfree echoes back on the
         # webhook so no correlation table is needed.
-        g_order = await gw.create_order(
-            order.total_amount, currency="INR", receipt=str(order.id),
-            customer={
-                "id": str(customer.id),
-                "phone": customer.phone_number,
-                "email": customer.email,
-                "name": customer.name,
-            },
-        )
+        #
+        # EVERY way this call can fail used to become a naked 500.
+        # CashfreeGateway raised a bare RuntimeError for all three of its
+        # refusals (credentials absent, a >=400 from Cashfree, a response with
+        # no payment_session_id); httpx raised its own errors for DNS, TLS and
+        # timeouts; and res.json() raised ValueError when an error page came
+        # back under a 200. Unhandled, every one of them reached the customer
+        # as "Request failed (500)." on the payment page (api_client.dart:392)
+        # — no cause, nothing to act on, and indistinguishable from a crash in
+        # our own code.
+        #
+        # NONE of them is an internal error, and they do not deserve the same
+        # answer either, which is why the gateway now raises three distinct
+        # types and this maps them three ways:
+        #
+        #   GatewayConfigError  -> 503. Our deployment is missing credentials.
+        #       Retrying cannot help until an operator acts, but the customer's
+        #       order is fine and will work once it is fixed. This is the
+        #       likeliest thing to be wrong on a fresh deploy: render.yaml sets
+        #       PAYMENT_GATEWAY=cashfree as a literal value while
+        #       CASHFREE_APP_ID and CASHFREE_SECRET_KEY are `sync: false`, so
+        #       the blueprint selects the live gateway but cannot supply its
+        #       secrets.
+        #
+        #   GatewayRequestError -> 422. The ORDER cannot be charged as it
+        #       stands (today: a discount that takes it to ₹0, which is below
+        #       Cashfree's ₹1 floor). Nothing is down; telling the customer
+        #       "payments are unavailable" would be a lie and they would retry
+        #       forever. The gateway supplies the prose because only it knows
+        #       which constraint was missed.
+        #
+        #   anything else       -> 502. The provider refused, timed out or
+        #       answered with something unusable. A genuine upstream failure.
+        #
+        # The catch-all is deliberately broad (RuntimeError covers the whole
+        # GatewayError family and any gateway still raising bare ones; httpx
+        # and ValueError cover an implementation that does not wrap). A 500 out
+        # of this call is never the right answer, so the net is wider than the
+        # list of things known to be thrown today.
+        #
+        # 502/503 are both honestly retryable here: the order row and the stock
+        # hold above are still UNCOMMITTED, so the session closes without a
+        # commit and nothing survives to collide with the retry (proven in
+        # test_api_payment_gateway_failure.py).
+        #
+        # Logged server-side with the order id and the provider's own response
+        # body, which is where diagnosis belongs and is the one place the
+        # offending field is actually named. Credentials are not in the log:
+        # they travel in request headers and `body` is Cashfree's response. The
+        # customer-facing message names neither the provider nor our config
+        # state, because the app renders `detail["message"]` verbatim.
+        try:
+            g_order = await gw.create_order(
+                order.total_amount, currency="INR", receipt=str(order.id),
+                customer={
+                    "id": str(customer.id),
+                    "phone": customer.phone_number,
+                    "email": customer.email,
+                    "name": customer.name,
+                },
+            )
+        except GatewayConfigError as exc:
+            logger.error(
+                "payment gateway %s is NOT CONFIGURED; refused order %s "
+                "(outlet=%s, amount=%s): %s",
+                getattr(gw, "name", type(gw).__name__), order.id,
+                payload.outlet_id, order.total_amount, exc)
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "PAYMENT_GATEWAY_UNCONFIGURED",
+                    "message": (
+                        "Payments are temporarily unavailable. You have not "
+                        "been charged — please try again in a moment."
+                    ),
+                },
+                headers={"Retry-After": "30"},
+            ) from exc
+        except GatewayRequestError as exc:
+            logger.warning(
+                "payment gateway %s cannot charge order %s "
+                "(outlet=%s, amount=%s): %s",
+                getattr(gw, "name", type(gw).__name__), order.id,
+                payload.outlet_id, order.total_amount, exc)
+            raise HTTPException(
+                status_code=422,
+                detail={"error": exc.code, "message": exc.customer_message},
+            ) from exc
+        except (RuntimeError, httpx.HTTPError, ValueError) as exc:
+            logger.error(
+                "payment gateway %s failed on order %s (outlet=%s, amount=%s): "
+                "%s [upstream_status=%s upstream_body=%r]",
+                getattr(gw, "name", type(gw).__name__), order.id,
+                payload.outlet_id, order.total_amount, exc,
+                getattr(exc, "status_code", None), getattr(exc, "body", None),
+                exc_info=True)
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": "PAYMENT_GATEWAY_ERROR",
+                    "message": (
+                        "We could not reach the payment provider. You have not "
+                        "been charged — please try again in a moment."
+                    ),
+                },
+                headers={"Retry-After": "30"},
+            ) from exc
 
         db.add(PaymentTransaction(
             customer_order_id=order.id,

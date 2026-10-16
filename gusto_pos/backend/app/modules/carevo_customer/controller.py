@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -19,6 +21,8 @@ from app.modules.carevo_customer.deps import (
     get_current_staff,
 )
 from app.modules.carevo_customer.service import CarevoService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/customer", tags=["Gusto Skip — Customer"])
 
@@ -268,7 +272,51 @@ async def create_order(
     customer: Customer = Depends(get_current_customer),
     db: AsyncSession = Depends(get_db),
 ):
-    return await CarevoService.create_order(db, customer, payload)
+    """Place an order and open a payment session for it.
+
+    The ProgrammingError guard is about SCHEMA DRIFT, which is the one failure
+    on this route that is neither the customer's fault nor the gateway's.
+    Migrations here are applied BY HAND — render.yaml runs `pip install` and
+    then `uvicorn`, with no migration step — so a deploy can and does reach
+    production carrying code whose tables do not exist yet. `create_order`'s
+    very first statement is StockService.sweep_expired, which writes to
+    `stock_reservations` (migration 033), and the insert immediately after it
+    names the nine columns migration 032 adds to `customer_orders`; against a
+    pre-032/033 database both are an UndefinedTable/UndefinedColumn, i.e. a
+    naked 500 on the Pay button. The menu keeps working throughout, because
+    get_menu wraps the identical sweep best-effort (service.py:755) — so the
+    drift is invisible everywhere except here.
+
+    This does NOT repair the drift and must not read as if it had: the answer
+    is still 5xx, the traceback is still logged in full, and the only fix is
+    running the migration. What changes is that the customer gets a sentence
+    instead of "Request failed (500).", and the log says which condition it was
+    rather than leaving the next person to reconstruct it from a stack trace.
+
+    Narrow on purpose. ProgrammingError is SQLAlchemy's "this statement is not
+    valid against this schema" — undefined table, undefined column, undefined
+    function. It is not IntegrityError and not OperationalError, so a genuine
+    constraint violation or a dropped connection still surfaces as itself.
+    """
+    try:
+        return await CarevoService.create_order(db, customer, payload)
+    except ProgrammingError as exc:
+        logger.error(
+            "create_order failed against the live schema (outlet=%s). "
+            "Migrations 032/033 are applied by hand and may be missing on "
+            "this deployment.", payload.outlet_id, exc_info=True)
+        await db.rollback()
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "SERVICE_SCHEMA_OUT_OF_DATE",
+                "message": (
+                    "Ordering is temporarily unavailable at this restaurant. "
+                    "You have not been charged — please try again shortly."
+                ),
+            },
+            headers={"Retry-After": "60"},
+        ) from exc
 
 
 # --------------------- PE Step 3: customer events --------------------------

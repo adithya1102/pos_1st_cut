@@ -111,6 +111,66 @@ def _rand(prefix: str, nbytes: int = 12) -> str:
     return f"{prefix}_{secrets.token_hex(nbytes)}"
 
 
+# --------------------------- gateway failures -------------------------------
+# Every one of these used to be a bare `RuntimeError`, which the create-order
+# call site could only catch as one undifferentiated blob — so the three very
+# different conditions below (we are misconfigured / the customer's order
+# cannot be expressed / the provider is having a bad day) could not be turned
+# into three different answers for the customer. They all became a naked 500.
+#
+# All THREE still subclass RuntimeError. That is deliberate: any caller already
+# written as `except RuntimeError` keeps behaving exactly as it did, so this is
+# additive rather than a change every call site has to be updated for.
+class GatewayError(RuntimeError):
+    """Base: the payment gateway could not produce an order."""
+
+
+class GatewayConfigError(GatewayError):
+    """The gateway is selected but this deployment cannot use it.
+
+    Our configuration, not the provider's fault and not the customer's. Nothing
+    about retrying changes the answer until an operator sets the credentials,
+    which is why the caller maps this to 503 rather than 502.
+    """
+
+
+class GatewayRequestError(GatewayError):
+    """The order cannot be expressed as a request this gateway will accept.
+
+    Raised BEFORE the network call, from a constraint we can check ourselves
+    against the provider's published contract. Carries a stable `code` and a
+    `customer_message`, because the caller has to say something true to the
+    person standing in the app — "payments are down" would be a lie.
+    """
+
+    def __init__(self, message: str, *, code: str, customer_message: str):
+        super().__init__(message)
+        self.code = code
+        self.customer_message = customer_message
+
+
+class GatewayUpstreamError(GatewayError):
+    """The provider refused, timed out, or answered with something unusable.
+
+    `status_code` and `body` are the provider's own, carried so the caller can
+    log WHY without re-reading the response. Credentials are never in either —
+    they travel in request headers and Cashfree does not echo them.
+    """
+
+    def __init__(self, message: str, *, status_code: Optional[int] = None,
+                 body: Optional[str] = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.body = body
+
+
+# ASCII only, spelled out rather than using str.isalnum(): 'é' and '٣' are both
+# alphanumeric to Python and neither is alphanumeric to a payment gateway.
+_ASCII_ALNUM = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+_ASCII_DIGITS = frozenset("0123456789")
+
+
 class StubRazorpayGateway(PaymentGateway):
     """Razorpay-shaped stub. Signatures are real HMAC-SHA256 when a secret is set."""
 
@@ -220,6 +280,19 @@ class CashfreeGateway(PaymentGateway):
     # handles.
     MIN_ORDER_EXPIRY_SECONDS = 300
 
+    # Cashfree's documented floor for order_amount: "minimum: 1", i.e. one
+    # rupee. Checked HERE rather than discovered as a 400 from the wire,
+    # because this is reachable from a perfectly ordinary customer action: a
+    # points coupon or a 100%-off promotion whose discount meets the basket
+    # total settles at ₹0 (service.create_order clamps with max(..., 0.0)),
+    # and ₹0 is not an amount Cashfree will take.
+    MIN_ORDER_AMOUNT = 1.00
+
+    # customer_details.customer_id — "A unique identifier for the customer.
+    # Use alphanumeric values only." minLength 3, maxLength 50.
+    CUSTOMER_ID_MIN = 3
+    CUSTOMER_ID_MAX = 50
+
     def __init__(self):
         self.app_id = settings.CASHFREE_APP_ID
         self.secret_key = settings.CASHFREE_SECRET_KEY
@@ -263,14 +336,78 @@ class CashfreeGateway(PaymentGateway):
         at = datetime.now(timezone.utc) + timedelta(seconds=cls.expiry_seconds())
         return at.isoformat(timespec="seconds")
 
+    @classmethod
+    def _customer_id(cls, raw: Any) -> str:
+        """`customer_details.customer_id`, reduced to what Cashfree documents.
+
+        We pass `customers.id`, a UUID — and a UUID's canonical spelling
+        carries four hyphens. Cashfree's Create Order reference says of this
+        field "Use alphanumeric values only" (minLength 3, maxLength 50) while
+        their SDK docs describe hyphens as allowed, so which spelling is
+        accepted depends on which of the two is authoritative.
+
+        Stripping the hyphens costs nothing and is valid under BOTH readings,
+        which is the point: a field whose acceptance depends on resolving a
+        documentation conflict has no business on the one request standing
+        between a customer and paying. The 32 hex characters that remain are
+        still unique and still the same customer, and nothing reads this value
+        back — the webhook correlates on `order_id` (see parse_webhook).
+        """
+        cleaned = "".join(ch for ch in str(raw or "") if ch in _ASCII_ALNUM)
+        if len(cleaned) < cls.CUSTOMER_ID_MIN:
+            return "guest"
+        return cleaned[:cls.CUSTOMER_ID_MAX]
+
+    @staticmethod
+    def _customer_phone(raw: Any) -> str:
+        """`customer_details.customer_phone`, in a shape Cashfree documents.
+
+        Their troubleshooting page lists three valid spellings — a bare
+        10-digit Indian number (9090407368), the same with its country code
+        and a plus (+919090407368), and any international number prefixed with
+        a plus — and one error, `customer_phone_invalid`, for everything else.
+        The schema's maxLength of 10 is overridden by the leading '+'.
+
+        What arrives here is not reliably one of those three. A Firebase
+        phone sign-in stores E.164 (`+919876543210`, already fine), a Google
+        sign-in stores no phone at all, and rows predating Firebase hold
+        whatever the old stub flow was given — including separators. So this
+        reduces each of those to a documented spelling rather than trusting
+        the column. A bare country-coded number gains the '+' it needs to
+        escape the 10-digit limit; anything too short to be a phone number
+        falls back to the placeholder, exactly as a missing one does.
+        """
+        text_ = str(raw or "").strip()
+        digits = "".join(ch for ch in text_ if ch in _ASCII_DIGITS)
+        if len(digits) < 10:
+            # Includes the empty case: a Google-only customer has no phone on
+            # file, and Cashfree requires the field.
+            return "9999999999"
+        if len(digits) == 10 and not text_.startswith("+"):
+            return digits
+        return f"+{digits}"
+
     async def create_order(self, amount_rupees: float, currency: str = "INR",
                            receipt: Optional[str] = None,
                            customer: Optional[Mapping[str, Any]] = None) -> GatewayOrder:
         if not self.configured:
-            raise RuntimeError(
+            raise GatewayConfigError(
                 "Cashfree is selected but CASHFREE_APP_ID / CASHFREE_SECRET_KEY "
                 "are not set. Refusing to fall back to the stub — a silent "
                 "downgrade to fake payments is worse than a hard failure."
+            )
+
+        amount = round(float(amount_rupees), 2)
+        if amount < self.MIN_ORDER_AMOUNT:
+            raise GatewayRequestError(
+                f"order_amount {amount} is below Cashfree's documented "
+                f"minimum of {self.MIN_ORDER_AMOUNT}",
+                code="AMOUNT_BELOW_GATEWAY_MINIMUM",
+                customer_message=(
+                    "This order comes to ₹0 after your discount, and payments "
+                    "cannot be taken for ₹0. Remove the discount to place it, "
+                    "or add something to your order."
+                ),
             )
 
         cust = dict(customer or {})
@@ -278,13 +415,13 @@ class CashfreeGateway(PaymentGateway):
             # OUR order id, so the webhook needs no correlation table.
             "order_id": str(receipt),
             # Rupees, not paise. Cashfree rejects integer paise here.
-            "order_amount": round(float(amount_rupees), 2),
+            "order_amount": amount,
             "order_currency": currency,
             "customer_details": {
-                "customer_id": str(cust.get("id") or "guest"),
+                "customer_id": self._customer_id(cust.get("id")),
                 # Cashfree requires a phone; sandbox accepts this placeholder for
                 # customers who signed in with Google and have none on file.
-                "customer_phone": str(cust.get("phone") or "9999999999"),
+                "customer_phone": self._customer_phone(cust.get("phone")),
                 **({"customer_email": cust["email"]} if cust.get("email") else {}),
                 **({"customer_name": cust["name"]} if cust.get("name") else {}),
             },
@@ -306,18 +443,51 @@ class CashfreeGateway(PaymentGateway):
             "order_expiry_time": self._expiry_iso(),
         }
 
-        async with httpx.AsyncClient(timeout=20) as client:
-            res = await client.post(f"{self.base_url}/orders",
-                                    headers=self._headers(), json=body)
+        # DNS, TLS, connect refusals and timeouts all surface as httpx errors.
+        # Translated here so the whole failure surface of this method is one
+        # exception family and the caller needs no knowledge of our HTTP
+        # client — the alternative is every call site importing httpx to catch
+        # what the gateway does internally.
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                res = await client.post(f"{self.base_url}/orders",
+                                        headers=self._headers(), json=body)
+        except httpx.HTTPError as exc:
+            raise GatewayUpstreamError(
+                f"Cashfree is unreachable: {type(exc).__name__}: {exc}"
+            ) from exc
+
         if res.status_code >= 400:
-            raise RuntimeError(
-                f"Cashfree create-order failed ({res.status_code}): {res.text[:300]}"
+            raise GatewayUpstreamError(
+                f"Cashfree create-order failed ({res.status_code})",
+                status_code=res.status_code,
+                # Cashfree's own error JSON names the offending field, which is
+                # the single most useful thing in the log. It is their response
+                # body, so it cannot contain our credentials.
+                body=res.text[:500],
             )
-        data = res.json()
+
+        # A 2xx carrying HTML — a proxy error page, a captive portal — would
+        # otherwise raise a bare ValueError out of this method.
+        try:
+            data = res.json()
+        except ValueError as exc:
+            raise GatewayUpstreamError(
+                "Cashfree returned a non-JSON body on a 2xx",
+                status_code=res.status_code, body=res.text[:500],
+            ) from exc
+        if not isinstance(data, dict):
+            raise GatewayUpstreamError(
+                f"Cashfree returned {type(data).__name__}, expected an object",
+                status_code=res.status_code, body=res.text[:500],
+            )
 
         session = data.get("payment_session_id")
         if not session:
-            raise RuntimeError("Cashfree returned no payment_session_id")
+            raise GatewayUpstreamError(
+                "Cashfree returned no payment_session_id",
+                status_code=res.status_code, body=res.text[:500],
+            )
 
         return GatewayOrder(
             gateway=self.name,

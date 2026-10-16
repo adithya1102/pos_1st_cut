@@ -7703,3 +7703,156 @@ previous entry is unchanged: **032 must reach prod before this code does.**
   order, which stays `CREATED` until the 45-minute pickup sweeper or a manual
   cancel. Harmless today (the hold is already reclaimed on the clock) but it
   means "expired at the gateway" is not a state the app can show.
+
+---
+
+## 2026-10-17 — payment-page 500 diagnosed; the create-order gateway path no longer 500s
+
+Three source files + one new test file; no migration was written or applied in
+this pass. Committed locally on `21_7`, not pushed.
+
+### The reported fault, and what it actually is
+
+"Request failed 500 error in the payment page." That string is
+`api_client.dart:392`, surfaced by `checkout_screen.dart:819`, so the failing
+call is `POST /customer/orders` — the Pay button, not the processing screen
+(`PaymentProcessingScreen` receives an already-created `CreatedOrder`).
+
+**LEADING CAUSE: migrations 032 and 033 are applied by hand, and the code that
+requires them is deployed.** `render.yaml:14-15` is `pip install` then
+`uvicorn` — there is NO migration step, so a deploy reaches production against
+whatever schema happens to be there. The previous three entries each warned
+about exactly this ("032 must reach prod before this code does"); the code
+shipped anyway as `da01e4a4` → `942eaa15` on `21_7`, which is what Render
+serves.
+
+Stated as the LEADING cause, not a proven one: the mechanism below is verified
+in the repo, but prod's actual schema was not readable from here (see the
+credential note). Confirm it with the Still-open checklist before acting on it.
+
+Order of failure inside `create_order` against a pre-032/033 database:
+
+1. `service.py:1049` — `StockService.sweep_expired(..., commit=False)` runs
+   `UPDATE stock_reservations sr ... FROM customer_orders co`
+   (`stock.py:321-326`). The table is created only by
+   `migrations/033_...sql:138` → `UndefinedTable` → 500. This is the first
+   thing that breaks, before any row is written.
+2. Past that, `CustomerOrder(...)` + `flush()` writes the nine MAPPED 032
+   columns (`model.py:96-123`) → `UndefinedColumn` → 500.
+
+Why the menu still loads: `get_menu`'s sweep is wrapped best-effort
+(`service.py:755-760`, "a failure here must not take down the menu") and only
+logs `stock sweep failed during get_menu`. `create_order`'s sweep is
+deliberately NOT wrapped, so the drift is invisible on the read path and fatal
+on the write path. `get_order` is ORM-based and is affected too;
+`list_my_orders` is raw `text()` and is not, so order HISTORY works while order
+DETAIL does not.
+
+Could not verify against prod or apply anything: the `DATABASE_URL` in
+`backend/.env` fails `InvalidPasswordError` for `neondb_owner` (the password
+was rotated). Re-probed this run with `sslmode=require` to rule out the
+insecure-connection red herring — still a password failure, so it is the
+credential and not the handshake. `/api/v1/public/outlets` answers 200 with
+live data, so the service and its database are up; this is schema drift, not
+an outage.
+
+**What that drift now looks like to a customer.** It is still a 5xx and the
+traceback is still logged in full — papering over a missing migration would
+delay the only thing that fixes it. But `controller.py:303` now catches
+`ProgrammingError` ONLY (SQLAlchemy's "this statement is invalid against this
+schema": undefined table/column/function — not `IntegrityError`, not
+`OperationalError`) and answers **503 `SERVICE_SCHEMA_OUT_OF_DATE`** with a
+sentence, logging at ERROR with `exc_info` and naming migrations 032/033. The
+customer stops seeing "Request failed (500)."; the operator gets a log line
+that says which condition it was instead of a stack trace to reconstruct.
+
+### What WAS fixed here — a second, independent family of 500s
+
+`gw.create_order(...)` was called with nothing around it, and every way it can
+fail was an unhandled exception, i.e. a naked 500 with no cause. This is not
+theoretical for this deploy: `render.yaml:80` sets `PAYMENT_GATEWAY=cashfree` as
+a literal while `CASHFREE_APP_ID`/`CASHFREE_SECRET_KEY` are `sync: false`, so
+the blueprint selects the live gateway and cannot supply its secrets.
+
+Seven crash paths, now typed (`gateway.py`) and mapped (`service.py:1301`):
+
+| Condition | Was | Now |
+|---|---|---|
+| Cashfree selected, credentials absent | 500 | **503** `PAYMENT_GATEWAY_UNCONFIGURED` |
+| Cashfree answers >=400 | 500 | **502** `PAYMENT_GATEWAY_ERROR` |
+| 2xx with no `payment_session_id` | 500 | **502** |
+| 2xx carrying HTML (`res.json()` → ValueError) | 500 | **502** |
+| 2xx carrying a JSON array (`data.get` → AttributeError) | 500 | **502** |
+| DNS/TLS/connect/timeout | 500 | **502** |
+| Order settles at ₹0 (full-value coupon or 100%-off offer) | 500 | **422** `AMOUNT_BELOW_GATEWAY_MINIMUM` |
+
+The ₹0 case was a real latent bug, not a hypothetical: Cashfree documents
+`order_amount` with "minimum: 1", `_consume_points_coupon` caps a discount AT
+the gross, and `create_order` clamps with `max(..., 0.0)` — so one ordinary
+points coupon on a matching basket reached the wire and came back a 400. It is
+now refused locally, BEFORE the network call, and the stub keeps accepting ₹0
+because the floor is Cashfree's, not ours.
+
+Also normalised, because each was its own 400-from-Cashfree waiting to happen:
+`customer_id` (we pass a UUID; the Create Order reference says "alphanumeric
+values only", so the hyphens are stripped — valid under both that and the SDK
+docs' looser reading) and `customer_phone` (Firebase stores E.164, Google
+sign-ins store nothing, pre-Firebase rows hold human spellings with separators;
+all reduced to a documented spelling). `order_id` deliberately keeps its
+hyphens — the webhook correlates on it.
+
+Taxonomy is `GatewayError(RuntimeError)` → `GatewayConfigError` /
+`GatewayRequestError(code, customer_message)` /
+`GatewayUpstreamError(status_code, body)`. Still subclasses `RuntimeError` so
+any existing `except RuntimeError` is unaffected. The call site's catch-all is
+deliberately wider than what is thrown today: a 500 out of that call is never
+the right answer.
+
+Proven, not assumed: the failure was reproduced first (traceback through
+`service.py:1235` → `gateway.py:270`), and the rollback property is asserted on
+both branches — a refused checkout leaves no order row, no `stock_reservations`
+row, no decremented stock, and an unspent coupon, so the 502/503 is honestly
+retryable. The log carries the outlet, the order id and Cashfree's own response
+body (which names the offending field) and is asserted never to contain the
+secret key.
+
+### Suites
+
+| Suite | Before | After |
+|---|---|---|
+| backend | 865 passed / 1 xfailed | **897 passed / 1 xfailed** (+32) |
+
+All 32 are in `tests/test_api_payment_gateway_failure.py`. 29 of them fail
+against the pre-fix tree and pass after; the other 3 are deliberate
+guards that pass on BOTH sides and exist to pin what must NOT change —
+`order_id` keeps its hyphens, the stub still creates orders, and the stub
+still accepts a ₹0 order (the ₹1 floor is Cashfree's, not ours).
+
+### Still open
+
+- **Confirm, then apply, migrations 032 + 033 on prod.** Confirm first — this
+  run could not read prod's schema, so "they are missing" is inference from
+  the deploy history, not an observation. Three read-only checks settle it:
+  `SELECT to_regclass('public.stock_reservations')`, and
+  `information_schema.columns` for `customer_orders.refund_required` (032) and
+  `menu_items.stock_remaining` (033). Both migrations are additive and
+  idempotent (`ADD COLUMN IF NOT EXISTS`, `CREATE TABLE IF NOT EXISTS`). Run
+  033's duplicate pre-check first — the partial unique index on
+  `(outlet_id, pickup_code)` cannot build if a live duplicate exists. Until
+  this is done the Pay button keeps failing; it now fails as a 503
+  `SERVICE_SCHEMA_OUT_OF_DATE` with a readable message instead of a bare 500,
+  which is a better error and not a fix.
+- **The `.env` Neon password is dead** (`InvalidPasswordError` for
+  `neondb_owner`, re-confirmed this run with `ssl='require'`). Nothing local
+  can read or migrate prod until it is refreshed. Worth noting the app itself
+  is fine — Render holds its own `DATABASE_URL`, and `/api/v1/public/outlets`
+  serves live rows.
+- Whether prod's `PAYMENT_GATEWAY` is `cashfree` or still `stub` is unknown from
+  here (the dashboard wins over `render.yaml`, and there is no prod access this
+  run). If it is `cashfree` without secrets, the page will report
+  "Payments are temporarily unavailable" once the migrations land, instead of a
+  500 — which is the correct answer to that configuration, not a fix for it.
+- `payment_webhook` is sound (is_live gate, signature before parse, JSON decode
+  wrapped). One theoretical hole: a signature-VERIFIED body that is a JSON array
+  rather than an object would `AttributeError` in `parse_webhook`. Unreachable
+  without Cashfree's signing key, so left alone.
