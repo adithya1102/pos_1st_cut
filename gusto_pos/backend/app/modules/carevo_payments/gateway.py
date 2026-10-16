@@ -266,19 +266,40 @@ class CashfreeGateway(PaymentGateway):
     SANDBOX_BASE = "https://sandbox.cashfree.com/pg"
     PROD_BASE = "https://api.cashfree.com/pg"
 
-    # Cashfree's own floor for order_expiry_time, VERIFIED against their docs
-    # rather than assumed: "Set order expiry time: Minimum 5 minutes, maximum
-    # 30 days" — cashfree.com/docs/payments/online/resources/payment-lifecycle.
-    # (The Create Order API reference itself documents the field but states no
-    # bound, so the lifecycle page is the citation.)
+    # Cashfree's floor for order_expiry_time, taken from the API ITSELF rather
+    # than from their documentation. Verbatim, from a production 400:
+    #
+    #     {"code":"order_expiry_time_invalid",
+    #      "message":"order_expiry_time : Expiry time should be more than
+    #                 15 min and less than 30 days"}
+    #
+    # This replaces 300, which came from the payment-lifecycle page ("Set order
+    # expiry time: Minimum 5 minutes, maximum 30 days"). That page is WRONG, or
+    # at least no longer true of the live API, and believing it cost us every
+    # checkout: STOCK_HOLD_TTL_SECONDS is 600, 600 cleared the documented
+    # 300 floor "with room to spare", and the gateway refused all of them. The
+    # error message is the authority here; the docs are not.
+    #
+    # 960 = 16 minutes. The requirement is "more than 15 min", so 900 would sit
+    # exactly on a boundary stated with a strict inequality and no stated
+    # precision — whether it is compared against the request's arrival time or
+    # its own clock is not something we can see. One minute of margin costs
+    # nothing and removes the question.
     #
     # The expiry is clamped to this rather than passed straight through: a
-    # STOCK_HOLD_TTL_SECONDS below 300 is a legitimate thing to set for local
-    # testing, and letting it reach Cashfree would turn every checkout into a
-    # hard create-order failure. Clamping degrades to "the gateway outlives the
-    # hold", which is exactly the case mark_paid's late-payment path already
-    # handles.
-    MIN_ORDER_EXPIRY_SECONDS = 300
+    # STOCK_HOLD_TTL_SECONDS below 960 is a legitimate thing to set (600 is the
+    # CURRENT production value), and letting it reach Cashfree turns every
+    # checkout into a hard create-order failure. Clamping degrades to "the
+    # gateway outlives the hold", which is exactly the case mark_paid's
+    # late-payment path already handles — see TestLatePayment.
+    MIN_ORDER_EXPIRY_SECONDS = 960
+
+    # The other end of the same sentence: "less than 30 days". 29 days for the
+    # same reason 960 rather than 900 — a strict inequality is not a limit to
+    # sit on. Nothing in this codebase can reach it today (the longest input is
+    # STOCK_HOLD_TTL_SECONDS), so this is a guard against a future value, not a
+    # live clamp.
+    MAX_ORDER_EXPIRY_SECONDS = 29 * 24 * 60 * 60
 
     # Cashfree's documented floor for order_amount: "minimum: 1", i.e. one
     # rupee. Checked HERE rather than discovered as a 400 from the wire,
@@ -317,15 +338,25 @@ class CashfreeGateway(PaymentGateway):
 
     @classmethod
     def expiry_seconds(cls) -> int:
-        """The gateway expiry actually sent, after clamping to Cashfree's floor.
+        """The gateway expiry actually sent, clamped into Cashfree's window.
+
+        The hold TTL, raised to Cashfree's 16-minute floor and capped at 29
+        days. With the production TTL of 600 the floor is what applies, so the
+        payment page deliberately OUTLIVES the stock hold by six minutes —
+        that is a real window in which a customer can pay for units that were
+        already swept back, and it is handled rather than prevented (see
+        mark_paid's late-payment branch and TestLatePayment).
 
         Separated from the timestamp so it can be asserted on directly: the
-        interesting property is "this equals the hold TTL unless the TTL is
-        below Cashfree's minimum", and that is awkward to test through a
-        formatted string.
+        interesting property is which bound applied, and that is awkward to
+        test through a formatted string.
+
+        STOCK_HOLD_TTL_SECONDS is READ here and never written — the hold's own
+        lifetime is not this function's business.
         """
-        return max(int(settings.STOCK_HOLD_TTL_SECONDS),
-                   cls.MIN_ORDER_EXPIRY_SECONDS)
+        return min(max(int(settings.STOCK_HOLD_TTL_SECONDS),
+                       cls.MIN_ORDER_EXPIRY_SECONDS),
+                   cls.MAX_ORDER_EXPIRY_SECONDS)
 
     @classmethod
     def _expiry_iso(cls) -> str:
@@ -429,15 +460,18 @@ class CashfreeGateway(PaymentGateway):
                 **({"notify_url": settings.CASHFREE_NOTIFY_URL}
                    if settings.CASHFREE_NOTIFY_URL else {}),
             },
-            # Die at the same moment the stock hold does (migration 033).
+            # Track the stock hold (migration 033) as closely as Cashfree
+            # allows. The intent is that the payment page dies with the
+            # reservation, so a customer cannot sit on a live checkout long
+            # after their units were swept back, pay, and land in the
+            # re-acquire-or-refund path over nothing but a clock mismatch.
             #
-            # Without this the gateway order outlived the reservation, so a
-            # customer could sit on a live payment page long after their units
-            # had been swept back into stock, pay, and land in the
-            # re-acquire-or-refund path for no reason other than a clock
-            # mismatch. Matching the two means the common case is a payment
-            # page that is already dead, which is a plain "this order expired"
-            # instead of a successful charge followed by a refund.
+            # It cannot be exact. Cashfree refuses anything inside 15 minutes
+            # and the hold is 600s, so expiry_seconds() raises it to 960 and
+            # the page outlives the hold by six minutes. That gap is a genuine
+            # late-payment window, not an oversight — it is the narrowest one
+            # Cashfree permits, and mark_paid already handles what arrives in
+            # it (re-acquire, or cancel + flag a refund).
             #
             # ISO 8601 WITH an offset — Cashfree rejects a naive timestamp.
             "order_expiry_time": self._expiry_iso(),

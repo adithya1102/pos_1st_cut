@@ -7642,6 +7642,13 @@ on 0, 2 units HELD, 1.80s.
 
 ### Cashfree expiry — VERIFIED, not guessed
 
+> **SUPERSEDED 2026-10-17 — the floor quoted below is WRONG and this is the
+> bug that broke every checkout.** The live API refuses anything inside
+> **15 minutes**, not 5. See "Cashfree order_expiry_time — the docs were
+> wrong" at the end of this file. The paragraph is kept as written because it
+> records what was believed, and why: the claim was labelled VERIFIED on the
+> strength of a documentation page, and a documentation page is not the API.
+
 `order_expiry_time = now + TTL` is now sent. Cashfree's floor, quoted verbatim:
 
 > "Set order expiry time: Minimum 5 minutes, maximum 30 days."
@@ -7856,3 +7863,104 @@ still accepts a ₹0 order (the ₹1 floor is Cashfree's, not ours).
   wrapped). One theoretical hole: a signature-VERIFIED body that is a JSON array
   rather than an object would `AttributeError` in `parse_webhook`. Unreachable
   without Cashfree's signing key, so left alone.
+
+## 2026-10-17 (later) — Cashfree `order_expiry_time`: the docs were wrong, and it cost every checkout
+
+One constant, 300 → 960. Local commit on `21_7`, not pushed.
+
+### What production actually said
+
+The previous entry closed with "whether prod's `PAYMENT_GATEWAY` is `cashfree`
+or still `stub` is unknown from here". It is `cashfree`, and the structured
+502 added in that entry is what surfaced the answer — verbatim from Cashfree:
+
+```
+400 {"code":"order_expiry_time_invalid",
+     "message":"order_expiry_time : Expiry time should be more than 15 min
+                and less than 30 days"}
+```
+
+So the schema-drift theory was not what was breaking the Pay button. The
+gateway was being reached, authenticated fine, and refusing one field.
+
+### The mistake, precisely
+
+`MIN_ORDER_EXPIRY_SECONDS` was 300, taken from Cashfree's payment-lifecycle
+page: *"Set order expiry time: Minimum 5 minutes, maximum 30 days."* That page
+does not match the live API. The entry that introduced the constant is headed
+**"Cashfree expiry — VERIFIED, not guessed"** and quotes the page verbatim as
+its evidence — which is exactly the failure. Reading a doc carefully is not
+verification; the only thing that verifies an API is the API.
+
+The arithmetic is what makes it total rather than occasional:
+
+| | |
+|---|---|
+| `STOCK_HOLD_TTL_SECONDS` | 600 |
+| old floor | 300 |
+| `max(600, 300)` | **600 — the clamp never fired** |
+| Cashfree's real floor | > 900 |
+
+600 < 900, so **every single Cashfree order creation was refused**, for every
+customer, from the moment the selector was flipped. The clamp designed to stop
+a short TTL reaching the gateway was itself set below the real limit, so it
+passed the bad value through untouched. A clamp is only as good as its bound.
+
+### The fix
+
+`gateway.py:295` `MIN_ORDER_EXPIRY_SECONDS = 960` (16 min), plus
+`MAX_ORDER_EXPIRY_SECONDS = 29 * 24 * 60 * 60` for the other end of the same
+sentence. `expiry_seconds()` is now
+`min(max(TTL, 960), 29 days)`.
+
+960 and 29 days rather than 900 and 30: both bounds are stated as STRICT
+inequalities with no stated precision, and whether Cashfree evaluates them
+against the request's arrival time or its own clock is not visible from here.
+A minute of margin at each end costs nothing and removes the question.
+
+`STOCK_HOLD_TTL_SECONDS` is **unchanged at 600** and the stock-hold behaviour
+is untouched — `expiry_seconds()` only reads it. The comment in `config.py`
+that claimed a 5-minute floor is corrected, and the superseded block earlier in
+this file now carries a pointer here.
+
+### The consequence, stated plainly
+
+The payment page now OUTLIVES the stock hold by ~6 minutes (960 vs 600). That
+is a real window — minute 10 to minute 16 — in which a customer can pay for
+units already swept back into stock. It is not an oversight and it cannot be
+closed without either raising the TTL above 960 or going below Cashfree's
+floor, which is what just broke. It is handled, in three outcomes:
+
+| State when the payment lands | Outcome | Code |
+|---|---|---|
+| Expired, not yet swept (still `HELD`) | commits the hold it always had; stock unmoved | `stock.py:243-245` short-circuit → `commit_for_order` |
+| Swept, units still available | re-acquired, order proceeds | `stock.py:246-270` → `service.py:1983` |
+| Swept, units taken by someone else | `CANCELLED` + `refund_required` + `ORDER_REJECTED` event | `service.py:1965-1983` |
+
+Row 1 is the common case in that window and was the one with no test — the two
+existing `TestLatePayment` cases both sweep first. Added
+`test_it_commits_an_expired_hold_that_was_never_swept`. Nobody is ever
+oversold; the worst outcome is a refund.
+
+### Suites
+
+| Suite | Before | After |
+|---|---|---|
+| backend | 897 passed / 1 xfailed | **908 passed / 1 xfailed** (+11) |
+
+`TestGatewayExpiryAlignment` went 4 → 14 cases, plus the one new
+`TestLatePayment` case. 8 of them fail against the pre-fix tree, including the
+production symptom reproduced exactly: *"hold TTL 600s produced an expiry
+599.5s out"*. The rest are guards — a 3600s TTL must still be sent unclamped,
+and the timestamp must stay offset-aware with no microseconds.
+
+### Still open
+
+- The migration 032/033 question from the previous entry is **unresolved, not
+  disproved**. The expiry 400 came back from Cashfree, which means
+  `create_order` got as far as the gateway call — so on the request that
+  produced it, the schema was fine. Worth confirming once anyway; the
+  read-only checks are in the previous entry.
+- Nothing here was exercised against the real Cashfree sandbox. The floor is
+  taken from a production error message rather than a doc this time, which is
+  better evidence, but the first successful live order is still the proof.

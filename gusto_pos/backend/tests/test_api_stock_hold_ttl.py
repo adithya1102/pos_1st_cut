@@ -233,6 +233,45 @@ class TestSweep:
 
 @pytest.mark.asyncio
 class TestLatePayment:
+    async def test_it_commits_an_expired_hold_that_was_never_swept(
+            self, client, seed, db):
+        """Minute 10 to minute 16 — the window the Cashfree floor creates.
+
+        The hold is 600s and Cashfree refuses any expiry inside 15 minutes, so
+        the payment page necessarily outlives the hold by ~6 minutes. A
+        customer paying in that gap arrives with `expires_at` in the past and
+        the row STILL `HELD`, because the sweep is check-on-read and nothing
+        has read since.
+
+        This is the COMMON case in that window and it is uneventful:
+        `rereserve_for_order` finds no RELEASED rows and short-circuits to True
+        (stock.py:243-245), so `commit_for_order` commits the hold the customer
+        has had all along. Nothing is re-taken because nothing was given back,
+        and stock is unchanged from the moment of ordering.
+
+        The two tests below are the other half — what happens once a sweep HAS
+        run. Together they cover both sides of the gap.
+        """
+        await _set_stock(db, seed["menu_item_id"], 5)
+        r = await _place_one(client, seed, seed["menu_item_id"], qty=2)
+        oid = r.json()["id"]
+        assert await _stock(db, seed["menu_item_id"]) == 3
+
+        # Past its expiry, and deliberately NOT swept.
+        await _force_expired(db, oid)
+        assert [s for _, _, s in await _reservations(db, oid)] == [HELD]
+
+        assert (await _pay(client, seed, oid)).status_code == 200
+
+        row = await _order_row(db, oid)
+        assert row.payment_status == "PAID"
+        assert row.status != "CANCELLED", \
+            "an unswept expired hold was treated as lost stock"
+        assert row.refund_required is False
+        assert [s for _, _, s in await _reservations(db, oid)] == [COMMITTED]
+        assert await _stock(db, seed["menu_item_id"]) == 3, \
+            "stock moved for units that were never released"
+
     async def test_it_re_acquires_when_the_units_are_still_there(
             self, client, seed, db):
         """The hold lapsed, nobody else took the units, then the money landed.
@@ -389,27 +428,60 @@ class TestLatePayment:
 # ==================== 4. the gateway expires with the hold ===================
 
 class TestGatewayExpiryAlignment:
-    """Cashfree's documented floor is 5 minutes: "Set order expiry time:
-    Minimum 5 minutes, maximum 30 days" —
-    cashfree.com/docs/payments/online/resources/payment-lifecycle.
-    600s clears it, so the expiry is sent rather than skipped.
+    """Cashfree's floor is SIXTEEN minutes here, not five.
+
+    Their payment-lifecycle page says "Set order expiry time: Minimum 5
+    minutes, maximum 30 days". The live API does not agree, and said so in
+    production:
+
+        {"code":"order_expiry_time_invalid",
+         "message":"order_expiry_time : Expiry time should be more than 15 min
+                    and less than 30 days"}
+
+    The old 300 floor was taken from that page, STOCK_HOLD_TTL_SECONDS is 600,
+    600 > 300 — so the clamp never fired and every single checkout was refused.
+    These tests assert against the ERROR, which is the authority, with a minute
+    of margin on each strict inequality (960s / 29 days).
     """
 
-    def test_the_expiry_equals_the_hold_ttl(self):
+    def test_the_floor_is_sixteen_minutes_not_five(self):
         from app.modules.carevo_payments.gateway import CashfreeGateway
-        assert CashfreeGateway.expiry_seconds() == settings.STOCK_HOLD_TTL_SECONDS
-        assert settings.STOCK_HOLD_TTL_SECONDS >= \
-            CashfreeGateway.MIN_ORDER_EXPIRY_SECONDS
+        assert CashfreeGateway.MIN_ORDER_EXPIRY_SECONDS == 960
+        assert CashfreeGateway.MAX_ORDER_EXPIRY_SECONDS == 29 * 24 * 60 * 60
 
-    def test_a_sub_minimum_ttl_is_clamped_not_sent(self, monkeypatch):
-        """A 60-second TTL is reasonable locally and Cashfree would REFUSE it,
-        turning every checkout into a hard create-order failure. Clamping
-        degrades to "the gateway outlives the hold", which the late-payment
-        path above already handles.
-        """
+    @pytest.mark.parametrize("ttl", [60, 600, 960])
+    def test_a_ttl_at_or_below_the_floor_is_raised_to_it(self, ttl, monkeypatch):
+        """600 is the LIVE production value and the one that was failing — a
+        TTL does not have to be unreasonably short to be refused."""
         from app.modules.carevo_payments.gateway import CashfreeGateway
-        monkeypatch.setattr(settings, "STOCK_HOLD_TTL_SECONDS", 60)
-        assert CashfreeGateway.expiry_seconds() == 300
+        monkeypatch.setattr(settings, "STOCK_HOLD_TTL_SECONDS", ttl)
+        assert CashfreeGateway.expiry_seconds() == 960
+
+    def test_a_ttl_above_the_floor_is_sent_unchanged(self, monkeypatch):
+        """Past the floor the hold and the payment page line up exactly, which
+        is the behaviour the clamp exists to preserve where it can."""
+        from app.modules.carevo_payments.gateway import CashfreeGateway
+        monkeypatch.setattr(settings, "STOCK_HOLD_TTL_SECONDS", 3600)
+        assert CashfreeGateway.expiry_seconds() == 3600
+
+    def test_an_absurd_ttl_is_capped_at_29_days(self, monkeypatch):
+        """The other end of the same sentence. Unreachable today — nothing
+        sets a TTL in months — so this guards a future value, not a live one."""
+        from app.modules.carevo_payments.gateway import CashfreeGateway
+        monkeypatch.setattr(settings, "STOCK_HOLD_TTL_SECONDS", 90 * 24 * 60 * 60)
+        assert CashfreeGateway.expiry_seconds() == 29 * 24 * 60 * 60
+
+    def test_the_production_ttl_clears_the_floor_on_the_wire(self):
+        """The regression itself, stated as the customer experiences it: with
+        the real STOCK_HOLD_TTL_SECONDS, is the timestamp we send acceptable?"""
+        from app.modules.carevo_payments.gateway import CashfreeGateway
+        assert settings.STOCK_HOLD_TTL_SECONDS == 600, \
+            "this test is pinned to the shipped TTL; update it deliberately"
+        at = datetime.fromisoformat(CashfreeGateway._expiry_iso())
+        delta = (at - datetime.now(timezone.utc)).total_seconds()
+        assert delta > 15 * 60, \
+            f"Cashfree refuses anything inside 15 minutes; sent {delta}s"
+        assert delta < 30 * 24 * 60 * 60
 
     def test_the_timestamp_is_offset_aware_and_in_the_future(self):
         """Cashfree rejects a naive timestamp, and microseconds."""
@@ -421,9 +493,15 @@ class TestGatewayExpiryAlignment:
         delta = (at - datetime.now(timezone.utc)).total_seconds()
         assert 0 < delta <= CashfreeGateway.expiry_seconds() + 5
 
-    @pytest.mark.asyncio
-    async def test_create_order_sends_order_expiry_time(self, monkeypatch):
-        """The field has to reach the wire, not just exist as a helper."""
+    @staticmethod
+    async def _capture_create_order_body(monkeypatch) -> dict:
+        """The body actually handed to httpx by a real create_order call.
+
+        Patching the AsyncClient CLASS the gateway constructs, not
+        httpx.AsyncClient.post — the latter would also hijack any in-process
+        test client, which is how a test like this passes while reaching
+        nothing.
+        """
         from app.modules.carevo_payments import gateway as gw_mod
         from app.modules.carevo_payments.gateway import CashfreeGateway
 
@@ -452,6 +530,14 @@ class TestGatewayExpiryAlignment:
         monkeypatch.setattr(gw_mod.settings, "CASHFREE_SECRET_KEY", "test-secret")
 
         await CashfreeGateway().create_order(100.0, receipt=str(uuid.uuid4()))
+        return captured
+
+    @pytest.mark.asyncio
+    async def test_create_order_sends_order_expiry_time(self, monkeypatch):
+        """The field has to reach the wire, not just exist as a helper."""
+        from app.modules.carevo_payments.gateway import CashfreeGateway
+
+        captured = await self._capture_create_order_body(monkeypatch)
 
         assert "order_expiry_time" in captured, \
             f"no order_expiry_time in the create-order body: {sorted(captured)}"
@@ -459,6 +545,48 @@ class TestGatewayExpiryAlignment:
         assert at.tzinfo is not None
         delta = (at - datetime.now(timezone.utc)).total_seconds()
         assert 0 < delta <= CashfreeGateway.expiry_seconds() + 5
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ttl", [60, 600, 960])
+    async def test_the_wire_value_clears_15_minutes_for_any_short_ttl(
+            self, ttl, monkeypatch):
+        """The regression, asserted where it actually failed: ON THE WIRE.
+
+        `expiry_seconds()` being right is necessary and not sufficient — the
+        400 came back because of the timestamp in the body, so that is what
+        gets checked. 600 is the production TTL that was being refused.
+        """
+        monkeypatch.setattr(settings, "STOCK_HOLD_TTL_SECONDS", ttl)
+
+        captured = await self._capture_create_order_body(monkeypatch)
+
+        at = datetime.fromisoformat(captured["order_expiry_time"])
+        delta = (at - datetime.now(timezone.utc)).total_seconds()
+        assert delta >= 960 - 5, \
+            (f"hold TTL {ttl}s produced an expiry {delta}s out; Cashfree "
+             f'refuses this with "Expiry time should be more than 15 min"')
+        assert delta < 30 * 24 * 60 * 60
+
+    @pytest.mark.asyncio
+    async def test_the_wire_value_equals_a_ttl_above_the_floor(self, monkeypatch):
+        monkeypatch.setattr(settings, "STOCK_HOLD_TTL_SECONDS", 3600)
+
+        captured = await self._capture_create_order_body(monkeypatch)
+
+        at = datetime.fromisoformat(captured["order_expiry_time"])
+        delta = (at - datetime.now(timezone.utc)).total_seconds()
+        assert 3600 - 5 <= delta <= 3600, \
+            f"a 3600s TTL should be sent as itself, not clamped; got {delta}s"
+
+    @pytest.mark.asyncio
+    async def test_the_wire_value_never_exceeds_29_days(self, monkeypatch):
+        monkeypatch.setattr(settings, "STOCK_HOLD_TTL_SECONDS", 90 * 24 * 60 * 60)
+
+        captured = await self._capture_create_order_body(monkeypatch)
+
+        at = datetime.fromisoformat(captured["order_expiry_time"])
+        delta = (at - datetime.now(timezone.utc)).total_seconds()
+        assert delta <= 29 * 24 * 60 * 60
 
 
 # ========================= 5. the hoarding cap ===============================

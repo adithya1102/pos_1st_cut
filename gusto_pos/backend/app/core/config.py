@@ -38,12 +38,17 @@ class Settings(BaseSettings):
     # Expressed in SECONDS, not minutes, because the value has to be comparable
     # with the gateway's own expiry without a unit conversion in between: the
     # Cashfree order is created with order_expiry_time = now + this, so the
-    # payment page dies at the same moment the hold does. Cashfree's documented
-    # floor is 5 minutes ("Set order expiry time: Minimum 5 minutes, maximum 30
-    # days" — cashfree.com/docs/payments/online/resources/payment-lifecycle),
-    # so 600s clears it with room to spare. Anything set below 300 here will be
-    # REFUSED by Cashfree at order creation, which is why the gateway clamps
-    # rather than passing it straight through.
+    # payment page dies as close to the hold as the gateway permits.
+    #
+    # It is NOT an exact match, and the reason is worth knowing before changing
+    # this number. Cashfree's live API refuses any expiry inside 15 minutes
+    # ("order_expiry_time : Expiry time should be more than 15 min and less
+    # than 30 days" — observed as a production 400, and contradicting their
+    # payment-lifecycle page, which still says 5 minutes). So the gateway
+    # clamps to CashfreeGateway.MIN_ORDER_EXPIRY_SECONDS (960) rather than
+    # passing this straight through, and at 600 the clamp is what applies: the
+    # payment page outlives the hold by six minutes. Raising this above 960
+    # would make the two line up exactly.
     #
     # Lowering this is safe for correctness but not for conversion: a hold that
     # lapses mid-payment is recovered by the late-payment path in mark_paid,
