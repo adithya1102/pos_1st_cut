@@ -29,11 +29,19 @@
         android:fullBackupContent="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher">
-        <!-- Google Maps / Places SDK key, injected from local.properties via
-             Gradle (see manifestPlaceholders). Never hardcoded here. -->
-        <meta-data
-            android:name="com.google.android.geo.API_KEY"
-            android:value="${MAPS_API_KEY}" />
+        <!-- There is deliberately NO Google Maps geo API-key meta-data in this
+             manifest. This app has no map and no Places call: no
+             google_maps_flutter or flutter_map dependency, no GoogleMap
+             widget, no geocoding. The key that used to be injected here was
+             consumed by nothing and shipped in every bundle, where it is
+             readable by anyone who downloads the app.
+             The outlet-settings "Use current location" button uses geolocator,
+             which talks to the platform location provider and needs no API key.
+             If a map is ever added, declare the meta-data WITH a Gradle
+             manifest placeholder rather than hardcoding a value.
+             This comment avoids spelling the metadata name in full on purpose,
+             so that "does the merged manifest mention it at all?" stays a
+             meaningful one-line check. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"

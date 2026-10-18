@@ -7,7 +7,6 @@ import '../config/app_config.dart';
 import '../services/staff_push_service.dart';
 import '../state/auth_state.dart';
 import 'forgot_password_screen.dart';
-import 'signup_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -151,14 +150,24 @@ class _LoginScreenState extends State<LoginScreen> {
                       child: const Text('Forgot password?'),
                     ),
                     const SizedBox(height: 4),
-                    TextButton(
-                      onPressed: auth.loading
-                          ? null
-                          : () => Navigator.of(context).push(
-                                MaterialPageRoute(
-                                    builder: (_) => const SignupScreen()),
-                              ),
-                      child: const Text('Register your restaurant'),
+                    // Plain text, NOT a button. Accounts are created by CareVo,
+                    // not by whoever downloads the app — an owner account can
+                    // read and rewrite a live restaurant's menu and prices, so
+                    // handing out self-service signup from the Play listing
+                    // means anyone can mint one. It also removes this app from
+                    // Play's account-deletion requirement, which only applies
+                    // where the app itself creates accounts.
+                    //
+                    // Deliberately carries NO phone number and NO email
+                    // address: a contact detail on a public login screen is a
+                    // target, and the people who have this app already know
+                    // who onboarded them.
+                    Text(
+                      'Need an account? Ask your CareVo contact.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(context).colorScheme.outline,
+                          ),
                     ),
                   ],
                 ),

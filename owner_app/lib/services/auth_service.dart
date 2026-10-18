@@ -23,52 +23,6 @@ class AuthService {
     return token;
   }
 
-  /// Public owner self-signup via `POST /register`. Does NOT log the user in
-  /// (the new outlet is pending admin verification). Throws [ApiException] on
-  /// failure (409 username taken, 429 rate-limited, etc.).
-  Future<void> register({
-    required String restaurantName,
-    String? city,
-    String? requestedCity,
-    required String locality,
-    required String phoneNumber,
-    required String email,
-    required String username,
-    required String password,
-    required String upiId,
-  }) async {
-    await _client.post('/register', body: {
-      'restaurant_name': restaurantName,
-      // Exactly one of city / requested_city — the server rejects both-or-
-      // neither. `city` must already be an approved city; `requested_city`
-      // files a new-city request for admin approval.
-      if (city != null && city.trim().isNotEmpty) 'city': city.trim(),
-      if (requestedCity != null && requestedCity.trim().isNotEmpty)
-        'requested_city': requestedCity.trim(),
-      // Area within the city (migration 012). Mandatory server-side as of
-      // the locality work — a signup without it is rejected with 422.
-      'locality': locality.trim(),
-      // Now mandatory server-side, so always sent.
-      'phone_number': phoneNumber.trim(),
-      // Required as of migration 015 — it is what makes forgot-password work.
-      'email': email.trim().toLowerCase(),
-      'username': username,
-      'password': password,
-      'upi_id': upiId.trim(),
-    });
-  }
-
-  /// Cities selectable at signup. Public endpoint — no token needed, which is
-  /// required since this populates the form before an account exists.
-  Future<List<String>> fetchCities() async {
-    final data = await _client.get('/cities');
-    return ((data as List?) ?? const [])
-        .whereType<Map>()
-        .map((m) => m['name']?.toString() ?? '')
-        .where((n) => n.isNotEmpty)
-        .toList();
-  }
-
   Future<bool> hasToken() async {
     final token = await _client.readToken();
     return token != null && token.isNotEmpty;

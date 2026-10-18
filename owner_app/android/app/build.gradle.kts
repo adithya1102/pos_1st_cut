@@ -10,21 +10,21 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-// Maps API key is injected from a gitignored properties file — never hardcoded
-// and never committed. Prefer android/maps.properties (Flutter rewrites
-// local.properties on every build and would drop the key); local.properties is
-// still read as a fallback. Missing key resolves to "" so a fresh clone still
-// builds (Maps just won't authenticate until the key is supplied).
-val mapsApiKey: String = Properties().apply {
-    listOf("local.properties", "maps.properties").forEach { name ->
-        val f = rootProject.file(name)
-        if (f.exists()) f.inputStream().use { load(it) }
-    }
-}.getProperty("MAPS_API_KEY", "")
+// No Maps key is read here. This app has no map: nothing in owner_app depends
+// on google_maps_flutter or flutter_map, there is no GoogleMap widget and no
+// Places or geocoding call. The key this block used to load was injected into
+// the manifest, shipped in every bundle, and consumed by nothing — and a key
+// inside a published Android app is extractable by anyone who downloads it.
+//
+// `android/maps.properties` is NOT read any more and nothing in this module
+// needs it. customer_app keeps its own copy and genuinely uses it; that one is
+// untouched.
+//
+// geolocator, which the outlet-settings location button uses, talks to the
+// platform location provider and needs no API key at all.
 
-// Upload key for Play Store releases. Same discipline as the Maps key above and
-// byte-for-byte the shape customer_app already uses: read from a gitignored
-// properties file, never hardcoded.
+// Upload key for Play Store releases. Read from a gitignored properties file,
+// never hardcoded — byte-for-byte the shape customer_app already uses.
 //
 // The keystore itself lives OUTSIDE the repo (see storeFile in key.properties)
 // because this repository is public — a gitignore slip should not be able to
@@ -72,8 +72,6 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        // Consumed by the com.google.android.geo.API_KEY meta-data in the manifest.
-        manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
     }
 
     signingConfigs {

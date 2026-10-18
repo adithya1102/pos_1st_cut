@@ -110,9 +110,6 @@ class AuthState extends ChangeNotifier {
     }
   }
 
-  /// Cities selectable at signup, from the canonical list (migration 013).
-  Future<List<String>> fetchCities() => _auth.fetchCities();
-
   /// Account state — drives the "add your email" prompt for legacy accounts.
   Future<AccountInfo> account() => _auth.account();
 
@@ -171,42 +168,6 @@ class AuthState extends ChangeNotifier {
           : 'Could not reach the server. Check your internet connection.';
     } catch (_) {
       return 'Something went wrong. Please try again.';
-    }
-  }
-
-  /// Owner self-signup. Returns null on success, or a staff-facing error.
-  /// Does not log in — the outlet is pending admin verification.
-  Future<String?> register({
-    required String restaurantName,
-    String? city,
-    String? requestedCity,
-    required String locality,
-    required String phoneNumber,
-    required String email,
-    required String username,
-    required String password,
-    required String upiId,
-  }) async {
-    try {
-      await _auth.register(
-        restaurantName: restaurantName.trim(),
-        city: city,
-        requestedCity: requestedCity,
-        locality: locality,
-        phoneNumber: phoneNumber,
-        email: email,
-        username: username.trim(),
-        password: password,
-        upiId: upiId,
-      );
-      return null;
-    } on ApiException catch (e) {
-      if (e.statusCode == 409) return 'That username is already taken.';
-      if (e.statusCode == 429) return 'Too many attempts. Please try again later.';
-      if (e.statusCode == 422) return 'Please check your details and try again.';
-      return 'Could not register. Please try again.';
-    } catch (_) {
-      return 'Could not reach the server. Check your connection.';
     }
   }
 
