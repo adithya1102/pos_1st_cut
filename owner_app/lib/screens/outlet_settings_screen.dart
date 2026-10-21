@@ -27,6 +27,8 @@ class OutletSettingsScreen extends StatefulWidget {
   static const closeTimeKey = Key('settings_close_time');
   static const manualToggleKey = Key('settings_manual_closed');
   static const saveHoursKey = Key('settings_save_hours');
+  static const upiIdKey = Key('settings_upi_id');
+  static const saveUpiKey = Key('settings_save_upi');
   static const useLocationKey = Key('settings_use_location');
   static const locationValueKey = Key('settings_location_value');
   static const openSettingsKey = Key('settings_open_app_settings');
@@ -41,6 +43,15 @@ class _OutletSettingsScreenState extends State<OutletSettingsScreen> {
   bool _initialised = false;
   bool _savingHours = false;
   bool _locating = false;
+
+  final TextEditingController _vpaController = TextEditingController();
+  bool _savingVpa = false;
+
+  @override
+  void dispose() {
+    _vpaController.dispose();
+    super.dispose();
+  }
 
   /// True once a refusal was permanent, so the UI can offer system settings
   /// instead of a retry the OS will silently swallow.
@@ -134,6 +145,54 @@ class _OutletSettingsScreenState extends State<OutletSettingsScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2))
                       : const Icon(Icons.save_outlined),
                   label: const Text('Save hours'),
+                ),
+                const Divider(height: 32),
+
+                // --- Where customer payments land ---
+                Text('Payment UPI ID',
+                    style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 4),
+                Text(
+                  'Customers pay this handle directly from their UPI app. '
+                  'Money goes straight to your bank — nothing is held in '
+                  'between. Check it character by character: payments sent to '
+                  'the wrong handle cannot be recovered.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  key: OutletSettingsScreen.upiIdKey,
+                  controller: _vpaController,
+                  enabled: !_savingVpa,
+                  autocorrect: false,
+                  keyboardType: TextInputType.emailAddress,
+                  textInputAction: TextInputAction.done,
+                  decoration: const InputDecoration(
+                    labelText: 'UPI ID',
+                    hintText: 'yourname@yourbank',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.account_balance_outlined),
+                  ),
+                  onSubmitted: (_) => _savingVpa ? null : _savePaymentVpa(context),
+                ),
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  key: OutletSettingsScreen.saveUpiKey,
+                  onPressed: _savingVpa ? null : () => _savePaymentVpa(context),
+                  icon: _savingVpa
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.save_outlined),
+                  label: const Text('Save UPI ID'),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Payments are confirmed from your bank\'s SMS alert, so the '
+                  'YOUPI observer app must stay installed and signed in on '
+                  'this phone.',
+                  style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const Divider(height: 32),
 
@@ -280,6 +339,27 @@ class _OutletSettingsScreenState extends State<OutletSettingsScreen> {
     if (!mounted) return;
     setState(() => _savingHours = false);
     _snack(err ?? 'Hours saved.');
+  }
+
+  Future<void> _savePaymentVpa(BuildContext context) async {
+    final upiId = _vpaController.text.trim();
+    if (upiId.isEmpty) {
+      _snack('Enter your UPI ID first.');
+      return;
+    }
+    // Caught here as well as server-side: a round trip to be told about a
+    // missing "@" is a worse experience than saying so immediately.
+    if (!RegExp(r'^[A-Za-z0-9._\-]{2,64}@[A-Za-z][A-Za-z0-9.\-]{1,30}$')
+        .hasMatch(upiId)) {
+      _snack('That does not look like a UPI ID. Example: yourname@yourbank');
+      return;
+    }
+
+    setState(() => _savingVpa = true);
+    final err = await context.read<HomeState>().setPaymentVpa(upiId);
+    if (!mounted) return;
+    setState(() => _savingVpa = false);
+    _snack(err ?? 'Payments will now go to $upiId.');
   }
 
   void _snack(String message) {

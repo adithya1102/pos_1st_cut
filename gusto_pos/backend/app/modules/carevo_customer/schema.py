@@ -279,6 +279,12 @@ class PaymentBlock(BaseModel):
     # Razorpay-shaped stub, which opens on gateway_order_id + key_id — so the
     # app picks its flow from `gateway`, not from a build-time constant.
     payment_session_id: Optional[str] = None
+    # YOUPI settles peer-to-peer and has no drop-in SDK, so the app opens this
+    # hosted page instead. It is not cosmetic: that page performs the
+    # select-method and payment-done transitions the gateway requires before an
+    # observed bank credit can be attributed to the session. Launching a raw
+    # upi:// intent would skip them and the payment would never verify.
+    checkout_url: Optional[str] = None
 
 
 class CreateOrderOut(BaseModel):
@@ -526,6 +532,26 @@ class SetManualClosedIn(BaseModel):
 class SetOutletImageIn(BaseModel):
     """Cloudinary URL produced by the app's unsigned upload. Null clears it."""
     image_url: Optional[str] = Field(None, max_length=500)
+
+
+class SetPaymentVpaIn(BaseModel):
+    """The restaurant's own UPI VPA — where customer money actually lands.
+
+    Registered with YOUPI by the BACKEND, never by the app: doing it from the
+    device would mean shipping the gateway admin token inside an APK, and a
+    token inside an APK is an extracted token.
+    """
+    # user@bank. Deliberately strict: a typo here silently sends every future
+    # payment to someone else's handle, and nothing downstream would notice.
+    upi_id: str = Field(..., min_length=3, max_length=100,
+                        pattern=r"^[A-Za-z0-9._\-]{2,64}@[A-Za-z][A-Za-z0-9.\-]{1,30}$")
+    payee_name: Optional[str] = Field(None, max_length=100)
+
+
+class PaymentVpaOut(BaseModel):
+    upi_id: str
+    payee_name: Optional[str] = None
+    is_active: bool = True
 
 
 class SetVisibilityIn(BaseModel):

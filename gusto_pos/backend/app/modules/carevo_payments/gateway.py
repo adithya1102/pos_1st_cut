@@ -33,6 +33,10 @@ class GatewayOrder:
     # Optional because Razorpay has no equivalent — it opens on order_id + key_id.
     # ADDITIVE: every existing reader of GatewayOrder is unaffected.
     payment_session_id: Optional[str] = None
+    # YOUPI settles peer-to-peer, so there is no hosted drop-in to open. The
+    # app either launches the upi:// intent directly or loads this page.
+    # ADDITIVE for the same reason as payment_session_id.
+    checkout_url: Optional[str] = None
 
 
 @dataclass
@@ -604,6 +608,206 @@ class CashfreeGateway(PaymentGateway):
         return None
 
 
+class YoupiGateway(PaymentGateway):
+    """Self-hosted YOUPI PG.
+
+    Shape differs from Cashfree in one way that matters: there is no hosted
+    SDK that takes the money. YOUPI settles peer-to-peer into the merchant's
+    own VPA, and learns the payment happened only when a bank credit alert is
+    observed on the merchant's phone. So:
+
+      * create_order returns a upi://pay intent for the app to launch, not a
+        drop-in session token;
+      * the webhook is the ONLY confirmation, and it arrives after an observer
+        forwards the bank SMS. Nothing in the client flow proves payment.
+
+    Credentials: YOUPI_BASE_URL + YOUPI_WEBHOOK_SECRET.
+    """
+
+    name = "youpi"
+
+    #: Real money moves between real bank accounts, and deliveries are signed
+    #: HMAC-SHA256, so webhooks are authenticable. Note this says nothing about
+    #: the gateway being bank- or NPCI-approved; it is not.
+    is_live = True
+
+    # Terminal events YOUPI emits -> the vocabulary the controller understands.
+    _OUTCOME = {
+        "SUCCESS": "PAID",
+        "FAILED": "FAILED",
+        "EXPIRED": "FAILED",
+        "CANCELLED": "FAILED",
+    }
+
+    #: Reject a delivery whose X-Gateway-Timestamp is further than this from
+    #: now, to bound replay of a captured request. Retries re-stamp, so the
+    #: gateway's hour-long backoff tail is unaffected.
+    TIMESTAMP_TOLERANCE_SECONDS = 300
+
+    def __init__(self):
+        self.base_url = (settings.YOUPI_BASE_URL or "").rstrip("/")
+        self.webhook_secret = settings.YOUPI_WEBHOOK_SECRET
+        self.merchant_id = settings.YOUPI_MERCHANT_ID
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.base_url and self.webhook_secret)
+
+    async def create_order(self, amount_rupees: float, currency: str = "INR",
+                           receipt: Optional[str] = None,
+                           customer: Optional[Mapping[str, Any]] = None) -> GatewayOrder:
+        if not self.configured:
+            raise GatewayConfigError(
+                "YOUPI is selected but YOUPI_BASE_URL / YOUPI_WEBHOOK_SECRET "
+                "are not set. Refusing to fall back to the stub — a silent "
+                "downgrade to fake payments is worse than a hard failure."
+            )
+
+        amount = round(float(amount_rupees), 2)
+        if amount <= 0:
+            raise GatewayRequestError(
+                f"order_amount {amount} is not payable",
+                code="AMOUNT_BELOW_GATEWAY_MINIMUM",
+                customer_message=(
+                    "This order comes to ₹0, and payments cannot be taken for "
+                    "₹0. Remove the discount to place it, or add something."
+                ),
+            )
+
+        cust = dict(customer or {})
+        body: dict[str, Any] = {
+            # OUR order id, echoed back on the webhook, so no correlation table.
+            "orderId": str(receipt),
+            # YOUPI takes rupees as a decimal string, not integer paise.
+            "amount": f"{amount:.2f}",
+            "currency": currency,
+            "customer": {
+                **({"name": cust["name"]} if cust.get("name") else {}),
+                **({"email": cust["email"]} if cust.get("email") else {}),
+                **({"phoneNumber": str(cust["phone"])} if cust.get("phone") else {}),
+            },
+            "metadata": {"source": "gusto_skip"},
+        }
+        if settings.YOUPI_RETURN_URL:
+            body["returnUrl"] = settings.YOUPI_RETURN_URL
+
+        headers = {"Content-Type": "application/json"}
+        if self.merchant_id:
+            headers["X-Merchant-Id"] = self.merchant_id
+        if receipt:
+            headers["Idempotency-Key"] = f"gusto_{receipt}"
+
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                res = await client.post(f"{self.base_url}/api/v1/payments",
+                                        json=body, headers=headers)
+        except httpx.HTTPError as exc:
+            raise GatewayUpstreamError(
+                f"Could not reach YOUPI at {self.base_url}: {exc}"
+            ) from exc
+
+        if res.status_code not in (200, 201):
+            raise GatewayUpstreamError(
+                f"YOUPI create payment failed with {res.status_code}",
+                status_code=res.status_code, body=res.text[:500],
+            )
+
+        try:
+            data = res.json()
+        except ValueError as exc:
+            raise GatewayUpstreamError(
+                "YOUPI returned a non-JSON body on a 2xx",
+                status_code=res.status_code, body=res.text[:500],
+            ) from exc
+        if not isinstance(data, dict):
+            raise GatewayUpstreamError(
+                f"YOUPI returned {type(data).__name__}, expected an object",
+                status_code=res.status_code, body=res.text[:500],
+            )
+
+        payment_id = data.get("paymentId")
+        if not payment_id:
+            raise GatewayUpstreamError(
+                "YOUPI returned no paymentId",
+                status_code=res.status_code, body=res.text[:500],
+            )
+
+        amount_paise = data.get("amountPaise")
+        return GatewayOrder(
+            gateway=self.name,
+            gateway_order_id=str(payment_id),
+            amount=(int(amount_paise) if amount_paise is not None
+                    else int(round(amount * 100))),
+            currency=str(data.get("currency") or currency),
+            key_id=None,
+            # Carried so the existing "is there a session to open?" check in the
+            # app keeps working; for YOUPI it is the payment id.
+            payment_session_id=str(payment_id),
+            checkout_url=data.get("checkoutUrl"),
+        )
+
+    def verify_webhook_signature(self, body: bytes, signature: Optional[str],
+                                 *, timestamp: Optional[str] = None) -> bool:
+        """YOUPI: `sha256=` + hex HMAC_SHA256(rawBody, webhook_secret).
+
+        The MAC covers the raw transmitted body ONLY — not timestamp+body as
+        Cashfree does. Re-serialising the parsed JSON before hashing changes
+        key order and whitespace and will never match, so this must be handed
+        the exact bytes received.
+        """
+        if not self.webhook_secret or not signature:
+            return False
+
+        presented = signature.strip()
+        if presented.lower().startswith("sha256="):
+            presented = presented[7:]
+        presented = presented.strip().lower()
+        if len(presented) != 64:
+            return False
+
+        expected = hmac.new(
+            self.webhook_secret.encode("utf-8"), body, hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(presented, expected):
+            return False
+
+        # Bound replay. Absent/garbage timestamps are rejected rather than
+        # waved through: a signature alone does not make a captured request
+        # fresh, and the gateway always sends this header.
+        if timestamp is None:
+            return True  # caller did not pass it; signature already checked
+        try:
+            sent_ms = int(str(timestamp).strip())
+        except (TypeError, ValueError):
+            return False
+        now_ms = datetime.now(timezone.utc).timestamp() * 1000
+        skew = abs(now_ms - sent_ms) / 1000.0
+        return skew <= self.TIMESTAMP_TOLERANCE_SECONDS
+
+    def parse_webhook(self, body: bytes, payload: dict) -> WebhookEvent:
+        event = str(payload.get("event") or "").upper()
+        return WebhookEvent(
+            outcome=self._OUTCOME.get(event, "UNKNOWN"),
+            gateway_order_id=(str(payload["paymentId"])
+                              if payload.get("paymentId") else None),
+            # YOUPI has no separate payment id; the UTR is the bank reference
+            # and is the thing worth reconciling against a statement.
+            gateway_payment_id=(str(payload["utr"]) if payload.get("utr") else None),
+            our_order_id=(str(payload["orderId"]) if payload.get("orderId") else None),
+            method=(str(payload.get("method")).lower()
+                    if payload.get("method") else "upi"),
+            raw=payload,
+        )
+
+    def make_payment_id(self) -> str:
+        return _rand("youpi")
+
+    def sign_payment(self, gateway_order_id: str, gateway_payment_id: str) -> Optional[str]:
+        """No client-side checkout signature exists — the signed webhook is the
+        only authority. Returning None is correct, not a stub."""
+        return None
+
+
 def get_gateway() -> PaymentGateway:
     """Factory. PAYMENT_GATEWAY is the real selector.
 
@@ -615,4 +819,6 @@ def get_gateway() -> PaymentGateway:
     selected = (settings.PAYMENT_GATEWAY or "stub").lower()
     if selected == "cashfree":
         return CashfreeGateway()
+    if selected == "youpi":
+        return YoupiGateway()
     return StubRazorpayGateway()

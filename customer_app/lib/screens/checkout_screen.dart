@@ -8,6 +8,7 @@ import '../config/city_transport.dart';
 import '../models/outlet.dart';
 import '../services/api_client.dart';
 import '../services/cashfree_service.dart';
+import '../services/youpi_service.dart';
 import '../services/location_service.dart';
 import '../services/order_service.dart';
 import '../services/payment_service.dart';
@@ -754,9 +755,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           );
       if (!mounted) return;
 
-      // Stub backend (no Cashfree session): keep the simulate path so dev and
-      // any deploy still on PAYMENT_GATEWAY=stub remains walkable.
-      if (!(order.payment?.isCashfree ?? false)) {
+      // Stub backend (no hosted checkout of any kind): keep the simulate path
+      // so dev and any deploy still on PAYMENT_GATEWAY=stub remains walkable.
+      if (!(order.payment?.needsHostedCheckout ?? false)) {
         Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) => PaymentProcessingScreen(
@@ -770,12 +771,19 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         return;
       }
 
-      // Cashfree Drop-in. UPI, cards and netbanking all live inside this
-      // sheet, which is why the app no longer asks the customer to choose.
-      final result = await context.read<CashfreeService>().openCheckout(
-            orderId: order.id,
-            paymentSessionId: order.payment!.paymentSessionId!,
-          );
+      // Hosted checkout. Cashfree opens a drop-in sheet carrying UPI, cards
+      // and netbanking; YOUPI opens its own page, which is UPI only and hands
+      // off to the customer's UPI app. Either way the customer no longer picks
+      // a method here.
+      final result = order.payment!.isYoupi
+          ? await context.read<YoupiService>().openCheckout(
+                orderId: order.id,
+                checkoutUrl: order.payment!.checkoutUrl!,
+              )
+          : await context.read<CashfreeService>().openCheckout(
+                orderId: order.id,
+                paymentSessionId: order.payment!.paymentSessionId!,
+              );
       if (!mounted) return;
 
       if (result.outcome == CheckoutOutcome.notStarted) {

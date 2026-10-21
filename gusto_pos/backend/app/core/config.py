@@ -141,6 +141,23 @@ class Settings(BaseSettings):
     # https://gusto-pos-backend.onrender.com/api/v1/customer/payment/webhook
     CASHFREE_NOTIFY_URL: Optional[str] = None
 
+    # Self-hosted YOUPI PG. Set PAYMENT_GATEWAY=youpi to select it; like
+    # Cashfree, the factory then refuses to start an order without these
+    # rather than silently serving stub payments.
+    #
+    # Settlement is peer-to-peer into the merchant's own VPA, and the ONLY
+    # confirmation is a signed webhook that fires after an observer on the
+    # merchant's phone forwards the bank credit alert. Nothing in the client
+    # flow proves payment, so YOUPI_WEBHOOK_SECRET is not optional.
+    YOUPI_BASE_URL: Optional[str] = None          # e.g. http://192.168.1.6:7000
+    YOUPI_WEBHOOK_SECRET: Optional[str] = None    # merchant webhook secret
+    YOUPI_MERCHANT_ID: Optional[str] = None       # omit to use default merchant
+    YOUPI_RETURN_URL: Optional[str] = None        # browser redirect after pay
+    # Admin bearer token, used ONLY for merchant-side VPA registration from the
+    # owner app. Never reaches a device: the app calls this backend, which
+    # calls YOUPI. An admin token shipped inside an APK is an extracted token.
+    YOUPI_ADMIN_TOKEN: Optional[str] = None
+
     FIREBASE_PROJECT_ID: Optional[str] = None
     FIREBASE_ENABLED: bool = False
 

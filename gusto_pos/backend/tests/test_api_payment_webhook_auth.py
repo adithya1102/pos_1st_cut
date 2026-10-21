@@ -25,12 +25,14 @@ requests hit. Guard 2 is asserted directly against the gateway object, since
 no HTTP path reaches it while the stub is selected.
 """
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 
 from app.modules.carevo_payments.gateway import (
     CashfreeGateway,
     StubRazorpayGateway,
+    YoupiGateway,
     get_gateway,
 )
 from tests.conftest import API
@@ -144,9 +146,88 @@ def test_cashfree_verifier_fails_closed_on_missing_pieces():
     assert gw.verify_webhook_signature(b"{}", "sig", timestamp=None) is False
 
 
+def test_youpi_verifier_fails_closed_on_missing_pieces():
+    """Same fail-closed contract as the other two, pinned so they cannot diverge."""
+    gw = YoupiGateway()
+    gw.webhook_secret = None
+    assert gw.verify_webhook_signature(b"{}", "sha256=" + "0" * 64) is False
+    gw.webhook_secret = "k"
+    assert gw.verify_webhook_signature(b"{}", None) is False
+    assert gw.verify_webhook_signature(b"{}", "") is False
+    # Not hex, wrong length, and missing prefix must all be refused rather than
+    # crashing on the hex decode.
+    assert gw.verify_webhook_signature(b"{}", "sha256=zz") is False
+    assert gw.verify_webhook_signature(b"{}", "sha256=" + "0" * 63) is False
+
+
+def test_youpi_verifier_signs_the_raw_body_only():
+    """YOUPI's MAC covers the transmitted bytes — NOT timestamp + body.
+
+    Pinned because the gateway itself shipped that bug once: signing
+    `${timestamp}.${payload}` on retry made every retried delivery fail the
+    merchant's check. If this test ever starts passing with a timestamp-salted
+    digest, the two sides have drifted apart again.
+    """
+    import hashlib
+    import hmac as _hmac
+
+    gw = YoupiGateway()
+    gw.webhook_secret = "s3cr3t"
+    body = b'{"event":"SUCCESS","paymentId":"abc"}'
+    ts = str(int(datetime.now(timezone.utc).timestamp() * 1000))
+
+    raw_mac = _hmac.new(b"s3cr3t", body, hashlib.sha256).hexdigest()
+    assert gw.verify_webhook_signature(body, f"sha256={raw_mac}", timestamp=ts) is True
+    # Prefix is optional; a bare hex digest is accepted too.
+    assert gw.verify_webhook_signature(body, raw_mac, timestamp=ts) is True
+
+    salted = _hmac.new(b"s3cr3t", f"{ts}.".encode() + body, hashlib.sha256).hexdigest()
+    assert gw.verify_webhook_signature(body, f"sha256={salted}", timestamp=ts) is False
+
+    # One byte of drift anywhere must fail.
+    assert gw.verify_webhook_signature(body + b" ", f"sha256={raw_mac}", timestamp=ts) is False
+
+
+def test_youpi_rejects_a_replayed_timestamp():
+    """A valid signature does not make a captured request fresh."""
+    import hashlib
+    import hmac as _hmac
+
+    gw = YoupiGateway()
+    gw.webhook_secret = "s3cr3t"
+    body = b"{}"
+    mac = "sha256=" + _hmac.new(b"s3cr3t", body, hashlib.sha256).hexdigest()
+
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    stale = str(now_ms - (gw.TIMESTAMP_TOLERANCE_SECONDS + 60) * 1000)
+    assert gw.verify_webhook_signature(body, mac, timestamp=stale) is False
+    assert gw.verify_webhook_signature(body, mac, timestamp="not-a-number") is False
+    assert gw.verify_webhook_signature(body, mac, timestamp=str(now_ms)) is True
+
+
+def test_youpi_outcome_mapping():
+    """Only SUCCESS may become PAID; anything unrecognised must not."""
+    gw = YoupiGateway()
+    assert gw.parse_webhook(b"{}", {"event": "SUCCESS"}).outcome == "PAID"
+    for event in ("FAILED", "EXPIRED", "CANCELLED"):
+        assert gw.parse_webhook(b"{}", {"event": event}).outcome == "FAILED"
+    for event in ("", "PENDING", "WHATEVER", None):
+        assert gw.parse_webhook(b"{}", {"event": event}).outcome == "UNKNOWN"
+
+    evt = gw.parse_webhook(b"{}", {
+        "event": "SUCCESS", "orderId": "ORD-1",
+        "paymentId": "pay-1", "utr": "123456789012",
+    })
+    # our_order_id is what the endpoint looks the order up by.
+    assert evt.our_order_id == "ORD-1"
+    assert evt.gateway_payment_id == "123456789012"
+    assert evt.method == "upi"
+
+
 def test_liveness_flags():
     """`is_live` is what the endpoint gates on — pin both ends of it."""
     assert StubRazorpayGateway().is_live is False
     assert CashfreeGateway().is_live is True
+    assert YoupiGateway().is_live is True
     # conftest sets PAYMENT_GATEWAY=stub, so the factory must yield the stub.
     assert get_gateway().is_live is False

@@ -8,6 +8,7 @@ class PaymentIntent {
     required this.currency,
     required this.keyId,
     this.paymentSessionId,
+    this.checkoutUrl,
   });
 
   final String gateway;
@@ -21,10 +22,26 @@ class PaymentIntent {
   /// this being present, not from a build-time constant.
   final String? paymentSessionId;
 
+  /// YOUPI's hosted checkout page. Null for Cashfree and the stub.
+  ///
+  /// The app opens this rather than building a `upi://pay` intent itself. That
+  /// page performs the select-method and payment-done transitions the gateway
+  /// requires before an observed bank credit can be attributed to the session;
+  /// a raw intent would skip them and the payment would never verify.
+  final String? checkoutUrl;
+
   bool get isCashfree => gateway == 'cashfree' && (paymentSessionId?.isNotEmpty ?? false);
+
+  bool get isYoupi => gateway == 'youpi' && (checkoutUrl?.isNotEmpty ?? false);
+
+  /// True when some hosted flow must be opened before the order can be paid,
+  /// whichever gateway is configured. Call sites branch on this instead of
+  /// naming a gateway, so a third one needs no new condition here.
+  bool get needsHostedCheckout => isCashfree || isYoupi;
 
   factory PaymentIntent.fromJson(Map<String, dynamic> json) {
     final session = json['payment_session_id'] as String?;
+    final checkout = json['checkout_url'] as String?;
     return PaymentIntent(
       gateway: (json['gateway'] ?? '') as String,
       gatewayOrderId: (json['gateway_order_id'] ?? '') as String,
@@ -32,6 +49,7 @@ class PaymentIntent {
       currency: (json['currency'] ?? 'INR') as String,
       keyId: (json['key_id'] ?? '') as String,
       paymentSessionId: (session != null && session.isNotEmpty) ? session : null,
+      checkoutUrl: (checkout != null && checkout.isNotEmpty) ? checkout : null,
     );
   }
 }

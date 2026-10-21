@@ -14,6 +14,7 @@ import 'services/firebase_otp_service.dart';
 import 'services/google_auth_service.dart';
 import 'services/location_service.dart';
 import 'services/cashfree_service.dart';
+import 'services/youpi_service.dart';
 import 'services/order_service.dart';
 import 'services/otp_auth_service.dart';
 import 'services/payment_service.dart';
@@ -144,6 +145,9 @@ Future<void> main() async {
         // pair, so a per-checkout instance would have later instances silently
         // overwrite the callbacks of an in-flight one.
         Provider<CashfreeService>(create: (_) => CashfreeService()),
+        // Stateless by comparison — no global SDK callback to own — but
+        // provided alongside so the screens resolve both the same way.
+        Provider<YoupiService>(create: (_) => YoupiService()),
         Provider<CustomerService>(create: (_) => CustomerService(api)),
         // ChangeNotifier, not a plain Provider: the app-resume re-check can
         // change the permission answer with no screen having asked for it, and

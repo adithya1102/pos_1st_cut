@@ -24,6 +24,27 @@ class OutletService {
     return Outlet.fromJson((data as Map).cast<String, dynamic>());
   }
 
+  /// `POST /pos/outlet/payment-vpa` — set the UPI handle customer payments
+  /// land in.
+  ///
+  /// The app sends only the handle. Registration with the payment gateway is
+  /// done server-side, because it needs the gateway admin token and a token
+  /// shipped inside an APK is an extracted token.
+  Future<({String upiId, String? payeeName})> setPaymentVpa(
+    String upiId, {
+    String? payeeName,
+  }) async {
+    final data = await _client.post('/pos/outlet/payment-vpa', body: {
+      'upi_id': upiId,
+      if (payeeName != null && payeeName.isNotEmpty) 'payee_name': payeeName,
+    });
+    final map = (data as Map).cast<String, dynamic>();
+    return (
+      upiId: (map['upi_id'] ?? upiId) as String,
+      payeeName: map['payee_name'] as String?,
+    );
+  }
+
   /// `POST /pos/outlets/{id}/visibility`
   Future<bool> setVisibility(String outletId, bool isVisible) async {
     final data = await _client.post(

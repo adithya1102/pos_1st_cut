@@ -95,6 +95,26 @@ async def set_outlet_image(
     )
 
 
+@router.post("/outlet/payment-vpa", response_model=s.PaymentVpaOut)
+async def set_payment_vpa(
+    payload: s.SetPaymentVpaIn,
+    staff: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set the restaurant's receiving UPI VPA on the payment gateway.
+
+    Scoped to the caller's own outlet via _require_outlet, and staff-authed
+    like every route here — so a customer token cannot repoint where this
+    restaurant's money lands.
+
+    The gateway admin token lives on the server and is used here; it is never
+    sent to the device.
+    """
+    return await CarevoService.set_payment_vpa(
+        _require_outlet(staff), payload.upi_id, payload.payee_name
+    )
+
+
 @router.patch("/outlet/hours", response_model=s.OwnerOutletOut)
 async def set_outlet_hours(
     payload: s.SetHoursIn,

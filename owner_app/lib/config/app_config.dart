@@ -8,7 +8,16 @@ class AppConfig {
   const AppConfig._();
 
   /// Single source of truth for the backend base URL.
-  static const String baseUrl = 'https://gusto-pos-backend.onrender.com/api/v1';
+  ///
+  /// Overridable at build time so a test build can point at a backend on the
+  /// LAN without editing source:
+  ///   flutter build apk --dart-define=API_BASE_URL=http://192.168.1.6:8000/api/v1
+  ///
+  /// The default is unchanged, so an ordinary build still targets Render.
+  static const String baseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: 'https://gusto-pos-backend.onrender.com/api/v1',
+  );
 
   /// App display name. Mirrors customer_app's AppConfig.appName. Used for the
   /// MaterialApp title and as the splash logo's semantic label — the lockup is

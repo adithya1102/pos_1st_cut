@@ -1394,6 +1394,9 @@ class CarevoService:
                 # What the Cashfree Flutter SDK opens checkout with. Null for
                 # the Razorpay-shaped stub, which opens on order_id + key_id.
                 "payment_session_id": self_session_id,
+                # YOUPI only: the hosted checkout page the app opens. Null for
+                # Cashfree and the stub, so the app branches on its presence.
+                "checkout_url": g_order.checkout_url,
             },
             # The struck-through-price breakdown, computed here rather than in
             # the app: `gross` is the pre-discount figure and only this function
@@ -3143,6 +3146,73 @@ class CarevoService:
         # Full OwnerOutletOut, so the app does not lose the hours or the photo
         # when the owner only moved the pin.
         return await CarevoService._load_owner_outlet(db, outlet_id)
+
+    @staticmethod
+    async def set_payment_vpa(
+        outlet_id: uuid.UUID, upi_id: str, payee_name: Optional[str]
+    ) -> dict:
+        """Register the restaurant's receiving VPA with YOUPI.
+
+        Proxied through the backend so the gateway admin token stays on the
+        server. The owner app never holds it.
+
+        Note what this does NOT do: prove the VPA belongs to this restaurant.
+        UPI has no ownership check available here — an operator who types a
+        stranger's handle will send every future payment to that stranger, and
+        the first sign of it will be money that never arrives. Whoever enters
+        it is the control.
+        """
+        base = (settings.YOUPI_BASE_URL or "").rstrip("/")
+        token = settings.YOUPI_ADMIN_TOKEN
+        if not base or not token:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=("Payment gateway is not configured on the server "
+                        "(YOUPI_BASE_URL / YOUPI_ADMIN_TOKEN)."),
+            )
+
+        body = {"upiId": upi_id, "isActive": True}
+        if payee_name:
+            body["payeeName"] = payee_name
+
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                res = await client.post(
+                    f"{base}/api/v1/admin/upi-accounts",
+                    json=body,
+                    headers={"Authorization": f"Bearer {token}",
+                             "Content-Type": "application/json"},
+                )
+        except httpx.HTTPError as exc:
+            logger.warning("YOUPI VPA registration unreachable: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Could not reach the payment gateway.",
+            ) from exc
+
+        if res.status_code not in (200, 201):
+            # Surface the gateway's own complaint (bad VPA format, duplicate)
+            # rather than a generic 500 — the operator can act on it.
+            detail = "Payment gateway rejected this UPI ID."
+            try:
+                payload = res.json()
+                if isinstance(payload, dict) and payload.get("error"):
+                    detail = str(payload["error"])[:300]
+            except ValueError:
+                pass
+            logger.warning("YOUPI VPA registration failed %s: %s",
+                           res.status_code, res.text[:200])
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+        data = res.json() if res.content else {}
+        account = data.get("account") if isinstance(data, dict) else None
+        account = account if isinstance(account, dict) else {}
+        logger.info("YOUPI receiving VPA set for outlet %s", outlet_id)
+        return {
+            "upi_id": str(account.get("upiId") or upi_id),
+            "payee_name": account.get("payeeName") or payee_name,
+            "is_active": bool(account.get("isActive", True)),
+        }
 
     @staticmethod
     async def set_outlet_image(

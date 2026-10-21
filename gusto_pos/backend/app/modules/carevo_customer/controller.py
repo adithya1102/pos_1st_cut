@@ -494,10 +494,17 @@ async def payment_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     h = request.headers
     signature = (
         h.get("x-webhook-signature")            # Cashfree
+        or h.get("x-gateway-signature")         # YOUPI
         or h.get("x-razorpay-signature")        # Razorpay
         or h.get("X-Razorpay-Signature")
     )
-    timestamp = h.get("x-webhook-timestamp")    # Cashfree only
+    # Cashfree signs timestamp+body and needs this to verify at all. YOUPI
+    # signs the body alone and uses its timestamp only to bound replay, so for
+    # it this is a freshness check rather than part of the digest.
+    timestamp = (
+        h.get("x-webhook-timestamp")            # Cashfree
+        or h.get("x-gateway-timestamp")         # YOUPI
+    )
 
     gw = get_gateway()
 

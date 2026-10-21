@@ -10,6 +10,7 @@ import '../models/order.dart';
 import '../models/order_notify.dart';
 import '../services/api_client.dart';
 import '../services/cashfree_service.dart';
+import '../services/youpi_service.dart';
 import '../services/location_service.dart';
 import '../services/order_notify_service.dart';
 import '../services/order_service.dart';
@@ -263,11 +264,11 @@ class _PickupScreenState extends State<PickupScreen>
   /// Reopen the SAME payment session for the SAME order. Never creates a new
   /// order — see [PickupScreen.paymentOrder].
   Future<void> _tryAgain() async {
-    final sessionId = widget.paymentOrder?.payment?.paymentSessionId;
-    if (sessionId == null || sessionId.isEmpty) {
-      // Unreachable in practice — this state is only entered from the Cashfree
-      // branch, which requires a session — but failing loudly beats opening an
-      // empty sheet.
+    final payment = widget.paymentOrder?.payment;
+    if (!(payment?.needsHostedCheckout ?? false)) {
+      // Unreachable in practice — this state is only entered from a hosted
+      // checkout branch, which requires a session or a checkout url — but
+      // failing loudly beats opening an empty sheet.
       setState(() {
         _payPhase = _PayPhase.retry;
         _payMessage =
@@ -277,10 +278,18 @@ class _PickupScreenState extends State<PickupScreen>
     }
 
     setState(() => _payPhase = _PayPhase.reopening);
-    final result = await context.read<CashfreeService>().openCheckout(
-          orderId: widget.orderId,
-          paymentSessionId: sessionId,
-        );
+    // Reopens the same gateway session either way: YOUPI's checkout url is
+    // bound to the payment id, so this is a retry of that payment, not a new
+    // one. Creating a second session would let the customer pay twice.
+    final result = payment!.isYoupi
+        ? await context.read<YoupiService>().openCheckout(
+              orderId: widget.orderId,
+              checkoutUrl: payment.checkoutUrl!,
+            )
+        : await context.read<CashfreeService>().openCheckout(
+              orderId: widget.orderId,
+              paymentSessionId: payment.paymentSessionId!,
+            );
     if (!mounted) return;
 
     if (result.outcome == CheckoutOutcome.notStarted) {

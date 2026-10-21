@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart' hide Category;
 import '../models/category.dart';
 import '../models/menu_item.dart';
 import '../models/outlet.dart';
+import '../services/api_client.dart' show ApiException, NetworkException;
 import '../services/menu_service.dart';
 import '../services/outlet_service.dart';
 
@@ -76,6 +77,26 @@ class HomeState extends ChangeNotifier {
       return null;
     } catch (_) {
       return 'Could not save the hours. Try again.';
+    }
+  }
+
+  /// Set the UPI handle customer payments land in.
+  ///
+  /// Surfaces the server's own complaint rather than a generic failure: the
+  /// gateway rejects malformed or duplicate handles with a specific reason,
+  /// and "could not save" would leave the operator with nothing to fix.
+  ///
+  /// Returns null on success, or a staff-facing error message.
+  Future<String?> setPaymentVpa(String upiId, {String? payeeName}) async {
+    try {
+      await _outletService.setPaymentVpa(upiId, payeeName: payeeName);
+      return null;
+    } on ApiException catch (e) {
+      return e.message;
+    } on NetworkException catch (e) {
+      return e.message;
+    } catch (_) {
+      return 'Could not save the UPI ID. Try again.';
     }
   }
 
