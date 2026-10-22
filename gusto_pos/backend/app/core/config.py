@@ -157,6 +157,18 @@ class Settings(BaseSettings):
     # owner app. Never reaches a device: the app calls this backend, which
     # calls YOUPI. An admin token shipped inside an APK is an extracted token.
     YOUPI_ADMIN_TOKEN: Optional[str] = None
+    # Shared secret sent as X-Gusto-Edge-Key on POST /api/v1/payments.
+    #
+    # YOUPI's own auth guard treats that route as PUBLIC (auth-guard.js returns
+    # null for it), so anyone who can reach the tunnel could mint sessions and
+    # — because only one session per VPA may be ACTIVE — occupy the slot. A
+    # Cloudflare WAF rule blocks the path unless this header matches, so the
+    # gateway is never reachable unauthenticated from the internet.
+    #
+    # Deliberately part of `configured`: a create_order that silently omitted
+    # the header would be blocked at the edge and surface as an opaque 403,
+    # which is a worse failure than refusing to start the order at all.
+    YOUPI_EDGE_KEY: Optional[str] = None
 
     FIREBASE_PROJECT_ID: Optional[str] = None
     FIREBASE_ENABLED: bool = False

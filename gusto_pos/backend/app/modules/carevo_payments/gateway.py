@@ -648,19 +648,26 @@ class YoupiGateway(PaymentGateway):
         self.base_url = (settings.YOUPI_BASE_URL or "").rstrip("/")
         self.webhook_secret = settings.YOUPI_WEBHOOK_SECRET
         self.merchant_id = settings.YOUPI_MERCHANT_ID
+        self.edge_key = settings.YOUPI_EDGE_KEY
 
     @property
     def configured(self) -> bool:
-        return bool(self.base_url and self.webhook_secret)
+        # edge_key is required, not optional: YOUPI leaves POST /api/v1/payments
+        # unauthenticated, so the Cloudflare rule carrying this header is the
+        # only thing in front of it. Sending the request without the header
+        # would be blocked at the edge and read back as an opaque 403.
+        return bool(self.base_url and self.webhook_secret and self.edge_key)
 
     async def create_order(self, amount_rupees: float, currency: str = "INR",
                            receipt: Optional[str] = None,
                            customer: Optional[Mapping[str, Any]] = None) -> GatewayOrder:
         if not self.configured:
             raise GatewayConfigError(
-                "YOUPI is selected but YOUPI_BASE_URL / YOUPI_WEBHOOK_SECRET "
-                "are not set. Refusing to fall back to the stub — a silent "
-                "downgrade to fake payments is worse than a hard failure."
+                "YOUPI is selected but YOUPI_BASE_URL / YOUPI_WEBHOOK_SECRET / "
+                "YOUPI_EDGE_KEY are not set. Refusing to fall back to the stub "
+                "— a silent downgrade to fake payments is worse than a hard "
+                "failure — and refusing to call the gateway without the edge "
+                "key, which the WAF rule requires."
             )
 
         amount = round(float(amount_rupees), 2)
@@ -709,7 +716,13 @@ class YoupiGateway(PaymentGateway):
         if settings.YOUPI_RETURN_URL:
             body["returnUrl"] = settings.YOUPI_RETURN_URL
 
-        headers = {"Content-Type": "application/json"}
+        headers = {
+            "Content-Type": "application/json",
+            # Matched by a Cloudflare custom rule; without it the edge blocks
+            # the request before it reaches YOUPI. `configured` guarantees this
+            # is non-empty, so there is no unauthenticated code path.
+            "X-Gusto-Edge-Key": self.edge_key,
+        }
         if self.merchant_id:
             headers["X-Merchant-Id"] = self.merchant_id
         if receipt:

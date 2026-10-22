@@ -644,3 +644,82 @@ class TestStubPathIsUnchanged:
             json=dict(_body(seed, qty=1), coupon_code=code))
         assert r.status_code == 200, r.text
         assert r.json()["final_amount"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# YOUPI edge key
+#
+# YOUPI leaves POST /api/v1/payments unauthenticated (auth-guard.js returns
+# null for it), so a Cloudflare custom rule blocking the path unless
+# X-Gusto-Edge-Key matches is the only thing in front of it. Two properties
+# matter and both are pinned here:
+#
+#   1. when the key IS configured, every create_order carries the header;
+#   2. when it is NOT, the order fails with the structured config error rather
+#      than going out bare -- a bare request is blocked at the edge and comes
+#      back as an opaque 403, which is a worse failure than refusing up front.
+# ---------------------------------------------------------------------------
+EDGE_KEY = "TEST_EDGE_KEY_do_not_log"
+
+
+def _select_youpi(monkeypatch, *, edge_key) -> None:
+    """Point the factory at YOUPI. `edge_key=None` simulates an unset env var."""
+    monkeypatch.setattr(settings, "PAYMENT_GATEWAY", "youpi")
+    monkeypatch.setattr(settings, "YOUPI_BASE_URL", "https://youpi.example.test")
+    monkeypatch.setattr(settings, "YOUPI_WEBHOOK_SECRET", "TEST_WEBHOOK_SECRET")
+    monkeypatch.setattr(settings, "YOUPI_MERCHANT_ID", None)
+    monkeypatch.setattr(settings, "YOUPI_EDGE_KEY", edge_key)
+
+
+@pytest.mark.asyncio
+async def test_youpi_create_order_sends_the_edge_key_header(monkeypatch):
+    from app.modules.carevo_payments.gateway import get_gateway
+
+    _select_youpi(monkeypatch, edge_key=EDGE_KEY)
+    seen = {}
+
+    async def responder(url, headers=None, json=None):
+        seen["url"] = url
+        seen["headers"] = headers or {}
+        return _FakeResponse(201, {
+            "paymentId": "11111111-2222-3333-4444-555555555555",
+            "amountPaise": "100", "currency": "INR",
+            "checkoutUrl": "https://youpi.example.test/checkout/x",
+        })
+
+    _patch_post(monkeypatch, responder)
+
+    gw = get_gateway()
+    assert gw.name == "youpi"
+    order = await gw.create_order(1.00, receipt="ORDER-EDGE-1")
+
+    assert seen["url"].endswith("/api/v1/payments")
+    assert seen["headers"].get("X-Gusto-Edge-Key") == EDGE_KEY, (
+        "create_order reached YOUPI without the edge key; the WAF rule would "
+        "block this and the failure would surface as an opaque 403"
+    )
+    assert order.gateway == "youpi"
+
+
+@pytest.mark.asyncio
+async def test_youpi_refuses_to_create_an_order_without_the_edge_key(monkeypatch):
+    from app.modules.carevo_payments.gateway import GatewayConfigError, get_gateway
+
+    _select_youpi(monkeypatch, edge_key=None)
+
+    called = {"n": 0}
+
+    async def responder(url, headers=None, json=None):   # pragma: no cover
+        called["n"] += 1
+        return _FakeResponse(201, {"paymentId": "x"})
+
+    _patch_post(monkeypatch, responder)
+
+    gw = get_gateway()
+    assert gw.configured is False
+
+    with pytest.raises(GatewayConfigError) as exc:
+        await gw.create_order(1.00, receipt="ORDER-EDGE-2")
+
+    assert "YOUPI_EDGE_KEY" in str(exc.value)
+    assert called["n"] == 0, "a request went out despite the missing edge key"
