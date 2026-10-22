@@ -687,6 +687,24 @@ class YoupiGateway(PaymentGateway):
                 **({"phoneNumber": str(cust["phone"])} if cust.get("phone") else {}),
             },
             "metadata": {"source": "gusto_skip"},
+            # Activates the UPI slot at creation instead of waiting for YOUPI's
+            # own bind-customer step, which would make the payer complete a
+            # second phone+OTP on the checkout page after already signing in
+            # here.
+            #
+            # It skips the customer binding ONLY. Verified against the gateway:
+            # it routes through the same queueEngine.enqueueOrActivate ->
+            # acquireSlotAtomic as bind-customer, so the one-ACTIVE-session-per-
+            # VPA unique index still holds, slot_acquired_at is still stamped
+            # (so the attribution time window still applies), exact-amount
+            # matching is untouched, and the observer's device HMAC is a
+            # separate concern entirely.
+            #
+            # What is genuinely lost: payment_sessions.customer_id stays null,
+            # so YOUPI cannot attribute a fraudulent-injection ban to one of
+            # its own customer identities. Gusto already knows who the customer
+            # is from its own auth, and the order is the record that matters.
+            "autoActivate": True,
         }
         if settings.YOUPI_RETURN_URL:
             body["returnUrl"] = settings.YOUPI_RETURN_URL
