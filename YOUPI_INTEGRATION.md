@@ -172,13 +172,27 @@ tunnel dials out.
 
 ## Build
 
+Both apps must be pointed at the **trial** Render service. Their compiled-in
+default is the LIVE service, so an un-overridden build sends trial traffic —
+including real ₹1 payments — to production.
+
 ```bash
-cd customer_app && flutter build apk --release
-cd owner_app    && flutter build apk --release
+cd customer_app && flutter build apk --release \
+  --dart-define=API_BASE_URL=<TRIAL_RENDER_URL>
+
+cd owner_app && flutter build apk --release \
+  --dart-define=API_BASE_URL=<TRIAL_RENDER_URL>
 ```
 
-Both default `API_BASE_URL` to `https://gusto-pos-backend.onrender.com/api/v1`,
-so no `--dart-define` is required for the trial.
+`<TRIAL_RENDER_URL>` is the trial service's API base, ending in `/api/v1`.
+
+The define name is `API_BASE_URL` in both apps —
+`customer_app/lib/config/app_config.dart:12` and
+`owner_app/lib/config/app_config.dart:18` — each defaulting to the live
+service at `customer_app/lib/config/app_config.dart:13` and
+`owner_app/lib/config/app_config.dart:19`.
+
+The value is compiled in, so changing the trial URL means rebuilding both APKs.
 
 Observer:
 
