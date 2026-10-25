@@ -134,6 +134,39 @@ class Order {
     return orderId.substring(orderId.length - 6);
   }
 
+  /// [createdAt] as a local DateTime, or null when absent/unparseable.
+  ///
+  /// Local, not UTC: this is read off a tablet on a counter in one restaurant,
+  /// and a kitchen comparing "placed at" against the clock on the wall must not
+  /// be handed a UTC time that is 5.5 hours out.
+  DateTime? get placedAt {
+    if (createdAt.isEmpty) return null;
+    return DateTime.tryParse(createdAt)?.toLocal();
+  }
+
+  /// "14:32", or null when [placedAt] is unavailable.
+  ///
+  /// Hand-formatted rather than via intl, which this app does not depend on —
+  /// adding a package for two digits and a colon is not worth the pubspec
+  /// churn. 24-hour because every outlet is in India and the kitchen printer
+  /// already uses it.
+  String? get placedLabel {
+    final at = placedAt;
+    if (at == null) return null;
+    final h = at.hour.toString().padLeft(2, '0');
+    final m = at.minute.toString().padLeft(2, '0');
+    return '$h:$m';
+  }
+
+  /// Minutes this order has been waiting since it was placed, or null when the
+  /// timestamp is unusable. Floored at zero so clock skew cannot render "-3m".
+  int? get minutesSincePlaced {
+    final at = placedAt;
+    if (at == null) return null;
+    final mins = DateTime.now().difference(at).inMinutes;
+    return mins < 0 ? 0 : mins;
+  }
+
   static double _toDouble(dynamic value) {
     if (value is num) return value.toDouble();
     if (value is String) return double.tryParse(value) ?? 0.0;

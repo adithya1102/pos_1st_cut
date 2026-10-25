@@ -29,10 +29,15 @@ class OrdersState extends ChangeNotifier {
 
   /// How often the queue refreshes itself while the app is in the foreground.
   ///
-  /// 15s is a counter-speed compromise: fast enough that a new order is noticed
+  /// 20s is a counter-speed compromise: fast enough that a new order is noticed
   /// while the customer is still walking away from the till, slow enough to be
-  /// gentle on Render's free tier (4 requests/minute per signed-in device).
-  static const Duration defaultPollInterval = Duration(seconds: 15);
+  /// gentle on Render's free tier (3 requests/minute per signed-in device).
+  ///
+  /// This does NOT override [pendingPollInterval]: an order awaiting a human
+  /// decision still escalates to 5s, because the acceptance deadline is 180s
+  /// and a 20s poll against it would be up to 20 seconds of alarm after another
+  /// device already settled the order. See [_retunePolling].
+  static const Duration defaultPollInterval = Duration(seconds: 20);
 
   /// Overridable so a test can drive real elapsed time instead of waiting 15s.
   final Duration pollInterval;
@@ -48,6 +53,70 @@ class OrdersState extends ChangeNotifier {
 
   /// Newest first — backend already returns them in that order.
   List<Order> get orders => List.unmodifiable(_orders);
+
+  /// Statuses the kitchen treats as live work, mirroring the backend's
+  /// `_LIVE_STATUSES` (app/modules/carevo_customer/service.py:80) exactly.
+  ///
+  /// `CREATED` is absent because the backend never sends it to staff — an
+  /// unpaid order is not the outlet's problem yet. The terminal set
+  /// (CANCELLED / COMPLETED / ABANDONED / PICKED_UP) is absent because none of
+  /// it is work to prepare.
+  static const Set<String> activeStatuses = {
+    'PAID',
+    'RECEIVED',
+    'PREPARING',
+    'READY',
+  };
+
+  /// The prep queue: active orders only, OLDEST FIRST.
+  ///
+  /// Two deliberate departures from [orders]:
+  ///
+  /// 1. COMPLETED orders are filtered out. The backend keeps a collected order
+  ///    in this feed for 30 minutes after handover (`COMPLETED_GRACE`,
+  ///    service.py:145) so staff can spot a mistake — useful on the Orders
+  ///    tab, wrong on a "what do I cook next" list, which is why the filter
+  ///    lives here and not in [load].
+  /// 2. Oldest first, because the queue is a work order: the person who has
+  ///    been waiting longest is the next thing to make. [orders] stays
+  ///    newest-first for the arrival alert, which cares about what just landed.
+  ///
+  /// Orders with an unparseable timestamp sort LAST rather than being dropped —
+  /// a row the kitchen cannot see is worse than a row in the wrong position.
+  List<Order> get activeOrders {
+    final list = _orders
+        .where((o) => activeStatuses.contains(o.status.toUpperCase()))
+        .toList();
+    list.sort((a, b) {
+      final at = a.placedAt;
+      final bt = b.placedAt;
+      if (at == null && bt == null) return 0;
+      if (at == null) return 1;
+      if (bt == null) return -1;
+      return at.compareTo(bt);
+    });
+    return List.unmodifiable(list);
+  }
+
+  bool _sessionExpired = false;
+
+  /// True when the server answered 401 on a queue refresh — the stored token is
+  /// expired or has been invalidated.
+  ///
+  /// Separate from [error] because the two need opposite responses: an [error]
+  /// is something a Retry button can fix, whereas no amount of retrying fixes
+  /// an expired token. Collapsing them is exactly what produced a dead screen
+  /// showing "Could not load orders. Pull to retry." to an owner whose only
+  /// way out was to find the logout button themselves.
+  bool get sessionExpired => _sessionExpired;
+
+  /// Clears the flag once the UI has acted on it, so signing back in on the
+  /// same app process does not immediately bounce to login again.
+  void clearSessionExpired() {
+    if (!_sessionExpired) return;
+    _sessionExpired = false;
+    notifyListeners();
+  }
 
   /// Set when a paid order appears that this session has not announced before.
   ///
@@ -98,6 +167,18 @@ class OrdersState extends ChangeNotifier {
       // decision, drop back to 15s once nothing is. Done here rather than in
       // the UI so a screen cannot forget it.
       _retunePolling();
+    } on ApiException catch (e) {
+      // 401 is NOT a retryable error, so it must not land in `_error`. The
+      // token is expired or revoked; the only fix is signing in again, and the
+      // screen routes to login off this flag. Polling stops because every
+      // subsequent tick would 401 too, hammering the backend from a device
+      // nobody can use.
+      if (e.statusCode == 401) {
+        _sessionExpired = true;
+        stopPolling();
+      } else {
+        _error = 'Could not load orders. Pull to retry.';
+      }
     } catch (_) {
       _error = 'Could not load orders. Pull to retry.';
     } finally {
@@ -241,6 +322,9 @@ class OrdersState extends ChangeNotifier {
     _announced.clear();
     _baselineTaken = false;
     _error = null;
+    // Cleared with everything else: a flag left set would bounce the NEXT
+    // owner signing in on this device straight back to login.
+    _sessionExpired = false;
     newOrderAlert.value = null;
     notifyListeners();
   }
