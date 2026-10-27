@@ -166,6 +166,21 @@ class OutletOut(BaseModel):
     # the card renders exactly as it did before.
     offer_count: int = 0
     offer_text: Optional[str] = None
+    # --- Payment methods (migration 034) -------------------------------------
+    # What this outlet can take, in display order: ["PREPAID"],
+    # ["PAY_AT_PICKUP"], or both. Server-driven for the same reason
+    # transport_modes is (030): switching an outlet to pay-at-pickup is one
+    # admin toggle, and it has to light up in an already-installed app.
+    #
+    # An EMPTY LIST is a real answer, not a missing one — a prepaid-only outlet
+    # on a deployment with no live gateway can take no orders. The app should
+    # treat it as "not orderable right now" rather than defaulting to prepaid.
+    #
+    # Resolved WITHOUT a customer on this endpoint, so it is an upper bound:
+    # pay-at-pickup additionally requires a verified phone, no open unpaid
+    # pickup order and fewer than 2 no-shows, all of which POST /orders
+    # re-checks against the actual caller.
+    payment_methods: list[str] = []
 
 
 # ------------------------------ Menu ----------------------------------------
@@ -193,6 +208,15 @@ class MenuOut(BaseModel):
     # second request — it is reached by tapping an outlet, and re-fetching the
     # whole discovery list just for one phone number would be wasteful.
     outlet_phone_number: Optional[str] = None
+    # Same list OutletOut carries, and carried here for the same reason the
+    # phone number is: the menu screen is where checkout starts, and it should
+    # not need a second request to know whether to offer "Pay at pickup".
+    #
+    # Resolved WITH the signed-in customer here — unlike the discovery list,
+    # this endpoint always has one — so it reflects their verified phone, their
+    # open-order state and their no-show strikes. It is therefore the list
+    # checkout should actually render.
+    payment_methods: list[str] = []
     categories: list[MenuCategoryOut] = []
 
 
@@ -208,6 +232,22 @@ class CreateOrderIn(BaseModel):
     outlet_id: uuid.UUID
     items: list[OrderItemIn] = Field(..., min_length=1)
     customer_notes: Optional[str] = None
+    # How this order will be paid (migration 034). 'PREPAID' | 'PAY_AT_PICKUP'.
+    #
+    # ABSENT MEANS PREPAID, and that is the entire backwards-compatibility
+    # story. An already-installed customer_app build has no such field to send,
+    # so it implicitly asks for prepaid — which is exactly what it has always
+    # asked for. At a pay-at-pickup-only outlet that request is refused with a
+    # 409 carrying prose the app renders verbatim, and no order row is created.
+    #
+    # NOT validated against a pattern here on purpose. The authority on which
+    # methods exist for THIS outlet and THIS customer is
+    # CarevoService.payment_methods_for, and a 422 from Pydantic would answer a
+    # different question ("is this a known string") with a message the app
+    # cannot show anybody. An unknown value falls through to the same 409 as a
+    # known-but-unavailable one. 'UPI_MANUAL' is reserved in the database CHECK
+    # but is never offered, so asking for it is refused like any other.
+    payment_method: Optional[str] = Field(None, max_length=20)
     # Optional POINTS_DISCOUNT coupon applied at checkout (migration 010).
     coupon_code: Optional[str] = Field(None, min_length=4, max_length=24)
     # Promotion applied at checkout (migration 016). Two ways in, because the
@@ -285,7 +325,23 @@ class CreateOrderOut(BaseModel):
     id: uuid.UUID
     status: str
     total_amount: float
-    payment: PaymentBlock
+    # OPTIONAL since migration 034. A pay-at-pickup order has no gateway
+    # session, so there is nothing to put here and the field is absent rather
+    # than filled with a synthetic block — a fake gateway id is a thing some
+    # client would eventually try to open a checkout with.
+    #
+    # Additive for the deployed app's PARSER: CreatedOrder.fromJson already
+    # tolerates a missing `payment` and yields null (order.dart:77-79). It is
+    # NOT behaviourally safe for that build, which would then route to the
+    # simulate screen — which is why a pay-at-pickup order is refused at
+    # create_order for a client that did not ask for one, and this field is
+    # never null for a request that omitted payment_method.
+    payment: Optional[PaymentBlock] = None
+    # 'PREPAID' | 'PAY_AT_PICKUP'. Echoed on both paths so the app reads one
+    # field rather than inferring the mode from `payment` being null.
+    payment_mode: str = "PREPAID"
+    #: What the customer will hand over at the counter. 0 for a prepaid order.
+    amount_due_at_pickup: float = 0
     # Price breakdown (migration 016). total_amount stays the amount charged and
     # keeps its meaning for every existing caller; these three are additive so
     # the app can show "₹420 ₹380" without recomputing anything client-side.
@@ -372,6 +428,22 @@ class OrderOut(BaseModel):
     #: True when money was taken and no food will be delivered. Drives the
     #: customer-facing refund message.
     refund_required: bool = False
+
+    # Pay at pickup (migration 034). ADDITIVE in both directions: 'PREPAID'
+    # and 0 for every order an already-installed build can produce, and that
+    # build ignores fields it does not know.
+    #
+    # DELIBERATELY NO CONTACT FIELDS HERE. The customer's own phone and name
+    # are snapshotted on the order, but echoing them back to the customer who
+    # supplied them adds nothing and widens the surface on which they can leak.
+    # The outlet reads them through the staff-authed owner queue; nobody reads
+    # them here.
+    payment_mode: str = "PREPAID"
+    #: What to hand over at the counter. 0 for a prepaid order.
+    amount_due_at_pickup: float = 0
+    #: NULL for a prepaid order. PENDING | CALLED | UNREACHABLE — lets the app
+    #: say "they're about to call you" rather than showing a bare spinner.
+    call_state: Optional[str] = None
 
 
 # ---------------------------- Payment ---------------------------------------
@@ -618,6 +690,35 @@ class OwnerOrderOut(BaseModel):
     #: exist is unaffected.
     acceptance_state: Optional[str] = None
     acceptance_deadline_at: Optional[datetime] = None
+    # --- Pay at pickup (migration 034) ---------------------------------------
+    # ALL SEVEN ARE ADDITIVE AND OPTIONAL, and every one of them is None/0/False
+    # for a PREPAID order — which is every order at every outlet until an admin
+    # switches one on. A deployed owner_app build reads a fixed key list
+    # (order.dart:110-129) and is therefore completely unaffected.
+    #
+    # THIS NARROWS A DOCUMENTED INVARIANT, and it is worth being explicit about
+    # rather than letting someone discover it: the owner queue is described as
+    # NAME-FREE in three places (orders_screen.dart, owner_app's Order model,
+    # and list_active_orders' own docstring). Pay-at-pickup cannot work without
+    # a name and a number — somebody has to ring the customer — so the
+    # invariant now holds for PREPAID orders only. It is not quietly gone; it
+    # is scoped, and the fields below are null wherever it still applies.
+    payment_mode: Optional[str] = None
+    #: FIRST NAME ONLY. A surname is extra personal data with no operational
+    #: use at a counter — "Asha" is what gets called out.
+    contact_first_name: Optional[str] = None
+    #: Suppressed once the visibility window closes, even though the row still
+    #: holds it, and nulled for good by the 30-day redaction sweep.
+    contact_phone: Optional[str] = None
+    #: Whether the contact above is being returned at all, so the app can draw
+    #: "contact no longer available" instead of an empty space that looks like
+    #: a bug.
+    contact_visible: bool = False
+    #: PENDING | CALLED | UNREACHABLE. Null for a prepaid order.
+    call_state: Optional[str] = None
+    call_attempts: int = 0
+    #: cash | upi, once the money has been taken.
+    collected_payment_method: Optional[str] = None
     items: list[OwnerOrderLineOut] = []
 
 
@@ -639,6 +740,46 @@ class AcceptOrderOut(BaseModel):
     status: str
     acceptance_state: str
     prep_minutes: int
+
+
+# ---------------------- Pay at pickup (migration 034) ------------------------
+class CallPlacedOut(BaseModel):
+    order_id: uuid.UUID
+    call_state: str
+    #: Counts up — a second attempt is a real thing, not an error.
+    call_attempts: int
+
+
+class CollectOrderIn(BaseModel):
+    """The code the customer shows, and how they paid.
+
+    `pickup_code` is REQUIRED, so taking money cannot be decoupled from
+    checking that this is the right order — the same gate the prepaid handover
+    has always had, with payment attached.
+    """
+    pickup_code: str = Field(..., min_length=1, max_length=16)
+    #: cash | upi. Not a free-text field: these two are what a counter can
+    #: actually take, and the DB CHECK enforces the same pair.
+    method: str = Field(..., pattern=r"^(cash|upi)$")
+
+
+class CollectOrderOut(BaseModel):
+    #: False for a wrong code — a 200 with collected=false, not a 4xx, for the
+    #: same reason LookupPickupOut reports a miss that way: the app must tell
+    #: "wrong code" apart from "the request failed".
+    collected: bool
+    order_id: uuid.UUID
+    status: Optional[str] = None
+    payment_status: Optional[str] = None
+    collected_payment_method: Optional[str] = None
+    attempts_remaining: Optional[int] = None
+    locked: Optional[bool] = None
+
+
+class NoShowOut(BaseModel):
+    order_id: uuid.UUID
+    status: str
+    no_show: bool = True
 
 
 class AlertAckOut(BaseModel):
@@ -725,6 +866,13 @@ class RejectOrderIn(BaseModel):
     """Optional free-text captured into the ORDER_REJECTED event. Not shown to
     the customer verbatim in V1 — the push copy is fixed and honest."""
     reason: Optional[str] = Field(default=None, max_length=300)
+    #: "We rang and could not reach them" (migration 034). A SEPARATE flag
+    #: rather than a magic `reason` string, because the server has to branch on
+    #: it (it writes call_state and its own event) and matching on free text
+    #: the staff typed would be the wrong way to decide that.
+    #:
+    #: Ignored for a prepaid order, which has no call to have failed.
+    unreachable: bool = False
 
 
 class RejectOrderOut(BaseModel):

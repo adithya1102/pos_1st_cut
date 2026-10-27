@@ -1623,3 +1623,52 @@ class AdminService:
             "acceptance_timeout_s": row[2],
             "consecutive_expiries": row[3],
         }
+
+    @staticmethod
+    async def set_payment_methods(
+        db: AsyncSession, outlet_id, *, prepaid: bool, pay_at_pickup: bool
+    ) -> dict:
+        """Set which payment methods one outlet offers (migration 034).
+
+        THIS IS THE PER-OUTLET PILOT SWITCH. One row, one outlet, one UPDATE —
+        no deploy, no restart, and reversible by the same call. It is the whole
+        of "turn pay-at-pickup on for one outlet only".
+
+        Takes the FULL state rather than a delta, so the end state is explicit
+        in the request; the schema refuses both-false with a 422 and the DB's
+        ck_outlets_payment_method_any refuses it again, because the UI is never
+        the enforcement point.
+
+        Deliberately does NOT touch orders already in flight. A prepaid order
+        mid-checkout at this outlet carries payment_mode='PREPAID' on its own
+        row and completes through the gateway exactly as it would have —
+        switching the outlet is not retroactive. Same reasoning as
+        set_acceptance_config, and for the same reason: anything else would
+        make an admin toggle reach into money that is already moving.
+        """
+        row = (await db.execute(text("""
+            UPDATE outlets
+               SET payment_prepaid_enabled = :prepaid,
+                   payment_pay_at_pickup_enabled = :pickup
+             WHERE id = :oid
+            RETURNING id, payment_prepaid_enabled, payment_pay_at_pickup_enabled
+        """), {"prepaid": bool(prepaid), "pickup": bool(pay_at_pickup),
+               "oid": str(outlet_id)})).first()
+        if row is None:
+            await db.rollback()
+            raise HTTPException(status_code=404, detail="Outlet not found")
+        await db.commit()
+
+        # What would ACTUALLY be offered, which is not just the flags: prepaid
+        # also needs a usable gateway. Resolved through the same function the
+        # customer endpoints use, with no customer, so an admin sees the
+        # outlet's capability rather than some particular person's eligibility.
+        from app.modules.carevo_customer.service import CarevoService
+        effective = await CarevoService.payment_methods_for(db, outlet_id)
+
+        return {
+            "outlet_id": row[0],
+            "payment_prepaid_enabled": bool(row[1]),
+            "payment_pay_at_pickup_enabled": bool(row[2]),
+            "effective_methods": effective,
+        }

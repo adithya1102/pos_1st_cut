@@ -123,6 +123,84 @@ ARRIVAL_INFEASIBLE_MESSAGE = (
     "Please try a different time or check back later."
 )
 
+# --- pay at pickup (migration 034) -----------------------------------------
+#: The two payment methods a customer can be OFFERED. 'UPI_MANUAL' exists in
+#: the database CHECK as a reserved value but is deliberately absent here:
+#: nothing writes it, so nothing may offer it either.
+PAY_PREPAID = "PREPAID"
+PAY_AT_PICKUP = "PAY_AT_PICKUP"
+
+#: No-shows before pay-at-pickup stops being offered to a customer. They are
+#: not locked out of the product — they are asked to prepay instead.
+NO_SHOW_STRIKE_LIMIT = 2
+
+#: The PAYMENT_GATEWAY value meaning "nobody chose one" (config.py). Kept as a
+#: named constant here so the comparison below reads as a decision rather than
+#: as a magic string.
+_GATEWAY_UNSET = "unset"
+
+
+def _gateway_can_charge() -> bool:
+    """Can this deployment open a checkout at all?
+
+    NOT the same question as `PaymentGateway.is_live`, and the difference is
+    the whole reason this function exists rather than a one-line attribute
+    read. `is_live` answers "may a webhook from this gateway be TRUSTED" — it
+    is False for the stub precisely because the stub has no counterparty to
+    have signed anything, which is what lets /customer/payment/webhook 503
+    instead of parsing an unauthenticatable body.
+
+    Offering PREPAID is a different question: "if the customer taps pay, will
+    they get a working payment session?" The stub answers yes — it returns a
+    Razorpay-shaped order and /payment/simulate completes it, which is how the
+    whole flow is walkable locally and how the test suite exercises it. Gating
+    the offer on is_live would therefore have withdrawn prepaid from every
+    development and test deployment, which is not what "switch Cashfree off"
+    means.
+
+    So the selector is PAYMENT_GATEWAY itself, which config.py already
+    establishes as the deliberate choice — its default is the non-gateway
+    sentinel 'unset' specifically so that forgetting to set it does not quietly
+    produce working-looking fake payments. That maps onto exactly what is
+    needed here:
+
+      cashfree -> a real gateway was chosen. Prepaid offered.
+      stub     -> fake payments were chosen DELIBERATELY (local dev, the
+                  suite). Prepaid offered; behaviour unchanged from today.
+      unset    -> nobody chose. Prepaid NOT offered.
+      anything else -> treated as unset. get_gateway() falls back to the stub
+                  for unrecognised values, but a typo is not a decision, and
+                  this is the safe direction for one to fail in.
+
+    Switching Cashfree off server-side is therefore PAYMENT_GATEWAY=unset (or
+    removing it), which withdraws prepaid everywhere and leaves pay-at-pickup
+    as the only method — without deleting a line of Cashfree code.
+    """
+    return (settings.PAYMENT_GATEWAY or _GATEWAY_UNSET).lower() in {
+        "cashfree", "stub",
+    }
+
+#: How long a pay-at-pickup order's contact details stay readable to the outlet
+#: after the order reaches a terminal status.
+#:
+#: A disputed handover and a no-show callback both happen inside the hour, and
+#: the restaurant may legitimately need to ring back about food it is holding.
+#: After this the API stops returning them; the row is cleared for good by the
+#: redaction sweep below.
+#:
+#: Honest limit: suppression stops NEW reads. It cannot un-render a tablet that
+#: already fetched the row, so this window — not the sweep — is the real bound
+#: on exposure.
+CONTACT_VISIBLE_AFTER_TERMINAL = timedelta(hours=2)
+
+#: When the contact snapshot is destroyed outright.
+CONTACT_REDACTION_AFTER = timedelta(days=30)
+
+#: Statuses at which a pay-at-pickup order is over, for the contact-visibility
+#: window. Spelled separately from _TERMINAL_STATUSES because that set carries
+#: PICKED_UP, which nothing writes — including it here would be dead SQL.
+_CONTACT_TERMINAL_STATUSES = ("COMPLETED", "CANCELLED", "ABANDONED")
+
 # How far ahead a pickup may be scheduled. Same-day by intent, but expressed as
 # a duration because "same day" is not well defined for an outlet whose window
 # crosses midnight (18:00 -> 02:00): for those, today ends at closes_at, which
@@ -617,7 +695,13 @@ class CarevoService:
 
         rows = (await db.execute(text(
             "SELECT id, location_name, city, locality, latitude, longitude, upi_id, image_url, "
-            "       phone_number, created_at, opens_at, closes_at, is_manually_closed "
+            "       phone_number, created_at, opens_at, closes_at, is_manually_closed, "
+            # Payment methods (034), SELECTed with the row rather than resolved
+            # per outlet. payment_methods_for is one query per call, which on
+            # the discovery list would be N round trips on the first screen the
+            # customer sees — the same reason the offer summary and the city
+            # transport profiles above are each one query for the whole list.
+            "       payment_prepaid_enabled, payment_pay_at_pickup_enabled "
             "FROM outlets "
             "WHERE is_visible = true AND deactivated_at IS NULL "
             # `= ANY(array)` rather than an IN-list built by string
@@ -664,11 +748,16 @@ class CarevoService:
         # `outlets.city` is free text with no FK — see migration 013.
         city_profiles = await CarevoService._city_transport_profiles(db)
 
+        # Whether a checkout can be opened at all — a deployment property, not
+        # an outlet one, so it is asked once for the whole list. See
+        # _gateway_can_charge for why this is not `is_live`.
+        gateway_live = _gateway_can_charge()
+
         out = []
         for r in rows:
             (oid, name, city, locality, o_lat, o_lng, upi_id, image_url,
              phone_number, created_at, opens_at, closes_at,
-             is_manually_closed) = r
+             is_manually_closed, prepaid_enabled, pickup_enabled) = r
             distance = None
             if lat is not None and lng is not None and o_lat is not None and o_lng is not None:
                 distance = CarevoService._haversine_km(lat, lng, float(o_lat), float(o_lng))
@@ -723,6 +812,16 @@ class CarevoService:
                 "longitude": float(o_lng) if o_lng is not None else None,
                 "offer_count": (summary or {}).get("count", 0),
                 "offer_text": (summary or {}).get("text"),
+                # Payment methods (034). CAPABILITY ONLY on this endpoint — no
+                # customer-specific gate is applied, so pay-at-pickup appearing
+                # here means "this outlet offers it", not "you may use it". The
+                # menu endpoint and POST /orders both resolve it against the
+                # actual caller. Kept in the same order payment_methods_for
+                # produces so the app never has to sort it.
+                "payment_methods": (
+                    ([PAY_PREPAID] if (prepaid_enabled and gateway_live) else [])
+                    + ([PAY_AT_PICKUP] if pickup_enabled else [])
+                ),
                 # Backs the app's "Newest" sort. Real column, not a proxy —
                 # sorting by it is the outlet's actual join date, so the label
                 # means what it says.
@@ -734,7 +833,18 @@ class CarevoService:
 
     # ------------------------------ Menu -----------------------------------
     @staticmethod
-    async def get_menu(db: AsyncSession, outlet_id: uuid.UUID) -> dict:
+    async def get_menu(
+        db: AsyncSession, outlet_id: uuid.UUID,
+        customer: Optional[Customer] = None,
+    ) -> dict:
+        """The outlet's latest menu, plus what it can be paid with.
+
+        `customer` is optional and additive (034): passed, the payment_methods
+        list reflects THAT customer's eligibility for pay-at-pickup; omitted,
+        it is the outlet's capability only. The controller always passes one —
+        this endpoint is behind get_current_customer — so the default exists
+        for internal callers and tests rather than for the route.
+        """
         # STOCK (033): reclaim lapsed holds BEFORE reading availability.
         #
         # This is the frequently-hit customer read and the one place a stale
@@ -823,6 +933,10 @@ class CarevoService:
         return {
             "outlet_id": outlet_id,
             "outlet_phone_number": (phone or "").strip() or None,
+            # Payment methods (034), resolved for THIS customer when there is
+            # one. This is the list checkout should render.
+            "payment_methods": await CarevoService.payment_methods_for(
+                db, outlet_id, customer),
             "categories": [cats[k] for k in order],
         }
 
@@ -980,6 +1094,198 @@ class CarevoService:
         return {"arrival_at": arrival_at, "source": source,
                 "availability": avail["status"]}
 
+    # --------------------- Payment methods (migration 034) ------------------
+    @staticmethod
+    async def payment_methods_for(
+        db: AsyncSession, outlet_id, customer: Optional[Customer] = None
+    ) -> list[str]:
+        """Which payment methods this outlet can offer THIS customer, in order.
+
+        THE one place that decision is made. create_order refuses anything this
+        does not return, and the customer app renders exactly this list, so the
+        two can never disagree about what is on offer.
+
+        Read with raw SQL because the 034 outlet columns are deliberately not
+        mapped on the Outlet model — see the migration header.
+
+        PREPAID requires the flag AND a usable gateway — see
+        _gateway_can_charge, which is deliberately NOT `is_live`. The flag
+        alone cannot conjure a payment provider, so switching Cashfree off
+        deployment-wide removes prepaid from every outlet's list no matter what
+        the column says. That is also why the empty list is a REAL outcome and
+        not a bug: an outlet that is prepaid-only on a deployment with no
+        gateway can take no orders, and the honest thing is to say so rather
+        than to offer a method that will fail at checkout.
+
+        PAY_AT_PICKUP requires the flag AND three things about the customer:
+
+          * a VERIFIED PHONE. The restaurant is about to cook on the strength
+            of that number, and `customers.phone_number` is only ever set by a
+            verified sign-in — a Google-only account has none (migration 008),
+            so it is offered prepaid instead.
+          * NO OPEN UNPAID PICKUP ORDER. The abuse cap, global rather than
+            per-outlet; see _assert_no_open_pickup_order.
+          * FEWER THAN NO_SHOW_STRIKE_LIMIT no-shows.
+
+        `customer` is optional so the discovery endpoints can ask what an
+        outlet is CAPABLE of without a customer in hand. With no customer the
+        customer-specific gates are skipped, which means the list is an upper
+        bound; create_order re-resolves WITH the customer and is the authority.
+        """
+        row = (await db.execute(text("""
+            SELECT payment_prepaid_enabled, payment_pay_at_pickup_enabled
+              FROM outlets WHERE id = :oid
+        """), {"oid": str(outlet_id)})).first()
+        if row is None:
+            return []
+
+        methods: list[str] = []
+
+        if bool(row[0]) and _gateway_can_charge():
+            methods.append(PAY_PREPAID)
+
+        if bool(row[1]) and customer is not None:
+            if (customer.phone_number or "").strip():
+                blocked = await CarevoService._open_pickup_order_id(db, customer)
+                strikes = await CarevoService._no_show_count(db, customer)
+                if blocked is None and strikes < NO_SHOW_STRIKE_LIMIT:
+                    methods.append(PAY_AT_PICKUP)
+        elif bool(row[1]) and customer is None:
+            methods.append(PAY_AT_PICKUP)
+
+        return methods
+
+    @staticmethod
+    async def _no_show_count(db: AsyncSession, customer: Customer) -> int:
+        """This customer's no-show strikes. Raw SQL — 034 is unmapped."""
+        n = await db.scalar(text(
+            "SELECT no_show_count FROM customers WHERE id = :cid"),
+            {"cid": str(customer.id)})
+        return int(n or 0)
+
+    @staticmethod
+    async def _open_pickup_order_id(
+        db: AsyncSession, customer: Customer, *, exclude_order_id=None
+    ) -> Optional[str]:
+        """This customer's open unpaid pay-at-pickup order, if they have one.
+
+        THE ABUSE CAP, and deliberately GLOBAL rather than per-outlet. The
+        existing hoarding cap in create_order is per-customer-per-outlet and
+        joins stock_reservations, which means it only bites when at least one
+        item is stock-TRACKED (reserve_for_order skips untracked items
+        entirely). Neither property is right here: what is being protected is
+        not one restaurant's stock but the platform's exposure to somebody who
+        orders food and never pays for it, and they could do that at five
+        outlets at once.
+
+        Terminal orders are excluded, so a cancelled or collected order never
+        blocks the next one. PAID is excluded too — once the money is in, the
+        customer is free to order again immediately.
+        """
+        clauses = [
+            "customer_id = :cid",
+            "payment_mode = :mode",
+            "payment_status <> 'PAID'",
+            "upper(coalesce(status, '')) <> ALL(:terminal)",
+        ]
+        params: dict = {
+            "cid": str(customer.id),
+            "mode": PAY_AT_PICKUP,
+            "terminal": list(_TERMINAL_STATUSES),
+        }
+        if exclude_order_id is not None:
+            clauses.append("id <> :self_id")
+            params["self_id"] = str(exclude_order_id)
+
+        row = (await db.execute(text(
+            "SELECT id FROM customer_orders WHERE " + " AND ".join(clauses)
+            + " LIMIT 1"
+        ), params)).first()
+        return str(row[0]) if row else None
+
+    @staticmethod
+    async def _resolve_payment_method(
+        db: AsyncSession, customer: Customer, outlet_id, requested: Optional[str]
+    ) -> str:
+        """Settle which method this order uses, or refuse with a 409.
+
+        Runs BEFORE any row is written — see the call site in create_order.
+
+        `requested=None` means PREPAID, and that is the whole backwards
+        compatibility story: an already-installed customer_app build has no
+        `payment_method` field to send, so it implicitly asks for prepaid. At a
+        pay-at-pickup-only outlet that is refused here, with prose the app
+        renders verbatim out of `detail["message"]` — no order row is created,
+        nothing is held, and the customer is told to update rather than being
+        dropped onto a payment screen that cannot work.
+        """
+        available = await CarevoService.payment_methods_for(db, outlet_id, customer)
+        wanted = (requested or PAY_PREPAID).upper()
+
+        if wanted in available:
+            return wanted
+
+        # The refusal prose is chosen by WHY it was refused, because the three
+        # reasons have three different remedies and a single message would be
+        # wrong for two of them.
+        if wanted == PAY_AT_PICKUP:
+            if not (customer.phone_number or "").strip():
+                message = ("Pay at pickup needs a verified mobile number. "
+                           "Add one to your account to use it.")
+            elif (open_id := await CarevoService._open_pickup_order_id(
+                    db, customer)) is not None:
+                # ITS OWN ERROR CODE, not the generic one.
+                #
+                # This is the only refusal reason the app can ACT on beyond
+                # reading the message: there is a specific order blocking this
+                # one, and the app should be able to deep-link straight to it.
+                # Folding it into PAYMENT_METHOD_UNAVAILABLE would drop the id
+                # and leave the customer to go and find the order themselves.
+                #
+                # Mirrors the existing UNPAID_ORDER_PENDING contract exactly —
+                # same shape, same reason, and the id stays out of the prose
+                # because a uuid is not something to show anybody.
+                #
+                # Raised HERE as well as in create_order because this gate
+                # notices first: at a pickup-only outlet an open order empties
+                # the available list, so the generic branch below would
+                # otherwise claim the restaurant was not taking orders.
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "OPEN_PICKUP_ORDER_PENDING",
+                        "order_id": open_id,
+                        "message": (
+                            "You already have an order waiting to be "
+                            "collected. Pick that one up first."
+                        ),
+                    },
+                )
+            elif await CarevoService._no_show_count(db, customer) >= NO_SHOW_STRIKE_LIMIT:
+                message = ("Pay at pickup is not available on your account. "
+                           "You can still pay online.")
+            else:
+                message = ("This restaurant is not taking pay-at-pickup orders "
+                           "right now.")
+        elif PAY_AT_PICKUP in available:
+            message = ("This restaurant now takes payment when you collect. "
+                       "Please update Gusto Skip to place this order.")
+        else:
+            message = ("This restaurant is not taking orders right now. "
+                       "Please try again shortly.")
+
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "PAYMENT_METHOD_UNAVAILABLE",
+                # DATA for the app: what it MAY use instead. An app that knows
+                # about pay-at-pickup can re-offer it without another round
+                # trip; one that does not simply ignores the field.
+                "available": available,
+                "message": message,
+            },
+        )
+
     # ----------------------------- Orders ----------------------------------
     @staticmethod
     async def create_order(db: AsyncSession, customer: Customer, payload) -> dict:
@@ -996,6 +1302,47 @@ class CarevoService:
         ), {"oid": str(payload.outlet_id)})).first()
         if gate is None:
             raise HTTPException(status_code=404, detail="Outlet not found")
+
+        # PAYMENT METHOD (migration 034), resolved FIRST — before the hours
+        # gate, before the arrival gate, before any row is written.
+        #
+        # Position is deliberate. This is the only gate whose refusal means
+        # "this app cannot place this order at all", and the customer's remedy
+        # (update the app, or prepay) does not change with the shop's opening
+        # hours. Telling someone the kitchen is closed when the real problem is
+        # that their build cannot pay would send them back at 7pm to be refused
+        # again for a different reason.
+        #
+        # Raises 409 PAYMENT_METHOD_UNAVAILABLE. Nothing is committed, nothing
+        # is held, no gateway order exists — identical in that respect to the
+        # gateway-failure paths further down.
+        payment_mode = await CarevoService._resolve_payment_method(
+            db, customer, payload.outlet_id,
+            getattr(payload, "payment_method", None))
+        pay_at_pickup = payment_mode == PAY_AT_PICKUP
+
+        # The global abuse cap, re-checked with this order excluded.
+        #
+        # _resolve_payment_method already consulted it to decide what to OFFER,
+        # so reaching here with an open order means a race: two checkouts in
+        # flight at once. Checked again for the same reason the stock cap is
+        # checked inside the transaction — the offer is advisory, the write is
+        # authoritative. Raised as its own error code so the app can deep-link
+        # to the order it is talking about.
+        if pay_at_pickup:
+            open_id = await CarevoService._open_pickup_order_id(db, customer)
+            if open_id is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "OPEN_PICKUP_ORDER_PENDING",
+                        "order_id": open_id,
+                        "message": (
+                            "You already have an order waiting to be collected. "
+                            "Pick that one up first."
+                        ),
+                    },
+                )
 
         requested_pickup_at = CarevoService._normalise_requested_pickup(
             getattr(payload, "requested_pickup_at", None))
@@ -1067,6 +1414,36 @@ class CarevoService:
         )
         db.add(order)
         await db.flush()  # assign order.id
+
+        # PAYMENT MODE + CONTACT SNAPSHOT (migration 034), in the SAME
+        # transaction as the order insert.
+        #
+        # Raw SQL because none of these columns is ORM-mapped — the same
+        # treatment the 031 columns get immediately below, and for the same
+        # reason (see the migration header).
+        #
+        # The contact is a SNAPSHOT of the account's verified phone and name.
+        # Nothing here reads the request body: a client-supplied phone is never
+        # accepted, because the restaurant is about to cook on the strength of
+        # that number. For a PREPAID order both stay NULL, which is what keeps
+        # the owner queue name-free everywhere it is name-free today.
+        #
+        # call_state starts at PENDING: the order exists, and nobody has rung
+        # yet. That is the state the owner app's Call button acts on.
+        await db.execute(text("""
+            UPDATE customer_orders
+               SET payment_mode = :mode,
+                   contact_name = :cname,
+                   contact_phone = :cphone,
+                   call_state = :cstate
+             WHERE id = :id
+        """), {
+            "mode": payment_mode,
+            "cname": (customer.name or None) if pay_at_pickup else None,
+            "cphone": (customer.phone_number or None) if pay_at_pickup else None,
+            "cstate": "PENDING" if pay_at_pickup else None,
+            "id": str(order.id),
+        })
 
         # PE Step 3 (FR-C1/C2): persist travel context on the order.
         if any(v is not None for v in (payload.transport_mode, payload.origin_lat,
@@ -1231,6 +1608,55 @@ class CarevoService:
         # unused ₹20 is not carried anywhere (single-use means single-use).
         order.total_amount = round(max(gross - discount, 0.0), 2)
 
+        # ---------------- PAY AT PICKUP: no gateway at all (034) ------------
+        #
+        # Returns BEFORE `gw = get_gateway()` below, so no gateway order is
+        # created, no payment session is minted and no PaymentTransaction row
+        # exists. There is nothing to charge yet — the money arrives at the
+        # counter, and the transaction row is written then by
+        # record_pickup_payment.
+        #
+        # Cashfree is untouched by this branch, in both senses: the block below
+        # is unchanged, and a PREPAID order at this same outlet still runs
+        # through it exactly as before.
+        if pay_at_pickup:
+            # The acceptance clock starts HERE, not at payment — there is no
+            # payment to start it. begin_awaiting runs in this transaction and
+            # does not commit (by contract), so the AWAITING state, the
+            # deadline and the durable schedule row all land atomically with
+            # the order itself. An order that exists but is not yet on anyone's
+            # clock is not a state that can be observed.
+            from app.modules.carevo_customer.acceptance import AcceptanceService
+            await AcceptanceService.begin_awaiting(
+                db, order, reason="pay_at_pickup_placed")
+
+            await CarevoService._write_order_created_event(
+                db, order, customer, payload, requested_pickup_at,
+                payment_mode=payment_mode)
+            await db.commit()
+
+            # Rung 1 of the alert ladder, AFTER the commit and best-effort —
+            # same contract as the payment path. A push failure must not undo
+            # an order that is already placed; the sweeper re-pushes from
+            # alert_count regardless.
+            await AcceptanceService.send_first_alert(db, order)
+
+            return {
+                "id": order.id,
+                "status": "CREATED",
+                "total_amount": order.total_amount,
+                # No payment block: there is no gateway session to open. The
+                # field is Optional precisely so this can be absent rather than
+                # faked — see CreateOrderOut.
+                "payment": None,
+                "payment_mode": payment_mode,
+                "amount_due_at_pickup": order.total_amount,
+                "original_amount": gross,
+                "discount_amount": discount,
+                "final_amount": order.total_amount,
+                "promotion_label": promotion_label,
+            }
+
         # Create gateway order (stub / razorpay-shaped)
         gw = get_gateway()
         # Awaited now that the interface is async — a real gateway is a network
@@ -1357,6 +1783,54 @@ class CarevoService:
         self_session_id = g_order.payment_session_id
 
         # FR-E1: ORDER_CREATED in the SAME transaction as the order insert.
+        # Shared with the pay-at-pickup path above — one definition of the
+        # payload, so the two cannot drift.
+        await CarevoService._write_order_created_event(
+            db, order, customer, payload, requested_pickup_at,
+            payment_mode=payment_mode)
+        await db.commit()
+
+        return {
+            "id": order.id,
+            "status": "CREATED",
+            "total_amount": order.total_amount,
+            "payment": {
+                "gateway": g_order.gateway,
+                "gateway_order_id": g_order.gateway_order_id,
+                "amount": g_order.amount,
+                "currency": g_order.currency,
+                "key_id": g_order.key_id,
+                # What the Cashfree Flutter SDK opens checkout with. Null for
+                # the Razorpay-shaped stub, which opens on order_id + key_id.
+                "payment_session_id": self_session_id,
+            },
+            # Additive (034). PREPAID here by construction — the pay-at-pickup
+            # path returned long before this point. Echoed anyway so the app
+            # reads one field on both paths instead of inferring the mode from
+            # whether `payment` happens to be null.
+            "payment_mode": payment_mode,
+            "amount_due_at_pickup": 0,
+            # The struck-through-price breakdown, computed here rather than in
+            # the app: `gross` is the pre-discount figure and only this function
+            # has ever known it.
+            "original_amount": gross,
+            "discount_amount": discount,
+            "final_amount": order.total_amount,
+            "promotion_label": promotion_label,
+        }
+
+    @staticmethod
+    async def _write_order_created_event(
+        db: AsyncSession, order, customer: Customer, payload,
+        requested_pickup_at, *, payment_mode: str,
+    ) -> None:
+        """FR-E1: ORDER_CREATED, in the caller's transaction. No commit.
+
+        Extracted so the prepaid and pay-at-pickup paths share ONE definition
+        of the payload. They diverge on whether a gateway order exists, which
+        is not something this event has ever recorded, so there was never a
+        reason for two copies of it to drift apart.
+        """
         await pe.write_event(
             db, order.id, pe.ORDER_CREATED,
             actor_type="customer", actor_id=customer.id, source="tap",
@@ -1377,32 +1851,13 @@ class CarevoService:
                 # would be unexplainable after the fact.
                 "requested_pickup_at": (
                     requested_pickup_at.isoformat() if requested_pickup_at else None),
+                # Which money path this order took (034). In the log as well as
+                # on the row because the event stream is what the timeline view
+                # reads, and "why did this order never have a payment session"
+                # must be answerable from it alone.
+                "payment_mode": payment_mode,
             },
         )
-        await db.commit()
-
-        return {
-            "id": order.id,
-            "status": "CREATED",
-            "total_amount": order.total_amount,
-            "payment": {
-                "gateway": g_order.gateway,
-                "gateway_order_id": g_order.gateway_order_id,
-                "amount": g_order.amount,
-                "currency": g_order.currency,
-                "key_id": g_order.key_id,
-                # What the Cashfree Flutter SDK opens checkout with. Null for
-                # the Razorpay-shaped stub, which opens on order_id + key_id.
-                "payment_session_id": self_session_id,
-            },
-            # The struck-through-price breakdown, computed here rather than in
-            # the app: `gross` is the pre-discount figure and only this function
-            # has ever known it.
-            "original_amount": gross,
-            "discount_amount": discount,
-            "final_amount": order.total_amount,
-            "promotion_label": promotion_label,
-        }
 
     @staticmethod
     async def get_order(db: AsyncSession, order_id: uuid.UUID, customer: Customer) -> CustomerOrder:
@@ -2098,6 +2553,7 @@ class CarevoService:
     async def reject_order(
         db: AsyncSession, order_id: uuid.UUID, outlet_id: uuid.UUID,
         *, reason: Optional[str] = None, actor_user_id: Optional[uuid.UUID] = None,
+        unreachable: bool = False,
     ) -> dict:
         """Staff refuse a paid order -> CANCELLED + ORDER_REJECTED.
 
@@ -2119,7 +2575,27 @@ class CarevoService:
         if current == "CANCELLED":
             # Idempotent: a double-tap is not an error.
             return {"order_id": order.id, "status": current, "already": True}
-        if current not in CarevoService.REJECTABLE_STATUSES:
+
+        # CREATED is rejectable for a PAY-AT-PICKUP order and nothing else
+        # (migration 034).
+        #
+        # Scoped that tightly on purpose. A pay-at-pickup order sits in CREATED
+        # for its whole confirmation window — that IS the state staff decide
+        # on, and "we called and they did not answer" has to be expressible.
+        # But adding CREATED to REJECTABLE_STATUSES wholesale would also let
+        # staff cancel a PREPAID order while the customer was mid-checkout, out
+        # from under a Cashfree sheet that was already open. So the widening is
+        # per-order, keyed on the order's own payment_mode, and the module-level
+        # set keeps its exact current meaning.
+        pay_mode = await db.scalar(text(
+            "SELECT payment_mode FROM customer_orders WHERE id = :id"),
+            {"id": str(order_id)})
+        pay_at_pickup = (pay_mode or "") == "PAY_AT_PICKUP"
+        rejectable = set(CarevoService.REJECTABLE_STATUSES)
+        if pay_at_pickup:
+            rejectable.add("CREATED")
+
+        if current not in rejectable:
             raise HTTPException(
                 status_code=409,
                 detail=(
@@ -2163,14 +2639,39 @@ class CarevoService:
             # Any decision proves the outlet is answering again.
             await AcceptanceService._reset_expiries(db, order.outlet_id)
 
+        # COULD NOT REACH THEM (migration 034). A distinct outcome from "we
+        # will not make this": the restaurant did not refuse the order, it
+        # failed to get hold of the customer. Recorded on call_state so the
+        # difference survives on the row, and as its own event below so it
+        # survives in the log.
+        #
+        # Guarded on pay_at_pickup because call_state is NULL for a prepaid
+        # order and its CHECK constraint permits only the three call values —
+        # writing one onto a prepaid order would be meaningless, not just
+        # untidy.
+        if unreachable and pay_at_pickup:
+            await db.execute(text(
+                "UPDATE customer_orders SET call_state = 'UNREACHABLE' "
+                "WHERE id = :id"), {"id": str(order_id)})
+
         await pe.write_event(
             db, order.id, pe.ORDER_REJECTED,
             actor_type="staff", source="tap", outlet_id=order.outlet_id,
             actor_id=actor_user_id,
             payload={"reason": reason, "from_status": current,
                      "was_awaiting_acceptance": was_awaiting,
-                     "refund_required": bool(was_paid)},
+                     "refund_required": bool(was_paid),
+                     # 034: which kind of no this was.
+                     "unreachable": bool(unreachable and pay_at_pickup),
+                     "payment_mode": pay_mode or "PREPAID"},
         )
+        if unreachable and pay_at_pickup:
+            await pe.write_event(
+                db, order.id, pe.ORDER_CALL_UNREACHABLE,
+                actor_type="staff", source="tap", outlet_id=order.outlet_id,
+                actor_id=actor_user_id,
+                payload={"from_status": current},
+            )
         await db.commit()
         await db.refresh(order)
 
@@ -2906,6 +3407,48 @@ class CarevoService:
                 "status": "ABANDONED",
             }
 
+        # PAY-AT-PICKUP MONEY GUARD (migration 034).
+        #
+        # THIS IS A DELIBERATE BREAKING CHANGE, and it is breaking in the only
+        # direction that is safe.
+        #
+        # Everything below this point decides completion on the CODE and the
+        # STATUS and has never once looked at payment_status — which was
+        # correct while every order reaching here had been charged by a gateway
+        # before the kitchen ever saw it. A pay-at-pickup order is different:
+        # it is genuinely live, genuinely READY, and genuinely unpaid until
+        # somebody takes the money at the counter. Left alone, this endpoint
+        # would mark it COMPLETED with payment_status='PENDING' — free food,
+        # recorded as a successful handover.
+        #
+        # So an unpaid pay-at-pickup order is refused here and must go through
+        # POST /pos/orders/{id}/collect instead, which takes the money and
+        # closes the order in one transaction. A DEPLOYED owner_app build that
+        # calls this endpoint on such an order therefore gets a 409 it does not
+        # expect — which is the point: the alternative is giving the food away,
+        # and the breakage is confined to orders that can only exist at an
+        # outlet an admin deliberately switched on.
+        #
+        # An ALREADY-PAID pay-at-pickup order falls through untouched, so a
+        # second verify tap after a successful collect behaves exactly like any
+        # other repeat verify.
+        pay_mode = await db.scalar(text(
+            "SELECT payment_mode FROM customer_orders WHERE id = :id"),
+            {"id": str(order_id)})
+        if ((pay_mode or "") == PAY_AT_PICKUP
+                and (order.payment_status or "").upper() != "PAID"):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "PAYMENT_NOT_RECORDED",
+                    "order_id": str(order.id),
+                    "message": (
+                        "Take payment first — use \"Paid and handed over\" to "
+                        "record cash or UPI and close this order."
+                    ),
+                },
+            )
+
         code_ok = bool(order.pickup_code) and order.pickup_code.upper() == pickup_code.strip().upper()
         status_ok = order.status.upper() in _LIVE_STATUSES
 
@@ -2942,6 +3485,349 @@ class CarevoService:
         await db.refresh(order)
         attempts_remaining = max(0, 3 - order.failed_attempts)
         return {"verified": False, "attempts_remaining": attempts_remaining, "locked": locked}
+
+    # ------------------- Pay at pickup: staff actions (034) -----------------
+    @staticmethod
+    async def _pickup_order_or_404(
+        db: AsyncSession, order_id: uuid.UUID, outlet_id: uuid.UUID
+    ):
+        """One PAY-AT-PICKUP order at THIS outlet, or 404.
+
+        404 rather than 403 for a cross-outlet id, and 404 rather than 409 for
+        a prepaid one — both for the reason lookup_pickup already documents:
+        "exists but is not yours" and "exists but is not that kind" are both
+        information about orders the caller has no business knowing about.
+        """
+        row = (await db.execute(text("""
+            SELECT id, status, payment_status, payment_mode, call_state,
+                   call_attempts, contact_phone, contact_name, total_amount,
+                   customer_id, pickup_code
+              FROM customer_orders
+             WHERE id = :id AND outlet_id = :oid AND payment_mode = :mode
+        """), {"id": str(order_id), "oid": str(outlet_id),
+               "mode": PAY_AT_PICKUP})).first()
+        if row is None:
+            raise HTTPException(
+                status_code=404, detail="Order not found for this outlet")
+        return row
+
+    @staticmethod
+    async def log_call(
+        db: AsyncSession, order_id: uuid.UUID, outlet_id: uuid.UUID,
+        *, actor_user_id: Optional[uuid.UUID] = None,
+    ) -> dict:
+        """Record that staff rang the customer. Does NOT decide the order.
+
+        Deliberately separate from accept/reject, and deliberately does not
+        touch the deadline. The call is evidence that somebody is working the
+        order; it is not a decision, and letting it extend the window would
+        make "ring and do nothing" a way to park an order indefinitely while
+        the customer waits — the same trap alert-ack was designed to avoid.
+
+        Idempotent in the sense that matters: calling twice is a real thing
+        that happens (no answer the first time), so it counts up rather than
+        refusing. first_call_at keeps the FIRST attempt, so "how long before
+        anyone rang" stays answerable after a second attempt overwrites
+        nothing.
+        """
+        row = await CarevoService._pickup_order_or_404(db, order_id, outlet_id)
+
+        if (row.status or "").upper() in _TERMINAL_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail=f"This order is {row.status} — there is nothing to confirm.")
+
+        res = await db.execute(text("""
+            UPDATE customer_orders
+               SET call_state = 'CALLED',
+                   call_attempts = call_attempts + 1,
+                   first_call_at = COALESCE(first_call_at, now())
+             WHERE id = :id AND payment_mode = :mode
+            RETURNING call_attempts, first_call_at
+        """), {"id": str(order_id), "mode": PAY_AT_PICKUP})
+        updated = res.first()
+        attempts = int(updated[0]) if updated else 1
+
+        await pe.write_event(
+            db, order_id, pe.ORDER_CALL_PLACED,
+            actor_type="staff", source="tap", outlet_id=outlet_id,
+            actor_id=actor_user_id,
+            payload={"attempt": attempts},
+        )
+        await db.commit()
+        return {
+            "order_id": order_id,
+            "call_state": "CALLED",
+            "call_attempts": attempts,
+        }
+
+    @staticmethod
+    async def record_pickup_payment(
+        db: AsyncSession, order, *, method: str,
+        actor_user_id: Optional[uuid.UUID] = None,
+    ) -> None:
+        """Record money taken at the counter. Runs in the CALLER's transaction.
+
+        DOES NOT COMMIT and does not touch `status` — both are the caller's
+        job, because this has to land atomically with the COMPLETED transition.
+
+        WHY NOT mark_paid. mark_paid is the gateway's entry point and does two
+        things that are wrong here: it sets status='PAID', which would drag a
+        READY order backwards, and it mints a pickup code, which this order has
+        had since it was accepted. It also starts the acceptance clock and takes
+        a scheduled hold, neither of which means anything at handover time. The
+        overlap is the PaymentTransaction row, the ORDER_PAID event and the
+        points accrual — all three of which are done here explicitly.
+
+        ORDER_PAID is written ALONGSIDE PAYMENT_COLLECTED on purpose: every
+        existing reader of "when was this order paid" keeps working, and the
+        new event carries what ORDER_PAID cannot (in person, by this method, by
+        this staff member).
+        """
+        if method not in ("cash", "upi"):
+            raise HTTPException(
+                status_code=422, detail="method must be 'cash' or 'upi'")
+
+        # A transaction row so the money is in the same ledger as every gateway
+        # payment. gateway='counter' names the path honestly rather than
+        # borrowing a provider's name for cash in a till.
+        db.add(PaymentTransaction(
+            customer_order_id=order.id,
+            gateway="counter",
+            amount=order.total_amount,
+            currency="INR",
+            status="PAID",
+            method=method,
+        ))
+
+        order.payment_status = "PAID"
+        order.updated_at = datetime.now(timezone.utc)
+
+        await db.execute(text("""
+            UPDATE customer_orders
+               SET collected_payment_method = :m,
+                   collected_at = now(),
+                   collected_by = :by
+             WHERE id = :id
+        """), {"m": method, "by": str(actor_user_id) if actor_user_id else None,
+               "id": str(order.id)})
+
+        await pe.write_event(
+            db, order.id, pe.ORDER_PAID,
+            actor_type="staff", source="tap", outlet_id=order.outlet_id,
+            actor_id=actor_user_id,
+            payload={"method": method, "at_counter": True},
+        )
+        await pe.write_event(
+            db, order.id, pe.PAYMENT_COLLECTED,
+            actor_type="staff", source="tap", outlet_id=order.outlet_id,
+            actor_id=actor_user_id,
+            payload={"method": method, "amount": float(order.total_amount or 0)},
+        )
+
+        # Loyalty accrual, in the SAME transaction as the payment — identical
+        # discipline to mark_paid: points are earned iff the payment is
+        # recorded, and the two cannot diverge through a partial failure.
+        await CarevoService._accrue_points(db, order)
+
+    @staticmethod
+    async def collect_order(
+        db: AsyncSession, order_id: uuid.UUID, outlet_id: uuid.UUID,
+        *, pickup_code: str, method: str,
+        actor_user_id: Optional[uuid.UUID] = None,
+    ) -> dict:
+        """Take the money and hand the food over. ONE transaction.
+
+        The two halves are inseparable by design. Recording payment without
+        completing the order leaves money against food still on the counter;
+        completing without recording payment gives it away. Doing them in one
+        transaction is why this is its own endpoint rather than a mark-paid tap
+        followed by a verify-pickup tap.
+
+        CODE-GATED exactly like the prepaid handover: the customer shows their
+        code, and a wrong one neither completes the order nor records the
+        money. The per-outlet miss cap and the per-order 3-strike lock both
+        still apply, so this is not a weaker check than verify_pickup — it is
+        the same check with payment attached.
+
+        Compare-and-set on status, so two tablets tapping it resolve to one
+        winner and the loser is told what beat it.
+        """
+        if method not in ("cash", "upi"):
+            raise HTTPException(
+                status_code=422, detail="method must be 'cash' or 'upi'")
+
+        CarevoService.check_pickup_miss_limit(outlet_id)
+
+        row = await CarevoService._pickup_order_or_404(db, order_id, outlet_id)
+
+        if bool((await db.scalar(text(
+                "SELECT is_locked FROM customer_orders WHERE id = :id"),
+                {"id": str(order_id)}))):
+            raise HTTPException(
+                status_code=423, detail={"verified": False, "locked": True})
+
+        code_ok = bool(row.pickup_code) and (
+            (row.pickup_code or "").upper() == (pickup_code or "").strip().upper())
+
+        if not code_ok:
+            # Same accounting as verify_pickup: a wrong code costs an attempt
+            # and locks the order at three. Nothing is paid and nothing closes.
+            res = await db.execute(text("""
+                UPDATE customer_orders
+                   SET failed_attempts = coalesce(failed_attempts, 0) + 1,
+                       is_locked = (coalesce(failed_attempts, 0) + 1) >= 3,
+                       updated_at = now()
+                 WHERE id = :id
+                RETURNING failed_attempts, is_locked
+            """), {"id": str(order_id)})
+            got = res.first()
+            await db.commit()
+            return {
+                "collected": False,
+                "order_id": order_id,
+                "attempts_remaining": max(0, 3 - int(got[0] or 0)) if got else 0,
+                "locked": bool(got[1]) if got else False,
+            }
+
+        # Right code at this outlet — clear any run of misses before it.
+        CarevoService.clear_pickup_misses(outlet_id)
+
+        # THE COMPARE-AND-SET. Only a live, uncollected order may be collected.
+        # READY is the normal case; RECEIVED/PREPARING are allowed because a
+        # customer who turns up early should not be refused their own food
+        # while it sits finished but unmarked.
+        res = await db.execute(text("""
+            UPDATE customer_orders
+               SET status = 'COMPLETED',
+                   pickup_verified_at = now(),
+                   updated_at = now()
+             WHERE id = :id
+               AND upper(coalesce(status, '')) IN ('RECEIVED','PREPARING','READY')
+        """), {"id": str(order_id)})
+        if res.rowcount != 1:
+            await db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "not_collectable",
+                    "status": row.status,
+                    "message": (
+                        f"This order is {row.status} and cannot be collected."
+                    ),
+                },
+            )
+
+        # The ORM object, loaded only now that the row is ours — it is what
+        # record_pickup_payment and _accrue_points need, and loading it before
+        # winning the CAS would have been a wasted query on the losing path.
+        order = (await db.execute(
+            select(CustomerOrder).where(CustomerOrder.id == order_id)
+        )).scalars().first()
+
+        await CarevoService.record_pickup_payment(
+            db, order, method=method, actor_user_id=actor_user_id)
+
+        await pe.write_event(
+            db, order_id, pe.PICKUP_VERIFIED,
+            actor_type="staff", source="tap", outlet_id=outlet_id,
+            actor_id=actor_user_id,
+        )
+        await db.commit()
+        await db.refresh(order)
+
+        await CarevoService._broadcast_status(order, db)
+        try:
+            from app.modules.prediction.service import PredictionService
+            await PredictionService.compute_outcome(db, order_id)
+        except Exception:
+            await db.rollback()
+
+        return {
+            "collected": True,
+            "order_id": order_id,
+            "status": order.status,
+            "payment_status": order.payment_status,
+            "collected_payment_method": method,
+        }
+
+    @staticmethod
+    async def mark_no_show(
+        db: AsyncSession, order_id: uuid.UUID, outlet_id: uuid.UUID,
+        *, actor_user_id: Optional[uuid.UUID] = None,
+    ) -> dict:
+        """The customer never came. ABANDONED, stock back, strike recorded.
+
+        The food was made and nobody paid for it, so this is the one terminal
+        cause that costs the restaurant real money — which is why it is the one
+        that increments customers.no_show_count.
+
+        NO REFUND IS FLAGGED: nothing was ever charged. That is the whole
+        reason _expire_one's refund flag had to become conditional too.
+
+        Allowed only from READY (and PREPARING, for a kitchen that marks states
+        late). Not from CREATED — an order nobody has confirmed yet is not a
+        no-show, it is an unanswered order, and the call window owns that.
+        """
+        row = await CarevoService._pickup_order_or_404(db, order_id, outlet_id)
+
+        current = (row.status or "").upper()
+        if current not in ("PREPARING", "READY"):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "not_a_no_show",
+                    "status": row.status,
+                    "message": (
+                        f"An order in {row.status} cannot be marked a no-show."
+                    ),
+                },
+            )
+
+        res = await db.execute(text("""
+            UPDATE customer_orders
+               SET status = 'ABANDONED',
+                   no_show_at = now(),
+                   updated_at = now()
+             WHERE id = :id
+               AND upper(coalesce(status, '')) IN ('PREPARING','READY')
+        """), {"id": str(order_id)})
+        if res.rowcount != 1:
+            await db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "not_a_no_show", "status": row.status,
+                        "message": "This order was already dealt with."})
+
+        # The strike. On `customers`, not on the order: it is a fact about a
+        # person across outlets, and the cap it feeds is global for the same
+        # reason the open-order cap is.
+        await db.execute(text(
+            "UPDATE customers SET no_show_count = no_show_count + 1 "
+            "WHERE id = :cid"), {"cid": str(row.customer_id)})
+
+        # Stock comes back. The units were COMMITTED at accept, so this is the
+        # one path that has to undo that — release_for_order only moves HELD
+        # rows, so it is called with the explicit state.
+        from app.modules.carevo_customer.stock import StockService
+        await StockService.release_for_order(
+            db, order_id, reason="pay_at_pickup_no_show", include_committed=True)
+
+        await pe.write_event(
+            db, order_id, pe.ORDER_NO_SHOW,
+            actor_type="staff", source="tap", outlet_id=outlet_id,
+            actor_id=actor_user_id,
+            payload={"from_status": current, "refund_required": False},
+        )
+        await db.commit()
+
+        order = (await db.execute(
+            select(CustomerOrder).where(CustomerOrder.id == order_id)
+        )).scalars().first()
+        if order is not None:
+            await CarevoService._broadcast_status(order, db)
+
+        return {"order_id": order_id, "status": "ABANDONED", "no_show": True}
 
     @staticmethod
     async def lookup_pickup(
@@ -2980,9 +3866,19 @@ class CarevoService:
         # leaves the queue rather than some later request.
         await CarevoService._expire_stale_pickups(db, outlet_id=outlet_id)
 
+        # payment_mode is SELECTed so the counter can see it owes money on this
+        # order before tapping confirm; the CONTACT COLUMNS ARE NOT.
+        #
+        # Deliberate, and not an oversight for consistency with the queue: this
+        # is a code-lookup at the counter with the customer physically present.
+        # Their phone number answers no question being asked here, and a lookup
+        # endpoint that returns a contact for any code typed into it is a
+        # strictly worse thing to hold than one that does not — the miss cap
+        # bounds guessing, it does not prevent it.
         row = (await db.execute(text("""
             SELECT id, status, payment_status, is_locked, total_amount,
-                   created_at, pickup_verified_at
+                   created_at, pickup_verified_at, payment_mode,
+                   collected_payment_method
             FROM customer_orders
             WHERE outlet_id = :oid
               AND upper(pickup_code) = :code
@@ -3021,6 +3917,11 @@ class CarevoService:
                 "total_amount": float(row.total_amount) if row.total_amount is not None else 0.0,
                 "created_at": row.created_at,
                 "pickup_verified_at": row.pickup_verified_at,
+                # 034: so the counter knows whether money is still owed on this
+                # order before it taps confirm. No contact fields here — see
+                # the query above.
+                "payment_mode": row.payment_mode,
+                "collected_payment_method": row.collected_payment_method,
                 "items": [
                     {"id": it.id, "name": it.name_snap, "quantity": it.quantity}
                     for it in items
@@ -3532,6 +4433,15 @@ class CarevoService:
             await StockService.sweep_expired(db, outlet_id=outlet_id)
         except Exception:
             await db.rollback()
+        # Contact redaction (034): destroy pay-at-pickup contact snapshots past
+        # their retention. SAME check-on-read slot as every sweep above, and
+        # for the same reason — this deploy has no reliable scheduler, and a
+        # retention promise that only holds while a worker happens to be awake
+        # is not a retention promise.
+        try:
+            await CarevoService.redact_expired_contacts(db, outlet_id=outlet_id)
+        except Exception:
+            await db.rollback()
         # A verified pickup lingers for COMPLETED_GRACE, then drops out on its
         # own. It used to vanish the instant staff tapped verify, which left no
         # window to notice a mistake — and no way to confirm the right order was
@@ -3550,7 +4460,33 @@ class CarevoService:
                    -- Manual acceptance (032). ADDITIVE: NULL for every order
                    -- at an auto outlet, so the rows owner_app already renders
                    -- are byte-identical.
-                   acceptance_state, acceptance_deadline_at
+                   acceptance_state, acceptance_deadline_at,
+                   -- Pay at pickup (034). All NULL/0 for a prepaid order.
+                   payment_mode, call_state, call_attempts,
+                   collected_payment_method,
+                   -- CONTACT VISIBILITY, DECIDED IN SQL.
+                   --
+                   -- Computed here rather than in Python so there is no path
+                   -- that reads the columns and then forgets to apply the
+                   -- window: the contact is either selected visible or
+                   -- selected NULL, and the serialiser never sees a value it
+                   -- is supposed to hide. A redacted row has nothing to show
+                   -- either way.
+                   --
+                   -- Visible while the order is LIVE, plus a grace period
+                   -- after it finishes: a disputed handover and a no-show
+                   -- callback both happen inside the hour, and the restaurant
+                   -- may need to ring back about food it is holding.
+                   CASE WHEN payment_mode = 'PAY_AT_PICKUP'
+                             AND contact_redacted_at IS NULL
+                             AND (upper(coalesce(status, '')) <> ALL(:cterm)
+                                  OR updated_at > now() - CAST(:cgrace AS interval))
+                        THEN contact_name ELSE NULL END AS contact_name,
+                   CASE WHEN payment_mode = 'PAY_AT_PICKUP'
+                             AND contact_redacted_at IS NULL
+                             AND (upper(coalesce(status, '')) <> ALL(:cterm)
+                                  OR updated_at > now() - CAST(:cgrace AS interval))
+                        THEN contact_phone ELSE NULL END AS contact_phone
             FROM customer_orders
             WHERE outlet_id = :oid
               AND created_at >= :rename_cutoff
@@ -3579,6 +4515,26 @@ class CarevoService:
                       AND pickup_verified_at IS NOT NULL
                       AND pickup_verified_at >= now() - CAST(:grace AS interval)
                     )
+                 -- PAY AT PICKUP, awaiting its confirmation call (034).
+                 --
+                 -- The one admitted exception to the paid/live floor above,
+                 -- and it does not weaken it: this order is not unpaid-because-
+                 -- -checkout-is-still-open, it is unpaid BY DESIGN, and the
+                 -- restaurant is the only party who can move it forward. The
+                 -- floor's purpose — keep half-finished checkouts off the
+                 -- tablet — is untouched, because a PREPAID order in CREATED
+                 -- still does not match.
+                 --
+                 -- Narrow on all three axes deliberately: the mode, the
+                 -- status, AND an acceptance_state of AWAITING. An expired or
+                 -- rejected pickup order has moved to CANCELLED and drops out
+                 -- on the status clause; one that is accepted is RECEIVED and
+                 -- matches the floor like anything else.
+                 OR (
+                      payment_mode = 'PAY_AT_PICKUP'
+                      AND status = 'CREATED'
+                      AND acceptance_state = 'AWAITING'
+                    )
               )
             ORDER BY created_at DESC
         """), {
@@ -3591,6 +4547,9 @@ class CarevoService:
             # interval, and it maps timedelta -> interval natively while
             # rejecting '1800 seconds' outright.
             "grace": CarevoService.COMPLETED_GRACE,
+            # Contact-visibility window (034). Same timedelta-not-string rule.
+            "cterm": list(_CONTACT_TERMINAL_STATUSES),
+            "cgrace": CONTACT_VISIBLE_AFTER_TERMINAL,
         })).fetchall()
         if not orders:
             return []
@@ -3620,10 +4579,92 @@ class CarevoService:
                 # unchanged until it learns to read them.
                 "acceptance_state": o.acceptance_state,
                 "acceptance_deadline_at": o.acceptance_deadline_at,
+                # Pay at pickup (034), additive. All None/0 for a prepaid
+                # order. contact_* arrive already suppressed by the SQL above,
+                # so there is nothing to re-check here — which is the point of
+                # deciding it there.
+                "payment_mode": o.payment_mode,
+                "contact_first_name": CarevoService._first_name(o.contact_name),
+                "contact_phone": o.contact_phone,
+                "contact_visible": bool(o.contact_phone),
+                "call_state": o.call_state,
+                "call_attempts": int(o.call_attempts or 0),
+                "collected_payment_method": o.collected_payment_method,
                 "items": by_order.get(str(o.id), []),
             }
             for o in orders
         ]
+
+    @staticmethod
+    def _first_name(full_name: Optional[str]) -> Optional[str]:
+        """The first whitespace-delimited token of a name, or None.
+
+        A counter calling out an order needs "Asha"; a surname is extra
+        personal data with no operational use. Done here rather than in SQL so
+        the stored snapshot keeps the whole name — the restaurant is not the
+        only future reader of that column, and truncating at rest would be
+        irreversible.
+        """
+        if not full_name:
+            return None
+        first = full_name.strip().split()
+        return first[0] if first else None
+
+    @staticmethod
+    async def redact_expired_contacts(
+        db: AsyncSession, *, outlet_id=None
+    ) -> int:
+        """Destroy pay-at-pickup contact snapshots past their retention.
+
+        The DURABLE half of the privacy promise. The owner queue stops
+        RETURNING a contact two hours after the order finishes, but suppression
+        only governs new reads — the row still holds the number. This is what
+        actually removes it.
+
+        SCOPED TO ONE OUTLET when called from the queue poll, and that scoping
+        is load-bearing rather than tidy. Unscoped, this is a table-wide UPDATE
+        on the hottest staff path in the product: it takes row locks across
+        every outlet's orders, so one restaurant's 15-second poll can block on
+        another restaurant's in-flight write, and the work it does grows with
+        the whole table rather than with the caller. Every other sweep in that
+        check-on-read slot is outlet-scoped for the same reason.
+        [-] The cost of scoping: an outlet nobody polls does not redact. In
+        practice the polling outlet is exactly the one whose data is at issue —
+        a contact belongs to an order at that outlet — so the rows that matter
+        are reached by the restaurant that holds them. A quiet outlet's
+        contacts are also already suppressed at the API by then; what lingers
+        is the row, not the exposure. Passing outlet_id=None still sweeps
+        globally, which is what a future cron or an admin action should use.
+
+        contact_redacted_at is stamped rather than left NULL so a redacted
+        order stays distinguishable from a prepaid one that never had a
+        contact — and so ck_customer_orders_pickup_contact keeps holding.
+
+        Commits its own maintenance UPDATE, like _expire_stale_pickups.
+        Idempotent: the predicate excludes rows it has already cleared.
+        """
+        clauses = [
+            "payment_mode = :mode",
+            "contact_redacted_at IS NULL",
+            "(contact_phone IS NOT NULL OR contact_name IS NOT NULL)",
+            "created_at < now() - CAST(:after AS interval)",
+        ]
+        params: dict = {"mode": PAY_AT_PICKUP, "after": CONTACT_REDACTION_AFTER}
+        if outlet_id is not None:
+            clauses.append("outlet_id = :oid")
+            params["oid"] = str(outlet_id)
+
+        res = await db.execute(text(
+            "UPDATE customer_orders "
+            "   SET contact_name = NULL, contact_phone = NULL, "
+            "       contact_redacted_at = now() "
+            " WHERE " + " AND ".join(clauses)
+        ), params)
+        if res.rowcount:
+            await db.commit()
+            logger.info("redacted %s pay-at-pickup contact snapshot(s)",
+                        res.rowcount)
+        return res.rowcount or 0
 
     @staticmethod
     async def mark_order_paid_by_staff(

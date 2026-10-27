@@ -259,10 +259,18 @@ async def list_outlets(
 @router.get("/menu/{outlet_id}", response_model=s.MenuOut)
 async def get_menu(
     outlet_id: uuid.UUID,
-    _: Customer = Depends(get_current_customer),
+    customer: Customer = Depends(get_current_customer),
     db: AsyncSession = Depends(get_db),
 ):
-    return await CarevoService.get_menu(db, outlet_id)
+    """The outlet's menu, plus the payment methods THIS customer may use.
+
+    The customer is passed through (034) rather than discarded, because
+    pay-at-pickup eligibility is per-customer: it needs a verified phone, no
+    open unpaid pickup order, and fewer than two no-shows. The discovery list
+    answers the outlet-capability question instead, which is why the two
+    endpoints can legitimately return different lists for the same outlet.
+    """
+    return await CarevoService.get_menu(db, outlet_id, customer)
 
 
 # ------------------------------ Orders -------------------------------------
@@ -389,8 +397,16 @@ async def get_order(
     # here (transport_mode, declared_arrival_at, origin_*): the deploy order is
     # DB-first, and an ORM column the database has not got yet breaks every
     # query against the table, not just the one that wanted it.
+    # payment_mode/call_state join the 031 columns here for the same reason and
+    # by the same route: migration 034 leaves them unmapped, so they are read
+    # with raw SQL rather than off the ORM object.
+    #
+    # contact_name/contact_phone are DELIBERATELY NOT SELECTED. They are the
+    # customer's own details and they already know them; the only reader that
+    # needs them is the receiving outlet, through the staff-authed owner queue.
     sched = (await db.execute(text(
-        "SELECT requested_pickup_at, release_at FROM customer_orders WHERE id = :o"
+        "SELECT requested_pickup_at, release_at, payment_mode, call_state "
+        "FROM customer_orders WHERE id = :o"
     ), {"o": str(order_id)})).first()
     # total_amount is what was charged; the discount is stored alongside it
     # (migration 010) precisely so the original can be reconstructed here rather
@@ -418,6 +434,18 @@ async def get_order(
         "acceptance_state": order.acceptance_state,
         "acceptance_deadline_at": order.acceptance_deadline_at,
         "refund_required": bool(order.refund_required),
+        # Pay at pickup (034). payment_mode defaults to PREPAID rather than
+        # None so the app can switch on it unconditionally; amount_due is the
+        # order total for an uncollected pickup order and 0 once it is paid,
+        # which is what lets the screen stop showing "₹420 to pay" the moment
+        # the money is recorded.
+        "payment_mode": (sched.payment_mode if sched else None) or "PREPAID",
+        "amount_due_at_pickup": (
+            total if (sched and sched.payment_mode == "PAY_AT_PICKUP"
+                      and (order.payment_status or "").upper() != "PAID")
+            else 0
+        ),
+        "call_state": sched.call_state if sched else None,
         "items": [
             {
                 "id": it.id,

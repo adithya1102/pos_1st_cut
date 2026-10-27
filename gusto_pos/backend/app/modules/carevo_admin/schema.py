@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 VerificationStatus = Literal["pending_verification", "active", "rejected"]
 
@@ -378,3 +378,45 @@ class AcceptanceConfigOut(BaseModel):
     acceptance_mode: str
     acceptance_timeout_s: int
     consecutive_expiries: int
+
+
+# ---------------------- Payment methods (migration 034) ----------------------
+class PaymentMethodsIn(BaseModel):
+    """Which payment methods one outlet may offer.
+
+    BOTH FLAGS ARE REQUIRED, deliberately — this is a PATCH that takes the
+    whole state rather than a delta. A partial update ("turn pay-at-pickup on")
+    reads as harmless but is how an outlet ends up with neither method enabled:
+    two separate toggles, applied in the wrong order by two admins, and the
+    shop can take no orders at all. Stating both every time makes the
+    end state explicit in the request, and the validator below can then refuse
+    the one combination that is never valid.
+    """
+    prepaid: bool
+    pay_at_pickup: bool
+
+    @model_validator(mode="after")
+    def _at_least_one(self):
+        """422 when both are false, matching the DB's own CHECK.
+
+        Enforced in both places on purpose: the constraint is the thing that
+        cannot be bypassed, and this is the thing that produces a message an
+        admin can read. A 422 here beats a 500 from an IntegrityError.
+        """
+        if not self.prepaid and not self.pay_at_pickup:
+            raise ValueError(
+                "An outlet must accept at least one payment method — "
+                "enable prepaid, pay at pickup, or both."
+            )
+        return self
+
+
+class PaymentMethodsOut(BaseModel):
+    outlet_id: uuid.UUID
+    payment_prepaid_enabled: bool
+    payment_pay_at_pickup_enabled: bool
+    #: What a customer would actually be offered right now, which is NOT just
+    #: the two flags: prepaid additionally needs a usable gateway. Echoed so an
+    #: admin who has just enabled prepaid on a deployment with no gateway can
+    #: see that it is still not on offer.
+    effective_methods: list[str] = []

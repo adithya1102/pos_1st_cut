@@ -302,7 +302,84 @@ async def reject_order(
         db, order_id, _require_outlet(staff),
         reason=(payload.reason if payload else None),
         actor_user_id=staff.id,
+        # 034: "could not reach them" is a different no from "we won't make
+        # this", and the server records the difference on call_state and in its
+        # own event. Inert for a prepaid order.
+        unreachable=bool(payload.unreachable) if payload else False,
     )
+
+
+# ---------------------- Pay at pickup (migration 034) ------------------------
+@router.post("/orders/{order_id}/call", response_model=s.CallPlacedOut)
+async def log_call(
+    order_id: uuid.UUID,
+    staff: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Record that staff rang the customer about a pay-at-pickup order.
+
+    PAY-AT-PICKUP ONLY: a prepaid order 404s, for the same reason a
+    cross-outlet id does — "exists but is not that kind" is information about
+    orders the caller has no business enumerating.
+
+    Does NOT decide the order and does NOT extend the deadline. The call is
+    evidence somebody is working it, not a decision, and letting it push the
+    window out would make "ring and do nothing" a way to park an order while
+    the customer waits — the trap /alert-ack was already designed to avoid.
+
+    Counts up rather than refusing a second call: ringing twice because nobody
+    answered the first time is normal. first_call_at keeps the first attempt.
+    """
+    return await CarevoService.log_call(
+        db, order_id, _require_outlet(staff), actor_user_id=staff.id)
+
+
+@router.post("/orders/{order_id}/collect", response_model=s.CollectOrderOut)
+async def collect_order(
+    order_id: uuid.UUID,
+    payload: s.CollectOrderIn,
+    staff: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Take the money and hand the food over, in ONE transaction.
+
+    This is the pay-at-pickup counterpart to /orders/verify-pickup, and it is a
+    separate endpoint rather than a flag on that one because the two halves are
+    inseparable: recording payment without closing the order leaves money
+    against food still on the counter, and closing without recording payment
+    gives it away. One transaction is the only shape with neither failure.
+
+    CODE-GATED exactly like the prepaid handover. A wrong code costs an attempt
+    and locks the order at three, and neither the payment nor the completion
+    happens — it answers 200 with collected=false rather than a 4xx, so the app
+    can tell "wrong code" from "the request failed".
+
+    Compare-and-set on status, so two tablets tapping Collect resolve to one
+    winner and the loser is told what beat it.
+    """
+    return await CarevoService.collect_order(
+        db, order_id, _require_outlet(staff),
+        pickup_code=payload.pickup_code, method=payload.method,
+        actor_user_id=staff.id)
+
+
+@router.post("/orders/{order_id}/no-show", response_model=s.NoShowOut)
+async def mark_no_show(
+    order_id: uuid.UUID,
+    staff: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """The customer never came for a pay-at-pickup order.
+
+    -> ABANDONED, a strike on the customer, and NO refund flagged: nothing was
+    ever charged. It is the one terminal cause that costs the restaurant real
+    food, which is why it is the one that increments no_show_count.
+
+    Allowed from PREPARING or READY only. An order nobody has confirmed yet is
+    not a no-show — it is an unanswered order, and the call window owns that.
+    """
+    return await CarevoService.mark_no_show(
+        db, order_id, _require_outlet(staff), actor_user_id=staff.id)
 
 
 @router.post("/push/register", response_model=s.RegisterStaffTokenOut)

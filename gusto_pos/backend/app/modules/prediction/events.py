@@ -90,6 +90,47 @@ ORDER_EXPIRED = "ORDER_EXPIRED"
 # site, so "who cleared this" is always answerable.
 ORDER_REFUND_MARKED = "ORDER_REFUND_MARKED"
 
+# --- pay at pickup (migration 034) -------------------------------------------
+# No schema change is needed for any of these: order_events.event_type is plain
+# TEXT with no CHECK constraint (migration 006), so the catalogue is a code
+# convention and adding to it is a code change.
+#
+# Staff rang the customer to confirm a pay-at-pickup order. Carries the attempt
+# number, so "we tried three times" is answerable from the log rather than only
+# from the counter on the row.
+#
+# Purely a record of a human action, like KITCHEN_START_NOTIFIED: it moves no
+# status and implies no acceptance. Somebody picking up the phone is not the
+# same as somebody agreeing to cook.
+ORDER_CALL_PLACED = "ORDER_CALL_PLACED"
+
+# Staff could not reach the customer, so the order was rejected for that
+# reason. DISTINCT from a plain ORDER_REJECTED, which is the restaurant
+# declining work it could have done: here the restaurant was willing and the
+# customer could not be contacted. Both are written on this path — the reject
+# for the state change, this one for the cause — because the cause is what
+# decides whether the customer or the outlet should be asked to change
+# something.
+ORDER_CALL_UNREACHABLE = "ORDER_CALL_UNREACHABLE"
+
+# Money changed hands at the counter for a pay-at-pickup order.
+#
+# Distinct from ORDER_PAID, which this path ALSO writes so that every existing
+# reader of "when was this order paid" keeps working unchanged. This one adds
+# what ORDER_PAID cannot carry: that it was collected in person, by which
+# method, and by which staff member.
+PAYMENT_COLLECTED = "PAYMENT_COLLECTED"
+
+# A pay-at-pickup order the customer never came for.
+#
+# A FIFTH terminal cause, and it is not any of the four above: the food was
+# made (so it is not ORDER_REJECTED or ORDER_EXPIRED), no gateway was involved
+# (so not PAYMENT_FAILED), and a human positively declared it rather than a
+# sweeper inferring it from a clock (so not ORDER_ABANDONED). It is the only
+# one that costs the restaurant real food, which is why it increments
+# customers.no_show_count and the others do not.
+ORDER_NO_SHOW = "ORDER_NO_SHOW"
+
 # actor_type ∈ {customer, staff, system}; source ∈ {tap, geofence, system, inferred}
 
 

@@ -31,6 +31,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Optional
 
 from fastapi import HTTPException
@@ -93,6 +94,30 @@ class AcceptanceService:
         mode, _ = await AcceptanceService.outlet_config(db, outlet_id)
         return mode == "manual"
 
+    @staticmethod
+    async def call_window_s(db: AsyncSession, outlet_id) -> int:
+        """The pay-at-pickup confirmation window, in seconds (migration 034).
+
+        SEPARATE from acceptance_timeout_s, which is a "tap the tablet" window.
+        A phone call is not that: somebody has to pick up a handset, find the
+        order and talk to a person, and tuning one of those windows must not
+        move the other.
+
+        Missing row => the 034 default, for the same reason outlet_config
+        falls back: a config read must not be the thing that breaks an order.
+
+        The DB caps this at 540 (ck_outlets_call_window) because it MUST stay
+        below STOCK_HOLD_TTL_SECONDS — a window longer than the stock hold
+        hands the units back while the customer is still waiting for the phone
+        to ring. See test_call_window_stays_inside_the_stock_hold.
+        """
+        row = (await db.execute(text("""
+            SELECT call_window_s FROM outlets WHERE id = :oid
+        """), {"oid": str(outlet_id)})).first()
+        if row is None:
+            return 300
+        return int(row[0] or 300)
+
     # --------------------------- entering AWAITING -------------------------
     @staticmethod
     async def begin_awaiting(db: AsyncSession, order, *, reason: str) -> datetime:
@@ -105,13 +130,25 @@ class AcceptanceService:
 
         Returns the deadline it stamped.
 
-        `reason` ∈ {payment, scheduled_release} and rides the ORDER_ALERTED
-        payload, so "did this clock start at payment or at release" is
-        answerable from the event log alone. For a scheduled order the clock
-        MUST start at release — a pickup three hours out whose deadline was set
-        at payment would expire before the kitchen ever saw it.
+        `reason` ∈ {payment, scheduled_release, pay_at_pickup_placed} and rides
+        the ORDER_ALERTED payload, so "did this clock start at payment, at
+        release, or at placement" is answerable from the event log alone. For a
+        scheduled order the clock MUST start at release — a pickup three hours
+        out whose deadline was set at payment would expire before the kitchen
+        ever saw it.
+
+        WHICH WINDOW APPLIES depends on the reason, not on the outlet's mode
+        (migration 034). 'pay_at_pickup_placed' uses call_window_s, because
+        what the restaurant has to do is RING SOMEBODY; every other reason uses
+        acceptance_timeout_s, because what it has to do is tap a tablet. Keyed
+        off `reason` rather than re-reading payment_mode from the row so there
+        is exactly one input deciding it, and it is the one the caller already
+        had to be explicit about.
         """
-        _, timeout_s = await AcceptanceService.outlet_config(db, order.outlet_id)
+        if reason == "pay_at_pickup_placed":
+            timeout_s = await AcceptanceService.call_window_s(db, order.outlet_id)
+        else:
+            _, timeout_s = await AcceptanceService.outlet_config(db, order.outlet_id)
         now = _utcnow()
         deadline = now + timedelta(seconds=timeout_s)
 
@@ -211,11 +248,13 @@ class AcceptanceService:
         # lookup-pickup does it: "exists but is not yours" is information about
         # another outlet's orders.
         row = (await db.execute(text("""
-            SELECT acceptance_state, status FROM customer_orders
+            SELECT acceptance_state, status, payment_mode, pickup_code
+              FROM customer_orders
              WHERE id = :id AND outlet_id = :oid
         """), {"id": str(order_id), "oid": str(outlet_id)})).first()
         if row is None:
             raise HTTPException(status_code=404, detail="Order not found for this outlet")
+        pay_at_pickup = (row[2] or "") == "PAY_AT_PICKUP"
 
         # COMPARE-AND-SET. This is the race winner-picker: two devices tapping
         # Accept, or an Accept arriving as the sweeper expires the order, all
@@ -257,6 +296,45 @@ class AcceptanceService:
             "DELETE FROM auto_advance_schedule WHERE order_id = :id "
             "AND kind = 'acceptance'"), {"id": str(order_id)})
         await AcceptanceService._reset_expiries(db, outlet_id)
+
+        # ------------- PAY AT PICKUP: stock + pickup code (034) -------------
+        #
+        # Both belong to ACCEPT rather than to placement, and both are in THIS
+        # transaction so a half-accepted order is not a state that exists.
+        #
+        # STOCK. A pay-at-pickup order is never payment_status='PAID' until the
+        # handover, and StockService.sweep_expired reclaims any HELD row whose
+        # order is not PAID once expires_at passes. Left alone, the hold would
+        # lapse ~10 minutes in — WHILE THE FOOD WAS BEING COOKED — and the dish
+        # would read as available again to everyone else. Committing here is
+        # what takes the reservation out of the sweeper's reach, and it is
+        # truthful at exactly this moment: a human has just said they will make
+        # it, so the units are genuinely spent.
+        #
+        # PICKUP CODE. Minted here, not at placement, for two reasons. Codes
+        # are unique only among an outlet's LIVE orders, so one issued to an
+        # order that is then rejected would have to be reclaimed; and migration
+        # 032 already established that a code must not reach the customer
+        # before the restaurant has agreed to make the food. The prepaid path
+        # is untouched — there the code is still minted by mark_paid.
+        if pay_at_pickup:
+            from app.modules.carevo_customer.stock import StockService
+            await StockService.commit_for_order(db, order_id)
+
+            if not (row[3] or "").strip():
+                from app.modules.carevo_customer.service import CarevoService as _Svc
+
+                # SimpleNamespace, not a local class: _assign_pickup_code reads
+                # .id and .outlet_id and writes .pickup_code, and a class body
+                # cannot be used here — `outlet_id = outlet_id` in a class body
+                # raises NameError, because class bodies skip the enclosing
+                # function scope on reads. The ORM object is not loaded on this
+                # path (accept is raw SQL throughout) and fetching one just to
+                # mint a code would be a wasted query.
+                target = SimpleNamespace(
+                    id=order_id, outlet_id=outlet_id, pickup_code=None)
+                await _Svc._assign_pickup_code(db, target)
+
         await db.commit()
 
         # PAID -> RECEIVED through the SAME advance_status every other path
@@ -452,13 +530,30 @@ class AcceptanceService:
         it entirely; there is no window in which an order is both ACCEPTED and
         CANCELLED.
         """
+        # refund_required IS CONDITIONAL ON MONEY HAVING MOVED (migration 034).
+        #
+        # This used to be an unconditional `true`, which was correct while
+        # every order reaching here was prepaid: an expired paid order owes the
+        # customer their money back. A PAY-AT-PICKUP order that expires owes
+        # nothing — nobody ever charged it — and flagging it would put rows
+        # into the admin refund queue for money that was never taken, which is
+        # worse than useless: it is a worklist of refunds that cannot be paid.
+        #
+        # Expressed in SQL rather than as a second pass, exactly as
+        # _expire_stale_pickups already does it (service.py), so the flag can
+        # never disagree with the transition that caused it.
         res = await db.execute(text("""
             UPDATE customer_orders
                SET acceptance_state = :new,
                    status = 'CANCELLED',
-                   refund_required = true,
-                   refund_reason = :reason,
-                   refund_flagged_at = now(),
+                   refund_required = CASE WHEN payment_status = 'PAID'
+                                          THEN true ELSE refund_required END,
+                   refund_reason = CASE WHEN payment_status = 'PAID'
+                                        AND NOT refund_required
+                                        THEN :reason ELSE refund_reason END,
+                   refund_flagged_at = CASE WHEN payment_status = 'PAID'
+                                            AND NOT refund_required
+                                            THEN now() ELSE refund_flagged_at END,
                    updated_at = now()
              WHERE id = :id AND acceptance_state = :old
         """), {"new": EXPIRED, "old": AWAITING, "id": str(r.id),

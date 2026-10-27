@@ -421,3 +421,35 @@ async def set_outlet_acceptance(
     """
     return await AdminService.set_acceptance_config(
         db, outlet_id, mode=payload.mode, timeout_s=payload.timeout_s)
+
+
+@router.patch("/outlets/{outlet_id}/payment-methods",
+              response_model=s.PaymentMethodsOut)
+async def set_outlet_payment_methods(
+    outlet_id: uuid.UUID,
+    payload: s.PaymentMethodsIn,
+    _admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Choose which payment methods ONE outlet offers (migration 034).
+
+    SUPER_ADMIN only, and deliberately not an owner-facing setting — same
+    reasoning as the acceptance switch next door. Turning pay-at-pickup on
+    means this restaurant starts taking orders it has not been paid for and
+    accepts the no-show risk that comes with them; that is a commercial
+    decision about the relationship, not a preference the shop toggles.
+
+    THE PILOT SWITCH. One outlet, one UPDATE, no deploy, reversible by the same
+    call — which is the whole of "turn it on for one restaurant and watch".
+
+    Both flags are required and both-false is a 422: an outlet that accepts no
+    payment method can take no orders, and that is not a state anyone should
+    reach by sending half a request. The database refuses it as well.
+
+    Does NOT touch orders already in flight. An order carries its own
+    payment_mode from the moment it is created, so a prepaid order mid-checkout
+    here still completes through the gateway exactly as it would have.
+    """
+    return await AdminService.set_payment_methods(
+        db, outlet_id,
+        prepaid=payload.prepaid, pay_at_pickup=payload.pay_at_pickup)
