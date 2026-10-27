@@ -1626,7 +1626,9 @@ class AdminService:
 
     @staticmethod
     async def set_payment_methods(
-        db: AsyncSession, outlet_id, *, prepaid: bool, pay_at_pickup: bool
+        db: AsyncSession, outlet_id, *, prepaid: bool, pay_at_pickup: bool,
+        upi_manual: Optional[bool] = None,
+        cashfree_unlocked: Optional[bool] = None,
     ) -> dict:
         """Set which payment methods one outlet offers (migration 034).
 
@@ -1646,14 +1648,27 @@ class AdminService:
         set_acceptance_config, and for the same reason: anything else would
         make an admin toggle reach into money that is already moving.
         """
-        row = (await db.execute(text("""
-            UPDATE outlets
-               SET payment_prepaid_enabled = :prepaid,
-                   payment_pay_at_pickup_enabled = :pickup
+        # upi_manual and cashfree_unlocked are OPTIONAL and omitted means
+        # "leave unchanged", so each is only named in the UPDATE when it was
+        # actually sent. An admin flipping the Cashfree lock must not silently
+        # turn the owner's UPI setting off as a side effect.
+        sets = ["payment_prepaid_enabled = :prepaid",
+                "payment_pay_at_pickup_enabled = :pickup"]
+        params: dict = {"prepaid": bool(prepaid), "pickup": bool(pay_at_pickup),
+                        "oid": str(outlet_id)}
+        if upi_manual is not None:
+            sets.append("payment_upi_manual_enabled = :upi")
+            params["upi"] = bool(upi_manual)
+        if cashfree_unlocked is not None:
+            sets.append("cashfree_unlocked = :unlocked")
+            params["unlocked"] = bool(cashfree_unlocked)
+
+        row = (await db.execute(text(f"""
+            UPDATE outlets SET {', '.join(sets)}
              WHERE id = :oid
-            RETURNING id, payment_prepaid_enabled, payment_pay_at_pickup_enabled
-        """), {"prepaid": bool(prepaid), "pickup": bool(pay_at_pickup),
-               "oid": str(outlet_id)})).first()
+            RETURNING id, payment_prepaid_enabled, payment_pay_at_pickup_enabled,
+                      payment_upi_manual_enabled, cashfree_unlocked
+        """), params)).first()
         if row is None:
             await db.rollback()
             raise HTTPException(status_code=404, detail="Outlet not found")
@@ -1670,5 +1685,7 @@ class AdminService:
             "outlet_id": row[0],
             "payment_prepaid_enabled": bool(row[1]),
             "payment_pay_at_pickup_enabled": bool(row[2]),
+            "payment_upi_manual_enabled": bool(row[3]),
+            "cashfree_unlocked": bool(row[4]),
             "effective_methods": effective,
         }

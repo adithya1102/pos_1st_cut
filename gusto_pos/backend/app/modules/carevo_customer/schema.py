@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -309,6 +309,23 @@ class EventAck(BaseModel):
     detail: Optional[str] = None
 
 
+class UpiPaymentBlock(BaseModel):
+    """Everything the app needs to build a `upi://pay?...` intent (035).
+
+    Computed server-side because the VPA and payee are the RESTAURANT's and the
+    app has no other way to learn them, and because `note` has to match what
+    the restaurant will see in its own UPI app beside the amount.
+
+    `note` is the short order number — deliberately NOT the pickup code, which
+    must never travel through a payment app or appear on a bank statement.
+    """
+    vpa: str
+    payee_name: str = ""
+    amount: float
+    #: The short order number, for the UPI `tn=` field.
+    note: str
+
+
 class PaymentBlock(BaseModel):
     gateway: str
     gateway_order_id: str
@@ -342,6 +359,10 @@ class CreateOrderOut(BaseModel):
     payment_mode: str = "PREPAID"
     #: What the customer will hand over at the counter. 0 for a prepaid order.
     amount_due_at_pickup: float = 0
+    #: Present only for a UPI_MANUAL order, and only while payment is pending.
+    #: Absent (not an empty object) for every other mode, so a client can test
+    #: for it rather than inspecting its fields.
+    upi_payment: Optional[UpiPaymentBlock] = None
     # Price breakdown (migration 016). total_amount stays the amount charged and
     # keeps its meaning for every existing caller; these three are additive so
     # the app can show "₹420 ₹380" without recomputing anything client-side.
@@ -444,6 +465,19 @@ class OrderOut(BaseModel):
     #: NULL for a prepaid order. PENDING | CALLED | UNREACHABLE — lets the app
     #: say "they're about to call you" rather than showing a bare spinner.
     call_state: Optional[str] = None
+    # --- Direct UPI (migration 035) ------------------------------------------
+    #: Set once the customer has tapped "I've paid". Its presence is what moves
+    #: the pay screen from "pay now" to "waiting for the restaurant", so the
+    #: state survives the app being killed and reopened.
+    payment_claimed_at: Optional[datetime] = None
+    #: The restaurant owes this money back directly. Drives the customer-facing
+    #: "they will refund you" message, which is honest about WHO refunds:
+    #: CareVo cannot, because it was never in the payment path.
+    manual_refund_due: bool = False
+    manual_refund_reason: Optional[str] = None
+    #: Present only while a UPI order is unpaid, so the pay screen can be
+    #: rebuilt after a restart. Absent once accepted.
+    upi_payment: Optional[UpiPaymentBlock] = None
 
 
 # ---------------------------- Payment ---------------------------------------
@@ -719,6 +753,17 @@ class OwnerOrderOut(BaseModel):
     call_attempts: int = 0
     #: cash | upi, once the money has been taken.
     collected_payment_method: Optional[str] = None
+    # --- Direct UPI (migration 035) ------------------------------------------
+    # All three additive and NULL/false for every other mode.
+    #
+    # payment_claimed_at is what the owner app gates its "Customer says paid"
+    # state on — NOT a payment. The restaurant confirms the money by looking at
+    # its own UPI app, and that confirmation is the Accept tap.
+    payment_claimed_at: Optional[datetime] = None
+    #: The RESTAURANT owes this customer money directly. Never the gateway
+    #: refund queue — CareVo was not in the payment path and cannot reverse it.
+    manual_refund_due: bool = False
+    manual_refund_reason: Optional[str] = None
     items: list[OwnerOrderLineOut] = []
 
 
@@ -740,6 +785,52 @@ class AcceptOrderOut(BaseModel):
     status: str
     acceptance_state: str
     prep_minutes: int
+
+
+# ------------- Owner self-serve payment settings (migration 035) ------------
+class OwnerPaymentMethodsOut(BaseModel):
+    """What this outlet accepts, and what it is permitted to accept."""
+    outlet_id: uuid.UUID
+    prepaid: bool
+    pay_at_pickup: bool
+    upi_manual: bool
+    #: PLATFORM permission for online payment, not an owner preference. False
+    #: means the owner app renders the Cashfree toggle locked with a reason
+    #: rather than a switch that flips back.
+    cashfree_unlocked: bool
+    upi_vpa: Optional[str] = None
+    upi_payee_name: Optional[str] = None
+    #: Derived from upi_attested_at, so the client has a boolean for its
+    #: checkbox rather than having to interpret a timestamp.
+    upi_attested: bool = False
+    updated_at: Optional[datetime] = None
+    #: What a customer would actually be offered right now — which is NOT just
+    #: the three flags, since prepaid also needs the unlock and a gateway.
+    effective_methods: list[str] = []
+
+
+class OwnerPaymentMethodsIn(BaseModel):
+    """The FULL desired state, not a delta.
+
+    All three flags are required for the same reason the admin route requires
+    both of its own: a partial update is how an outlet ends up accepting
+    nothing, and stating the end state makes the request unambiguous.
+    """
+    prepaid: bool
+    pay_at_pickup: bool
+    upi_manual: bool
+    #: Max length matches ck_outlets_upi_vpa_shape's own bound. The shape is
+    #: validated in the service so a bad value is a sentence, not a 422 the
+    #: owner app cannot render.
+    upi_vpa: Optional[str] = Field(None, max_length=320)
+    upi_payee_name: Optional[str] = Field(None, max_length=120)
+    #: "I sent myself Rs 1 using this UPI ID and received it."
+    #:
+    #: The only check that proves a VPA reaches the person who typed it. Sent
+    #: as a transient confirmation rather than stored state — the server
+    #: stamps upi_attested_at from it, and CHANGING THE VPA VOIDS IT, so an
+    #: owner editing their UPI ID must tick it again.
+    upi_attested: bool = False
 
 
 # ---------------------- Pay at pickup (migration 034) ------------------------
@@ -774,6 +865,20 @@ class CollectOrderOut(BaseModel):
     collected_payment_method: Optional[str] = None
     attempts_remaining: Optional[int] = None
     locked: Optional[bool] = None
+
+
+class ClaimPaidOut(BaseModel):
+    """Result of the customer tapping "I've paid" (035).
+
+    `claimed` is the state, `already` distinguishes the second tap of a
+    double-tap from the first — the same shape AlertAckOut uses, and for the
+    same reason: a repeat is normal, not an error.
+    """
+    order_id: uuid.UUID
+    claimed: bool
+    already: bool = False
+    payment_claimed_at: Optional[datetime] = None
+    status: Optional[str] = None
 
 
 class NoShowOut(BaseModel):
@@ -873,6 +978,18 @@ class RejectOrderIn(BaseModel):
     #:
     #: Ignored for a prepaid order, which has no call to have failed.
     unreachable: bool = False
+    #: Direct UPI only (035): WHICH kind of no this is.
+    #:
+    #:   not_received — the money is not in the restaurant's UPI app. The
+    #:       customer claimed a payment that did not happen: their strike,
+    #:       nothing owed.
+    #:   cannot_make  — the money IS there and the kitchen cannot cook it. The
+    #:       restaurant owes it back directly, UPI to UPI.
+    #:
+    #: A closed set rather than free text, because the server branches on it
+    #: and matching prose a staff member typed would be the wrong way to decide
+    #: who is owed money. Ignored unless the order is a claimed UPI order.
+    upi_outcome: Optional[Literal["not_received", "cannot_make"]] = None
 
 
 class RejectOrderOut(BaseModel):

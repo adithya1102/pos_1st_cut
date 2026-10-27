@@ -260,13 +260,38 @@ class AcceptanceService:
         # lookup-pickup does it: "exists but is not yours" is information about
         # another outlet's orders.
         row = (await db.execute(text("""
-            SELECT acceptance_state, status, payment_mode, pickup_code
+            SELECT acceptance_state, status, payment_mode, pickup_code,
+                   payment_claimed_at
               FROM customer_orders
              WHERE id = :id AND outlet_id = :oid
         """), {"id": str(order_id), "oid": str(outlet_id)})).first()
         if row is None:
             raise HTTPException(status_code=404, detail="Order not found for this outlet")
         pay_at_pickup = (row[2] or "") == "PAY_AT_PICKUP"
+        upi_manual = (row[2] or "") == "UPI_MANUAL"
+
+        # DIRECT UPI: THE ACCEPT TAP IS THE PAYMENT CONFIRMATION (035).
+        #
+        # It cannot happen before the customer has claimed to have paid —
+        # there would be nothing for staff to have checked. The claim is also
+        # what opened this acceptance window in the first place, so reaching
+        # here without one means the order is in AWAITING for some other
+        # reason, which should not be possible; refused rather than assumed.
+        #
+        # This is the single most load-bearing tap in the direct-UPI flow:
+        # what the staff member is asserting is "I looked at my own UPI app and
+        # the exact amount is there". The owner app puts that sentence on the
+        # confirm dialog for the same reason.
+        if upi_manual and row[4] is None:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "PAYMENT_NOT_CLAIMED",
+                    "message": (
+                        "The customer has not said they have paid yet. Wait "
+                        "for them, or reject the order."
+                    ),
+                })
 
         # COMPARE-AND-SET. This is the race winner-picker: two devices tapping
         # Accept, or an Accept arriving as the sweeper expires the order, all
@@ -329,6 +354,35 @@ class AcceptanceService:
         # 032 already established that a code must not reach the customer
         # before the restaurant has agreed to make the food. The prepaid path
         # is untouched — there the code is still minted by mark_paid.
+        # DIRECT UPI: RECORD THE MONEY, IN THIS TRANSACTION (035).
+        #
+        # One transaction with the ACCEPTED transition and the pickup code, so
+        # there is no instant at which the order is accepted but the payment is
+        # not recorded (or the reverse). Stock was already COMMITTED at the
+        # claim, so there is nothing to do for it here.
+        #
+        # record_pickup_payment is reused verbatim — the same function the
+        # pay-at-pickup counter handover uses. Both are "a human confirmed
+        # money arrived outside the gateway", and it deliberately does not
+        # touch `status`, which is what lets it be called from two places that
+        # move the status differently (RECEIVED here, COMPLETED there).
+        if upi_manual:
+            from app.modules.carevo_customer.service import CarevoService as _Svc
+            from app.modules.carevo_customer.model import CustomerOrder
+            from sqlalchemy import select as _select
+
+            order_obj = (await db.execute(
+                _select(CustomerOrder).where(CustomerOrder.id == order_id)
+            )).scalars().first()
+            await _Svc.record_pickup_payment(
+                db, order_obj, method="upi", actor_user_id=actor_user_id,
+                at_counter=False)
+
+            if not (row[3] or "").strip():
+                target = SimpleNamespace(
+                    id=order_id, outlet_id=outlet_id, pickup_code=None)
+                await _Svc._assign_pickup_code(db, target)
+
         if pay_at_pickup:
             from app.modules.carevo_customer.stock import StockService
             await StockService.commit_for_order(db, order_id)
@@ -600,6 +654,36 @@ class AcceptanceService:
                     "check what advanced it without an accept.",
                     r.id, r.status)
             return False
+
+        # DIRECT UPI, ALREADY CLAIMED: THE RESTAURANT OWES THE MONEY BACK.
+        #
+        # The customer said they had sent it and nobody at the restaurant ever
+        # looked. By the time the deadline passes the money may well be sitting
+        # in their UPI app, so the safe reading — and the only one that is fair
+        # to the customer — is that a refund is due.
+        #
+        # manual_refund_due, never refund_required: CareVo was not in the
+        # payment path and cannot reverse it, so it must not enter the gateway
+        # refund queue. Set in a separate statement from the CAS above, which
+        # has already settled the transition and is what makes this reachable
+        # exactly once.
+        claimed = await db.scalar(text(
+            "SELECT payment_claimed_at FROM customer_orders "
+            " WHERE id = :id AND payment_mode = 'UPI_MANUAL'"),
+            {"id": str(r.id)})
+        if claimed is not None:
+            await db.execute(text("""
+                UPDATE customer_orders
+                   SET manual_refund_due = true,
+                       manual_refund_reason = :r
+                 WHERE id = :id AND NOT manual_refund_due
+            """), {"r": "acceptance_expired_after_payment_claim",
+                   "id": str(r.id)})
+            await pe.write_event(
+                db, r.id, pe.MANUAL_REFUND_DUE,
+                actor_type="system", source="system", outlet_id=r.outlet_id,
+                payload={"reason": "acceptance_expired_after_payment_claim"},
+            )
 
         await pe.write_event(
             db, r.id, pe.ORDER_EXPIRED,

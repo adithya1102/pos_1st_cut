@@ -452,4 +452,9 @@ async def set_outlet_payment_methods(
     """
     return await AdminService.set_payment_methods(
         db, outlet_id,
-        prepaid=payload.prepaid, pay_at_pickup=payload.pay_at_pickup)
+        prepaid=payload.prepaid, pay_at_pickup=payload.pay_at_pickup,
+        # Both optional (035); omitted leaves them unchanged.
+        # cashfree_unlocked is the PLATFORM lock and is admin-only — the
+        # owner-facing route reads it and can never write it.
+        upi_manual=payload.upi_manual,
+        cashfree_unlocked=payload.cashfree_unlocked)

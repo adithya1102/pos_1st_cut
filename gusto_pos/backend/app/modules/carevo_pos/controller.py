@@ -13,6 +13,7 @@ from app.core.database import get_db
 from app.modules.carevo_customer import schema as s
 from app.modules.carevo_customer.deps import get_current_staff
 from app.modules.carevo_customer.service import CarevoService
+from app.modules.carevo_pos.deps import get_outlet_manager
 from app.modules.users.model import User
 
 router = APIRouter(prefix="/pos", tags=["Gusto Skip — POS"])
@@ -77,6 +78,51 @@ async def get_outlet(
     db: AsyncSession = Depends(get_db),
 ):
     return await CarevoService.get_owner_outlet(db, _require_outlet(staff))
+
+
+# ------------- Owner self-serve payment settings (migration 035) ------------
+@router.get("/outlet/payment-methods", response_model=s.OwnerPaymentMethodsOut)
+async def get_outlet_payment_methods(
+    staff: User = Depends(get_outlet_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """What this outlet accepts, and what it is permitted to accept.
+
+    OWNER / MANAGER only — see carevo_pos/deps.py for the role model and for
+    why a role-less account (which is what register_owner produces, and so what
+    every real owner has) is allowed while a waiter or kitchen account is not.
+
+    Returns cashfree_unlocked so the app can draw the Cashfree toggle as locked
+    with a reason rather than as a switch that flips back.
+    """
+    return await CarevoService.get_owner_payment_methods(
+        db, _require_outlet(staff))
+
+
+@router.patch("/outlet/payment-methods", response_model=s.OwnerPaymentMethodsOut)
+async def set_outlet_payment_methods(
+    payload: s.OwnerPaymentMethodsIn,
+    staff: User = Depends(get_outlet_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """The owner changes how their restaurant takes money.
+
+    Scoped to the caller's own outlet via _require_outlet — there is no
+    outlet_id parameter — so one restaurant cannot reconfigure another's.
+
+    Four rules, each a refusal with a readable message rather than a silent
+    correction (see set_owner_payment_methods):
+
+      * at least one method must be on                       -> 422
+      * prepaid needs the platform unlock                    -> 409
+      * UPI needs a VPA, a payee name and an attestation      -> 422
+      * changing the VPA voids the attestation and turns UPI off until it is
+        re-attested — because the old proof was about the old string, and a
+        one-character typo inheriting it would send a customer's money to a
+        stranger with CareVo not in the path to recover it.
+    """
+    return await CarevoService.set_owner_payment_methods(
+        db, _require_outlet(staff), payload, actor_user_id=staff.id)
 
 
 @router.patch("/outlet/image", response_model=s.OwnerOutletOut)
@@ -306,6 +352,11 @@ async def reject_order(
         # this", and the server records the difference on call_state and in its
         # own event. Inert for a prepaid order.
         unreachable=bool(payload.unreachable) if payload else False,
+        # 035: for a CLAIMED direct-UPI order, which kind of no this is —
+        # 'not_received' (the customer's strike, nothing owed) or
+        # 'cannot_make' (the restaurant owes the money back directly). Inert
+        # for every other mode and for an unclaimed order.
+        upi_outcome=(payload.upi_outcome if payload else None),
     )
 
 

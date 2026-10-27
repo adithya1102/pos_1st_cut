@@ -382,6 +382,28 @@ async def picked_up(
     return await CarevoService.record_picked_up(db, order_id, customer)
 
 
+@router.post("/orders/{order_id}/claim-paid", response_model=s.ClaimPaidOut)
+async def claim_paid(
+    order_id: uuid.UUID,
+    customer: Customer = Depends(get_current_customer),
+    db: AsyncSession = Depends(get_db),
+):
+    """"I've paid" for a direct-UPI order (migration 035).
+
+    THIS DOES NOT CONFIRM A PAYMENT. It records that the customer says they
+    sent money to the restaurant's VPA — payment_status stays PENDING until a
+    human at the restaurant checks their own UPI app and taps Accept, which is
+    the only evidence that exists outside the gateway.
+
+    Scoped to the order's own customer (get_order enforces it), idempotent via
+    compare-and-set on payment_claimed_at IS NULL, and allowed only while the
+    order is CREATED and inside the pay window. It commits the stock hold and
+    opens the acceptance window, so from here a restaurant that never looks
+    cannot leave the customer waiting indefinitely.
+    """
+    return await CarevoService.claim_upi_payment(db, order_id, customer)
+
+
 @router.get("/orders/{order_id}", response_model=s.OrderOut)
 async def get_order(
     order_id: uuid.UUID,
@@ -405,7 +427,8 @@ async def get_order(
     # customer's own details and they already know them; the only reader that
     # needs them is the receiving outlet, through the staff-authed owner queue.
     sched = (await db.execute(text(
-        "SELECT requested_pickup_at, release_at, payment_mode, call_state "
+        "SELECT requested_pickup_at, release_at, payment_mode, call_state, "
+        "       payment_claimed_at, manual_refund_due, manual_refund_reason "
         "FROM customer_orders WHERE id = :o"
     ), {"o": str(order_id)})).first()
     # total_amount is what was charged; the discount is stored alongside it
@@ -446,6 +469,19 @@ async def get_order(
             else 0
         ),
         "call_state": sched.call_state if sched else None,
+        # Direct UPI (035). upi_payment is present only while the order is
+        # genuinely awaiting money, so the pay screen can be rebuilt after the
+        # app is killed — and disappears once accepted, which is what stops a
+        # paid order still offering a Pay button.
+        "payment_claimed_at": sched.payment_claimed_at if sched else None,
+        "manual_refund_due": bool(sched.manual_refund_due) if sched else False,
+        "manual_refund_reason": sched.manual_refund_reason if sched else None,
+        "upi_payment": (
+            await CarevoService.upi_payment_for_order(db, order)
+            if (sched and sched.payment_mode == "UPI_MANUAL"
+                and (order.payment_status or "").upper() != "PAID")
+            else None
+        ),
         "items": [
             {
                 "id": it.id,

@@ -394,6 +394,14 @@ class PaymentMethodsIn(BaseModel):
     """
     prepaid: bool
     pay_at_pickup: bool
+    #: Direct UPI (035). Optional so an existing admin caller that predates it
+    #: keeps working unchanged — omitted means "leave as it is", not "off".
+    upi_manual: Optional[bool] = None
+    #: PLATFORM permission for online payment (035), and the one field here
+    #: that is NOT an owner preference. Only an admin may set it; the
+    #: owner-facing route reads it and can never write it. Omitted leaves it
+    #: unchanged.
+    cashfree_unlocked: Optional[bool] = None
 
     @model_validator(mode="after")
     def _at_least_one(self):
@@ -403,10 +411,13 @@ class PaymentMethodsIn(BaseModel):
         cannot be bypassed, and this is the thing that produces a message an
         admin can read. A 422 here beats a 500 from an IntegrityError.
         """
-        if not self.prepaid and not self.pay_at_pickup:
+        # upi_manual counts toward the floor when it is stated (035), matching
+        # the DB CHECK this mirrors. Omitted means "leave it as it is", so it
+        # cannot be relied on to satisfy the floor and is not counted then.
+        if not self.prepaid and not self.pay_at_pickup and not self.upi_manual:
             raise ValueError(
                 "An outlet must accept at least one payment method — "
-                "enable prepaid, pay at pickup, or both."
+                "enable prepaid, pay at pickup, or UPI."
             )
         return self
 
@@ -415,8 +426,11 @@ class PaymentMethodsOut(BaseModel):
     outlet_id: uuid.UUID
     payment_prepaid_enabled: bool
     payment_pay_at_pickup_enabled: bool
+    #: 035, additive.
+    payment_upi_manual_enabled: bool = False
+    cashfree_unlocked: bool = True
     #: What a customer would actually be offered right now, which is NOT just
-    #: the two flags: prepaid additionally needs a usable gateway. Echoed so an
-    #: admin who has just enabled prepaid on a deployment with no gateway can
-    #: see that it is still not on offer.
+    #: the flags: prepaid additionally needs the platform unlock AND a usable
+    #: gateway. Echoed so an admin who has just enabled prepaid on a locked
+    #: outlet or a gateway-less deployment can see it is still not on offer.
     effective_methods: list[str] = []

@@ -131,6 +131,31 @@ PAYMENT_COLLECTED = "PAYMENT_COLLECTED"
 # customers.no_show_count and the others do not.
 ORDER_NO_SHOW = "ORDER_NO_SHOW"
 
+# --- direct UPI (migration 035) ----------------------------------------------
+# The CUSTOMER asserted they have sent the money to the restaurant's VPA.
+#
+# An assertion, not a payment, and the distinction is the whole design: nothing
+# verifies it until a human reads their own UPI app and taps Accept. ORDER_PAID
+# is written at THAT point, not here, so "when was this order paid" keeps
+# meaning the same thing it means on every other path.
+PAYMENT_CLAIMED = "PAYMENT_CLAIMED"
+
+# The restaurant reported that the claimed money never arrived.
+#
+# Distinct from ORDER_REJECTED, which is the restaurant declining work it could
+# have done. Here it is willing and the payment is absent, so the customer —
+# not the outlet — is the party the event is about: it increments
+# customers.false_claim_count and nothing else does.
+PAYMENT_NOT_RECEIVED = "PAYMENT_NOT_RECEIVED"
+
+# The RESTAURANT owes this customer money directly, UPI to UPI.
+#
+# Deliberately NOT ORDER_REFUND_MARKED, which is an admin recording that a
+# GATEWAY refund has been settled and is read by /admin/orders/refund-due.
+# CareVo was never in the path of a direct-UPI payment and cannot refund it, so
+# the two must not share an event any more than they share a queue.
+MANUAL_REFUND_DUE = "MANUAL_REFUND_DUE"
+
 # actor_type ∈ {customer, staff, system}; source ∈ {tap, geofence, system, inferred}
 
 
