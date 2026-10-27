@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    String, ForeignKey, DECIMAL, Integer, Boolean, DateTime, Text,
+    String, ForeignKey, DECIMAL, Integer, Boolean, DateTime, Text, text,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -93,8 +93,31 @@ class CustomerOrder(Base):
     # refund_required is the queryable form of "a human owes this customer
     # money". It is NOT a gateway integration — nothing in this repository
     # calls a Cashfree refund API — and clearing it is an explicit admin act.
+    # server_default MATTERS, and not for the ORM's sake — it is what makes the
+    # TEST schema match prod.
+    #
+    # `default=False` is a PYTHON-side default: SQLAlchemy fills it on an ORM
+    # insert and emits no DEFAULT in DDL. On prod that was invisible, because
+    # migration 032 ran as a real ALTER on a populated table and carried its own
+    # `NOT NULL DEFAULT false`. On the test database it is not invisible at all:
+    # bootstrap_test_db.py runs Base.metadata.create_all FIRST and the raw
+    # migrations after it (bootstrap_test_db.py:95-116), so create_all creates
+    # this column as `boolean NOT NULL` with no default, and 032's
+    # `ADD COLUMN IF NOT EXISTS ... DEFAULT false` is then a no-op — IF NOT
+    # EXISTS skips the whole column clause, DEFAULT included.
+    #
+    # The consequence was seven failures in test_api_testing_actions.py: its
+    # _insert_order helper writes customer_orders with a raw INSERT and omits
+    # this column, which prod accepts and the test DB rejected with
+    # NotNullViolationError. That helper already documents the same wrinkle for
+    # failed_attempts/is_locked; this column arrived later with 032 and was
+    # never added to it.
+    #
+    # Fixed here rather than in the test, so every FUTURE raw INSERT behaves the
+    # same way against both schemas. Nothing else about the column changes:
+    # same type, same nullability, same Python default.
     refund_required: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False
+        Boolean, nullable=False, default=False, server_default=text("false")
     )
     refund_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     refund_flagged_at: Mapped[datetime | None] = mapped_column(
@@ -118,7 +141,12 @@ class CustomerOrder(Base):
         Integer, nullable=True
     )
     # Persisted rather than in-memory so the alert ladder survives a redeploy.
-    alert_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # server_default for the same reason as refund_required above — this is the
+    # other 032 column create_all leaves without one, and it is the next thing
+    # _insert_order would have failed on.
+    alert_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
     last_alert_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
