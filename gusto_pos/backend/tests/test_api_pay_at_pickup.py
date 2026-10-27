@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import text
@@ -830,8 +832,15 @@ class TestNoShow:
         assert strikes == 1
 
         assert "ORDER_NO_SHOW" in [e[0] for e in await _events(db, ready["id"])]
-        # Per the brief: committed units come back on a no-show.
-        assert await _stock_states(db, ready["id"]) == ["RELEASED"]
+        # STOCK STAYS SPENT. The food was cooked and wasted, so the units are
+        # genuinely gone — and stock_remaining is the customer-facing
+        # availability gate, so returning them would offer the next customer
+        # portions the kitchen does not have. Matches the TTL path exactly.
+        assert await _stock_states(db, ready["id"]) == ["COMMITTED"]
+        left = await db.scalar(text(
+            "SELECT stock_remaining FROM menu_items WHERE id = :i"),
+            {"i": seed["menu_item_id"]})
+        assert left == 8, "the two portions stay consumed"
 
     async def test_no_show_is_refused_before_the_food_is_made(
             self, client, db, seed):
@@ -1251,3 +1260,437 @@ class TestPrepaidRegression:
         b = await _place_ok(client, seed, method=PAY_PREPAID)
         ra, rb = await _order_row(db, a["id"]), await _order_row(db, b["id"])
         assert ra.payment_mode == rb.payment_mode == "PREPAID"
+
+
+# =========== 17. the accept gate on advance (review BLOCKER 1) ==============
+
+class TestAdvanceRequiresAccept:
+    """advance_status maps CREATED straight to RECEIVED and, with an explicit
+    target, never looked at the current status. For a pay-at-pickup order that
+    made the Accept step skippable — and skipping it produced an order with no
+    pickup code (so it could never be collected or paid), stock that stayed
+    HELD (so the sweeper reclaimed it mid-cook), and an acceptance deadline
+    still running (so the sweeper then cancelled food being made)."""
+
+    @pytest.fixture
+    async def placed(self, client, db, seed):
+        await _set_methods(db, seed["outlet_id"], prepaid=False, pickup=True)
+        await db.execute(text(
+            "UPDATE menu_items SET stock_remaining = 10 WHERE id = :i"),
+            {"i": seed["menu_item_id"]})
+        await db.commit()
+        return await _place_ok(client, seed)
+
+    async def test_advance_without_accept_409s_and_changes_nothing(
+            self, client, db, seed, placed):
+        before = await _order_row(db, placed["id"])
+
+        r = await _advance(client, seed, placed["id"], "RECEIVED")
+        assert r.status_code == 409, r.text
+        detail = r.json()["detail"]
+        assert detail["error"] == "NOT_ACCEPTED"
+        assert detail["acceptance_state"] == AWAITING
+        assert "accept" in detail["message"].lower()
+
+        after = await _order_row(db, placed["id"])
+        assert after.status == before.status == "CREATED"
+        assert after.acceptance_state == AWAITING
+        assert after.pickup_code is None
+        assert await _stock_states(db, placed["id"]) == ["HELD"]
+
+    @pytest.mark.parametrize("target", ["RECEIVED", "PREPARING", "READY"])
+    async def test_every_explicit_target_is_refused(
+            self, client, db, seed, placed, target):
+        r = await _advance(client, seed, placed["id"], target)
+        assert r.status_code == 409, r.text
+        assert (await _order_row(db, placed["id"])).status == "CREATED"
+
+    async def test_implicit_advance_is_refused_too(self, client, db, seed, placed):
+        """No target at all — the branch that maps CREATED to RECEIVED."""
+        r = await client.post(
+            f"{API}/customer/orders/{placed['id']}/advance",
+            headers=seed["owner_auth"], json={})
+        assert r.status_code == 409, r.text
+        assert (await _order_row(db, placed["id"])).status == "CREATED"
+
+    async def test_the_exact_review_repro_now_ends_safe(
+            self, client, db, seed, placed):
+        """The reproduction from the review, step for step.
+
+        Before the fix this ended: status=CANCELLED, acceptance=EXPIRED,
+        pickup_code=None, stock=RELEASED — an order that was cooked, could
+        never be collected, and was cancelled by a background sweep.
+        """
+        assert (await _advance(client, seed, placed["id"], "RECEIVED")
+                ).status_code == 409
+        assert (await _advance(client, seed, placed["id"], "READY")
+                ).status_code == 409
+
+        c = await client.post(f"{API}/pos/orders/{placed['id']}/collect",
+                              headers=seed["owner_auth"],
+                              json={"pickup_code": "123456", "method": "cash"})
+        assert c.status_code in (200, 409)
+
+        await db.execute(text(
+            "UPDATE customer_orders SET acceptance_deadline_at = "
+            "now() - interval '1 minute' WHERE id = :i"), {"i": placed["id"]})
+        await db.commit()
+        await AcceptanceService.process_acceptance_deadlines(
+            db, order_id=placed["id"])
+
+        row = await _order_row(db, placed["id"])
+        # The order expires — correctly, nobody accepted it — but it never
+        # reached the kitchen, so no work and no food were destroyed.
+        assert row.status in ("CREATED", "CANCELLED")
+        assert row.payment_status == "PENDING"
+        assert row.refund_required is False, "nothing was ever charged"
+        assert row.pickup_code is None
+
+    async def test_an_accepted_order_still_advances(self, client, db, seed, placed):
+        """The guard must not break the real flow."""
+        a = await _accept(client, seed, placed["id"])
+        assert a.status_code == 200, a.text
+
+        for target in ("PREPARING", "READY"):
+            r = await _advance(client, seed, placed["id"], target)
+            assert r.status_code == 200, r.text
+        row = await _order_row(db, placed["id"])
+        assert row.status == "READY"
+        assert row.pickup_code, "minted at accept"
+        assert await _stock_states(db, placed["id"]) == ["COMMITTED"]
+
+    @pytest.mark.parametrize("state", ["REJECTED", "EXPIRED"])
+    async def test_a_settled_order_cannot_advance(
+            self, client, db, seed, placed, state):
+        """ACCEPTED is the gate, not merely not-AWAITING."""
+        await db.execute(text(
+            "UPDATE customer_orders SET acceptance_state = :s WHERE id = :i"),
+            {"s": state, "i": placed["id"]})
+        await db.commit()
+        r = await _advance(client, seed, placed["id"], "RECEIVED")
+        assert r.status_code == 409, r.text
+
+    async def test_prepaid_orders_advance_exactly_as_before(
+            self, client, db, seed, paid_order):
+        """The guard reads payment_mode, so a prepaid order never sees it."""
+        for target in ("RECEIVED", "PREPARING", "READY"):
+            r = await _advance(client, seed, paid_order["id"], target)
+            assert r.status_code == 200, r.text
+        assert (await _order_row(db, paid_order["id"])).status == "READY"
+
+
+# ========== 18. expiry cannot cancel food in progress (BLOCKER 1b) =========
+
+class TestExpiryCannotCancelWorkInProgress:
+    @pytest.mark.parametrize("status", ["PREPARING", "READY"])
+    async def test_expiry_refuses_an_order_being_made(
+            self, client, db, seed, status):
+        """Belt-and-braces for a state advance_status now prevents.
+
+        Forced directly, because the guard above is what makes it unreachable
+        through the API — and the point of this layer is that it would hold
+        even if that guard were removed again.
+        """
+        await _set_methods(db, seed["outlet_id"], prepaid=False, pickup=True)
+        order = await _place_ok(client, seed)
+        await db.execute(text(
+            "UPDATE customer_orders SET status = :s, "
+            "       acceptance_deadline_at = now() - interval '1 minute' "
+            " WHERE id = :i"), {"s": status, "i": order["id"]})
+        await db.commit()
+
+        res = await AcceptanceService.process_acceptance_deadlines(
+            db, order_id=order["id"])
+        assert res["expired"] == 0
+        # Skipped by the sweep selection as well, so it is not re-examined on
+        # every poll forever.
+        assert res["considered"] == 0
+
+        row = await _order_row(db, order["id"])
+        assert row.status == status, "work in progress must survive"
+        assert row.acceptance_state == AWAITING
+
+    async def test_the_cas_itself_refuses_even_when_selected(self, client, db, seed):
+        """Drive _expire_one directly, bypassing the sweep own filter."""
+        await _set_methods(db, seed["outlet_id"], prepaid=False, pickup=True)
+        order = await _place_ok(client, seed)
+        await db.execute(text(
+            "UPDATE customer_orders SET status = 'READY' WHERE id = :i"),
+            {"i": order["id"]})
+        await db.commit()
+        shim = SimpleNamespace(
+            id=uuid.UUID(order["id"]), outlet_id=uuid.UUID(seed["outlet_id"]),
+            status="READY", alert_count=0, acceptance_deadline_at=None)
+        assert await AcceptanceService._expire_one(db, shim) is False
+        assert (await _order_row(db, order["id"])).status == "READY"
+
+    async def test_an_awaiting_created_order_still_expires(
+            self, client, db, seed):
+        """The guard must not stop the case expiry exists for."""
+        await _set_methods(db, seed["outlet_id"], prepaid=False, pickup=True)
+        order = await _place_ok(client, seed)
+        await db.execute(text(
+            "UPDATE customer_orders SET acceptance_deadline_at = "
+            "now() - interval '1 minute' WHERE id = :i"), {"i": order["id"]})
+        await db.commit()
+        res = await AcceptanceService.process_acceptance_deadlines(
+            db, order_id=order["id"])
+        assert res["expired"] == 1
+        assert (await _order_row(db, order["id"])).status == "CANCELLED"
+
+
+# ============ 19. scheduled pickup is refused (review MAJOR 3) =============
+
+class TestSchedulingRefusedForPickupPayment:
+    async def test_requested_pickup_at_is_refused_and_writes_nothing(
+            self, client, db, seed):
+        await _set_methods(db, seed["outlet_id"], prepaid=False, pickup=True)
+        before = await db.scalar(text(
+            "SELECT count(*) FROM customer_orders WHERE outlet_id = :o"),
+            {"o": seed["outlet_id"]})
+
+        when = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+        r = await client.post(f"{API}/customer/orders",
+                              headers=seed["customer_auth"], json={
+            "outlet_id": seed["outlet_id"],
+            "items": [{"menu_item_id": seed["menu_item_id"], "quantity": 1}],
+            "payment_method": PAY_AT_PICKUP,
+            "requested_pickup_at": when,
+        })
+        assert r.status_code == 409, r.text
+        detail = r.json()["detail"]
+        assert detail["error"] == "SCHEDULING_UNAVAILABLE_FOR_PICKUP_PAYMENT"
+        assert detail["message"] == (
+            "Pay at pickup is available for orders collected as soon as they "
+            "are ready.")
+
+        after = await db.scalar(text(
+            "SELECT count(*) FROM customer_orders WHERE outlet_id = :o"),
+            {"o": seed["outlet_id"]})
+        assert after == before, "a refused order must leave NO row"
+
+    async def test_a_prepaid_scheduled_order_still_works(self, client, db, seed):
+        """The refusal is scoped to pay-at-pickup; 031 is untouched."""
+        await _set_methods(db, seed["outlet_id"], prepaid=True, pickup=True)
+        when = datetime.now(timezone.utc) + timedelta(hours=2)
+        r = await client.post(f"{API}/customer/orders",
+                              headers=seed["customer_auth"], json={
+            "outlet_id": seed["outlet_id"],
+            "items": [{"menu_item_id": seed["menu_item_id"], "quantity": 1}],
+            "payment_method": PAY_PREPAID,
+            "requested_pickup_at": when.isoformat(),
+        })
+        assert r.status_code == 200, r.text
+        stored = await db.scalar(text(
+            "SELECT requested_pickup_at FROM customer_orders WHERE id = :i"),
+            {"i": r.json()["id"]})
+        assert stored is not None, "the schedule is kept for a prepaid order"
+
+    async def test_asap_pay_at_pickup_is_unaffected(self, client, db, seed):
+        await _set_methods(db, seed["outlet_id"], prepaid=False, pickup=True)
+        order = await _place_ok(client, seed)
+        assert order["payment_mode"] == PAY_AT_PICKUP
+
+
+# ================ 20. minors 7, 8, 10, 11 from the review ==================
+
+class TestCollectRecordsAnOutletMiss:
+    """Minor 7: check_pickup_miss_limit was read but never incremented, so the
+    per-outlet cap could not trip from /collect however many codes were tried."""
+
+    async def test_wrong_code_counts_toward_the_outlet_cap(
+            self, client, db, seed, monkeypatch):
+        monkeypatch.setattr(settings, "PICKUP_MISS_LIMIT", 2)
+        await _set_methods(db, seed["outlet_id"], prepaid=False, pickup=True)
+        CarevoService.clear_pickup_misses(seed["outlet_id"])
+
+        order = await _place_ok(client, seed)
+        await _accept(client, seed, order["id"])
+        await _advance(client, seed, order["id"], "READY")
+
+        # check_pickup_miss_limit refuses once LIMIT misses are ALREADY
+        # recorded, so with a limit of 2 the first two attempts are answered
+        # and the third is capped. Before the fix nothing recorded a miss at
+        # all, so the third attempt was answered too — and so would the
+        # thousandth.
+        body = {"pickup_code": "000000", "method": "cash"}
+        for i in range(2):
+            r = await client.post(f"{API}/pos/orders/{order['id']}/collect",
+                                  headers=seed["owner_auth"], json=body)
+            assert r.status_code == 200, f"attempt {i + 1}: {r.text}"
+            assert r.json()["collected"] is False
+
+        capped = await client.post(f"{API}/pos/orders/{order['id']}/collect",
+                                   headers=seed["owner_auth"], json=body)
+        # Refused before the database is touched at all.
+        assert capped.status_code == 429, capped.text
+        assert capped.json()["detail"]["error"] == "too_many_pickup_attempts"
+        CarevoService.clear_pickup_misses(seed["outlet_id"])
+
+    async def test_a_right_code_clears_the_run(self, client, db, seed):
+        await _set_methods(db, seed["outlet_id"], prepaid=False, pickup=True)
+        CarevoService.clear_pickup_misses(seed["outlet_id"])
+        order = await _place_ok(client, seed)
+        await _accept(client, seed, order["id"])
+        await _advance(client, seed, order["id"], "READY")
+        code = (await _order_row(db, order["id"])).pickup_code
+
+        await client.post(f"{API}/pos/orders/{order['id']}/collect",
+                          headers=seed["owner_auth"],
+                          json={"pickup_code": "000000", "method": "cash"})
+        ok = await client.post(f"{API}/pos/orders/{order['id']}/collect",
+                               headers=seed["owner_auth"],
+                               json={"pickup_code": code, "method": "cash"})
+        assert ok.status_code == 200 and ok.json()["collected"] is True
+
+
+class TestMarkPaidIsInertForPickupOrders:
+    """Minor 10: mark_paid would have set status='PAID' on a READY order and
+    accrued points a second time at handover."""
+
+    async def test_a_signed_webhook_naming_a_pickup_order_does_nothing(
+            self, client, db, seed, monkeypatch):
+        from app.modules.carevo_payments import gateway as gw_mod
+
+        await _set_methods(db, seed["outlet_id"], prepaid=False, pickup=True)
+        order = await _place_ok(client, seed)
+        await _accept(client, seed, order["id"])
+        await _advance(client, seed, order["id"], "READY")
+        before = await _order_row(db, order["id"])
+
+        # A gateway that is LIVE and accepts the signature, so the webhook gets
+        # all the way to mark_paid. This is the only way the order id could
+        # ever arrive — nothing creates a gateway order for a pickup order.
+        monkeypatch.setattr(gw_mod.StubRazorpayGateway, "is_live", True)
+        monkeypatch.setattr(gw_mod.StubRazorpayGateway,
+                            "verify_webhook_signature",
+                            lambda self, body, sig, timestamp=None: True)
+
+        r = await client.post(
+            f"{API}/customer/payment/webhook",
+            headers={"x-razorpay-signature": "whatever"},
+            json={"event": "payment.captured",
+                  "payload": {"payment": {"entity": {
+                      "id": "pay_fake", "order_id": "order_fake",
+                      "method": "upi", "notes": {"receipt": order["id"]},
+                      "receipt": order["id"]}}}})
+        # The gateway must get a 2xx/4xx answer, never a 5xx that makes it
+        # retry forever.
+        assert r.status_code < 500, r.text
+
+        after = await _order_row(db, order["id"])
+        assert after.payment_status == "PENDING", "nothing was applied"
+        assert after.status == before.status == "READY", "not dragged backwards"
+        assert await _txns(db, order["id"]) == [], "no transaction row"
+        pts = await db.scalar(text(
+            "SELECT points_balance FROM customers WHERE id = :i"),
+            {"i": seed["customer_id"]})
+        assert float(pts) == 0, "no points accrued"
+
+    async def test_simulate_cannot_pay_a_pickup_order(self, client, db, seed):
+        """Same guard closes /payment/simulate on a stub deployment."""
+        await _set_methods(db, seed["outlet_id"], prepaid=False, pickup=True)
+        order = await _place_ok(client, seed)
+
+        r = await client.post(f"{API}/customer/payment/simulate",
+                              headers=seed["customer_auth"],
+                              json={"order_id": order["id"], "method": "upi"})
+        assert r.status_code == 200, r.text
+        row = await _order_row(db, order["id"])
+        assert row.payment_status == "PENDING", "a customer cannot self-pay"
+        assert row.status == "CREATED"
+        assert row.pickup_code is None
+
+    async def test_prepaid_mark_paid_is_untouched(self, client, db, seed):
+        order = await _place_ok(client, seed, method=None)
+        p = await client.post(f"{API}/customer/payment/simulate",
+                              headers=seed["customer_auth"],
+                              json={"order_id": order["id"], "method": "upi"})
+        assert p.status_code == 200, p.text
+        row = await _order_row(db, order["id"])
+        assert row.payment_status == "PAID"
+        assert row.pickup_code
+
+
+class TestNoShowAndTtlAgree:
+    """Minor 11: the same real-world event by tap and by clock must carry the
+    same consequence, or a customer avoids every strike by not being noticed."""
+
+    async def _ready_pickup_order(self, client, db, seed):
+        await _set_methods(db, seed["outlet_id"], prepaid=False, pickup=True)
+        await db.execute(text(
+            "UPDATE menu_items SET stock_remaining = 10 WHERE id = :i"),
+            {"i": seed["menu_item_id"]})
+        await db.commit()
+        order = await _place_ok(client, seed)
+        await _accept(client, seed, order["id"])
+        await _advance(client, seed, order["id"], "READY")
+        return order
+
+    async def test_the_tap_path(self, client, db, seed):
+        order = await self._ready_pickup_order(client, db, seed)
+        r = await client.post(f"{API}/pos/orders/{order['id']}/no-show",
+                              headers=seed["owner_auth"])
+        assert r.status_code == 200, r.text
+
+        row = await _order_row(db, order["id"])
+        assert row.status == "ABANDONED"
+        assert row.refund_required is False
+        assert await _stock_states(db, order["id"]) == ["COMMITTED"]
+        assert await db.scalar(text(
+            "SELECT no_show_count FROM customers WHERE id = :i"),
+            {"i": seed["customer_id"]}) == 1
+
+    async def test_the_clock_path_matches_it(self, client, db, seed):
+        order = await self._ready_pickup_order(client, db, seed)
+        # Age it past the pickup TTL.
+        await db.execute(text(
+            "UPDATE customer_orders SET updated_at = now() - "
+            "make_interval(mins => :t) - interval '1 minute' WHERE id = :i"),
+            {"t": settings.PICKUP_TTL_MINUTES, "i": order["id"]})
+        await db.commit()
+
+        n = await CarevoService._expire_stale_pickups(db, order_id=order["id"])
+        assert n == 1
+
+        row = await _order_row(db, order["id"])
+        assert row.status == "ABANDONED"
+        assert row.refund_required is False, "nothing was ever charged"
+        # IDENTICAL to the tap path on both counts.
+        assert await _stock_states(db, order["id"]) == ["COMMITTED"]
+        assert await db.scalar(text(
+            "SELECT no_show_count FROM customers WHERE id = :i"),
+            {"i": seed["customer_id"]}) == 1
+        assert "ORDER_NO_SHOW" in [e[0] for e in await _events(db, order["id"])]
+
+    async def test_a_ttl_abandoned_prepaid_order_takes_no_strike(
+            self, client, db, seed, paid_order):
+        """The strike is a pay-at-pickup concept; a prepaid customer who never
+        collects is owed a refund, not a penalty."""
+        await db.execute(text(
+            "UPDATE customer_orders SET updated_at = now() - "
+            "make_interval(mins => :t) - interval '1 minute' WHERE id = :i"),
+            {"t": settings.PICKUP_TTL_MINUTES, "i": paid_order["id"]})
+        await db.commit()
+        await CarevoService._expire_stale_pickups(db, order_id=paid_order["id"])
+
+        row = await _order_row(db, paid_order["id"])
+        assert row.status == "ABANDONED"
+        assert row.refund_required is True, "paid food never collected"
+        assert await db.scalar(text(
+            "SELECT no_show_count FROM customers WHERE id = :i"),
+            {"i": seed["customer_id"]}) == 0
+
+
+class TestPickupOrderLookupHoldsNoContact:
+    """Minor 8: the shared helper no longer selects the contact columns."""
+
+    async def test_the_helper_does_not_return_contact_fields(self, db, seed, client):
+        await _set_methods(db, seed["outlet_id"], prepaid=False, pickup=True)
+        order = await _place_ok(client, seed)
+        row = await CarevoService._pickup_order_or_404(
+            db, uuid.UUID(order["id"]), uuid.UUID(seed["outlet_id"]))
+        assert not hasattr(row, "contact_phone")
+        assert not hasattr(row, "contact_name")
+        # And the data is still on the row for the queue to read.
+        assert (await _order_row(db, order["id"])).contact_phone

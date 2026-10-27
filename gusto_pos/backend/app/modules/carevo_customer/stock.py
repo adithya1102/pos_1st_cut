@@ -190,44 +190,32 @@ class StockService:
         return res.rowcount or 0
 
     @staticmethod
-    async def release_for_order(
-        db: AsyncSession, order_id, *, reason: str,
-        include_committed: bool = False,
-    ) -> int:
+    async def release_for_order(db: AsyncSession, order_id, *, reason: str) -> int:
         """HELD -> RELEASED, returning the units. Caller's transaction.
 
-        By default ONLY touches HELD rows, which is what makes this idempotent
-        and safe to call from every terminal path (cancel, reject, acceptance
-        expiry, TTL abandon, payment failure) without any of them having to
-        know whether another already ran. A COMMITTED reservation is not
-        released by default — the food was made.
+        ONLY touches HELD rows, which is what makes this idempotent and safe to
+        call from every terminal path (cancel, reject, acceptance expiry, TTL
+        abandon, payment failure) without any of them having to know whether
+        another already ran. A COMMITTED reservation is never released by this
+        — the food was made.
 
-        `include_committed=True` also releases COMMITTED rows. Added for the
-        pay-at-pickup no-show path (migration 034) and used ONLY there, so
-        every existing caller behaves exactly as before.
-        !! WORTH A SECOND OPINION, AND DELIBERATELY FLAGGED RATHER THAN
-        !! SILENTLY CHOSEN. On a no-show the food WAS cooked and then wasted,
-        !! so the ingredients are physically gone — and `stock_remaining` is
-        !! the customer-facing availability gate, meaning units put back here
-        !! are offered to the next customer as though the kitchen still had
-        !! them. By that reading a no-show should NOT release, exactly like
-        !! every other post-accept outcome.
-        !!
-        !! It releases because the rollout brief asked for it explicitly, and
-        !! there is a coherent reading behind that: a restaurant that has just
-        !! eaten the cost of wasted food would rather keep selling the dish
-        !! than have its counter show "sold out" on top of the loss. Which
-        !! reading is right depends on whether stock_remaining means "portions
-        !! we can still make" or "portions not already promised", and that is
-        !! the founder's call. Flipping it is deleting the argument at the one
-        !! call site in mark_no_show.
+        That last sentence is the whole contract, and it now holds for the
+        pay-at-pickup no-show too. An `include_committed` flag was briefly
+        added for that path, on the reading that a restaurant eating the cost
+        of wasted food would rather keep selling the dish; it is gone. Two
+        things decided it: the units really are consumed (the food was cooked),
+        and `stock_remaining` is the customer-facing availability gate — so
+        returning them offers the next customer portions that do not exist.
+        The TTL sweeper, which is the same real-world event arriving by clock
+        rather than by tap, never released committed units either, and having
+        the two disagree made a dish's availability depend on which one got
+        there first.
         """
-        states = [HELD, COMMITTED] if include_committed else [HELD]
         rows = (await db.execute(text("""
             UPDATE stock_reservations SET state = :new, updated_at = now()
-             WHERE order_id = :oid AND state = ANY(:old)
+             WHERE order_id = :oid AND state = :old
             RETURNING menu_item_id, qty
-        """), {"new": RELEASED, "old": states, "oid": str(order_id)})).fetchall()
+        """), {"new": RELEASED, "old": HELD, "oid": str(order_id)})).fetchall()
         if not rows:
             return 0
 

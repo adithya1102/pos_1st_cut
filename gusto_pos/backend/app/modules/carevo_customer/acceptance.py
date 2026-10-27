@@ -56,6 +56,18 @@ ALERT_INTERVAL_S = 30
 #: Consecutive expiries before the outlet is auto-closed.
 EXPIRY_CLOSE_THRESHOLD = 3
 
+#: Statuses an acceptance expiry must NEVER cancel (migration 034).
+#:
+#: The deadline answers "did anybody agree to make this". Once the food IS
+#: being made that question is moot, and cancelling it would destroy work in
+#: progress — and, for a pay-at-pickup order, strand a customer who is already
+#: walking over. The CAS in _expire_one excludes these, and the sweep below
+#: skips them so a protected row is not re-examined on every poll forever.
+#:
+#: Both layers matter: the CAS is the thing that cannot be bypassed, the sweep
+#: filter is what stops it being hit.
+_EXPIRY_PROTECTED_STATUSES = ("PREPARING", "READY")
+
 
 def _utcnow() -> datetime:
     """AWARE UTC, matching model._utcnow.
@@ -443,6 +455,16 @@ class AcceptanceService:
         """
         clauses = ["acceptance_state = :st"]
         params: dict = {"st": AWAITING}
+        # Skip the statuses _expire_one is forbidden to cancel. Without this
+        # the sweep would re-select such a row on every poll, fail its CAS
+        # every time, and log the warning forever. The CAS guard is still the
+        # authority — this only stops it being pointlessly re-tested.
+        #
+        # Note the re-push ladder is skipped for these rows too, which is
+        # right: alerting staff to accept an order they are already cooking
+        # would be noise about a decision that has effectively been made.
+        clauses.append("upper(coalesce(status, '')) <> ALL(:protected)")
+        params["protected"] = list(_EXPIRY_PROTECTED_STATUSES)
         if outlet_id is not None:
             clauses.append("outlet_id = :oid")
             params["oid"] = str(outlet_id)
@@ -556,10 +578,27 @@ class AcceptanceService:
                                             THEN now() ELSE refund_flagged_at END,
                    updated_at = now()
              WHERE id = :id AND acceptance_state = :old
+               AND upper(coalesce(status, '')) <> ALL(:protected)
         """), {"new": EXPIRED, "old": AWAITING, "id": str(r.id),
-               "reason": "acceptance_expired"})
+               "reason": "acceptance_expired",
+               "protected": list(_EXPIRY_PROTECTED_STATUSES)})
         if res.rowcount != 1:
             await db.rollback()
+            # Distinguish the two ways the CAS can miss, because they mean
+            # opposite things. Another actor settling the acceptance axis first
+            # is the normal race this whole module is built around and is not
+            # worth a word. An order sitting in PREPARING/READY while still
+            # AWAITING is an INCONSISTENT state that should now be unreachable
+            # (advance_status refuses a pay-at-pickup order that is not
+            # ACCEPTED), so reaching it means something upstream regressed and
+            # it should be loud.
+            if (r.status or "").upper() in _EXPIRY_PROTECTED_STATUSES:
+                logger.warning(
+                    "acceptance expiry REFUSED for order %s: it is %s and "
+                    "still AWAITING. The food is being made, so cancelling it "
+                    "would be wrong — but this state should be unreachable; "
+                    "check what advanced it without an accept.",
+                    r.id, r.status)
             return False
 
         await pe.write_event(
