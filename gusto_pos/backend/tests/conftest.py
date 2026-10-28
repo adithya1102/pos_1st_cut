@@ -129,9 +129,20 @@ async def seed(db):
     # A REAL hash: passlib raises UnknownHashError on a malformed one, so a
     # placeholder would make the wrong-password test 500 instead of 401.
     pw_hash = get_password_hash("correct-horse")
+    # is_outlet_owner = true (migration 037), named EXPLICITLY.
+    #
+    # This account models the restaurant's real owner — the thing
+    # CarevoService.register_owner provisions — and after 037 that is a
+    # positive fact on the row rather than an inference from having no roles.
+    # The gate in carevo_pos/deps.py is now an ALLOW-list precisely because
+    # "role-less" was forgeable through the then-open /api/v1/users, so a
+    # fixture that left this false would be modelling an account the product
+    # deliberately refuses. See test_a_role_less_unflagged_account_is_refused
+    # for that case, which creates its own user rather than borrowing this one.
     await db.execute(text("""
-        INSERT INTO users (id, username, hashed_password, is_active, outlet_id, created_at)
-        VALUES (:i,:u,:h, true, :o, now())"""),
+        INSERT INTO users (id, username, hashed_password, is_active, outlet_id,
+                           is_outlet_owner, created_at)
+        VALUES (:i,:u,:h, true, :o, true, now())"""),
         {"i": str(owner_id), "u": f"owner_{tag}", "h": pw_hash, "o": str(outlet_id)})
     await db.execute(text("""
         INSERT INTO users (id, username, hashed_password, is_active, created_at)

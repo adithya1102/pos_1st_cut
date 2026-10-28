@@ -1,5 +1,7 @@
 import uuid
-from sqlalchemy import String, Boolean, ForeignKey, Table as SATable, Column
+from sqlalchemy import (
+    String, Boolean, ForeignKey, Table as SATable, Column, text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base
 
@@ -19,6 +21,25 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     outlet_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("outlets.id", ondelete="SET NULL"))
+
+    # A POSITIVE marker for "this account runs its outlet" (migration 037).
+    #
+    # MAPPED, unlike every other column added on this branch, because
+    # may_manage_outlet_settings reads it off the User the auth dependency has
+    # already loaded. Reading it with raw SQL would put an extra query on an
+    # authorisation path — and an authorisation check that can fail open if
+    # that query errors. The cost is that migration 037 must run BEFORE this
+    # code deploys.
+    #
+    # It replaces the old "has no roles, so must be the owner" inference, which
+    # a waiter could satisfy by minting a role-less account through the then-
+    # open /api/v1/users. server_default so a raw INSERT that omits it (every
+    # existing one, including register_owner's and the test fixtures') gets
+    # false rather than violating NOT NULL — the same wrinkle refund_required
+    # was fixed for in 7877ba42.
+    is_outlet_owner: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
 
     outlet = relationship("Outlet", back_populates="staff", lazy="selectin")
     roles = relationship("Role", secondary=user_roles_table, back_populates="users", lazy="selectin")

@@ -15,6 +15,22 @@ class UserService:
         return result.scalars().all()
 
     @staticmethod
+    async def get_users_for_outlet(db: AsyncSession, outlet_id):
+        """Staff at ONE outlet. Empty for an account with no outlet.
+
+        The scoped counterpart to get_all_users, which returned every staff
+        account at every restaurant to any authenticated staff member. An
+        account with no outlet_id gets an empty list rather than everything —
+        "unscoped" must not mean "unrestricted".
+        """
+        if outlet_id is None:
+            return []
+        result = await db.execute(
+            select(User).where(User.outlet_id == outlet_id)
+        )
+        return result.scalars().all()
+
+    @staticmethod
     async def get_user_by_id(db: AsyncSession, user_id: UUID):
         result = await db.execute(
             select(User).where(User.id == user_id)

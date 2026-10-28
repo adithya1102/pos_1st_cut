@@ -516,8 +516,10 @@ class TestPayWindow:
         assert row.refund_required is False
         assert row.manual_refund_due is False
         assert await _stock_states(db, order["id"]) == ["RELEASED"]
-        # And the cap is clear again.
-        assert await _place(client, seed) is not None
+        # And the cap is clear again — asserted on the STATUS, not on the
+        # response object being non-None, which it always is.
+        again = await _place(client, seed)
+        assert again.status_code == 200, again.text
 
     async def test_a_claimed_order_is_not_swept_by_the_pay_window(
             self, client, db, seed):

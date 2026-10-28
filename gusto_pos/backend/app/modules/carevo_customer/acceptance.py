@@ -381,7 +381,11 @@ class AcceptanceService:
             if not (row[3] or "").strip():
                 target = SimpleNamespace(
                     id=order_id, outlet_id=outlet_id, pickup_code=None)
-                await _Svc._assign_pickup_code(db, target)
+                # sweep=False: _expire_stale_pickups COMMITS, and this is
+                # mid-transaction holding the acceptance CAS, the stock
+                # write and (for UPI) the payment record. One commit, or
+                # an accepted order could end up paid with no code.
+                await _Svc._assign_pickup_code(db, target, sweep=False)
 
         if pay_at_pickup:
             from app.modules.carevo_customer.stock import StockService
@@ -399,7 +403,11 @@ class AcceptanceService:
                 # mint a code would be a wasted query.
                 target = SimpleNamespace(
                     id=order_id, outlet_id=outlet_id, pickup_code=None)
-                await _Svc._assign_pickup_code(db, target)
+                # sweep=False: _expire_stale_pickups COMMITS, and this is
+                # mid-transaction holding the acceptance CAS, the stock
+                # write and (for UPI) the payment record. One commit, or
+                # an accepted order could end up paid with no code.
+                await _Svc._assign_pickup_code(db, target, sweep=False)
 
         await db.commit()
 

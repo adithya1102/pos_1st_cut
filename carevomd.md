@@ -7964,3 +7964,52 @@ and the timestamp must stay offset-aware with no microseconds.
 - Nothing here was exercised against the real Cashfree sandbox. The floor is
   taken from a production error message rather than a doc this time, which is
   better evidence, but the first successful live order is still the proof.
+
+## 2026-10-29 — review fixes for 5d03ea83 (branch pay-at-pickup, local only)
+
+Fixed the six confirmed defects from the independent review of `5d03ea83`. Each
+is pinned by a test that was verified to FAIL with the fix reverted, not merely
+to pass with it.
+
+Migration **037** — `users.is_outlet_owner boolean NOT NULL DEFAULT false`.
+Applied to the local `carevo_test` DB only, twice, to prove it is idempotent.
+NOT applied to prod; no backfill (see the SQL below).
+
+1. **Privilege escalation (owner settings).** The gate was a deny-list that
+   refused WAITER and KITCHEN and allowed everyone else, including any
+   role-less account — justified by "only register_owner makes those". But
+   `/api/v1/users` was open to any logged-in staff member, so a waiter could
+   mint a role-less account and then rewrite `upi_vpa`, the VPA customers' UPI
+   payments land in, with CareVo not in the path to recover them. Now an
+   allow-list over OWNER/MANAGER/ADMIN plus the positive 037 marker, AND
+   `/api/v1/users` requires a manager, is outlet-scoped, refuses `role_ids` and
+   `outlet_id` to non-super-admins, and refuses self-edit of either for
+   everyone. Two independent fixes, so neither is load-bearing alone.
+2. **Direct UPI reached the Cashfree refund queue.** CareVo never touched that
+   payment, so an admin working `/admin/orders/refund-due` could not reverse
+   it. Fixed on both paths into the queue (staff reject, TTL sweep): the
+   gateway axis `refund_required` is now PREPAID-only; direct UPI sets
+   `manual_refund_due` instead, which is the restaurant's own obligation.
+3. **An expired claim had no resolution.** Expiry cancels with
+   `manual_refund_due = true` on purpose, which left a restaurant owing a
+   refund on money it never received. Added
+   `POST /api/v1/pos/orders/{id}/payment-not-received` — owner/manager only,
+   outlet-scoped (404 cross-outlet), idempotent, bounded to 7 days, refused on
+   a PAID or non-expired order, and it strikes the customer.
+4. **A partial PATCH erased saved fields.** A body carrying only the three
+   toggles — what the screen sends — wrote NULL over `upi_vpa`, and the CHECK
+   then forced UPI off: one unrelated edit silently stopped the restaurant
+   taking UPI. Now keyed on `model_fields_set`; an explicit null is a 422
+   rather than a clear.
+5. **Four smaller ones.** Accept no longer runs a committing sweep inside its
+   own transaction (payment and pickup code are all-or-nothing); the admin
+   payment-methods route has the empty-resolved-list floor the owner route
+   already had via CASHFREE_LOCKED; a customer's own order read sweeps their
+   own lapsed UPI orders, so an abandoned order at a closed shop no longer
+   locks them out of ordering anywhere; and four vacuous tests were tightened
+   (`assert status_code == 200` for `is not None`, a real cross-outlet case, a
+   positive assertion on a 200, and `IntegrityError` + constraint name for
+   three bare `pytest.raises(Exception)`).
+
+Suite: **1101 passed, 1 xfailed -> 1149 passed, 1 xfailed.** 48 new tests, no
+regressions. Nothing pushed, nothing deployed, prod DB untouched.

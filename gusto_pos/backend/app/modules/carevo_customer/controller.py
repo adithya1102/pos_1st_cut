@@ -410,6 +410,17 @@ async def get_order(
     customer: Customer = Depends(get_current_customer),
     db: AsyncSession = Depends(get_db),
 ):
+    # Sweep this customer's own lapsed direct-UPI orders on their own read
+    # (review fix). The global open-order cap otherwise waits for the OUTLET to
+    # poll, so a customer who abandoned a payment at a shop that has since
+    # closed stayed locked out of ordering anywhere. Best-effort: a sweep
+    # failure must not stop them seeing their order.
+    try:
+        await CarevoService.expire_unclaimed_upi_orders(
+            db, customer_id=customer.id)
+    except Exception:
+        await db.rollback()
+
     order = await CarevoService.get_order(db, order_id, customer)
     wait_estimate = await CarevoService.shadow_estimate(db, order_id)
     # Customer's own pickup-journey acks (migration 023), read from order_events.

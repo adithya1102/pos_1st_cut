@@ -16,7 +16,13 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     """Schema for creating a User."""
     password: str
-    role_ids: Optional[List[int]] = []
+    #: Default is None, not [], so OMITTED is distinguishable from EXPLICITLY
+    #: EMPTY. The controller treats both as privileged — granting roles is how
+    #: you escalate, and creating a ROLE-LESS account is what the old
+    #: owner-settings deny-list mistook for the restaurant's owner — but they
+    #: get different refusal messages, and a caller deserves to know which
+    #: rule it hit.
+    role_ids: Optional[List[int]] = None
 
 
 class UserUpdate(BaseModel):

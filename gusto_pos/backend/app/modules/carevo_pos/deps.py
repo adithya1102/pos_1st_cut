@@ -6,40 +6,52 @@ this adds one role check on top of the resulting User, in the same shape
 carevo_admin/deps.py adds the SUPER_ADMIN check.
 
 =============================================================================
-WHY THIS IS A DENY-LIST AND NOT THE ALLOW-LIST IT LOOKS LIKE IT SHOULD BE
+AN ALLOW-LIST. THE PREVIOUS DENY-LIST WAS A PRIVILEGE ESCALATION.
 =============================================================================
-The obvious implementation is "allow OWNER or MANAGER, refuse everyone else".
-That would lock every real restaurant owner out of their own settings screen,
-because in this schema an outlet's owner account has NO ROLE ROW AT ALL:
+Migration 035 shipped this gate as a DENY-LIST: it refused WAITER and KITCHEN
+by name and allowed everything else, INCLUDING AN ACCOUNT WITH NO ROLES AT
+ALL. The argument was that a role-less account could only have been produced
+by CarevoService.register_owner, so it had to be the outlet's own owner, and
+that this was "narrow".
 
-  * CarevoService.register_owner inserts into `users` naming only id, username,
-    hashed_password, is_active, outlet_id, email and created_at
-    (carevo_customer/service.py:4492-4498). No user_roles row is written.
-  * No migration backfills roles for outlet staff — 003_admin_dashboard.sql
-    only ever assigns SUPER_ADMIN, and does so by hand in a commented example.
-  * The test fixture reproduces production faithfully: conftest.py gives the
-    SUPER_ADMIN role to the admin user and leaves the owner user role-less.
+THAT ARGUMENT WAS WRONG AND THE CLAIM OF NARROWNESS IS WITHDRAWN. It rested on
+provenance the gate could not actually check, and the provenance was forgeable:
 
-So "holds the Owner role" is not a property real owners have. What IS reliably
-true is the other side: staff created through POST /staff DO get a role, mapped
-by StaffService._ROLE_MAP (staff/service.py:11) to Owner, Waiter or Kitchen.
-Waiters and kitchen staff are therefore identifiable by what they hold, and the
-owner is identifiable by holding nothing.
+  1. every route in /api/v1/users was staff-authed router-wide and had no
+     further check, so ANY staff account could reach POST and PUT there;
+  2. a waiter could therefore create a new account with `role_ids: []`;
+  3. that account is role-less;
+  4. the deny-list allowed it;
+  5. and it could rewrite the outlet's payment settings — including the UPI
+     VPA that customers' money is sent to.
 
-The gate is built on that asymmetry:
+Five steps, all of them inside one outlet, none of them requiring SUPER_ADMIN.
+"A role-less account can only have been created by register_owner" was simply
+not true while anybody could create one.
 
-  SUPER_ADMIN                      -> allow (acts across every outlet)
-  holds OWNER / MANAGER / ADMIN    -> allow (explicitly privileged)
-  holds WAITER or KITCHEN          -> 403   (the requirement this exists for)
-  holds no role at all             -> allow (the outlet's own owner account)
+Both halves are now closed. /api/v1/users is locked down (see
+users/controller.py for the rules and the caller audit behind them), and this
+gate no longer infers ownership from an ABSENCE. It requires one of three
+positive facts:
 
-The last line is the deviation and it is load-bearing: without it the feature
-cannot be used by anybody it was built for. It is also narrow — a role-less
-account can only have been created by register_owner or seeded by hand, both of
-which mean "this is the outlet", and it is still outlet-scoped by
-_require_outlet, so it can only ever change its OWN restaurant's settings.
+  SUPER_ADMIN                        -> allow (acts across every outlet)
+  role OWNER / MANAGER / ADMIN       -> allow (explicitly privileged)
+  users.is_outlet_owner = true       -> allow (migration 037; the restaurant's
+                                        own account, asserted deliberately)
+  anything else, including no roles  -> 403
 
-ROLE_NAMES ARE MATCHED CASE-INSENSITIVELY, matching is_super_admin and
+The cost is real and was accepted: an owner account created BEFORE migration
+037 has neither a role nor the flag, so it is refused until a human flags it
+with
+
+    UPDATE users SET is_outlet_owner = true WHERE username = '<username>';
+
+There is deliberately NO BACKFILL. Flipping the flag true for every role-less
+account would restore the exact hole this closes, because the role-less
+accounts are precisely the ones whose provenance is unknown. A support ticket
+per existing owner is the cheaper mistake.
+
+ROLE NAMES ARE MATCHED CASE-INSENSITIVELY, matching is_super_admin and
 _PIN_ADMIN_ROLES, because the seeded names are title-case ("Owner") while the
 constants everywhere else are upper.
 """
@@ -49,15 +61,11 @@ from app.modules.carevo_admin.deps import is_super_admin
 from app.modules.carevo_customer.deps import get_current_staff
 from app.modules.users.model import User
 
-#: Roles that may administer the outlet's own configuration. ADMIN is included
-#: because _ROLE_MAP turns a staff member created as "Admin" into "Owner", and
-#: _PIN_ADMIN_ROLES already treats the three as equivalent for the same reason.
+#: Roles that may administer their own outlet's configuration. ADMIN is
+#: included because StaffService._ROLE_MAP turns a staff member created as
+#: "Admin" into "Owner", and _PIN_ADMIN_ROLES already treats the three as
+#: equivalent for the same reason.
 OUTLET_ADMIN_ROLES = {"OWNER", "MANAGER", "ADMIN"}
-
-#: Roles that must NEVER reach payment settings. A waiter changing how the
-#: restaurant gets paid, or a kitchen tablet doing it by accident, is the
-#: specific thing this gate exists to prevent.
-OUTLET_STAFF_ROLES = {"WAITER", "KITCHEN"}
 
 
 def _role_names(user: User) -> set[str]:
@@ -66,17 +74,17 @@ def _role_names(user: User) -> set[str]:
 
 
 def may_manage_outlet_settings(user: User) -> bool:
-    """True when this staff account may change its outlet's configuration."""
+    """True when this staff account may change its outlet's configuration.
+
+    An ALLOW-LIST: every branch is a positive fact about the account. There is
+    no fall-through that grants access, so a new kind of account — however it
+    was created — is refused until somebody says otherwise.
+    """
     if is_super_admin(user):
         return True
-    names = _role_names(user)
-    if names & OUTLET_ADMIN_ROLES:
+    if bool(getattr(user, "is_outlet_owner", False)):
         return True
-    if names & OUTLET_STAFF_ROLES:
-        return False
-    # No role at all — the outlet's own owner account. See the module docstring
-    # for why this is an allow and not a refusal.
-    return not names
+    return bool(_role_names(user) & OUTLET_ADMIN_ROLES)
 
 
 async def get_outlet_manager(staff: User = Depends(get_current_staff)) -> User:
@@ -84,7 +92,7 @@ async def get_outlet_manager(staff: User = Depends(get_current_staff)) -> User:
 
     Deliberately does NOT resolve the outlet itself: every route using this
     still calls _require_outlet, so scoping stays in one place and this
-    dependency answers only the role question.
+    dependency answers only the "may you" question.
     """
     if not may_manage_outlet_settings(staff):
         raise HTTPException(

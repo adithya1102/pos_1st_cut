@@ -5,10 +5,11 @@ restaurant decides how it takes money, without going through CareVo.
 
 THE THREE ASSERTIONS THAT MATTER MOST
 -------------------------------------
-1. `TestRoleGate.test_a_role_less_owner_account_is_allowed` — in this schema an
-   outlet's owner account has NO role row (register_owner never writes one), so
-   a strict OWNER-or-MANAGER allow-list would lock every real owner out of their
-   own settings. This pins the deviation that makes the feature usable.
+1. `TestRoleGate` — the gate is an ALLOW-list over privileged roles plus the
+   positive `users.is_outlet_owner` marker (migration 037). It replaced a
+   deny-list that let any role-less account through, on the reasoning that only
+   register_owner creates role-less accounts; while /api/v1/users was open to
+   all staff, a waiter could mint one and reach the UPI VPA customers pay into.
 
 2. `TestVpaChangeVoidsAttestation` — the old attestation was about the old
    string. If a one-character typo inherited it, direct UPI would stay ON
@@ -24,6 +25,7 @@ import uuid
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from app.core.auth import create_access_token
 from app.core.security import get_password_hash
@@ -96,20 +98,64 @@ class TestRoleGate:
     name-matched case-insensitively — the same shape is_super_admin and
     _PIN_ADMIN_ROLES already use."""
 
-    async def test_a_role_less_owner_account_is_allowed(self, client, db, seed):
-        """THE DEVIATION, pinned.
+    async def test_a_role_less_unflagged_account_is_REFUSED(
+            self, client, db, seed):
+        """THE ESCALATION, closed.
 
-        CarevoService.register_owner inserts the owner's users row without any
-        user_roles row, and no migration backfills one — so every real outlet
-        owner is role-less. A strict allow-list would 403 all of them.
+        This used to be `test_a_role_less_owner_account_is_allowed` and it
+        asserted the opposite, on the argument that a role-less account could
+        only have come from register_owner. That argument was wrong: while
+        /api/v1/users was reachable by any staff account, a waiter could MINT a
+        role-less account and inherit the owner's settings — including the UPI
+        VPA customers' money is sent to.
+
+        The gate is now an allow-list, so an account with no role and no
+        is_outlet_owner flag is refused however it was created.
         """
+        who = await _staff_with_role(db, seed, None)
+        roles = await db.scalar(text(
+            "SELECT count(*) FROM user_roles WHERE user_id = :u"),
+            {"u": who["id"]})
+        assert roles == 0, "precondition: this account has no roles"
+        flagged = await db.scalar(text(
+            "SELECT is_outlet_owner FROM users WHERE id = :u"),
+            {"u": who["id"]})
+        assert flagged is False, "precondition: and no owner flag"
+
+        r = await client.get(SETTINGS, headers=who["auth"])
+        assert r.status_code == 403, r.text
+
+        w = await client.patch(SETTINGS, headers=who["auth"], json=_body())
+        assert w.status_code == 403, w.text
+
+    async def test_a_flagged_owner_is_allowed(self, client, db, seed):
+        """The replacement for the inference: a POSITIVE marker.
+
+        The seed's owner account carries is_outlet_owner = true, which is what
+        register_owner now writes for the accounts it provisions.
+        """
+        flagged = await db.scalar(text(
+            "SELECT is_outlet_owner FROM users WHERE id = :u"),
+            {"u": seed["owner_id"]})
+        assert flagged is True
         roles = await db.scalar(text(
             "SELECT count(*) FROM user_roles WHERE user_id = :u"),
             {"u": seed["owner_id"]})
-        assert roles == 0, "the fixture reproduces a real owner: no roles"
+        assert roles == 0, "allowed by the FLAG, not by a role"
 
         r = await client.get(SETTINGS, headers=seed["owner_auth"])
         assert r.status_code == 200, r.text
+
+    async def test_register_owner_sets_the_flag(self, db):
+        """The provisioning path must produce an account the gate accepts, or
+        every new restaurant is locked out of its own settings."""
+        src = open(
+            "app/modules/carevo_customer/service.py", encoding="utf-8").read()
+        start = src.index("async def register_owner")
+        body = src[start:start + 6000]
+        insert = body[body.index("INSERT INTO users"):]
+        assert "is_outlet_owner" in insert[:400], \
+            "register_owner must set is_outlet_owner on the account it creates"
 
     @pytest.mark.parametrize("role", ["Owner", "Manager", "Admin"])
     async def test_privileged_roles_are_allowed(self, client, db, seed, role):
@@ -199,6 +245,42 @@ class TestGetSettings:
         r = await client.get(SETTINGS, headers=seed["owner_auth"])
         assert r.json()["outlet_id"] == seed["outlet_id"]
 
+        # AND THE REAL TEST: an account at the OTHER outlet sees and changes
+        # only its own. The assertion above alone was near-vacuous — it proved
+        # the route returns the caller's outlet, which it could hardly fail to
+        # do when there is no outlet_id parameter to get wrong.
+        tag2 = uuid.uuid4().hex[:8]
+        other_uid = uuid.uuid4()
+        await db.execute(text("""
+            INSERT INTO users (id, username, hashed_password, is_active,
+                               outlet_id, is_outlet_owner, created_at)
+            VALUES (:i,:u,:h, true, :o, true, now())"""),
+            {"i": str(other_uid), "u": f"owner_b_{tag2}",
+             "h": get_password_hash("correct-horse"), "o": str(oid)})
+        await db.commit()
+        other_auth = {"Authorization":
+                      f"Bearer {create_access_token(subject=f'owner_b_{tag2}')}"}
+
+        # Reads its OWN outlet, never outlet A's.
+        rb = await client.get(SETTINGS, headers=other_auth)
+        assert rb.status_code == 200, rb.text
+        assert rb.json()["outlet_id"] == str(oid)
+        assert rb.json()["outlet_id"] != seed["outlet_id"]
+        # Outlet B was seeded prepaid=false/pickup=true, so the two genuinely
+        # differ — proving this is B's row and not A's echoed back.
+        assert rb.json()["pay_at_pickup"] is True
+        assert rb.json()["prepaid"] is False
+
+        # And a WRITE from B does not touch A.
+        before_a = await _outlet_row(db, seed["outlet_id"])
+        w = await client.patch(SETTINGS, headers=other_auth,
+                               json=_body(prepaid=False, pay_at_pickup=True,
+                                          upi_manual=False))
+        assert w.status_code == 200, w.text
+        assert w.json()["outlet_id"] == str(oid)
+        after_a = await _outlet_row(db, seed["outlet_id"])
+        assert tuple(after_a) == tuple(before_a), "outlet A must be untouched"
+
 
 # ========================= 3. the three validation rules =====================
 
@@ -212,19 +294,31 @@ class TestAtLeastOneMethod:
 
     async def test_the_database_refuses_it_too(self, db, seed):
         """The UI and the service are never the only enforcement point."""
-        with pytest.raises(Exception):
+        # IntegrityError and the CONSTRAINT NAME, not a bare Exception. A bare
+        # Exception passed on a SQL typo or a dropped connection too, so it
+        # could not tell "the check rejected this" from "the statement never
+        # ran" — and would have kept passing if the constraint were dropped.
+        with pytest.raises(IntegrityError) as exc:
             await db.execute(text("""
                 UPDATE outlets SET payment_prepaid_enabled = false,
                                    payment_pay_at_pickup_enabled = false,
                                    payment_upi_manual_enabled = false
                  WHERE id = :o"""), {"o": seed["outlet_id"]})
             await db.commit()
+        assert "ck_outlets_payment_method_any" in str(exc.value)
         await db.rollback()
 
     async def test_pay_at_pickup_alone_is_fine(self, client, db, seed):
         r = await client.patch(SETTINGS, headers=seed["owner_auth"],
                                json=_body(prepaid=False, pay_at_pickup=True))
         assert r.status_code == 200, r.text
+        # THE POSITIVE ASSERTION. A 200 alone does not prove the write landed;
+        # the route could have returned the old state unchanged.
+        assert r.json()["prepaid"] is False
+        assert r.json()["pay_at_pickup"] is True
+        row = await _outlet_row(db, seed["outlet_id"])
+        assert row[0] is False, "prepaid actually turned off in the row"
+        assert row[1] is True
         assert r.json()["pay_at_pickup"] is True
         assert r.json()["prepaid"] is False
 
@@ -318,21 +412,23 @@ class TestUpiValidation:
         assert r.json()["detail"]["error"] == "INVALID_UPI_ID"
 
     async def test_the_database_refuses_a_malformed_vpa_too(self, db, seed):
-        with pytest.raises(Exception):
+        with pytest.raises(IntegrityError) as exc:
             await db.execute(text(
                 "UPDATE outlets SET upi_vpa = 'nope' WHERE id = :o"),
                 {"o": seed["outlet_id"]})
             await db.commit()
+        assert "ck_outlets_upi_vpa_shape" in str(exc.value)
         await db.rollback()
 
     async def test_the_database_refuses_upi_on_without_details(self, db, seed):
         """ck_outlets_upi_manual_requires_vpa — the invariant that makes an
         order against an unattested VPA impossible."""
-        with pytest.raises(Exception):
+        with pytest.raises(IntegrityError) as exc:
             await db.execute(text(
                 "UPDATE outlets SET payment_upi_manual_enabled = true "
                 " WHERE id = :o"), {"o": seed["outlet_id"]})
             await db.commit()
+        assert "ck_outlets_upi_manual_requires_vpa" in str(exc.value)
         await db.rollback()
 
     async def test_the_happy_path_stamps_the_attestation(

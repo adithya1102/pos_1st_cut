@@ -414,6 +414,38 @@ async def collect_order(
         actor_user_id=staff.id)
 
 
+@router.post("/orders/{order_id}/payment-not-received",
+             response_model=s.PaymentNotReceivedOut)
+async def report_payment_not_received(
+    order_id: uuid.UUID,
+    staff: User = Depends(get_outlet_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """An expired direct-UPI claim's money never arrived (migration 035).
+
+    THE GAP THIS CLOSES. When a claim expires unanswered the order is
+    cancelled with manual_refund_due = true, deliberately: nobody looked, so an
+    honest customer whose money really left their account must not be stranded.
+    The cost is that a restaurant holding no payment is also holding a refund
+    obligation, with no way to say so. This is that way.
+
+    OWNER / MANAGER only — the same gate as the payment settings, because the
+    side effect is a penalty on a customer's account and a reversal of a
+    refund. Outlet-scoped via _require_outlet; a cross-outlet id is a 404.
+
+    Allowed ONLY on a CANCELLED direct-UPI order whose reason is
+    acceptance_expired_after_payment_claim, and only within 7 days. A
+    cannot_make cancellation is refused: there the restaurant said the money
+    WAS there, and letting one tap undo that would both cancel a refund it owes
+    and strike the customer for its own change of mind.
+
+    Idempotent, by compare-and-set on the reason — so a double-tap records one
+    strike, not two.
+    """
+    return await CarevoService.report_payment_not_received(
+        db, order_id, _require_outlet(staff), actor_user_id=staff.id)
+
+
 @router.post("/orders/{order_id}/no-show", response_model=s.NoShowOut)
 async def mark_no_show(
     order_id: uuid.UUID,

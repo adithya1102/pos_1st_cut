@@ -1234,6 +1234,33 @@ class CarevoService:
         return methods
 
     @staticmethod
+    async def _would_offer_anything(
+        db: AsyncSession, outlet_id, *, prepaid: bool, pickup: bool, upi: bool
+    ) -> bool:
+        """Would these flags leave a customer able to order at all?
+
+        Asks the RESOLVER rather than re-deriving its rule, so the check cannot
+        drift from the thing it is checking. The outlet's unlock and the
+        deployment's gateway are read from their real sources; only the three
+        flags are hypothetical.
+
+        No customer is passed, so this is the outlet's capability — which is
+        the right question for a settings save: a per-customer gate (a
+        no-show strike, an open order) must not stop an owner configuring their
+        restaurant.
+        """
+        if pickup or upi:
+            return True
+        if not prepaid:
+            return False
+        # Prepaid-only: it lands iff the platform permits it AND a gateway is
+        # selected on this deployment.
+        unlocked = await db.scalar(text(
+            "SELECT cashfree_unlocked FROM outlets WHERE id = :oid"),
+            {"oid": str(outlet_id)})
+        return bool(unlocked) and _gateway_can_charge()
+
+    @staticmethod
     async def _false_claim_count(db: AsyncSession, customer: Customer) -> int:
         """This customer's false-payment-claim strikes. Raw SQL — 035 unmapped."""
         n = await db.scalar(text(
@@ -1271,6 +1298,28 @@ class CarevoService:
         # BOTH non-gateway modes count toward the one cap (035). The exposure
         # is a person holding food they have not paid for, and which of the two
         # buttons they pressed makes no difference to that.
+        # SWEEP THIS CUSTOMER'S OWN LAPSED UPI ORDERS FIRST (review fix).
+        #
+        # The cap is global, so an abandoned direct-UPI order at outlet A
+        # blocked the same customer ordering at outlet B. The only thing that
+        # cancelled it was expire_unclaimed_upi_orders on outlet A's staff
+        # poll — so the customer was locked out until a restaurant they had
+        # walked away from happened to open its tablet. At a quiet outlet, or
+        # one closed for the night, that is indefinite.
+        #
+        # Swept per-CUSTOMER rather than per-outlet here, which is both the
+        # narrowest scope that fixes it and the one the caller already has.
+        # Best-effort: the cap must still be enforced if the sweep fails, so a
+        # failure here leaves the stricter answer rather than no answer.
+        try:
+            await CarevoService.expire_unclaimed_upi_orders(
+                db, customer_id=customer.id)
+        except Exception:
+            logger.warning(
+                "self-service UPI sweep failed for customer %s; the open-order "
+                "cap may hold a lapsed order", customer.id, exc_info=True)
+            await db.rollback()
+
         clauses = [
             "customer_id = :cid",
             "payment_mode = ANY(:modes)",
@@ -2369,13 +2418,29 @@ class CarevoService:
         # Conditional in SQL rather than in a second pass, so the flag can
         # never disagree with the status transition that caused it.
         rows = (await db.execute(text(
+            # AND payment_mode = 'PREPAID' on all three, for the same reason as
+            # reject_order: only a GATEWAY payment can enter the gateway refund
+            # queue. An accepted direct-UPI order and a collected
+            # pay-at-pickup order are both PAID, so the bare payment_status
+            # test put money CareVo never received — and cannot reverse — into
+            # /admin/orders/refund-due.
+            #
+            # A direct-UPI order that reaches the TTL has been paid to the
+            # RESTAURANT and never collected. Nothing is flagged on either
+            # axis: refund_required would be a lie about who holds the money,
+            # and manual_refund_due would oblige a refund for food that was
+            # made and waiting. It is the customer's own loss, which is the
+            # same answer a collected-but-uncollected pay-at-pickup order gets.
             "UPDATE customer_orders SET status='ABANDONED', updated_at=now(), "
             "    refund_required = CASE WHEN payment_status = 'PAID' "
+            "                           AND payment_mode = 'PREPAID' "
             "                           THEN true ELSE refund_required END, "
             "    refund_reason = CASE WHEN payment_status = 'PAID' "
+            "                         AND payment_mode = 'PREPAID' "
             "                         AND NOT refund_required "
             "                         THEN 'ttl_abandoned' ELSE refund_reason END, "
             "    refund_flagged_at = CASE WHEN payment_status = 'PAID' "
+            "                             AND payment_mode = 'PREPAID' "
             "                             AND NOT refund_required "
             "                             THEN now() ELSE refund_flagged_at END "
             "WHERE " + " AND ".join(clauses)
@@ -2446,7 +2511,7 @@ class CarevoService:
 
     @staticmethod
     async def expire_unclaimed_upi_orders(
-        db: AsyncSession, *, outlet_id=None, order_id=None
+        db: AsyncSession, *, outlet_id=None, order_id=None, customer_id=None
     ) -> int:
         """Cancel direct-UPI orders nobody claimed to have paid (035).
 
@@ -2481,6 +2546,12 @@ class CarevoService:
         if order_id is not None:
             clauses.append("id = :iid")
             params["iid"] = str(order_id)
+        # Per-CUSTOMER scope, so the global open-order cap can release a lapsed
+        # order without waiting for the outlet it was placed at to poll. See
+        # the call in _open_pickup_order_id.
+        if customer_id is not None:
+            clauses.append("customer_id = :cid")
+            params["cid"] = str(customer_id)
 
         rows = (await db.execute(text(
             "UPDATE customer_orders SET status = 'CANCELLED', updated_at = now() "
@@ -2508,9 +2579,33 @@ class CarevoService:
         return len(rows)
 
     @staticmethod
-    async def _generate_pickup_code(db: AsyncSession, outlet_id) -> str:
+    async def _generate_pickup_code(
+        db: AsyncSession, outlet_id, *, sweep: bool = True
+    ) -> str:
+        """Allocate a code unique among this outlet's live orders.
+
+        `sweep=False` SKIPS the stale-pickup sweep, and exists because that
+        sweep COMMITS (_expire_stale_pickups ends with db.commit() whenever it
+        matches a row).
+
+        That commit is harmless where this is called from mark_paid, which is
+        about to commit anyway. It is NOT harmless inside
+        AcceptanceService.accept: there the caller is mid-transaction holding
+        the acceptance CAS, the stock commit and — for a direct-UPI order — the
+        payment record, and a commit here splits them. A crash in the gap would
+        leave an order accepted and paid with no pickup code, which cannot be
+        collected, or the code written against a payment that later rolled
+        back.
+        #
+        Skipping the sweep costs nothing at that call site: accept is reached
+        from GET /pos/orders, whose very first action is the same sweep, so any
+        stale code has already been freed moments earlier. Uniqueness is still
+        enforced by the partial unique index (033) and by the retry in
+        _assign_pickup_code.
+        """
         # Free up any expired codes for this outlet first.
-        await CarevoService._expire_stale_pickups(db, outlet_id=outlet_id)
+        if sweep:
+            await CarevoService._expire_stale_pickups(db, outlet_id=outlet_id)
         # Digits 2-9 only: no visually ambiguous chars (0/O, 1/I/l) and easy to
         # type on a numeric keypad at verify time. 8^6 = 262k codes, and
         # uniqueness is only needed among an outlet's LIVE orders (a handful).
@@ -2531,7 +2626,9 @@ class CarevoService:
         raise HTTPException(status_code=500, detail="Could not allocate pickup code")
 
     @staticmethod
-    async def _assign_pickup_code(db: AsyncSession, order) -> str:
+    async def _assign_pickup_code(
+        db: AsyncSession, order, *, sweep: bool = True
+    ) -> str:
         """Allocate a code and survive losing the race for it (migration 033).
 
         _generate_pickup_code above checks-then-returns, with no lock between
@@ -2550,7 +2647,8 @@ class CarevoService:
         from sqlalchemy.exc import IntegrityError
 
         for _ in range(5):
-            code = await CarevoService._generate_pickup_code(db, order.outlet_id)
+            code = await CarevoService._generate_pickup_code(
+                db, order.outlet_id, sweep=sweep)
             try:
                 # A SAVEPOINT, so a unique violation rolls back only this
                 # attempt and leaves the caller's transaction — which is
@@ -3019,8 +3117,22 @@ class CarevoService:
         # Guarded on payment_status so rejecting an unpaid order — which the
         # REJECTABLE_STATUSES gate permits — does not flag a refund for money
         # that never arrived.
+        # ONLY A GATEWAY PAYMENT CAN ENTER THE GATEWAY REFUND QUEUE.
+        #
+        # `payment_status == 'PAID'` was the whole condition, and it stopped
+        # being sufficient the moment a payment could arrive outside Cashfree.
+        # An ACCEPTED direct-UPI order is PAID — accept is what records the
+        # money — so rejecting one with cannot_make flagged refund_required and
+        # the order appeared in /admin/orders/refund-due, a queue of refunds
+        # CareVo is being asked to issue for money it never received and cannot
+        # reverse. The same is true of a collected pay-at-pickup order.
+        #
+        # refund_required now means what its comment always said: a GATEWAY
+        # payment has to go back out through the gateway. The restaurant's own
+        # obligation is manual_refund_due (035), set below.
         was_paid = (order.payment_status or "").upper() == "PAID"
-        if was_paid and not order.refund_required:
+        is_gateway = (pay_mode or PAY_PREPAID) == PAY_PREPAID
+        if was_paid and is_gateway and not order.refund_required:
             order.refund_required = True
             order.refund_reason = "order_rejected"
             order.refund_flagged_at = datetime.now(timezone.utc)
@@ -3076,6 +3188,34 @@ class CarevoService:
         # Only meaningful once a claim exists. Rejecting an unclaimed UPI order
         # is an ordinary refusal — no money was asserted, so neither a strike
         # nor a refund applies.
+        # 'not_received' IS A CONTRADICTION ONCE THE MONEY IS RECORDED.
+        #
+        # Accepting a direct-UPI order IS the payment confirmation: a human
+        # looked at their own UPI app and said the amount was there, and
+        # payment_status became PAID on the strength of that. Saying
+        # "not received" afterwards asserts the opposite of something this
+        # restaurant already asserted — and it would strike the CUSTOMER for
+        # it, on an order whose money the restaurant is holding.
+        #
+        # Refused rather than reinterpreted. If the restaurant has changed its
+        # mind about an order it accepted, that is cannot_make: cancel it and
+        # give the money back. The message says so, because the staff member
+        # has to pick the other button and should know which.
+        if (upi_manual and upi_outcome == "not_received"
+                and (order.payment_status or "").upper() == "PAID"):
+            await db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "PAYMENT_ALREADY_RECORDED",
+                    "message": (
+                        "You already confirmed this payment when you accepted "
+                        "the order. If you cannot make it, use \"Can't make "
+                        "this\" and refund the customer."
+                    ),
+                },
+            )
+
         if upi_manual and claimed_at is not None and upi_outcome:
             if upi_outcome == "not_received":
                 await db.execute(text(
@@ -4001,6 +4141,144 @@ class CarevoService:
         attempts_remaining = max(0, 3 - order.failed_attempts)
         return {"verified": False, "attempts_remaining": attempts_remaining, "locked": locked}
 
+    # ---------- Direct UPI: the restaurant's way out of an expiry ----------
+    #: How long after cancellation a restaurant may still report that an
+    #: expired claim's money never arrived.
+    #:
+    #: Bounded because the claim is unverifiable after the fact and the strike
+    #: lands on a CUSTOMER. A week is long enough for a restaurant to notice a
+    #: missing payment while reconciling, and short enough that nobody is
+    #: struck for an order they placed last month and have forgotten.
+    NOT_RECEIVED_WINDOW = timedelta(days=7)
+
+    @staticmethod
+    async def report_payment_not_received(
+        db: AsyncSession, order_id: uuid.UUID, outlet_id: uuid.UUID,
+        *, actor_user_id: Optional[uuid.UUID] = None,
+    ) -> dict:
+        """The restaurant says an EXPIRED claim's money never arrived.
+
+        THE PROBLEM THIS SOLVES. When a direct-UPI claim expires unanswered,
+        the order is cancelled with manual_refund_due = true — deliberately,
+        because nobody looked and an honest customer whose money really left
+        their account must not be stranded. But that leaves the restaurant
+        holding a refund obligation for a payment it has no evidence of, with
+        no way to say so. This is that way.
+        """
+        row = (await db.execute(text("""
+            SELECT status, payment_mode, payment_status, manual_refund_due,
+                   manual_refund_reason, customer_id, updated_at,
+                   total_amount
+              FROM customer_orders
+             WHERE id = :id AND outlet_id = :oid
+        """), {"id": str(order_id), "oid": str(outlet_id)})).first()
+        # 404 for a cross-outlet id, matching every other staff route here:
+        # "exists but is not yours" is information about another restaurant.
+        if row is None:
+            raise HTTPException(
+                status_code=404, detail="Order not found for this outlet")
+
+        # IDEMPOTENT. A second tap finds the reason already rewritten and
+        # returns the same answer without striking again — which matters more
+        # than usual here, because the side effect is a penalty on a customer.
+        if (row.manual_refund_reason or "") == "restaurant_reported_not_received":
+            return {
+                "order_id": order_id,
+                "manual_refund_due": bool(row.manual_refund_due),
+                "already": True,
+            }
+
+        if (row.payment_mode or "") != PAY_UPI_MANUAL:
+            raise HTTPException(
+                status_code=404, detail="Order not found for this outlet")
+
+        # Checked BEFORE the expiry test so the refusal names the real cause.
+        # An accepted order fails both — it is not an expired claim either —
+        # but "you already confirmed this payment" tells the staff member what
+        # they did, where "this only applies to an expired order" leaves them
+        # looking for an expiry that is not the problem. Same ordering reason
+        # as CASHFREE_LOCKED ahead of the at-least-one-method rule.
+        #
+        # Accepting a direct-UPI order IS the payment confirmation: a human
+        # read their own UPI app and said the amount was there. Reporting it
+        # missing afterwards would unwind a payment this restaurant recorded
+        # and strike the customer for it.
+        if (row.payment_status or "").upper() == "PAID":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "PAYMENT_ALREADY_RECORDED",
+                    "message": (
+                        "You confirmed this payment when you accepted the "
+                        "order, so it cannot be reported as missing."
+                    ),
+                },
+            )
+
+        # ONLY the expiry case. A cannot_make cancellation is the restaurant
+        # saying the money WAS there, so letting it be reversed here would let
+        # one tap undo a refund the restaurant already owes — and strike the
+        # customer for the restaurant's own change of mind.
+        if ((row.manual_refund_reason or "")
+                != "acceptance_expired_after_payment_claim"):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "NOT_AN_EXPIRED_CLAIM",
+                    "message": (
+                        "This only applies to an order that expired before you "
+                        "confirmed the payment."
+                    ),
+                },
+            )
+
+        within = await db.scalar(text(
+            "SELECT updated_at > now() - CAST(:w AS interval) "
+            "FROM customer_orders WHERE id = :id"),
+            {"w": CarevoService.NOT_RECEIVED_WINDOW, "id": str(order_id)})
+        if not within:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "REPORT_WINDOW_EXPIRED",
+                    "message": (
+                        "This order is too old to report. Contact support if "
+                        "you still need to resolve it."
+                    ),
+                },
+            )
+
+        # THE COMPARE-AND-SET, on the reason itself. Two taps arriving together
+        # both pass the checks above; exactly one changes the row, so exactly
+        # one strike is recorded.
+        res = await db.execute(text("""
+            UPDATE customer_orders
+               SET manual_refund_due = false,
+                   manual_refund_reason = 'restaurant_reported_not_received',
+                   updated_at = now()
+             WHERE id = :id
+               AND manual_refund_reason = 'acceptance_expired_after_payment_claim'
+        """), {"id": str(order_id)})
+        if res.rowcount != 1:
+            await db.rollback()
+            return {"order_id": order_id, "manual_refund_due": False,
+                    "already": True}
+
+        await db.execute(text(
+            "UPDATE customers SET false_claim_count = false_claim_count + 1 "
+            "WHERE id = :cid"), {"cid": str(row.customer_id)})
+
+        await pe.write_event(
+            db, order_id, pe.PAYMENT_NOT_RECEIVED,
+            actor_type="staff", source="tap", outlet_id=outlet_id,
+            actor_id=actor_user_id,
+            payload={"reason": "reported_after_expiry",
+                     "amount": float(row.total_amount or 0)},
+        )
+        await db.commit()
+        return {"order_id": order_id, "manual_refund_due": False,
+                "already": False}
+
     # ------------- Owner self-serve payment settings (035) ------------------
     #: Shape check mirroring ck_outlets_upi_vpa_shape EXACTLY, so a bad VPA is
     #: a 422 with a sentence rather than an IntegrityError or — worse — a
@@ -4103,10 +4381,56 @@ class CarevoService:
                 },
             )
 
-        # VPA / payee, normalised. An empty string from a cleared form field
-        # means "no value", not a value of "".
-        vpa = (getattr(payload, "upi_vpa", None) or "").strip() or None
-        payee = (getattr(payload, "upi_payee_name", None) or "").strip() or None
+        # FIELDS-SET SEMANTICS (review fix). OMITTED MEANS UNCHANGED.
+        #
+        # This read `payload.upi_vpa or None`, which cannot tell "the caller
+        # did not mention it" from "the caller sent null" — both arrive as
+        # None. So a PATCH carrying only the three toggles wrote NULL over a
+        # saved VPA and payee name, and ck_outlets_upi_manual_requires_vpa then
+        # forced direct UPI off: one partial request silently destroyed the
+        # restaurant's payment details and stopped it taking UPI orders.
+        #
+        # model_fields_set is Pydantic's record of what was actually present in
+        # the request body, which is the only thing that distinguishes them.
+        sent = payload.model_fields_set
+        vpa_sent = "upi_vpa" in sent
+        payee_sent = "upi_payee_name" in sent
+
+        # An EXPLICIT null is refused rather than treated as a clear. There is
+        # no "remove my UPI ID" operation here, and a caller sending one is
+        # almost certainly building a body from a partially-populated form.
+        # Turning the method off is the supported way to stop using it, and it
+        # keeps the details for next time.
+        if vpa_sent and payload.upi_vpa is None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "UPI_ID_CANNOT_BE_CLEARED",
+                    "message": (
+                        "To stop taking UPI payments, turn the option off. "
+                        "Your UPI ID is kept for next time."
+                    ),
+                },
+            )
+        if payee_sent and payload.upi_payee_name is None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "UPI_PAYEE_CANNOT_BE_CLEARED",
+                    "message": (
+                        "To stop taking UPI payments, turn the option off. "
+                        "Your account name is kept for next time."
+                    ),
+                },
+            )
+
+        # An empty STRING is still treated as "no value" — that is a cleared
+        # form field, which the owner app does send, and it is not the same as
+        # an explicit JSON null.
+        vpa = ((payload.upi_vpa or "").strip() or None) if vpa_sent \
+            else current["upi_vpa"]
+        payee = ((payload.upi_payee_name or "").strip() or None) if payee_sent \
+            else current["upi_payee_name"]
         attested_now = bool(getattr(payload, "upi_attested", False))
 
         if vpa is not None and not CarevoService._VPA_RE.match(vpa):
@@ -4176,6 +4500,31 @@ class CarevoService:
                     "message": (
                         "Your restaurant must accept at least one payment "
                         "method. Turn on online payment, pay at pickup, or UPI."
+                    ),
+                },
+            )
+
+        # THE FLAGS CAN ALL BE "ON" AND THE OUTLET STILL TAKE NOTHING.
+        #
+        # ck_outlets_payment_method_any only requires one FLAG to be true, and
+        # prepaid additionally needs the platform unlock and a live gateway. So
+        # (prepaid=true, pay_at_pickup=false, upi=false, cashfree_unlocked=
+        # false) satisfies the constraint, satisfies the "at least one" rule
+        # below, and resolves to an EMPTY method list — an outlet that cannot
+        # be ordered from, saved without a word of warning.
+        #
+        # Checked against the resolver itself rather than by re-deriving the
+        # rule, so the two can never disagree.
+        if not await CarevoService._would_offer_anything(
+                db, outlet_id, prepaid=prepaid, pickup=pickup, upi=upi):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "NO_EFFECTIVE_PAYMENT_METHOD",
+                    "message": (
+                        "These settings would leave customers unable to order. "
+                        "Online payment is not active for your restaurant yet, "
+                        "so turn on pay at pickup or UPI."
                     ),
                 },
             )
@@ -5224,9 +5573,14 @@ class CarevoService:
                 )
 
             await db.execute(text(
+                # is_outlet_owner = true (migration 037). THIS is the account
+                # that runs the restaurant, and saying so explicitly is what
+                # replaced the old "it has no roles, so it must be the owner"
+                # inference — an inference a waiter could satisfy by minting a
+                # role-less account through the then-open /api/v1/users.
                 "INSERT INTO users (id, username, hashed_password, is_active, outlet_id, "
-                "  email, created_at) "
-                "VALUES (gen_random_uuid(), :u, :pw, true, :oid, :email, now())"
+                "  email, is_outlet_owner, created_at) "
+                "VALUES (gen_random_uuid(), :u, :pw, true, :oid, :email, true, now())"
             ), {
                 "u": payload.username, "pw": get_password_hash(payload.password),
                 "oid": str(outlet_id), "email": payload.email.strip().lower(),

@@ -1663,6 +1663,42 @@ class AdminService:
             sets.append("cashfree_unlocked = :unlocked")
             params["unlocked"] = bool(cashfree_unlocked)
 
+        # THE SAME GUARD THE OWNER ROUTE HAS. Flags being "on" is not the same
+        # as a customer being able to order: prepaid additionally needs the
+        # platform unlock and a live gateway, so (prepaid=true,
+        # pay_at_pickup=false, cashfree_unlocked=false) passes the DB CHECK and
+        # resolves to an EMPTY list.
+        #
+        # It matters more on this route than on the owner's, because this is
+        # the route that can SET cashfree_unlocked — an admin revoking the
+        # unlock on a prepaid-only outlet is the single likeliest way to
+        # produce the unorderable state, and before this it saved silently.
+        cur = (await db.execute(text(
+            "SELECT payment_prepaid_enabled, payment_pay_at_pickup_enabled, "
+            "       payment_upi_manual_enabled, cashfree_unlocked "
+            "  FROM outlets WHERE id = :oid"), {"oid": str(outlet_id)})).first()
+        if cur is None:
+            raise HTTPException(status_code=404, detail="Outlet not found")
+
+        eff_pickup = bool(pay_at_pickup)
+        eff_upi = bool(cur[2] if upi_manual is None else upi_manual)
+        eff_unlocked = bool(cur[3] if cashfree_unlocked is None
+                            else cashfree_unlocked)
+        from app.modules.carevo_customer.service import _gateway_can_charge
+        if not (eff_pickup or eff_upi
+                or (bool(prepaid) and eff_unlocked and _gateway_can_charge())):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "NO_EFFECTIVE_PAYMENT_METHOD",
+                    "message": (
+                        "These settings would leave this outlet unable to take "
+                        "any order. Enable pay at pickup or UPI, or leave "
+                        "Cashfree unlocked."
+                    ),
+                },
+            )
+
         row = (await db.execute(text(f"""
             UPDATE outlets SET {', '.join(sets)}
              WHERE id = :oid

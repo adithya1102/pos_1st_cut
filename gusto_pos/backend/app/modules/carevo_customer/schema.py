@@ -819,6 +819,21 @@ class OwnerPaymentMethodsIn(BaseModel):
     prepaid: bool
     pay_at_pickup: bool
     upi_manual: bool
+    #: FIELDS-SET SEMANTICS: omitting either of these means UNCHANGED, not
+    #: cleared. The service reads model_fields_set to tell the two apart.
+    #:
+    #: It was a silent data-loss bug. The owner app sends the whole form, but
+    #: anything else PATCHing only the three toggles — a script, a future
+    #: screen, a retry built from a partial body — wrote NULL over a saved VPA
+    #: and payee name, and because ck_outlets_upi_manual_requires_vpa then
+    #: forbids the method being on, direct UPI switched itself off and the
+    #: restaurant's payment details were gone.
+    #:
+    #: An EXPLICIT null is a 422 rather than a clear: there is no "remove my
+    #: UPI ID" operation in this product, and the only callers that would send
+    #: one are doing it by accident. Turning the method off is the supported
+    #: way to stop using it, and that keeps the details for next time.
+    #:
     #: Max length matches ck_outlets_upi_vpa_shape's own bound. The shape is
     #: validated in the service so a bad value is a sentence, not a 422 the
     #: owner app cannot render.
@@ -879,6 +894,20 @@ class ClaimPaidOut(BaseModel):
     already: bool = False
     payment_claimed_at: Optional[datetime] = None
     status: Optional[str] = None
+
+
+class PaymentNotReceivedOut(BaseModel):
+    """Result of the restaurant reporting an expired claim's money missing.
+
+    `already` distinguishes the second tap of a double-tap from the first, the
+    same shape AlertAckOut and ClaimPaidOut use — and it matters more here,
+    because the side effect is a strike on a customer's account and the caller
+    needs to know whether this call is the one that applied it.
+    """
+    order_id: uuid.UUID
+    #: False once reported — the restaurant no longer owes the refund.
+    manual_refund_due: bool
+    already: bool = False
 
 
 class NoShowOut(BaseModel):
