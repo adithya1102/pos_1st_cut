@@ -31,6 +31,7 @@ import 'package:owner_app/services/order_service.dart';
 import 'package:owner_app/services/outlet_service.dart';
 import 'package:owner_app/state/orders_state.dart';
 import 'package:owner_app/widgets/order_acceptance_modal.dart';
+import 'package:owner_app/widgets/order_card.dart';
 
 const _orderId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 
@@ -81,11 +82,15 @@ class _SettingsBackend {
     Map<String, dynamic>? initial,
     this.patchStatus = 200,
     this.patchError,
+    this.getStatus = 200,
+    this.getError,
   }) : current = initial ?? _settingsJson();
 
   Map<String, dynamic> current;
   final int patchStatus;
   final Map<String, dynamic>? patchError;
+  final int getStatus;
+  final Map<String, dynamic>? getError;
   Map<String, dynamic>? lastPatchBody;
 
   late final ApiClient api = ApiClient(
@@ -100,6 +105,11 @@ class _SettingsBackend {
         }
         current = {...current, ...?lastPatchBody};
         return http.Response(jsonEncode(current), 200,
+            headers: {'content-type': 'application/json'});
+      }
+      if (getStatus != 200) {
+        return http.Response(
+            jsonEncode(getError ?? {'detail': 'nope'}), getStatus,
             headers: {'content-type': 'application/json'});
       }
       return http.Response(jsonEncode(current), 200,
@@ -566,6 +576,217 @@ void main() {
 
     test('it is the expected build for this release', () {
       expect(AppConfig.appVersion, '1.0.1+5');
+    });
+  });
+
+
+  // ============ the refund banner tells the two causes apart ==============
+  //
+  // A refund owed because NOBODY LOOKED is not the same as one owed because
+  // the restaurant confirmed the money and then could not cook. Only the first
+  // leaves the owner with something to check, so only it gets the extra line.
+  group('refund banner distinguishes the cause', () {
+    Future<void> openCard(WidgetTester tester, Order order) async {
+      _seedToken();
+      final backend = _SettingsBackend();
+      await tester.pumpWidget(MultiProvider(
+        providers: [
+          Provider<ApiClient>.value(value: backend.api),
+          Provider<OrderService>(create: (_) => OrderService(backend.api)),
+          ChangeNotifierProvider<OrdersState>(
+              create: (_) => OrdersState(OrderService(backend.api))),
+        ],
+        child: MaterialApp(
+          home: Scaffold(body: SingleChildScrollView(
+              child: OrderCard(order: order))),
+        ),
+      ));
+      await tester.pump();
+      // Expand the card: the banner lives in the detail panel.
+      await tester.tap(find.text('#${order.shortId}'));
+      await tester.pumpAndSettle();
+    }
+
+    Order refundOrder(String? reason) => _order({
+          'payment_mode': 'UPI_MANUAL',
+          'status': 'CANCELLED',
+          'payment_claimed_at': '2026-10-28T10:05:00Z',
+          'manual_refund_due': true,
+          if (reason != null) 'manual_refund_reason': reason,
+        });
+
+    test('the model flags only the expiry reason', () {
+      expect(
+          refundOrder('acceptance_expired_after_payment_claim')
+              .refundFromMissedClaim,
+          isTrue);
+      expect(refundOrder('cannot_make').refundFromMissedClaim, isFalse);
+      expect(refundOrder(null).refundFromMissedClaim, isFalse);
+      expect(refundOrder('Kitchen closed early').refundFromMissedClaim,
+          isFalse);
+      // And never without a refund actually being due.
+      final noRefund = _order({
+        'payment_mode': 'UPI_MANUAL',
+        'manual_refund_reason': 'acceptance_expired_after_payment_claim',
+      });
+      expect(noRefund.refundFromMissedClaim, isFalse);
+    });
+
+    testWidgets('the expiry reason adds the check-your-app line',
+        (tester) async {
+      await openCard(
+          tester, refundOrder('acceptance_expired_after_payment_claim'));
+
+      expect(find.byKey(const Key('manual_refund_banner')), findsOneWidget);
+      // The plain banner text is still there…
+      expect(find.byKey(const Key('manual_refund_text')), findsOneWidget);
+      // …plus the line that tells the owner there is something to check.
+      expect(find.byKey(const Key('manual_refund_missed_claim_text')),
+          findsOneWidget);
+      expect(
+          find.textContaining(
+              'The customer said they paid but you did not confirm in time'),
+          findsOneWidget);
+    });
+
+    testWidgets('cannot_make keeps the PLAIN banner and no extra line',
+        (tester) async {
+      // The restaurant confirmed the money and then could not cook, so there
+      // is nothing left for them to check.
+      await openCard(tester, refundOrder('cannot_make'));
+
+      expect(find.byKey(const Key('manual_refund_banner')), findsOneWidget);
+      expect(find.byKey(const Key('manual_refund_text')), findsOneWidget);
+      expect(find.byKey(const Key('manual_refund_missed_claim_text')),
+          findsNothing);
+    });
+
+    testWidgets('no banner at all without a refund due', (tester) async {
+      await openCard(tester, _order({
+        'payment_mode': 'UPI_MANUAL',
+        'status': 'CANCELLED',
+      }));
+      expect(find.byKey(const Key('manual_refund_banner')), findsNothing);
+      expect(find.byKey(const Key('manual_refund_missed_claim_text')),
+          findsNothing);
+    });
+
+    testWidgets('a prepaid order never shows it', (tester) async {
+      // refund_required is CareVo's queue, not this banner.
+      await openCard(tester, _order({
+        'status': 'CANCELLED',
+        'payment_status': 'PAID',
+      }));
+      expect(find.byKey(const Key('manual_refund_banner')), findsNothing);
+    });
+  });
+
+  // ================ 403 on the settings screen (TASK 1c) =================
+  group('a 403 shows the server message and disables everything', () {
+    testWidgets('a 403 from GET shows no toggles and no Retry', (tester) async {
+      _seedToken();
+      final backend = _SettingsBackend(
+        getStatus: 403,
+        getError: const {
+          'detail': 'Only the restaurant owner or a manager can change this.',
+        },
+      );
+      await tester.pumpWidget(_settingsHost(backend));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('payment_modes_forbidden')), findsOneWidget);
+      // THE SERVER'S sentence.
+      expect(
+          find.text(
+              'Only the restaurant owner or a manager can change this.'),
+          findsOneWidget);
+      // It never shows toggles it cannot save.
+      expect(find.byKey(const Key('toggle_cashfree')), findsNothing);
+      expect(find.byKey(const Key('toggle_pay_at_pickup')), findsNothing);
+      expect(find.byKey(const Key('toggle_upi_manual')), findsNothing);
+      expect(find.byKey(const Key('payment_modes_save')), findsNothing);
+      // And no Retry: a 403 will answer the same way every time.
+      expect(find.byKey(const Key('payment_modes_retry')), findsNothing);
+    });
+
+    testWidgets('a NETWORK failure still offers Retry', (tester) async {
+      // The contrast that makes the above meaningful — a transient failure is
+      // drawn differently from a permanent refusal.
+      _seedToken();
+      final backend = _SettingsBackend(getStatus: 500);
+      await tester.pumpWidget(_settingsHost(backend));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('payment_modes_forbidden')), findsNothing);
+      expect(find.byKey(const Key('payment_modes_load_error')), findsOneWidget);
+      expect(find.byKey(const Key('payment_modes_retry')), findsOneWidget);
+    });
+
+    testWidgets('a 403 from PATCH disables every control', (tester) async {
+      // The role can be revoked between loading and saving, so the refusal can
+      // arrive on the save. The toggles are already on screen by then, so they
+      // are DISABLED rather than removed — and the message is the server's.
+      _seedToken();
+      final backend = _SettingsBackend(
+        initial: _settingsJson(unlocked: true),
+        patchStatus: 403,
+        patchError: const {
+          'message': 'Only the restaurant owner or a manager can change this.',
+        },
+      );
+      await tester.pumpWidget(_settingsHost(backend));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('toggle_pay_at_pickup')));
+      await tester.pumpAndSettle();
+      await _tapSave(tester);
+
+      expect(
+          find.text(
+              'Only the restaurant owner or a manager can change this.'),
+          findsOneWidget);
+
+      // Every control is now dead.
+      for (final k in [
+        'toggle_cashfree',
+        'toggle_pay_at_pickup',
+        'toggle_upi_manual',
+      ]) {
+        final sw = tester.widget<SwitchListTile>(find.byKey(Key(k)));
+        expect(sw.onChanged, isNull, reason: '$k must be disabled');
+      }
+      final box = tester.widget<CheckboxListTile>(
+          find.byKey(const Key('upi_attested_checkbox')));
+      expect(box.onChanged, isNull);
+      final vpa = tester.widget<TextField>(find.byKey(const Key('upi_vpa_field')));
+      expect(vpa.enabled, isFalse);
+      final save = tester.widget<FilledButton>(
+          find.byKey(const Key('payment_modes_save')));
+      expect(save.onPressed, isNull);
+    });
+
+    testWidgets('a 409 is NOT treated as forbidden', (tester) async {
+      // Only a 403 locks the screen; a business-rule refusal leaves the owner
+      // able to correct it and try again.
+      _seedToken();
+      final backend = _SettingsBackend(
+        initial: _settingsJson(prepaid: false, pickup: true, unlocked: true),
+        patchStatus: 409,
+        patchError: const {
+          'error': 'CASHFREE_LOCKED',
+          'message': 'Cashfree is currently unavailable for your restaurant.',
+        },
+      );
+      await tester.pumpWidget(_settingsHost(backend));
+      await tester.pumpAndSettle();
+      await _tapSave(tester);
+
+      expect(
+          find.text('Cashfree is currently unavailable for your restaurant.'),
+          findsOneWidget);
+      final save = tester.widget<FilledButton>(
+          find.byKey(const Key('payment_modes_save')));
+      expect(save.onPressed, isNotNull, reason: 'still correctable');
     });
   });
 }

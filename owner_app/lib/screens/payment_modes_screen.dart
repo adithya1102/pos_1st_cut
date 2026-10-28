@@ -44,6 +44,16 @@ class _PaymentModesScreenState extends State<PaymentModesScreen> {
   bool _saving = false;
   String? _error;
 
+  /// True when the server said this account may not manage payment settings.
+  ///
+  /// A 403 is NOT a transient failure and must not be offered a Retry: the
+  /// answer will be the same every time. It also must not leave the toggles
+  /// live — a waiter who can flip a switch that then refuses to save has been
+  /// shown a control that was never theirs, and the refusal arrives only after
+  /// they have made a decision. So every control is disabled and the server's
+  /// own sentence is what the screen says.
+  bool _forbidden = false;
+
   // Local edit state, seeded from the server once loaded.
   bool _prepaid = false;
   bool _pickup = false;
@@ -87,6 +97,7 @@ class _PaymentModesScreenState extends State<PaymentModesScreen> {
       if (mounted) {
         setState(() {
           _loading = false;
+          _forbidden = e.statusCode == 403;
           _error = e.serverMessage ?? e.message;
         });
       }
@@ -105,6 +116,9 @@ class _PaymentModesScreenState extends State<PaymentModesScreen> {
   /// Changing it voids the attestation server-side, so the checkbox is reset
   /// locally too — otherwise the owner would see a ticked box for a string
   /// nobody has proven they control.
+  /// Every interactive control is dead while [_forbidden] or mid-save.
+  bool get _locked => _saving || _forbidden;
+
   bool get _vpaChanged =>
       _vpa.text.trim() != (_settings?.upiVpa ?? '').trim();
 
@@ -154,6 +168,9 @@ class _PaymentModesScreenState extends State<PaymentModesScreen> {
       if (mounted) {
         setState(() {
           _saving = false;
+          // A role can be revoked between loading and saving, so the PATCH is
+          // the second place this can arrive.
+          _forbidden = _forbidden || e.statusCode == 403;
           _error = e.serverMessage ?? e.message;
         });
       }
@@ -178,22 +195,38 @@ class _PaymentModesScreenState extends State<PaymentModesScreen> {
           ? const Center(child: CircularProgressIndicator())
           : (s == null
               ? Center(
-                  key: const Key('payment_modes_load_error'),
+                  // A 403 and a network failure look nothing alike to the
+                  // person holding the tablet, so they are not drawn alike.
+                  // A permission refusal gets NO Retry — the answer will not
+                  // change — and no toggles, because there is nothing here
+                  // this account could save.
+                  key: _forbidden
+                      ? const Key('payment_modes_forbidden')
+                      : const Key('payment_modes_load_error'),
                   child: Padding(
                     padding: const EdgeInsets.all(24),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.cloud_off, size: 40),
+                        Icon(_forbidden ? Icons.lock_outline : Icons.cloud_off,
+                            size: 40),
                         const SizedBox(height: 12),
-                        Text(_error ?? 'Could not load your settings.',
+                        Text(
+                            _error ??
+                                (_forbidden
+                                    ? 'Only the restaurant owner or a manager '
+                                        'can change this.'
+                                    : 'Could not load your settings.'),
+                            key: const Key('payment_modes_message'),
                             textAlign: TextAlign.center),
-                        const SizedBox(height: 16),
-                        FilledButton.tonal(
-                          key: const Key('payment_modes_retry'),
-                          onPressed: _load,
-                          child: const Text('Retry'),
-                        ),
+                        if (!_forbidden) ...[
+                          const SizedBox(height: 16),
+                          FilledButton.tonal(
+                            key: const Key('payment_modes_retry'),
+                            onPressed: _load,
+                            child: const Text('Retry'),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -219,7 +252,7 @@ class _PaymentModesScreenState extends State<PaymentModesScreen> {
                       SwitchListTile(
                         key: const Key('toggle_cashfree'),
                         value: _prepaid,
-                        onChanged: _saving
+                        onChanged: _locked
                             ? null
                             : (v) => setState(() => _prepaid = v),
                         title: const Text('Online payment (Cashfree)'),
@@ -235,7 +268,7 @@ class _PaymentModesScreenState extends State<PaymentModesScreen> {
                       key: const Key('toggle_pay_at_pickup'),
                       value: _pickup,
                       onChanged:
-                          _saving ? null : (v) => setState(() => _pickup = v),
+                          _locked ? null : (v) => setState(() => _pickup = v),
                       title: const Text('Pay at pickup'),
                       subtitle: const Text(
                           'Customers order first and pay when they collect.'),
@@ -257,7 +290,7 @@ class _PaymentModesScreenState extends State<PaymentModesScreen> {
                     SwitchListTile(
                       key: const Key('toggle_upi_manual'),
                       value: _upi,
-                      onChanged: _saving
+                      onChanged: _locked
                           ? null
                           : (v) => setState(() => _upi = v),
                       title: const Text('Pay directly to your UPI'),
@@ -286,7 +319,7 @@ class _PaymentModesScreenState extends State<PaymentModesScreen> {
                           TextField(
                             key: const Key('upi_vpa_field'),
                             controller: _vpa,
-                            enabled: !_saving,
+                            enabled: !_locked,
                             autocorrect: false,
                             enableSuggestions: false,
                             decoration: const InputDecoration(
@@ -302,7 +335,7 @@ class _PaymentModesScreenState extends State<PaymentModesScreen> {
                           TextField(
                             key: const Key('upi_payee_field'),
                             controller: _payee,
-                            enabled: !_saving,
+                            enabled: !_locked,
                             decoration: const InputDecoration(
                               labelText: 'Name on the UPI account',
                               hintText: 'Test Kitchen',
@@ -311,7 +344,7 @@ class _PaymentModesScreenState extends State<PaymentModesScreen> {
                           CheckboxListTile(
                             key: const Key('upi_attested_checkbox'),
                             value: _attested,
-                            onChanged: _saving
+                            onChanged: _locked
                                 ? null
                                 : (v) =>
                                     setState(() => _attested = v ?? false),
@@ -371,7 +404,7 @@ class _PaymentModesScreenState extends State<PaymentModesScreen> {
 
                     FilledButton(
                       key: const Key('payment_modes_save'),
-                      onPressed: _saving ? null : _save,
+                      onPressed: _locked ? null : _save,
                       child: _saving
                           ? const SizedBox(
                               height: 18,

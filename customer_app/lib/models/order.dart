@@ -299,6 +299,7 @@ class OrderStatus {
     this.callState,
     this.paymentClaimedAt,
     this.manualRefundDue = false,
+    this.manualRefundReason,
     this.upiPayment,
   });
 
@@ -365,6 +366,30 @@ class OrderStatus {
   /// copy driven by this must say the restaurant will refund — promising
   /// otherwise would be promising something nobody can send.
   final bool manualRefundDue;
+
+  /// WHY the restaurant owes the money, which decides what the customer is
+  /// told — and the two cases need genuinely different sentences.
+  ///
+  ///   'acceptance_expired_after_payment_claim' — nobody at the restaurant
+  ///       ever looked. The customer said they paid and the deadline passed,
+  ///       so NOBODY KNOWS whether the money actually left their account. The
+  ///       honest copy is conditional ("if your money left your account") and
+  ///       points them at the restaurant, because the restaurant is the only
+  ///       party who can see whether it arrived.
+  ///
+  ///   anything else (today: 'cannot_make') — the restaurant confirmed the
+  ///       money and then could not cook. Here the payment IS established, so
+  ///       a flat promise of a refund is accurate.
+  ///
+  /// Promising a refund in the first case would be asserting a payment nobody
+  /// has verified; being vague in the second would be withholding a promise
+  /// that is owed.
+  final String? manualRefundReason;
+
+  /// The expiry case: the claim was never checked, so the payment is unproven.
+  bool get refundUnconfirmedByRestaurant =>
+      manualRefundDue &&
+      manualRefundReason == 'acceptance_expired_after_payment_claim';
 
   /// Present only while a direct-UPI order is still unpaid, so the pay screen
   /// can be rebuilt after a restart. Absent once the restaurant accepts.
@@ -442,6 +467,7 @@ class OrderStatus {
       callState: json['call_state']?.toString(),
       paymentClaimedAt: json['payment_claimed_at']?.toString(),
       manualRefundDue: (json['manual_refund_due'] as bool?) ?? false,
+      manualRefundReason: json['manual_refund_reason']?.toString(),
       upiPayment: UpiPaymentInfo.fromJson(json['upi_payment']),
     );
   }

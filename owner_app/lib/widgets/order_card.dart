@@ -953,6 +953,23 @@ class _ManualRefundBanner extends StatelessWidget {
                   style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onErrorContainer),
                 ),
+                // THE EXPIRY CASE ONLY. The claim was never checked, so unlike
+                // a 'cannot_make' refund the owner does not yet know whether
+                // the money arrived — and the first useful thing they can do
+                // is look. An order they themselves cancelled after
+                // confirming the payment gets the plain banner above and
+                // nothing extra, because there is nothing left to check.
+                if (order.refundFromMissedClaim) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'The customer said they paid but you did not confirm in '
+                    'time. Check your UPI app.',
+                    key: const Key('manual_refund_missed_claim_text'),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onErrorContainer,
+                        fontWeight: FontWeight.w600),
+                  ),
+                ],
               ],
             ),
           ),

@@ -1526,16 +1526,39 @@ class _NonGatewayPaymentCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 10),
-            Text(
-              'The restaurant could not make your order. They will refund '
-              '${formatRupees(status.totalAmount)}.',
-              key: const Key('pickup_manual_refund_text'),
-              style: textTheme.bodyMedium,
-            ),
+            // TWO DIFFERENT SENTENCES, because the two cases are genuinely
+            // different and only one of them is a promise we can keep.
+            //
+            // When the restaurant never confirmed the claim, nobody knows
+            // whether the money left the customer's account — so the copy is
+            // conditional and points them at the restaurant, which is the only
+            // party who can see whether it arrived. Promising a refund here
+            // would assert a payment nobody has verified.
+            //
+            // When the restaurant DID confirm and then could not cook, the
+            // payment is established and a flat promise is accurate.
+            if (status.refundUnconfirmedByRestaurant)
+              Text(
+                'The restaurant did not confirm your order in time. If your '
+                'money left your account, contact the restaurant to get '
+                '${formatRupees(status.totalAmount)} back.',
+                key: const Key('pickup_refund_unconfirmed_text'),
+                style: textTheme.bodyMedium,
+              )
+            else
+              Text(
+                'The restaurant could not make your order. They will refund '
+                '${formatRupees(status.totalAmount)}.',
+                key: const Key('pickup_manual_refund_text'),
+                style: textTheme.bodyMedium,
+              ),
             const SizedBox(height: 6),
             Text(
-              'The money goes back to the UPI account you paid from. Contact '
-              'the restaurant if it has not arrived.',
+              status.refundUnconfirmedByRestaurant
+                  ? 'They can see in their UPI app whether your payment '
+                      'arrived.'
+                  : 'The money goes back to the UPI account you paid from. '
+                      'Contact the restaurant if it has not arrived.',
               style: textTheme.bodySmall?.copyWith(color: c.inkSoft),
             ),
           ],

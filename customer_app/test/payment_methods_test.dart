@@ -24,7 +24,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:customer_app/models/order.dart';
 import 'package:customer_app/models/outlet.dart';
-import 'package:customer_app/screens/checkout_screen.dart';
+import 'package:customer_app/screens/pickup_screen.dart';
 import 'package:customer_app/screens/upi_pay_screen.dart';
 import 'package:customer_app/services/api_client.dart';
 import 'package:customer_app/services/cashfree_service.dart';
@@ -117,25 +117,55 @@ class _Backend {
   );
 }
 
-Widget _checkoutHost(_Backend backend, _SpyCashfree cf, Outlet outlet) {
-  final cart = CartState();
-  return MultiProvider(
+
+/// Opens PickupScreen on a CANCELLED direct-UPI order with a refund due.
+///
+/// The screen polls GET /customer/orders/{id}, so the backend answers with the
+/// cancellation shape and the card renders from it.
+Future<void> _openPickup(WidgetTester tester, {required String? reason}) async {
+  SharedPreferences.setMockInitialValues({'carevo_access_token': 't'});
+  final api = ApiClient(
+    client: MockClient((req) async => http.Response(
+          jsonEncode({
+            'id': _orderId,
+            'status': 'CANCELLED',
+            'payment_status': 'PENDING',
+            'total_amount': 200,
+            'items': const [],
+            'payment_mode': 'UPI_MANUAL',
+            'payment_claimed_at': '2026-10-28T10:05:00Z',
+            'manual_refund_due': true,
+            if (reason != null) 'manual_refund_reason': reason,
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        )),
+  );
+  await tester.pumpWidget(MultiProvider(
     providers: [
-      Provider<ApiClient>.value(value: backend.api),
-      Provider<OrderService>(create: (_) => OrderService(backend.api)),
-      Provider<CashfreeService>.value(value: cf),
+      Provider<ApiClient>.value(value: api),
+      Provider<OrderService>(create: (_) => OrderService(api)),
+      Provider<CashfreeService>.value(value: _SpyCashfree()),
       Provider<LocationService>(create: (_) => LocationService()),
-      ChangeNotifierProvider<CartState>.value(value: cart),
+      ChangeNotifierProvider<CartState>(create: (_) => CartState()),
       ChangeNotifierProvider<ThemeProvider>(create: (_) => ThemeProvider()),
     ],
     child: MaterialApp(
       theme: AppTheme.light(),
-      home: Builder(builder: (context) {
-        // One item in the cart, bound to the outlet under test.
-        return const CheckoutScreen();
-      }),
+      home: PickupScreen(orderId: _orderId),
     ),
-  );
+  ));
+  await tester.pump();
+  await tester.pump();
+}
+
+/// Tears PickupScreen down so its polling Timer does not outlive the test.
+///
+/// The same two-step the existing manual_acceptance_states_test uses: replace
+/// the tree, then settle, so dispose() runs and cancels the timers.
+Future<void> _closePickup(WidgetTester tester) async {
+  await tester.pumpWidget(const SizedBox.shrink());
+  await tester.pumpAndSettle();
 }
 
 void main() {
@@ -510,6 +540,94 @@ void main() {
       expect(find.byKey(const Key('upi_pay_unavailable')), findsOneWidget);
       // And no Pay button, because there is nothing to pay to.
       expect(find.byKey(const Key('upi_claim_paid')), findsNothing);
+    });
+  });
+
+  // ============== honest cancellation copy (review fix) ==================
+  //
+  // Two causes, two sentences, and only one of them is a promise the app can
+  // keep. When the restaurant never confirmed the claim, NOBODY knows whether
+  // the money left the customer's account — so promising a refund would be
+  // asserting a payment no human has verified. When the restaurant did confirm
+  // and then could not cook, the payment is established and a flat promise is
+  // accurate.
+  group('cancellation copy tells the two causes apart', () {
+    OrderStatus cancelled(String? reason) => OrderStatus.fromJson({
+          'id': _orderId,
+          'status': 'CANCELLED',
+          'payment_status': 'PENDING',
+          'total_amount': 200,
+          'items': const [],
+          'payment_mode': 'UPI_MANUAL',
+          'payment_claimed_at': '2026-10-28T10:05:00Z',
+          'manual_refund_due': true,
+          if (reason != null) 'manual_refund_reason': reason,
+        });
+
+    test('the model flags only the expiry reason', () {
+      expect(
+          cancelled('acceptance_expired_after_payment_claim')
+              .refundUnconfirmedByRestaurant,
+          isTrue);
+      expect(cancelled('cannot_make').refundUnconfirmedByRestaurant, isFalse);
+      expect(cancelled(null).refundUnconfirmedByRestaurant, isFalse);
+    });
+
+    test('it is never true without a refund being due', () {
+      final o = OrderStatus.fromJson({
+        'id': _orderId, 'status': 'CANCELLED', 'payment_status': 'PENDING',
+        'total_amount': 200, 'items': const [],
+        'payment_mode': 'UPI_MANUAL',
+        'manual_refund_reason': 'acceptance_expired_after_payment_claim',
+      });
+      expect(o.manualRefundDue, isFalse);
+      expect(o.refundUnconfirmedByRestaurant, isFalse);
+    });
+
+    test('the reason is parsed off the wire', () {
+      expect(cancelled('cannot_make').manualRefundReason, 'cannot_make');
+      expect(cancelled(null).manualRefundReason, isNull);
+    });
+
+    testWidgets('the expiry reason gets the CONDITIONAL copy', (tester) async {
+      await _openPickup(tester,
+          reason: 'acceptance_expired_after_payment_claim');
+
+      expect(find.byKey(const Key('pickup_refund_unconfirmed_text')),
+          findsOneWidget);
+      expect(
+          find.textContaining(
+              'The restaurant did not confirm your order in time. If your '
+              'money left your account, contact the restaurant to get'),
+          findsOneWidget);
+      // And NOT the flat promise.
+      expect(find.byKey(const Key('pickup_manual_refund_text')), findsNothing);
+      expect(find.textContaining('They will refund'), findsNothing);
+      await _closePickup(tester);
+    });
+
+    testWidgets('any other reason keeps the FLAT promise', (tester) async {
+      await _openPickup(tester, reason: 'cannot_make');
+
+      expect(find.byKey(const Key('pickup_manual_refund_text')),
+          findsOneWidget);
+      expect(
+          find.textContaining(
+              'The restaurant could not make your order. They will refund'),
+          findsOneWidget);
+      expect(find.byKey(const Key('pickup_refund_unconfirmed_text')),
+          findsNothing);
+      await _closePickup(tester);
+    });
+
+    testWidgets('a missing reason keeps the flat promise too', (tester) async {
+      // Defensive: an older backend sends manual_refund_due with no reason.
+      await _openPickup(tester, reason: null);
+      expect(find.byKey(const Key('pickup_manual_refund_text')),
+          findsOneWidget);
+      expect(find.byKey(const Key('pickup_refund_unconfirmed_text')),
+          findsNothing);
+      await _closePickup(tester);
     });
   });
 }

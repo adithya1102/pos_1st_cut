@@ -128,6 +128,17 @@ class Order {
   final bool manualRefundDue;
   final String? manualRefundReason;
 
+  /// The refund is owed because NOBODY HERE EVER LOOKED.
+  ///
+  /// The customer claimed a payment and the acceptance deadline passed with no
+  /// decision, so the restaurant does not yet know whether the money arrived.
+  /// That is a different situation from having confirmed the money and then
+  /// been unable to cook ('cannot_make'), where the payment is established —
+  /// and it is the only case where the owner still has something to check.
+  bool get refundFromMissedClaim =>
+      manualRefundDue &&
+      manualRefundReason == 'acceptance_expired_after_payment_claim';
+
   bool get isPayAtPickup => paymentMode == 'PAY_AT_PICKUP';
   bool get isUpiManual => paymentMode == 'UPI_MANUAL';
   bool get isPrepaid => paymentMode == 'PREPAID';
