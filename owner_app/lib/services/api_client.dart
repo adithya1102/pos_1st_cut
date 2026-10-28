@@ -22,6 +22,44 @@ class ApiException implements Exception {
 
   ApiException(this.statusCode, this.message, {this.body});
 
+  /// The human-readable part of a structured `detail`, or null.
+  ///
+  /// FastAPI's `detail` is NOT always a string. The backend raises structured
+  /// details for exactly the cases an owner most needs explained —
+  /// CASHFREE_LOCKED, UPI_ATTESTATION_REQUIRED, PAYMENT_NOT_RECORDED — and
+  /// [message] is built by `.toString()`ing whatever `detail` was, which for a
+  /// Map renders Dart's debug form straight into the UI:
+  ///
+  ///   {error: CASHFREE_LOCKED, message: Cashfree is currently unavailable…}
+  ///
+  /// Every structured detail carries a `message` written for a person, so that
+  /// is preferred; `error` is the fallback for one that has none, and is at
+  /// least a short code rather than a dump. A plain string detail comes back
+  /// unchanged, which is the common case.
+  ///
+  /// customer_app has carried the same helper since the ITEM_SOLD_OUT work
+  /// (its api_client._detailMessage); this is the owner-side twin.
+  String? get serverMessage {
+    final detail = body?['detail'];
+    if (detail is Map) {
+      final msg = detail['message'];
+      if (msg != null && msg.toString().trim().isNotEmpty) {
+        return msg.toString();
+      }
+      final code = detail['error'];
+      if (code != null && code.toString().trim().isNotEmpty) {
+        return code.toString();
+      }
+      // A Map with neither key is not worth dumping at the owner.
+      return null;
+    }
+    if (detail is String && detail.trim().isNotEmpty) return detail;
+    // FastAPI validation errors arrive as a LIST of per-field objects whose
+    // prose is framework-speak ("field required"), so they are not rendered.
+    if (detail is List) return null;
+    return message.trim().isEmpty ? null : message;
+  }
+
   @override
   String toString() => 'ApiException($statusCode): $message';
 }

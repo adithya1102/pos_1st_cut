@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'payment_modes_screen.dart';
 
 import '../services/location_service.dart';
 import '../state/home_state.dart';
@@ -204,6 +205,34 @@ class _OutletSettingsScreenState extends State<OutletSettingsScreen> {
                         context.read<LocationService>().openSettings(),
                   ),
                 ],
+                // --- Payment modes (backend migrations 035, 036) ---
+                //
+                // LAST on the screen, deliberately. This page is titled
+                // "Hours & availability" and the hours are what an owner opens
+                // it for; payment modes are a rarely-touched setting that
+                // happens to live in the same place. Putting it above the
+                // hours also pushed every control below it out of reach in the
+                // existing widget tests' viewport, which was a fair signal it
+                // was in the wrong place.
+                //
+                // A ROW, not an inline section: the screen behind it loads its
+                // own state from a role-gated endpoint, and a waiter or kitchen
+                // account gets a 403 there. Opening it on demand means this
+                // screen does not have to know who is allowed — the server
+                // answers that, and the screen reports what it says.
+                const Divider(height: 32),
+                ListTile(
+                  key: const Key('open_payment_modes'),
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.payments_outlined),
+                  title: const Text('Payment modes'),
+                  subtitle: const Text(
+                      'Choose how customers pay: online, at pickup, or '
+                      'straight to your UPI.'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => const PaymentModesScreen())),
+                ),
               ],
             ),
     );

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/order.dart';
 import '../state/orders_state.dart';
@@ -128,6 +129,17 @@ class _Detail extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // The restaurant owes money back, directly. First, because it is the
+          // only thing on this card that costs the owner something if missed.
+          if (order.manualRefundDue) ...[
+            _ManualRefundBanner(order: order),
+            const Divider(height: 24),
+          ],
+          // Who to call, for the two modes that have a customer to reach.
+          if (order.contactVisible) ...[
+            _ContactRow(order: order),
+            const Divider(height: 24),
+          ],
           _PaymentAction(order: order),
           const Divider(height: 24),
           Text('Items', style: theme.textTheme.labelLarge),
@@ -232,10 +244,377 @@ class _PaymentActionState extends State<_PaymentAction> {
       ));
   }
 
+
+  /// Accept. For a direct-UPI order this IS the payment confirmation, so it is
+  /// behind a confirm dialog that names what the staff member is asserting.
+  Future<void> _accept(BuildContext context) async {
+    final order = widget.order;
+
+    if (order.isUpiManual) {
+      final sure = await showDialog<bool>(
+        context: context,
+        builder: (c) => AlertDialog(
+          key: const Key('upi_accept_confirm'),
+          title: const Text('Has the money arrived?'),
+          content: Text(
+            'Only accept if your UPI app shows exactly '
+            '₹${order.totalAmount.toStringAsFixed(0)} from this customer. '
+            'Accepting records the payment.',
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(c, false),
+                child: const Text('Not yet')),
+            FilledButton(
+                key: const Key('upi_accept_confirm_yes'),
+                onPressed: () => Navigator.pop(c, true),
+                child: const Text('Yes, received')),
+          ],
+        ),
+      );
+      if (sure != true || !mounted) return;
+    }
+
+    setState(() => _busy = true);
+    // 15 minutes is the modal's own default and the commonest answer; the
+    // acceptance modal is where a real estimate is chosen.
+    final err = await context.read<OrdersState>().acceptPending(
+        order.orderId, 15);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (err != null) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(err)));
+    }
+  }
+
+  /// Reject a direct-UPI order, with WHICH kind of no it is.
+  ///
+  /// The two outcomes are opposites and the dialogs say so: one strikes the
+  /// customer and owes nothing, the other obliges the restaurant to refund.
+  Future<void> _rejectUpi(BuildContext context, String outcome) async {
+    final order = widget.order;
+    final notReceived = outcome == 'not_received';
+
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        key: Key('upi_reject_confirm_$outcome'),
+        title: Text(notReceived
+            ? 'Payment not received?'
+            : "Can't make this order?"),
+        content: Text(notReceived
+            ? 'Check your UPI app once more. If the money really is not '
+              'there, the order is cancelled and the customer is told.'
+            : 'The customer has paid '
+              '₹${order.totalAmount.toStringAsFixed(0)}. You will need to '
+              'refund them yourself from your UPI app.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(c, false),
+              child: const Text('Go back')),
+          FilledButton(
+            style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(c).colorScheme.error),
+            onPressed: () => Navigator.pop(c, true),
+            child: Text(notReceived ? 'Not received' : 'Cancel and refund'),
+          ),
+        ],
+      ),
+    );
+    if (sure != true || !mounted) return;
+
+    setState(() => _busy = true);
+    final err = await context.read<OrdersState>().reject(
+          order.orderId,
+          upiOutcome: outcome,
+        );
+    if (!mounted) return;
+    setState(() => _busy = false);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(err ??
+            (notReceived
+                ? 'Order cancelled. The customer has been told.'
+                : 'Order cancelled. Please refund the customer.')),
+      ));
+  }
+
+  /// Take the money and hand the food over, in one action.
+  ///
+  /// The pickup code is required, exactly as it is for a prepaid handover:
+  /// taking cash cannot be decoupled from checking this is the right order.
+  Future<void> _collect(BuildContext context) async {
+    final code = TextEditingController();
+    String method = 'cash';
+
+    final result = await showDialog<({String code, String method})?>(
+      context: context,
+      builder: (c) => StatefulBuilder(
+        builder: (c, setLocal) => AlertDialog(
+          key: const Key('collect_dialog'),
+          title: const Text('Paid and handed over'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('₹${widget.order.totalAmount.toStringAsFixed(0)} '
+                  'from the customer.'),
+              const SizedBox(height: 12),
+              SegmentedButton<String>(
+                key: const Key('collect_method'),
+                segments: const [
+                  ButtonSegment(value: 'cash', label: Text('Cash')),
+                  ButtonSegment(value: 'upi', label: Text('UPI')),
+                ],
+                selected: {method},
+                onSelectionChanged: (s) => setLocal(() => method = s.first),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                key: const Key('collect_code'),
+                controller: code,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Pickup code',
+                  hintText: '6 digits',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(c, null),
+                child: const Text('Cancel')),
+            FilledButton(
+              key: const Key('collect_confirm'),
+              onPressed: () => Navigator.pop(
+                  c, (code: code.text.trim(), method: method)),
+              child: const Text('Confirm'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == null || !mounted) return;
+
+    setState(() => _busy = true);
+    final res = await context
+        .read<OrdersState>()
+        .collect(widget.order.orderId, pickupCode: result.code,
+            method: result.method);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(res.verified
+            ? 'Payment recorded and order closed.'
+            : (res.message ??
+                (res.locked
+                    ? 'Too many wrong codes. This order is locked.'
+                    : 'Wrong code. ${res.attemptsRemaining ?? 0} '
+                      'attempts left.'))),
+      ));
+  }
+
+  Future<void> _noShow(BuildContext context) async {
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        key: const Key('no_show_confirm'),
+        title: const Text('Customer never came?'),
+        content: const Text(
+            'The order is closed as a no-show and the customer gets a strike. '
+            'The food is not returned to stock.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(c, false),
+              child: const Text('Keep waiting')),
+          FilledButton(
+            style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(c).colorScheme.error),
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('No-show'),
+          ),
+        ],
+      ),
+    );
+    if (sure != true || !mounted) return;
+
+    setState(() => _busy = true);
+    final err =
+        await context.read<OrdersState>().noShow(widget.order.orderId);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+          SnackBar(content: Text(err ?? 'Order closed as a no-show.')));
+  }
+
+  /// Pay-at-pickup: call, then decide. Direct UPI: check the app, then decide.
+  ///
+  /// Both are built here rather than in a separate widget because they share
+  /// the reject path and the "too late" states with the prepaid card, and
+  /// forking it would mean three copies of those drifting apart.
+  Widget _nonGatewayActions(BuildContext context) {
+    final theme = Theme.of(context);
+    final order = widget.order;
+    final status = order.status.toUpperCase();
+
+    // Collected or cancelled: nothing left to do.
+    if (status == 'COMPLETED' || status == 'CANCELLED' ||
+        status == 'ABANDONED') {
+      return Row(
+        children: [
+          Icon(
+              status == 'COMPLETED'
+                  ? Icons.check_circle_outline
+                  : Icons.cancel_outlined,
+              size: 18,
+              color: status == 'COMPLETED'
+                  ? theme.colorScheme.primary
+                  : theme.colorScheme.error),
+          const SizedBox(width: 8),
+          Text(
+            status == 'COMPLETED'
+                ? 'Collected${order.collectedPaymentMethod != null ? ' · '
+                    '${order.collectedPaymentMethod!.toUpperCase()}' : ''}'
+                : (status == 'ABANDONED' ? 'No-show' : 'Cancelled'),
+            style: theme.textTheme.labelLarge,
+          ),
+        ],
+      );
+    }
+
+    // -------------------- awaiting the human decision --------------------
+    if (order.isPending) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (order.isUpiManual)
+            // THE SENTENCE THAT MATTERS. Staff must check their own UPI app
+            // for the EXACT amount — not trust the customer's word, which is
+            // all payment_claimed_at is.
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Text(
+                'Customer says paid ₹${order.totalAmount.toStringAsFixed(0)}. '
+                'Check your UPI app for exactly '
+                '₹${order.totalAmount.toStringAsFixed(0)}',
+                key: const Key('upi_check_your_app'),
+                style: theme.textTheme.titleSmall
+                    ?.copyWith(color: theme.colorScheme.error),
+              ),
+            ),
+          if (order.isPayAtPickup && order.needsCall)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Text(
+                'Call the customer to confirm before you start cooking.',
+                key: const Key('pickup_call_first'),
+                style: theme.textTheme.bodySmall,
+              ),
+            ),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  key: const Key('order_accept'),
+                  onPressed: _busy ? null : () => _accept(context),
+                  icon: const Icon(Icons.check, size: 18),
+                  label: Text(order.isUpiManual
+                      ? 'Accept — amount received'
+                      : 'Accept'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (order.isUpiManual)
+            OutlinedButton.icon(
+              key: const Key('order_payment_not_received'),
+              onPressed: _busy ? null : () => _rejectUpi(context, 'not_received'),
+              icon: Icon(Icons.money_off, size: 18,
+                  color: theme.colorScheme.error),
+              label: Text('Payment not received',
+                  style: TextStyle(color: theme.colorScheme.error)),
+            ),
+          if (order.isUpiManual) const SizedBox(height: 8),
+          OutlinedButton.icon(
+            key: const Key('order_cannot_make'),
+            onPressed: _busy
+                ? null
+                : () => order.isUpiManual
+                    ? _rejectUpi(context, 'cannot_make')
+                    : _reject(),
+            icon: const Icon(Icons.block, size: 18),
+            label: const Text("Can't make this"),
+          ),
+        ],
+      );
+    }
+
+    // ------------------- accepted: cooking, then handover ----------------
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Icon(order.isPaid ? Icons.verified : Icons.payments_outlined,
+                size: 18,
+                color: order.isPaid
+                    ? theme.colorScheme.primary
+                    : const Color(0xFFB26A00)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                order.isPaid
+                    ? 'Paid${order.collectedPaymentMethod != null ? ' · '
+                        '${order.collectedPaymentMethod!.toUpperCase()}' : ''}'
+                    : '₹${order.amountDue.toStringAsFixed(0)} to collect',
+                key: const Key('order_amount_due'),
+                style: theme.textTheme.labelLarge,
+              ),
+            ),
+          ],
+        ),
+        // Pay-at-pickup takes money at handover, so it gets the combined
+        // "paid and handed over" action. A direct-UPI order is already paid by
+        // this point and completes through the ordinary code box below.
+        if (order.isPayAtPickup && !order.isPaid) ...[
+          const SizedBox(height: 10),
+          FilledButton.icon(
+            key: const Key('order_paid_and_handed_over'),
+            onPressed: _busy ? null : () => _collect(context),
+            icon: const Icon(Icons.done_all, size: 18),
+            label: const Text('Paid and handed over'),
+          ),
+        ],
+        if (status == 'READY' || status == 'PREPARING') ...[
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            key: const Key('order_no_show'),
+            onPressed: _busy ? null : () => _noShow(context),
+            icon: const Icon(Icons.person_off_outlined, size: 18),
+            label: const Text('No-show'),
+          ),
+        ],
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final status = widget.order.status.toUpperCase();
+
+    // Pay-at-pickup and direct UPI have their own action set: there is a human
+    // decision to make, money to take at the counter, and a no-show to record.
+    if (!widget.order.isPrepaid) return _nonGatewayActions(context);
 
     if (status == 'CANCELLED') {
       return Row(
@@ -456,6 +835,128 @@ class _StatusChip extends StatelessWidget {
           color: color,
           fontWeight: FontWeight.w700,
         ),
+      ),
+    );
+  }
+}
+
+/// Who to call, and the button that calls them.
+///
+/// Rendered only when the server is still returning the contact — it
+/// suppresses it once the visibility window closes and nulls it for good on
+/// redaction, so this widget never has to decide. [Order.contactVisible] is
+/// that answer.
+class _ContactRow extends StatelessWidget {
+  const _ContactRow({required this.order});
+
+  final Order order;
+
+  Future<void> _call(BuildContext context) async {
+    final uri = order.telUri;
+    if (uri == null) return;
+    final ok = await launchUrl(uri);
+    if (!ok && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open the dialer.')),
+      );
+    }
+    if (context.mounted) {
+      // Record the attempt so the queue stops nagging and the customer-facing
+      // state moves to CALLED. Best-effort: a failed log must not stop a call
+      // that has already been placed.
+      await context.read<OrdersState>().logCall(order.orderId);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final name = order.contactFirstName?.trim();
+    final phone = order.contactPhone?.trim();
+
+    return Row(
+      children: [
+        Icon(Icons.person_outline, size: 18, color: theme.colorScheme.primary),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                (name == null || name.isEmpty) ? 'Customer' : name,
+                key: const Key('order_contact_name'),
+                style: theme.textTheme.titleSmall,
+              ),
+              if (phone != null && phone.isNotEmpty)
+                Text(phone,
+                    key: const Key('order_contact_phone'),
+                    style: theme.textTheme.bodySmall),
+            ],
+          ),
+        ),
+        if (order.telUri != null)
+          FilledButton.tonalIcon(
+            key: const Key('order_call_button'),
+            onPressed: () => _call(context),
+            icon: const Icon(Icons.call, size: 18),
+            label: Text(order.callAttempts > 0
+                ? 'Call again (${order.callAttempts})'
+                : 'Call'),
+          ),
+      ],
+    );
+  }
+}
+
+/// "Refund ₹X to the customer yourself."
+///
+/// The wording is the point. CareVo was never in the path of a direct-UPI
+/// payment and cannot reverse it, so a banner saying "a refund is being
+/// arranged" — the gateway copy — would promise something nobody can send. It
+/// names the amount and puts the action on the person who holds the money.
+class _ManualRefundBanner extends StatelessWidget {
+  const _ManualRefundBanner({required this.order});
+
+  final Order order;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      key: const Key('manual_refund_banner'),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.errorContainer,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.currency_rupee,
+              size: 18, color: theme.colorScheme.onErrorContainer),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Refund ₹${order.totalAmount.toStringAsFixed(0)} to the '
+                  'customer yourself',
+                  key: const Key('manual_refund_text'),
+                  style: theme.textTheme.titleSmall?.copyWith(
+                      color: theme.colorScheme.onErrorContainer),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'They paid you directly by UPI, so CareVo cannot refund it. '
+                  'Send it back from your UPI app.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onErrorContainer),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

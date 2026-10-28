@@ -7,6 +7,7 @@ import '../config/app_config.dart';
 import '../services/staff_push_service.dart';
 import '../state/auth_state.dart';
 import 'forgot_password_screen.dart';
+import 'onboarding_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -164,6 +165,37 @@ class _LoginScreenState extends State<LoginScreen> {
                     // who onboarded them.
                     Text(
                       'Need an account? Ask your CareVo contact.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(context).colorScheme.outline,
+                          ),
+                    ),
+                    const SizedBox(height: 8),
+                    // The ONE route in for a restaurant that is not on the
+                    // platform yet.
+                    //
+                    // This does NOT reintroduce self-service signup, and the
+                    // reasoning above still holds: no account is created here.
+                    // It opens a page that explains the team will call, and
+                    // hands off to a form they own. An owner account can
+                    // rewrite a live restaurant's prices, so it stays
+                    // something CareVo provisions after a conversation.
+                    TextButton(
+                      key: const Key('login_join_link'),
+                      onPressed: auth.loading
+                          ? null
+                          : () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                    builder: (_) => const OnboardingScreen()),
+                              ),
+                      child: const Text('New restaurant? Join Gusto Skip'),
+                    ),
+                    const SizedBox(height: 4),
+                    // The build, so a tester can say which one they are on
+                    // without digging through Android settings.
+                    Text(
+                      'Version ${AppConfig.appVersion}',
+                      key: const Key('login_version_label'),
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: Theme.of(context).colorScheme.outline,

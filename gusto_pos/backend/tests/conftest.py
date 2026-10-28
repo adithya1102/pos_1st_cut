@@ -95,11 +95,24 @@ async def seed(db):
     # geofence_radius_meters and verification_status are NOT NULL with no
     # server default, so they must be supplied explicitly — the ORM normally
     # fills them in Python.
+    # cashfree_unlocked is named EXPLICITLY, and the reason matters.
+    #
+    # Migration 036 flipped its DEFAULT to false so a restaurant joining now
+    # has online payment invisible until CareVo activates it. Existing outlets
+    # were deliberately left as they were, which for all of them is true.
+    #
+    # This fixture models an ESTABLISHED outlet — one already trading, which is
+    # what the overwhelming majority of tests are about — so it states true
+    # rather than inheriting a default that now means "brand new and not yet
+    # activated". A test that wants the new-outlet case creates an outlet
+    # WITHOUT naming the column, which is what proves the default; see
+    # TestNewOutletIsCashfreeLocked in test_api_owner_payment_settings.py.
     await db.execute(text("""
         INSERT INTO outlets (id, organization_id, location_name, city, is_visible,
                              upi_id, geofence_radius_meters, verification_status,
-                             created_at)
-        VALUES (:i,:o,:n,'Testville', true, 'test@upi', 150, 'active', now())"""),
+                             created_at, cashfree_unlocked)
+        VALUES (:i,:o,:n,'Testville', true, 'test@upi', 150, 'active', now(),
+                true)"""),
         {"i": str(outlet_id), "o": str(org_id), "n": f"Outlet {tag}"})
     await db.execute(text("""
         INSERT INTO menus (id, outlet_id, version_label, is_latest, created_at)

@@ -74,6 +74,7 @@ class Outlet {
     this.opensAt,
     this.closesAt,
     this.createdAt,
+    this.paymentMethods,
   });
 
   final String id;
@@ -238,6 +239,45 @@ class Outlet {
   /// than being guessed at.
   final DateTime? createdAt;
 
+  /// Payment methods this outlet accepts: PREPAID, PAY_AT_PICKUP, UPI_MANUAL.
+  ///
+  /// NULL when the server did not send the field (a backend predating it); an
+  /// empty list when it said this outlet accepts none. See [_parseMethods].
+  ///
+  /// Checkout renders exactly this list and nothing else. In particular the
+  /// Cashfree flow is reachable ONLY when [acceptsPrepaid] is true. The
+  /// Cashfree code itself is untouched; it is simply not routed to for an
+  /// outlet that does not offer online payment.
+  final List<String>? paymentMethods;
+
+  /// True when the server told us which methods this outlet takes.
+  ///
+  /// The gate on every decision below, so "we were not told" never silently
+  /// becomes "there are none".
+  bool get knowsPaymentMethods => paymentMethods != null;
+
+  bool get acceptsPrepaid => paymentMethods?.contains('PREPAID') ?? false;
+  bool get acceptsPayAtPickup =>
+      paymentMethods?.contains('PAY_AT_PICKUP') ?? false;
+  bool get acceptsUpiManual =>
+      paymentMethods?.contains('UPI_MANUAL') ?? false;
+
+  /// True when the server listed at least one method.
+  bool get canOrder => paymentMethods?.isNotEmpty ?? false;
+
+  /// True when the server says this outlet accepts NOTHING.
+  ///
+  /// Only ever true when the field was actually sent, so an older backend
+  /// cannot produce it.
+  bool get acceptsNothing => knowsPaymentMethods && paymentMethods!.isEmpty;
+
+  /// True when the ONLY ways to pay settle outside the gateway.
+  ///
+  /// Both of those are collected as soon as the food is ready and the server
+  /// refuses `requested_pickup_at` for them, so the scheduling control is
+  /// hidden in this case rather than offered and then rejected.
+  bool get onlyNonGatewayPayment => canOrder && !acceptsPrepaid;
+
   /// "9:00 am - 10:30 pm", or null when the hours are unknown.
   String? get hoursLabel {
     if (!hasHours) return null;
@@ -275,6 +315,33 @@ class Outlet {
   final String? offerText;
 
   bool get hasOffers => offerCount > 0 && (offerText?.isNotEmpty ?? false);
+
+  /// Which payment methods this outlet can take, in server order.
+  ///
+  /// SERVER-DRIVEN, like `transport_modes` (migration 030) and for the same
+  /// reason: an admin unlocking online payment, or an owner switching on
+  /// direct UPI, has to light up in an app that is already installed.
+  ///
+  /// NULL means the server said NOTHING, and an empty list means it said
+  /// "none". Collapsing the two would be a real bug, so this returns null for
+  /// a missing key — the same distinction [hasMetro] draws a few lines below,
+  /// and for the same reason:
+  ///
+  ///   null -> a backend predating the field. Assume online payment, which is
+  ///           what every build before this one did unconditionally.
+  ///   []   -> this restaurant accepts nothing. It can take no orders, most
+  ///           often because it has just joined and its online payment is not
+  ///           activated yet. Checkout disables Pay and says so.
+  ///
+  /// If both read as `[]`, a brand-new restaurant would be offered the Cashfree
+  /// flow it has no account for.
+  static List<String>? _parseMethods(dynamic raw) {
+    if (raw is! List) return null;
+    return raw
+        .map((e) => e?.toString().trim().toUpperCase() ?? '')
+        .where((s) => s.isNotEmpty)
+        .toList(growable: false);
+  }
 
   factory Outlet.fromJson(Map<String, dynamic> json) {
     final dist = json['distance_km'];
@@ -327,6 +394,7 @@ class Outlet {
       // tryParse, not parse: a malformed timestamp leaves this null (sorts
       // last under "Newest") rather than throwing and blanking the whole list.
       createdAt: DateTime.tryParse(json['created_at']?.toString() ?? ''),
+      paymentMethods: _parseMethods(json['payment_methods']),
     );
   }
 

@@ -21,8 +21,11 @@ import '../widgets/focus_release.dart';
 import '../widgets/location_permission_dialog.dart';
 import '../widgets/offer_sheet.dart';
 import '../widgets/price_text.dart';
+import 'confirm_contact_screen.dart';
 import 'payment_processing_screen.dart';
 import 'pickup_screen.dart';
+import 'upi_pay_screen.dart';
+import '../models/order.dart';
 import '../widgets/account_button.dart';
 
 /// PE Step 3 (FR-C1) — how the customer will travel to the outlet. Values map
@@ -142,6 +145,34 @@ class CheckoutScreen extends StatefulWidget {
 
 class _CheckoutScreenState extends State<CheckoutScreen> {
   bool _placing = false;
+
+  /// Set once the contact screen has been through for this checkout, so going
+  /// back and tapping Pay again does not re-ask.
+  bool _contactConfirmed = false;
+
+  /// Human label for a wire method value, for copy that names it.
+  static String _methodLabel(String wire) => switch (wire) {
+        'PAY_AT_PICKUP' => 'Pay at pickup',
+        'UPI_MANUAL' => 'Pay by UPI',
+        'PREPAID' => 'Pay online',
+        _ => 'Pay',
+      };
+
+  static String _methodSubtitle(String wire) => switch (wire) {
+        'PAY_AT_PICKUP' =>
+          'Pay when you collect. The restaurant will call you to confirm.',
+        'UPI_MANUAL' =>
+          'Pay the restaurant directly from your UPI app.',
+        'PREPAID' => 'UPI, card or net banking.',
+        _ => '',
+      };
+
+  static IconData _methodIcon(String wire) => switch (wire) {
+        'PAY_AT_PICKUP' => Icons.storefront_outlined,
+        'UPI_MANUAL' => Icons.account_balance_outlined,
+        'PREPAID' => Icons.lock_outline,
+        _ => Icons.payment,
+      };
 
   /// Optional points-discount coupon code. Validated server-side at order
   /// creation — the app deliberately does no local check, so there is exactly
@@ -411,8 +442,54 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   /// window where scheduling is most useful, since "no room to cook that now"
   /// is not an answer to a request for later. A fully closed shutter offers
   /// nothing, matching the server, which refuses scheduled orders there too.
-  bool _canSchedule(Outlet? outlet) =>
-      outlet == null || outlet.orderStatus != 'closed';
+  ///
+  /// ALSO HIDDEN when the only ways to pay settle outside the gateway
+  /// (pay-at-pickup, direct UPI). The server refuses `requested_pickup_at` for
+  /// both with a 409, because the hold that keeps an order back from the
+  /// kitchen is taken at gateway payment and those never reach it. Offering a
+  /// control whose every value would be rejected is worse than not offering
+  /// it: the customer picks a time, taps Pay, and is told no for a reason that
+  /// has nothing to do with the time they chose.
+  bool _canSchedule(Outlet? outlet) {
+    if (outlet != null && outlet.onlyNonGatewayPayment) return false;
+    return outlet == null || outlet.orderStatus != 'closed';
+  }
+
+  /// The methods this outlet offers, server-driven.
+  ///
+  /// An EMPTY list means the restaurant has not chosen how to be paid — most
+  /// often one that has just joined, whose online payment is not activated and
+  /// which has not turned on pay-at-pickup or UPI. Pay is disabled and the
+  /// reason is said, rather than sending an order the server will refuse.
+  ///
+  /// A build talking to a backend that predates `payment_methods` also gets an
+  /// empty list. That case is handled by [_fallbackPrepaid] rather than by
+  /// treating empty as prepaid everywhere, so the two situations stay
+  /// distinguishable.
+  List<String> _methodsFor(Outlet? outlet) =>
+      outlet?.paymentMethods ?? const [];
+
+  /// True when the server told us nothing about payment methods at all.
+  ///
+  /// Then — and only then — the app assumes prepaid, which is what every build
+  /// before this one did unconditionally. This is the compatibility path, not
+  /// the normal one, and it is NOT the same as an outlet that accepts nothing.
+  bool _fallbackPrepaid(Outlet? outlet) =>
+      outlet == null || !outlet.knowsPaymentMethods;
+
+  /// Which method the customer has chosen, defaulting to the first offered.
+  ///
+  /// Stored as a wire string rather than an enum for the same reason the
+  /// transport chips are: the offered list is server-driven and may one day
+  /// contain something this build has no case for.
+  String? _method;
+
+  String _effectiveMethod(Outlet? outlet) {
+    final offered = _methodsFor(outlet);
+    if (offered.isEmpty) return 'PREPAID';
+    if (_method != null && offered.contains(_method)) return _method!;
+    return offered.first;
+  }
 
   /// Upper bound on how far ahead an arrival may be declared.
   ///
@@ -722,12 +799,31 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       return;
     }
 
+    // NON-PREPAID ORDERS CONFIRM THE CONTACT FIRST.
+    //
+    // The restaurant is going to ring this person, or look for their payment,
+    // so the number it will use is shown before the order exists rather than
+    // after. Prepaid skips it — nobody is called about a gateway payment, and
+    // adding a screen to that flow would be a step for its own sake.
+    final chosen = _effectiveMethod(cart.outlet);
+    if (chosen != 'PREPAID' && !_contactConfirmed) {
+      final ok = await Navigator.of(context).push<bool>(MaterialPageRoute(
+        builder: (_) => ConfirmContactScreen(
+          methodLabel: _methodLabel(chosen),
+          onConfirmed: () => Navigator.of(context).pop(true),
+        ),
+      ));
+      if (ok != true || !mounted) return;
+      setState(() => _contactConfirmed = true);
+    }
+
     setState(() => _placing = true);
     try {
       if (!await _ensureAvailable(cart)) return;
       if (!mounted) return;
       final order = await context.read<OrderService>().createOrder(
             cart.toOrderPayload(
+              paymentMethod: chosen,
               customerNotes: widget.customerNotes,
               transportMode: mode.wire,
               originLat: _originLat,
@@ -753,6 +849,44 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             ),
           );
       if (!mounted) return;
+
+      // ---------------- NON-GATEWAY ORDERS ROUTE AWAY HERE ----------------
+      //
+      // Checked BEFORE anything looks at `order.payment`, so neither the
+      // Cashfree sheet nor the stub simulate screen is reachable for these.
+      // The Cashfree code below is untouched and still the only prepaid path;
+      // it is simply not routed to for an order that has no gateway session.
+      //
+      // Branching on the SERVER's payment_mode rather than on `payment` being
+      // null: the server is the authority on which money path this order took,
+      // and inferring it from a missing field is how a future response shape
+      // change becomes a mis-route.
+      if (order.paymentMode == PaymentMode.upiManual) {
+        Navigator.of(context).pushReplacement(MaterialPageRoute(
+          builder: (_) => UpiPayScreen(
+            order: order,
+            outletName: cart.outlet?.displayName,
+          ),
+        ));
+        return;
+      }
+      if (order.paymentMode == PaymentMode.payAtPickup) {
+        // The cart clears now: the order is placed and the restaurant has it.
+        // Unlike the UPI path there is nothing further the customer must do
+        // for it to be real.
+        cart.clear();
+        Navigator.of(context).pushReplacement(MaterialPageRoute(
+          builder: (_) => PickupScreen(
+            orderId: order.id,
+            amount: order.finalAmount,
+            outletName: cart.outlet?.displayName,
+            // Carried so the pickup card can offer directions from the
+            // outlet's own pin rather than a name search.
+            outlet: cart.outlet,
+          ),
+        ));
+        return;
+      }
 
       // Stub backend (no Cashfree session): keep the simulate path so dev and
       // any deploy still on PAYMENT_GATEWAY=stub remains walkable.
@@ -830,6 +964,147 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     } finally {
       if (mounted) setState(() => _placing = false);
     }
+  }
+
+  /// True when the server says this outlet accepts nothing, which disables Pay.
+  ///
+  /// Distinguished from the legacy no-field case by [_fallbackPrepaid]: an
+  /// older backend gets the old behaviour, a current one that reports an empty
+  /// list gets a disabled button and an explanation.
+  bool _noMethods(Outlet? outlet) => outlet?.acceptsNothing ?? false;
+
+  String _payButtonLabel(Outlet? outlet, double payable) {
+    if (_noMethods(outlet)) return 'Not taking orders';
+    return switch (_effectiveMethod(outlet)) {
+      'PAY_AT_PICKUP' => 'Place order · ${formatRupees(payable)} at pickup',
+      'UPI_MANUAL' => 'Place order · pay ${formatRupees(payable)} by UPI',
+      _ => 'Pay ${formatRupees(payable)}',
+    };
+  }
+
+  /// The payment section: one row per method the outlet actually offers.
+  ///
+  /// A single offered method renders as a statement rather than a choice —
+  /// a radio list of one is a decision the customer does not have.
+  List<Widget> _buildPaymentSection(BuildContext context, Outlet? outlet,
+      TextTheme textTheme, AppColorScheme c) {
+    final offered = _methodsFor(outlet);
+
+    // No methods at all: the restaurant has not chosen how to be paid. Said
+    // plainly, with Pay disabled by the same condition in build().
+    if (_noMethods(outlet)) {
+      return [
+        NeoCard(
+          key: const Key('checkout_no_payment_methods'),
+          child: Row(
+            children: [
+              Icon(Icons.block, color: AppColors.tomato),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(
+                  'This restaurant is not taking orders right now.',
+                  style: textTheme.bodyMedium,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ];
+    }
+
+    // Compatibility path: a backend with no payment_methods field at all.
+    // Behaves exactly as every build before this one did. Reached only when
+    // the field was absent, because acceptsNothing was handled above.
+    if (_fallbackPrepaid(outlet)) {
+      return [
+        Text(
+          'Pay securely with UPI, card or net banking.',
+          style: textTheme.bodyMedium?.copyWith(color: c.inkSoft),
+        ),
+        const SizedBox(height: 16),
+        NeoCard(
+          key: const Key('checkout_payment_legacy'),
+          child: Row(
+            children: [
+              Icon(Icons.lock_outline, color: c.primary),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text("You'll choose how to pay on the next screen.",
+                    style: textTheme.bodyMedium),
+              ),
+            ],
+          ),
+        ),
+      ];
+    }
+
+    final chosen = _effectiveMethod(outlet);
+    final single = offered.length == 1;
+
+    return [
+      Text(
+        single
+            ? _methodSubtitle(offered.first)
+            : 'Choose how you want to pay.',
+        key: const Key('checkout_payment_intro'),
+        style: textTheme.bodyMedium?.copyWith(color: c.inkSoft),
+      ),
+      const SizedBox(height: 14),
+      for (final m in offered) ...[
+        NeoCard(
+          key: Key('payment_method_$m'),
+          color: (!single && m == chosen) ? c.accent : c.surface,
+          onTap: single ? null : () => setState(() => _method = m),
+          child: Row(
+            children: [
+              Icon(_methodIcon(m),
+                  color: (!single && m == chosen) ? c.onAccent : c.primary),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(_methodLabel(m),
+                        style: textTheme.titleMedium?.copyWith(
+                            color: (!single && m == chosen)
+                                ? c.onAccent
+                                : c.ink)),
+                    const SizedBox(height: 2),
+                    Text(_methodSubtitle(m),
+                        style: textTheme.bodySmall?.copyWith(
+                            color: (!single && m == chosen)
+                                ? c.onAccent
+                                : c.inkSoft)),
+                  ],
+                ),
+              ),
+              if (!single)
+                Icon(m == chosen
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
+                    color: m == chosen ? c.onAccent : c.inkSoft),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+      ],
+      // The promise the restaurant is making, spelled out before the order
+      // exists rather than discovered on the next screen.
+      if (chosen == 'PAY_AT_PICKUP')
+        Text(
+          'The restaurant will call you soon for order confirmation. '
+          'Please answer the call.',
+          key: const Key('checkout_pickup_call_note'),
+          style: textTheme.bodySmall?.copyWith(color: c.inkSoft),
+        ),
+      if (chosen == 'UPI_MANUAL')
+        Text(
+          'You will see the restaurant\'s UPI ID on the next screen. '
+          'Pay the exact amount, then tap "I\'ve paid".',
+          key: const Key('checkout_upi_note'),
+          style: textTheme.bodySmall?.copyWith(color: c.inkSoft),
+        ),
+    ];
   }
 
   @override
@@ -937,12 +1212,19 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               ],
               NeoButton(
                 key: const Key('checkout_pay'),
+                // The label names what will actually happen. "Pay ₹420" is a
+                // lie for a pay-at-pickup order, where nothing is charged now.
                 label: blocked
                     ? outlet!.statusLabel
-                    : 'Pay ${formatRupees(payable)}',
-                icon: blocked ? Icons.block : Icons.lock,
+                    : _payButtonLabel(outlet, payable),
+                icon: blocked
+                    ? Icons.block
+                    : _methodIcon(_effectiveMethod(outlet)),
                 loading: _placing,
-                onPressed: (cart.isEmpty || blocked) ? null : _payNow,
+                onPressed:
+                    (cart.isEmpty || blocked || _noMethods(outlet))
+                        ? null
+                        : _payNow,
               ),
             ],
           ),
@@ -1200,29 +1482,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             const SizedBox(height: 24),
             Text('Payment', style: textTheme.headlineSmall),
             const SizedBox(height: 6),
-            // No method picker any more: Cashfree's sheet presents UPI, cards
-            // and netbanking itself, and handing card entry to them is what
-            // keeps card details out of this app entirely.
-            Text(
-              'Pay securely with UPI, card or net banking. '
-              'Counter payment is not available.',
-              style: textTheme.bodyMedium?.copyWith(color: c.inkSoft),
-            ),
-            const SizedBox(height: 16),
-            NeoCard(
-              child: Row(
-                children: [
-                  Icon(Icons.lock_outline, color: c.primary),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Text(
-                      'You\'ll choose how to pay on the next screen.',
-                      style: textTheme.bodyMedium,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            // SERVER-DRIVEN. Exactly the methods in `payment_methods` are
+            // offered — nothing more. In particular the Cashfree flow is
+            // reachable only when PREPAID is in that list, which is how an
+            // outlet whose online payment has not been activated shows no
+            // Cashfree affordance at all rather than a disabled one.
+            //
+            // The Cashfree SERVICE and screens are untouched; this only
+            // decides whether anything routes to them.
+            ..._buildPaymentSection(context, cart.outlet, textTheme, c),
             const SizedBox(height: 20),
             _TotalRow(
               key: const Key('checkout_total_row'),

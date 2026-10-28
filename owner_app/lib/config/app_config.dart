@@ -23,6 +23,32 @@ class AppConfig {
   /// artwork, so this is the only thing announcing the app to a screen reader.
   static const String appName = 'Gusto Restaurant';
 
+  /// Where "Register your restaurant" sends a prospective owner.
+  ///
+  /// A --dart-define with NO default, deliberately. There is no sign-up
+  /// endpoint in this app and no native form; onboarding is a conversation
+  /// that CareVo's team finishes by phone, and the link points at whatever
+  /// form they are currently using. Hardcoding one would mean a store release
+  /// every time that changes, and shipping a stale link is worse than shipping
+  /// none.
+  ///
+  /// Empty means the button is HIDDEN rather than dead — see
+  /// [hasOnboardingForm] and OnboardingScreen.
+  static const String onboardingFormUrl = String.fromEnvironment(
+    'ONBOARDING_FORM_URL',
+    defaultValue: '',
+  );
+
+  static bool get hasOnboardingForm => onboardingFormUrl.trim().isNotEmpty;
+
+  /// Version shown in the app, so a tester can say which build they are on.
+  ///
+  /// Kept in step with pubspec.yaml by a test (see version_display_test.dart)
+  /// rather than read from the package at runtime: package_info_plus is not a
+  /// dependency here, and adding a plugin to render six characters would be a
+  /// poor trade.
+  static const String appVersion = '1.0.1+5';
+
   /// Brand palette (used lightly for accents only).
   static const int brandPurple = 0xFF6B2FB3;
   static const int brandMint = 0xFF8FD6B0;

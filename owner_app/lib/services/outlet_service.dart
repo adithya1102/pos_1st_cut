@@ -1,4 +1,5 @@
 import '../models/outlet.dart';
+import '../models/payment_settings.dart';
 import 'api_client.dart';
 
 class OutletService {
@@ -58,6 +59,43 @@ class OutletService {
 
   /// `POST /pos/outlet/closed` — flip the "temporarily closed" toggle
   /// (migration 024). Returns the full refreshed outlet.
+  /// `GET /pos/outlet/payment-methods` (backend migration 035).
+  ///
+  /// OWNER / MANAGER only server-side; a waiter or kitchen account gets a 403,
+  /// which is what hides the Payment modes entry from them.
+  Future<PaymentSettings> getPaymentSettings() async {
+    final data = await _client.get('/pos/outlet/payment-methods');
+    return PaymentSettings.fromJson((data as Map).cast<String, dynamic>());
+  }
+
+  /// `PATCH /pos/outlet/payment-methods`.
+  ///
+  /// Sends the FULL desired state, as the server requires: a partial update is
+  /// how an outlet ends up accepting nothing.
+  ///
+  /// Errors are deliberately NOT normalised here. The server refuses with
+  /// prose written for the owner — "Cashfree is currently unavailable for your
+  /// restaurant", "Send yourself Rs 1 using this UPI ID..." — and the screen
+  /// shows it verbatim, so an ApiException is allowed to propagate.
+  Future<PaymentSettings> setPaymentSettings({
+    required bool prepaid,
+    required bool payAtPickup,
+    required bool upiManual,
+    String? upiVpa,
+    String? upiPayeeName,
+    bool upiAttested = false,
+  }) async {
+    final data = await _client.patch('/pos/outlet/payment-methods', body: {
+      'prepaid': prepaid,
+      'pay_at_pickup': payAtPickup,
+      'upi_manual': upiManual,
+      'upi_vpa': upiVpa,
+      'upi_payee_name': upiPayeeName,
+      'upi_attested': upiAttested,
+    });
+    return PaymentSettings.fromJson((data as Map).cast<String, dynamic>());
+  }
+
   Future<Outlet> setManualClosed(bool isClosed) async {
     final data = await _client.post('/pos/outlet/closed', body: {
       'is_manually_closed': isClosed,

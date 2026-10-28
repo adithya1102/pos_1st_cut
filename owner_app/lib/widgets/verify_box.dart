@@ -59,6 +59,16 @@ class _VerifyBoxState extends State<VerifyBox> {
                 : 'Verified — pickup confirmed.',
           );
           _controller.clear();
+        } else if (result.message != null) {
+          // THE SERVER'S OWN SENTENCE.
+          //
+          // This is the 409 PAYMENT_NOT_RECORDED case: a pay-at-pickup or
+          // direct-UPI order whose money has not been taken yet. It used to
+          // fall through to the generic "Could not verify right now. Try
+          // again." below, which is wrong twice over — retrying cannot fix it,
+          // and the staff member was never told they have to take the payment
+          // first. The server writes prose for exactly this moment.
+          _feedback = _Feedback.error(result.message!);
         } else {
           final remaining = result.attemptsRemaining;
           _feedback = _Feedback.warn(

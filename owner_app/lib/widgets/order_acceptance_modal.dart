@@ -260,7 +260,18 @@ class _AcceptanceSheetState extends State<_AcceptanceSheet> {
               ? null
               : () => Navigator.of(context).pop(
                   RejectDecision(_reason!, note: _note.text)),
-          child: const Text('Reject and refund'),
+          // THE WORD "REFUND" IS WRONG FOR A NON-PREPAID ORDER.
+          //
+          // A pay-at-pickup order was never charged, so there is nothing to
+          // refund and saying so would tell staff money is going back when
+          // none came in. A direct-UPI order WAS paid, but CareVo cannot
+          // reverse it — the restaurant refunds that itself, which is a
+          // different sentence and lives on the order card's banner.
+          //
+          // Only a prepaid order has a refund CareVo arranges.
+          child: Text(widget.order.isPrepaid
+              ? 'Reject and refund'
+              : 'Reject order'),
         ),
         const SizedBox(height: 8),
         TextButton(

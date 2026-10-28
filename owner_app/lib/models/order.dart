@@ -69,7 +69,88 @@ class Order {
     this.pickupVerifiedAt,
     this.acceptanceState,
     this.acceptanceDeadlineAt,
+    this.paymentMode = 'PREPAID',
+    this.contactFirstName,
+    this.contactPhone,
+    this.contactVisible = false,
+    this.callState,
+    this.callAttempts = 0,
+    this.collectedPaymentMethod,
+    this.paymentClaimedAt,
+    this.manualRefundDue = false,
+    this.manualRefundReason,
   });
+
+  // --- Pay at pickup / direct UPI (backend migrations 034, 035) ------------
+  //
+  // THIS MODEL USED TO CARRY NO CUSTOMER DATA AT ALL, and that was a stated
+  // invariant: orders were anchored purely by [orderId]. It now holds a first
+  // name and a phone — for these two payment modes ONLY, because somebody has
+  // to ring the customer to confirm a pay-at-pickup order, and has to be able
+  // to chase a UPI payment that did not arrive.
+  //
+  // The invariant is NARROWED, not abandoned: every field below is null or
+  // false for a PREPAID order, which is still every order at every outlet
+  // until an owner turns one of the new methods on.
+
+  /// PREPAID | PAY_AT_PICKUP | UPI_MANUAL.
+  final String paymentMode;
+
+  /// FIRST NAME ONLY — a surname has no use at a counter.
+  final String? contactFirstName;
+
+  /// Suppressed by the server once the visibility window closes, and nulled
+  /// for good by its redaction sweep. Absent for a prepaid order.
+  final String? contactPhone;
+
+  /// Whether the server is still returning the contact, so the card can say
+  /// "no longer available" rather than render an empty space that looks broken.
+  final bool contactVisible;
+
+  /// PENDING | CALLED | UNREACHABLE for pay-at-pickup; null otherwise.
+  final String? callState;
+  final int callAttempts;
+
+  /// cash | upi, once money has been taken.
+  final String? collectedPaymentMethod;
+
+  /// Direct UPI: when the CUSTOMER said they had paid.
+  ///
+  /// Not a payment. The restaurant confirms by looking at its own UPI app, and
+  /// that confirmation is the Accept tap — which is why the card's copy says
+  /// "Customer says paid" rather than "Paid".
+  final String? paymentClaimedAt;
+
+  /// The RESTAURANT owes this customer money back, directly.
+  ///
+  /// CareVo was never in the path of a direct-UPI payment and cannot reverse
+  /// it, so the banner this drives tells the owner to refund it themselves.
+  final bool manualRefundDue;
+  final String? manualRefundReason;
+
+  bool get isPayAtPickup => paymentMode == 'PAY_AT_PICKUP';
+  bool get isUpiManual => paymentMode == 'UPI_MANUAL';
+  bool get isPrepaid => paymentMode == 'PREPAID';
+
+  /// A pay-at-pickup order nobody has rung yet.
+  bool get needsCall => isPayAtPickup && callState != 'CALLED';
+
+  /// A direct-UPI order whose customer says they have paid, awaiting a human
+  /// to check the UPI app.
+  bool get upiAwaitingCheck =>
+      isUpiManual && paymentClaimedAt != null && !isPaid;
+
+  /// What is still owed. 0 once the money is recorded.
+  double get amountDue => isPaid ? 0 : totalAmount;
+
+  /// A `tel:` URI for the call button, or null when there is no number to dial.
+  Uri? get telUri {
+    final p = contactPhone?.trim();
+    if (p == null || p.isEmpty) return null;
+    // Strip spaces and dashes only. The leading + is kept — it is part of the
+    // number, and dialers handle it.
+    return Uri(scheme: 'tel', path: p.replaceAll(RegExp(r'[\s-]'), ''));
+  }
 
   /// True once staff have confirmed payment (manual UPI-intent tick).
   bool get isPaid => paymentStatus.toUpperCase() == 'PAID';
@@ -122,6 +203,19 @@ class Order {
       // it leaves the order on the ordinary queue rather than alarming.
       acceptanceState: json['acceptance_state']?.toString(),
       acceptanceDeadlineAt: json['acceptance_deadline_at']?.toString(),
+      // 034/035. All absent on an older backend and on every prepaid order, so
+      // each is read defensively with the prepaid answer as its default.
+      paymentMode:
+          (json['payment_mode'] as String?)?.trim().toUpperCase() ?? 'PREPAID',
+      contactFirstName: json['contact_first_name']?.toString(),
+      contactPhone: json['contact_phone']?.toString(),
+      contactVisible: (json['contact_visible'] as bool?) ?? false,
+      callState: json['call_state']?.toString(),
+      callAttempts: (json['call_attempts'] as num?)?.toInt() ?? 0,
+      collectedPaymentMethod: json['collected_payment_method']?.toString(),
+      paymentClaimedAt: json['payment_claimed_at']?.toString(),
+      manualRefundDue: (json['manual_refund_due'] as bool?) ?? false,
+      manualRefundReason: json['manual_refund_reason']?.toString(),
       items: rawItems
           .map((e) => OrderLineItem.fromJson(e as Map<String, dynamic>))
           .toList(),

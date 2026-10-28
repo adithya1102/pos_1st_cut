@@ -494,3 +494,125 @@ class TestAdminRouteStillWorks:
                                      "cashfree_unlocked": True})
         assert r.status_code == 200, r.text
         assert r.json()["cashfree_unlocked"] is False, "still locked"
+
+
+# ============ 5. Cashfree invisible until activated (migration 036) =========
+
+class TestNewOutletIsCashfreeLocked:
+    """036 flipped the DEFAULT so a restaurant joining now has online payment
+    invisible until CareVo activates it — without touching existing outlets."""
+
+    @pytest.fixture
+    async def fresh_outlet(self, db, seed):
+        """An outlet created the way every real path creates one: WITHOUT
+        naming cashfree_unlocked. That omission is what the test is about."""
+        org = await db.scalar(text(
+            "SELECT organization_id FROM outlets WHERE id = :o"),
+            {"o": seed["outlet_id"]})
+        oid = uuid.uuid4()
+        tag = uuid.uuid4().hex[:8]
+        await db.execute(text("""
+            INSERT INTO outlets (id, organization_id, location_name, city,
+                                 is_visible, upi_id, geofence_radius_meters,
+                                 verification_status, created_at)
+            VALUES (:i,:o,:n,'Testville', true, 'new@upi', 150, 'active',
+                    now())"""),
+            {"i": str(oid), "o": str(org), "n": f"Brand New {tag}"})
+        await db.commit()
+        return str(oid)
+
+    async def test_a_new_outlet_is_locked(self, db, fresh_outlet):
+        row = (await db.execute(text(
+            "SELECT cashfree_unlocked, payment_prepaid_enabled "
+            "FROM outlets WHERE id = :i"), {"i": fresh_outlet})).first()
+        assert row[0] is False, "online payment is not activated yet"
+        # The owner's PREFERENCE is still on by default — permission is what
+        # is absent. Keeping them separate is what lets an admin unlock the
+        # outlet later without the owner having to touch anything.
+        assert row[1] is True
+
+    async def test_prepaid_is_absent_from_its_resolved_methods(
+            self, db, fresh_outlet):
+        methods = await CarevoService.payment_methods_for(db, fresh_outlet)
+        assert PAY_PREPAID not in methods
+        # And with nothing else enabled the list is EMPTY, which is the honest
+        # answer: this restaurant has not chosen how to get paid yet.
+        assert methods == []
+
+    async def test_an_existing_outlet_was_not_touched(self, db, seed):
+        """036 changed a default, not any row. The seeded outlet models an
+        established restaurant and keeps online payment."""
+        unlocked = await db.scalar(text(
+            "SELECT cashfree_unlocked FROM outlets WHERE id = :i"),
+            {"i": seed["outlet_id"]})
+        assert unlocked is True
+        assert PAY_PREPAID in await CarevoService.payment_methods_for(
+            db, seed["outlet_id"])
+
+    async def test_an_admin_can_activate_it(self, client, db, seed, fresh_outlet):
+        """The intended route out of the locked state."""
+        r = await client.patch(
+            f"{API}/admin/outlets/{fresh_outlet}/payment-methods",
+            headers=seed["admin_auth"],
+            json={"prepaid": True, "pay_at_pickup": False,
+                  "cashfree_unlocked": True})
+        assert r.status_code == 200, r.text
+        assert r.json()["cashfree_unlocked"] is True
+        assert PAY_PREPAID in r.json()["effective_methods"]
+
+    async def test_the_owner_can_take_orders_without_waiting_for_an_admin(
+            self, client, db, seed, fresh_outlet):
+        """The other route out: the owner turns on a method that needs no
+        platform permission at all."""
+        # Point the owner's staff account at the new outlet.
+        await db.execute(text(
+            "UPDATE users SET outlet_id = :o WHERE id = :u"),
+            {"o": fresh_outlet, "u": seed["owner_id"]})
+        await db.commit()
+
+        r = await client.patch(SETTINGS, headers=seed["owner_auth"],
+                               json=_body(prepaid=False, pay_at_pickup=True))
+        assert r.status_code == 200, r.text
+        assert r.json()["effective_methods"] == [PAY_AT_PICKUP]
+
+
+class TestSettingsExposeTheLockAndTheResolvedList:
+    """AMENDMENT A2: the owner app cannot decide whether to render the Cashfree
+    row without both of these, so both are part of the contract."""
+
+    async def test_get_returns_cashfree_unlocked_and_effective_methods(
+            self, client, seed):
+        r = await client.get(SETTINGS, headers=seed["owner_auth"])
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert "cashfree_unlocked" in body
+        assert isinstance(body["cashfree_unlocked"], bool)
+        assert "effective_methods" in body
+        assert isinstance(body["effective_methods"], list)
+
+    async def test_patch_returns_them_too(self, client, seed):
+        """So the app can re-render from the save response without a re-fetch."""
+        r = await client.patch(SETTINGS, headers=seed["owner_auth"],
+                               json=_body(prepaid=True, pay_at_pickup=True))
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert "cashfree_unlocked" in body
+        assert body["effective_methods"] == [PAY_PREPAID, PAY_AT_PICKUP]
+
+    async def test_the_locked_case_is_distinguishable_from_the_off_case(
+            self, client, db, seed):
+        """Two different states the app must draw differently: 'you turned it
+        off' versus 'we have not activated it'."""
+        # Owner turned it off, platform permits it.
+        await client.patch(SETTINGS, headers=seed["owner_auth"],
+                           json=_body(prepaid=False, pay_at_pickup=True))
+        off = (await client.get(SETTINGS, headers=seed["owner_auth"])).json()
+        assert off["prepaid"] is False and off["cashfree_unlocked"] is True
+
+        # Platform has not activated it.
+        await db.execute(text(
+            "UPDATE outlets SET cashfree_unlocked = false WHERE id = :o"),
+            {"o": seed["outlet_id"]})
+        await db.commit()
+        locked = (await client.get(SETTINGS, headers=seed["owner_auth"])).json()
+        assert locked["cashfree_unlocked"] is False

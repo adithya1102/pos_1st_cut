@@ -16,11 +16,20 @@ class PickupResult {
   /// Backend order status, if returned (e.g. "COMPLETED").
   final String? status;
 
+  /// The SERVER's own sentence, when it sent one.
+  ///
+  /// Carries the 409 PAYMENT_NOT_RECORDED prose through to the UI instead of
+  /// the generic "Could not verify right now. Try again." that used to replace
+  /// it — retrying cannot fix an unpaid order, and the staff member needs
+  /// telling to take the payment first.
+  final String? message;
+
   const PickupResult({
     required this.verified,
     required this.locked,
     this.attemptsRemaining,
     this.status,
+    this.message,
   });
 }
 
@@ -122,8 +131,78 @@ class OrderService {
           status: e.body?['status'] as String?,
         );
       }
+      // 409 PAYMENT_NOT_RECORDED: a pay-at-pickup or direct-UPI order whose
+      // money has not been taken yet (backend migrations 034, 035).
+      //
+      // SURFACED, not swallowed. Before this, anything that was not a 423 was
+      // rethrown and VerifyBox turned it into "Could not verify right now. Try
+      // again." — which is both wrong and unactionable: retrying cannot help,
+      // and the staff member is never told they have to take the payment
+      // first. The server sends a sentence written for exactly this moment, so
+      // it is carried through verbatim.
+      if (e.statusCode == 409) {
+        return PickupResult(
+          verified: false,
+          locked: false,
+          status: e.body?['status'] as String?,
+          message: _serverMessage(e),
+        );
+      }
       rethrow;
     }
+  }
+
+  /// The server's own prose for a structured error, or null.
+  ///
+  /// Delegates to ApiException.serverMessage so there is ONE definition of how
+  /// a FastAPI `detail` is unwrapped, shared with the settings screen.
+  static String? _serverMessage(ApiException e) => e.serverMessage;
+
+  /// `POST /pos/orders/{id}/call` — record that staff rang the customer.
+  ///
+  /// Does not decide the order and does not extend its deadline. Counts up,
+  /// because ringing twice because nobody answered is normal.
+  Future<void> logCall(String orderId) async {
+    await _client.post('/pos/orders/$orderId/call');
+  }
+
+  /// `POST /pos/orders/{id}/collect` — take the money and hand the food over.
+  ///
+  /// One transaction server-side: recording payment without closing the order
+  /// leaves money against food on the counter, and closing without recording
+  /// payment gives it away.
+  ///
+  /// A wrong code is a 200 with `collected: false`, not an exception — the app
+  /// must tell "wrong code" from "the request failed".
+  Future<PickupResult> collect(String orderId,
+      {required String pickupCode, required String method}) async {
+    try {
+      final data = await _client.post(
+        '/pos/orders/$orderId/collect',
+        body: {'pickup_code': pickupCode, 'method': method},
+      );
+      final map = (data as Map<String, dynamic>?) ?? const {};
+      return PickupResult(
+        verified: (map['collected'] as bool?) ?? false,
+        locked: (map['locked'] as bool?) ?? false,
+        attemptsRemaining: map['attempts_remaining'] as int?,
+        status: map['status'] as String?,
+      );
+    } on ApiException catch (e) {
+      if (e.statusCode == 423) {
+        return const PickupResult(verified: false, locked: true);
+      }
+      return PickupResult(
+        verified: false,
+        locked: false,
+        message: _serverMessage(e),
+      );
+    }
+  }
+
+  /// `POST /pos/orders/{id}/no-show` — the customer never came.
+  Future<void> noShow(String orderId) async {
+    await _client.post('/pos/orders/$orderId/no-show');
   }
 
   // REMOVED: markPaid / POST /pos/orders/{id}/mark-paid.
@@ -188,9 +267,23 @@ class OrderService {
   /// There is deliberately no matching accept: a paid order is accepted
   /// automatically. This is the only human gate and it is an opt-OUT.
   /// Returns the resulting status. 409 if the order is already READY.
-  Future<String> reject(String orderId, {String? reason}) async {
-    final data = await _client.post('/pos/orders/$orderId/reject',
-        body: {if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim()});
+  /// [upiOutcome] is direct-UPI only (backend migration 035) and decides who
+  /// is owed what:
+  ///
+  ///   'not_received' — the money is not in the restaurant's UPI app. The
+  ///       customer claimed a payment that did not happen: their strike,
+  ///       nothing owed.
+  ///   'cannot_make'  — the money IS there and the kitchen cannot cook it. The
+  ///       restaurant owes it back, UPI to UPI.
+  ///
+  /// Ignored by the server for any other mode and for an unclaimed order.
+  Future<String> reject(String orderId,
+      {String? reason, bool unreachable = false, String? upiOutcome}) async {
+    final data = await _client.post('/pos/orders/$orderId/reject', body: {
+      if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
+      if (unreachable) 'unreachable': true,
+      if (upiOutcome != null) 'upi_outcome': upiOutcome,
+    });
     return ((data as Map?)?['status'] ?? 'CANCELLED').toString();
   }
 

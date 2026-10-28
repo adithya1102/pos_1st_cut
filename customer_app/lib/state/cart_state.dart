@@ -392,9 +392,17 @@ class CartState extends ChangeNotifier {
     String? promotionCode,
     DateTime? declaredArrivalAt,
     DateTime? requestedPickupAt,
+    String? paymentMethod,
   }) =>
       {
         'outlet_id': _outlet?.id,
+        // PREPAID | PAY_AT_PICKUP | UPI_MANUAL (backend migrations 034, 035).
+        //
+        // Omitted when null, and the server reads an absent field as PREPAID —
+        // so leaving it out is exactly what an older build does and keeps
+        // meaning what it always meant. Checkout always sends it now, because
+        // the outlet may not offer prepaid at all.
+        'payment_method': ?paymentMethod,
         'items': _items.map((i) => i.toOrderItemJson()).toList(),
         if (customerNotes != null && customerNotes.trim().isNotEmpty)
           'customer_notes': customerNotes.trim(),

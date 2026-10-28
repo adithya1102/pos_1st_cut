@@ -34,6 +34,19 @@ class OrderService {
         .toList();
   }
 
+  /// "I've paid" for a direct-UPI order (backend migration 035).
+  ///
+  /// THIS DOES NOT CONFIRM A PAYMENT, and the method is named for what the
+  /// customer is asserting rather than for what it proves. The restaurant
+  /// confirms the money by looking at its own UPI app; until then the order
+  /// stays unpaid.
+  ///
+  /// Idempotent server-side (compare-and-set on payment_claimed_at), so a
+  /// double-tap on a slow connection is safe and returns the first claim.
+  Future<void> claimPaid(String orderId) async {
+    await _api.post('/customer/orders/$orderId/claim-paid');
+  }
+
   Future<OrderStatus> fetchStatus(String orderId) async {
     final res = await _api.get('/customer/orders/$orderId');
     return OrderStatus.fromJson((res as Map).cast<String, dynamic>());

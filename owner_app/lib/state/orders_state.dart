@@ -68,6 +68,23 @@ class OrdersState extends ChangeNotifier {
     'READY',
   };
 
+  /// Whether this order belongs on the prep queue.
+  ///
+  /// [activeStatuses] is the rule for a PREPAID order and is unchanged. The
+  /// two non-gateway modes add ONE case: a `CREATED` order that is awaiting a
+  /// human decision — pay-at-pickup from the moment it is placed, direct UPI
+  /// from the moment the customer says they have paid.
+  ///
+  /// Narrow on all three axes (mode, status, acceptance_state) so nothing else
+  /// in CREATED leaks onto the tablet: a prepaid order mid-checkout still does
+  /// not appear, and neither does a UPI order whose customer has not paid yet.
+  static bool belongsOnQueue(Order o) {
+    if (activeStatuses.contains(o.status.toUpperCase())) return true;
+    return !o.isPrepaid &&
+        o.status.toUpperCase() == 'CREATED' &&
+        o.isPending;
+  }
+
   /// The prep queue: active orders only, OLDEST FIRST.
   ///
   /// Two deliberate departures from [orders]:
@@ -84,9 +101,7 @@ class OrdersState extends ChangeNotifier {
   /// Orders with an unparseable timestamp sort LAST rather than being dropped —
   /// a row the kitchen cannot see is worse than a row in the wrong position.
   List<Order> get activeOrders {
-    final list = _orders
-        .where((o) => activeStatuses.contains(o.status.toUpperCase()))
-        .toList();
+    final list = _orders.where(belongsOnQueue).toList();
     list.sort((a, b) {
       final at = a.placedAt;
       final bt = b.placedAt;
@@ -362,14 +377,52 @@ class OrdersState extends ChangeNotifier {
   /// Replaces markPaid, which is gone: payment is confirmed by the gateway
   /// webhook now, so there is nothing for staff to confirm — only something to
   /// refuse. 409 means the order is already READY and can no longer be pulled.
-  Future<String?> reject(String orderId, {String? reason}) async {
+  Future<String?> reject(String orderId,
+      {String? reason, bool unreachable = false, String? upiOutcome}) async {
     try {
-      await _orderService.reject(orderId, reason: reason);
+      await _orderService.reject(orderId,
+          reason: reason, unreachable: unreachable, upiOutcome: upiOutcome);
       await load();
       return null;
     } on ApiException catch (e) {
       if (e.statusCode == 409) return e.message;
       return 'Could not reject this order.';
+    } catch (_) {
+      return 'Could not reach the server. Check your connection.';
+    }
+  }
+
+  /// Record that staff rang the customer (backend migration 034).
+  ///
+  /// Best-effort and never surfaces an error: the call has already been placed
+  /// by the time this runs, and failing to log it must not look like a failure
+  /// to call. The queue refresh is what moves the row out of "needs a call".
+  Future<void> logCall(String orderId) async {
+    try {
+      await _orderService.logCall(orderId);
+      await load();
+    } catch (_) {
+      // Swallowed deliberately — see above.
+    }
+  }
+
+  /// Take the money and close the order, in one server-side transaction.
+  Future<PickupResult> collect(String orderId,
+      {required String pickupCode, required String method}) async {
+    final res = await _orderService.collect(orderId,
+        pickupCode: pickupCode, method: method);
+    if (res.verified) await load();
+    return res;
+  }
+
+  /// The customer never came. Returns null on success, else a staff message.
+  Future<String?> noShow(String orderId) async {
+    try {
+      await _orderService.noShow(orderId);
+      await load();
+      return null;
+    } on ApiException catch (e) {
+      return e.message;
     } catch (_) {
       return 'Could not reach the server. Check your connection.';
     }

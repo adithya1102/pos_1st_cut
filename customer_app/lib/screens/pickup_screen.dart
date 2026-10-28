@@ -4,10 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../config/app_config.dart';
 import '../models/order.dart';
 import '../models/order_notify.dart';
+import '../models/outlet.dart';
 import '../services/api_client.dart';
 import '../services/cashfree_service.dart';
 import '../services/location_service.dart';
@@ -35,6 +37,7 @@ class PickupScreen extends StatefulWidget {
     this.paymentReason,
     this.fromHistory = false,
     this.outletName,
+    this.outlet,
     this.graceWindow = defaultGraceWindow,
     this.confirmPollInterval = defaultConfirmPollInterval,
   });
@@ -49,6 +52,14 @@ class PickupScreen extends StatefulWidget {
   /// every existing call site omits it and none of them can reach that copy
   /// anyway, since an auto-mode order has no acceptance_state.
   final String? outletName;
+
+  /// The outlet, when the caller has it — checkout always does.
+  ///
+  /// Carried so the pay-at-pickup card can offer directions. Optional because
+  /// this screen is also reached from order history, which has only a name;
+  /// the card then shows the address line without a Maps button rather than
+  /// pretending it has a pin.
+  final Outlet? outlet;
 
   /// True when reached from Order History rather than straight from checkout.
   ///
@@ -543,6 +554,24 @@ class _PickupScreenState extends State<PickupScreen>
                     style: textTheme.bodyLarge?.copyWith(color: c.inkSoft),
                   ),
                   const SizedBox(height: 20),
+
+                  // PAY AT PICKUP / DIRECT UPI (backend 034, 035).
+                  //
+                  // Placed above the code card because, for these orders, what
+                  // the customer needs first is the amount they owe and how to
+                  // get there — the code is only useful once they arrive, and
+                  // for a pay-at-pickup order it is withheld until the
+                  // restaurant accepts anyway.
+                  if (status != null &&
+                      status.paymentMode != PaymentMode.prepaid) ...[
+                    _NonGatewayPaymentCard(
+                      status: status,
+                      outlet: widget.outlet,
+                      outletName: widget.outletName,
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
                   // The pickup-code area is state-aware. While the payment is
                   // being confirmed OR offered for retry it is REPLACED, in the
                   // same spot, by the matching inline state — so a dismissed
@@ -1404,4 +1433,199 @@ class _PickupUiStore {
   }
 
   static Future<void> clear(String orderId) => write(orderId, const {});
+}
+
+
+/// What a non-prepaid order needs on the pickup screen: what is owed, how to
+/// get there, and what happens next.
+///
+/// THREE STATES, and they say different things because they ARE different:
+///
+///   pay-at-pickup   -> you owe this at the counter, and the restaurant is
+///                      about to ring you. The call is the thing to stress:
+///                      an unanswered call is a cancelled order.
+///   UPI, unclaimed  -> you still have to pay. Should not normally be seen
+///                      here (the pay screen owns that), so it points back.
+///   UPI, claimed    -> you have told them; they are checking their UPI app.
+///
+/// MANUAL REFUND is handled first and separately, because it is the one case
+/// where the honest sentence names who owes the money. CareVo was never in the
+/// path of a direct-UPI payment and cannot reverse it, so saying "your refund
+/// is being arranged" — the gateway copy — would be promising something nobody
+/// can send.
+class _NonGatewayPaymentCard extends StatelessWidget {
+  const _NonGatewayPaymentCard({
+    required this.status,
+    this.outlet,
+    this.outletName,
+  });
+
+  final OrderStatus status;
+  final Outlet? outlet;
+  final String? outletName;
+
+  /// Directions to the restaurant.
+  ///
+  /// COORDINATES when the outlet has a pin, because a name search can land on
+  /// a different branch of the same chain — the exact failure the checkout
+  /// card already guards against. Falls back to an address search only when
+  /// there is no pin to use.
+  Uri? get _mapsUri {
+    final o = outlet;
+    if (o == null) return null;
+    if (o.hasCoordinates) {
+      return Uri.parse(
+        'https://www.google.com/maps/dir/?api=1'
+        '&destination=${o.latitude},${o.longitude}',
+      );
+    }
+    final query = [o.name, o.address]
+        .where((s) => s.trim().isNotEmpty)
+        .join(', ');
+    if (query.isEmpty) return null;
+    return Uri.https('www.google.com', '/maps/search/', {
+      'api': '1',
+      'query': query,
+    });
+  }
+
+  Future<void> _openMaps(BuildContext context) async {
+    final uri = _mapsUri;
+    if (uri == null) return;
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!ok && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open Maps on this device.')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final textTheme = Theme.of(context).textTheme;
+    final where = outletName ?? outlet?.displayName ?? 'the restaurant';
+
+    // 1. The restaurant owes money back, directly.
+    if (status.manualRefundDue) {
+      return NeoCard(
+        key: const Key('pickup_manual_refund'),
+        color: c.surface,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.error_outline, color: AppColors.tomato),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text('Order cancelled',
+                      style: textTheme.titleMedium
+                          ?.copyWith(color: AppColors.tomato)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'The restaurant could not make your order. They will refund '
+              '${formatRupees(status.totalAmount)}.',
+              key: const Key('pickup_manual_refund_text'),
+              style: textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'The money goes back to the UPI account you paid from. Contact '
+              'the restaurant if it has not arrived.',
+              style: textTheme.bodySmall?.copyWith(color: c.inkSoft),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final isPickup = status.paymentMode == PaymentMode.payAtPickup;
+    final amount = isPickup
+        ? (status.amountDueAtPickup > 0
+            ? status.amountDueAtPickup
+            : status.totalAmount)
+        : status.totalAmount;
+
+    return NeoCard(
+      key: const Key('pickup_non_gateway_card'),
+      color: c.surface,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(isPickup ? Icons.storefront_outlined
+                            : Icons.account_balance_outlined,
+                  color: c.primary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  isPickup ? 'Pay at pickup' : 'Paid by UPI',
+                  key: const Key('pickup_method_label'),
+                  style: textTheme.titleMedium,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // The amount, which for a pay-at-pickup order is the single most
+          // useful thing on this screen: it is what they need in hand.
+          Text(
+            isPickup
+                ? '${formatRupees(amount)} to pay at the counter'
+                : '${formatRupees(amount)} paid',
+            key: const Key('pickup_amount_line'),
+            style: textTheme.headlineSmall,
+          ),
+
+          if (isPickup) ...[
+            const SizedBox(height: 12),
+            Text(
+              'The restaurant will call you soon for order confirmation. '
+              'Please answer the call.',
+              key: const Key('pickup_answer_the_call'),
+              style: textTheme.bodyMedium,
+            ),
+          ] else if (status.awaitingUpiConfirmation) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Waiting for the restaurant to confirm your payment.',
+              key: const Key('pickup_awaiting_upi_confirmation'),
+              style: textTheme.bodyMedium,
+            ),
+          ] else if (status.awaitingUpiPayment) ...[
+            const SizedBox(height: 12),
+            Text(
+              'This order is not paid yet. Open it from your orders to pay.',
+              key: const Key('pickup_upi_unpaid'),
+              style: textTheme.bodyMedium?.copyWith(color: AppColors.tomato),
+            ),
+          ],
+
+          // Directions. Shown for both modes — the customer is collecting
+          // either way — and only when there is somewhere to point at.
+          if (_mapsUri != null) ...[
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: NeoButton(
+                key: const Key('pickup_open_maps'),
+                label: 'Directions to $where',
+                icon: Icons.map_outlined,
+                variant: NeoButtonVariant.neutral,
+                expand: false,
+                compact: true,
+                onPressed: () => _openMaps(context),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 }
