@@ -223,7 +223,17 @@ class MenuOut(BaseModel):
 # ----------------------------- Orders ---------------------------------------
 class OrderItemIn(BaseModel):
     menu_item_id: uuid.UUID
-    quantity: int = Field(..., ge=1)
+    # ge=1 already rejected 0/negative, and pydantic's int coercion already
+    # rejects a non-integer (e.g. 1.5) with int_from_float — both pre-existing.
+    # le=100 is the new bound (Task 5): nothing caps this item, and
+    # total_amount is DECIMAL(10,2) — a 1,000,000-unit line on anything
+    # priced above a few rupees overflows that column at commit time, an
+    # unhandled DB error rather than a clean 4xx. 100 is well above any real
+    # single-item restaurant order (a catering-scale order splits across
+    # multiple outlets/pickups in this system, not one checkout) and well
+    # below where the DECIMAL(10,2) total could overflow for any realistic
+    # menu price.
+    quantity: int = Field(..., ge=1, le=100)
     customizations: Optional[Any] = None
     item_notes: Optional[str] = None
 
