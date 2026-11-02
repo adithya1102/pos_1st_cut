@@ -152,6 +152,18 @@ class Settings(BaseSettings):
     # https://gusto-pos-backend.onrender.com/api/v1/customer/payment/webhook
     CASHFREE_NOTIFY_URL: Optional[str] = None
 
+    # Reject an otherwise-validly-signed webhook whose x-webhook-timestamp is
+    # older (or newer) than this many seconds versus now. 7200s (2 HOURS), not
+    # Cashfree's own suggested 300s: their documented retry schedule spans
+    # roughly 42 minutes end to end, and 300s would start rejecting — and
+    # therefore permanently losing, since a rejected retry is not re-sent on a
+    # shorter cycle — their OWN later retries of a real delivery. Whether
+    # x-webhook-timestamp is stamped once per EVENT or re-stamped on every
+    # RETRY ATTEMPT is not yet confirmed against the sandbox (see
+    # docs/ops/cashfree_only_verify.sql); until it is, this stays generous
+    # rather than risking silently dropped real payments.
+    CASHFREE_WEBHOOK_MAX_AGE_S: int = 7200
+
     FIREBASE_PROJECT_ID: Optional[str] = None
     FIREBASE_ENABLED: bool = False
 
@@ -282,11 +294,21 @@ class PaymentConfigError(RuntimeError):
     """
 
 
+# The ONE shared definition of "this is not a production deploy", read off
+# APP_ENV. Used by app/main.py (to gate /docs) and by
+# validate_gateway_startup_posture below (to gate the fail-closed stub-gateway
+# check); both used to carry their own separate copy of this set, which is how
+# the two could silently drift apart.
+NON_PRODUCTION_ENVS = {"dev", "development", "local", "test"}
+
 # The literal signal used to tell a test run from a real one. Same variable
 # and same convention as main.py's _DOCS_ENABLED (APP_ENV, default
 # "production" so an unconfigured deploy is treated as real) — but narrower:
-# only the literal value "test" exempts this check, not "dev"/"local", since
-# those are real processes that should still fail loudly if misconfigured.
+# only the literal value "test" exempts THIS check, not "dev"/"local", since
+# those are real processes that should still fail loudly if a CASHFREE_ONLY
+# deploy is half-built. Deliberately NOT the same set as NON_PRODUCTION_ENVS:
+# that set answers "is this a real deploy worth enforcing fail-closed posture
+# on", this one answers only "is this the test harness".
 # tests/conftest.py sets APP_ENV=test before the app is ever imported.
 _TEST_APP_ENV = "test"
 
@@ -327,3 +349,41 @@ def validate_cashfree_only_config(cfg: "Settings" = None, *,
             "CASHFREE_ONLY=true but required Cashfree credential "
             f"variable(s) are not set: {', '.join(missing)}"
         )
+
+
+def validate_gateway_startup_posture(cfg: "Settings" = None, *,
+                                      env_name: Optional[str] = None,
+                                      allow_stub: Optional[str] = None) -> None:
+    """Fail closed on ANY deploy — not just a CASHFREE_ONLY one.
+
+    A non-cashfree PAYMENT_GATEWAY (the "unset" default included: that is
+    exactly what shipped fake payments on 2026-09-08) must never run outside
+    NON_PRODUCTION_ENVS unless an operator has explicitly opted in with
+    ALLOW_STUB_GATEWAY=true. Checked once at process startup
+    (app/main.py's on_startup), alongside — and independently of —
+    validate_cashfree_only_config: this one applies whether CASHFREE_ONLY is
+    true or false.
+
+    Raises PaymentConfigError naming the offending VARIABLE (PAYMENT_GATEWAY).
+    """
+    cfg = cfg if cfg is not None else settings
+    if env_name is None:
+        env_name = os.getenv("APP_ENV", "production").strip().lower()
+    if env_name in NON_PRODUCTION_ENVS:
+        return
+
+    if (cfg.PAYMENT_GATEWAY or "").strip().lower() == "cashfree":
+        return
+
+    if allow_stub is None:
+        allow_stub = os.getenv("ALLOW_STUB_GATEWAY", "")
+    if allow_stub.strip().lower() == "true":
+        return
+
+    raise PaymentConfigError(
+        "PAYMENT_GATEWAY is not cashfree outside a non-production "
+        "environment (APP_ENV is not one of "
+        f"{sorted(NON_PRODUCTION_ENVS)}); set PAYMENT_GATEWAY=cashfree or "
+        "ALLOW_STUB_GATEWAY=true to run a stub gateway here. The variable "
+        "PAYMENT_GATEWAY is the one that must change"
+    )

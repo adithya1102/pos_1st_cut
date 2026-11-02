@@ -63,8 +63,12 @@ from app.modules.promotions.controller import (
 # Opt-IN rather than opt-out: docs appear only when APP_ENV is explicitly a
 # local/dev value, so a deploy that forgets to set anything gets the closed
 # behaviour. Set APP_ENV=development locally to get Swagger back.
-_DEV_ENVS = {"dev", "development", "local", "test"}
-_DOCS_ENABLED = os.getenv("APP_ENV", "production").strip().lower() in _DEV_ENVS
+#
+# NON_PRODUCTION_ENVS is the one shared definition of "not a production
+# deploy" (app/core/config.py) — also used by validate_gateway_startup_posture
+# below, so the two checks can never silently drift apart.
+from app.core.config import NON_PRODUCTION_ENVS
+_DOCS_ENABLED = os.getenv("APP_ENV", "production").strip().lower() in NON_PRODUCTION_ENVS
 
 app = FastAPI(
     title="Gusto POS",
@@ -115,8 +119,15 @@ async def on_startup():
     # Fail-closed payment config: refuse to start rather than boot into a
     # half-built CASHFREE_ONLY deployment. Raises PaymentConfigError, which is
     # deliberately NOT caught — it must abort startup, not just log.
-    from app.core.config import validate_cashfree_only_config
+    from app.core.config import validate_cashfree_only_config, validate_gateway_startup_posture
     validate_cashfree_only_config()
+    # Fail-closed gateway posture, independent of CASHFREE_ONLY: a stub
+    # gateway must never run outside a non-production environment unless
+    # ALLOW_STUB_GATEWAY=true was set deliberately.
+    validate_gateway_startup_posture()
+
+    from app.modules.carevo_payments.gateway import log_effective_gateway
+    log_effective_gateway()
 
     await init_db()
     async with AsyncSessionLocal() as session:

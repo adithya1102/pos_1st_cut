@@ -11,6 +11,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
@@ -633,3 +634,13 @@ def get_gateway() -> PaymentGateway:
     if selected == "cashfree":
         return CashfreeGateway()
     return StubRazorpayGateway()
+
+
+_gateway_logger = logging.getLogger("app.main")
+
+
+def log_effective_gateway() -> None:
+    """Log the resolved gateway's NAME, once, at startup. Never a key —
+    PaymentGateway.name is a literal like "cashfree" or "razorpay" (the
+    stub's wire shape), not a credential."""
+    _gateway_logger.info("Effective payment gateway: %s", get_gateway().name)
