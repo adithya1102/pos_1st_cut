@@ -21,6 +21,7 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.modules.users.model import User
 # Reused rather than reimplemented — one haversine in the codebase, so the
 # admin log and the customer's distance sort can never disagree.
@@ -1648,6 +1649,29 @@ class AdminService:
         set_acceptance_config, and for the same reason: anything else would
         make an admin toggle reach into money that is already moving.
         """
+        # CASHFREE_ONLY (config.py) — THE SAME PLATFORM-WIDE GUARD THE OWNER
+        # ROUTE HAS (carevo_customer/service.py set_owner_payment_methods).
+        # Pay-at-pickup and direct UPI are off platform-wide, not a per-outlet
+        # preference, so an admin trying to turn either on for one outlet is
+        # refused exactly like an owner would be — a permission problem (403),
+        # not a validation problem. Checked first, before any other rule,
+        # so the refusal names the real cause. Before this check existed, the
+        # admin route had no parity with the owner route at all: an admin
+        # could silently re-enable what CASHFREE_ONLY had switched off
+        # platform-wide for every outlet.
+        if settings.CASHFREE_ONLY and (pay_at_pickup or upi_manual):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "CASHFREE_ONLY_MODE",
+                    "message": (
+                        "Pay at pickup and UPI are switched off platform-wide "
+                        "while Cashfree-only mode is active. Online payment "
+                        "is the only method available."
+                    ),
+                },
+            )
+
         # upi_manual and cashfree_unlocked are OPTIONAL and omitted means
         # "leave unchanged", so each is only named in the UPDATE when it was
         # actually sent. An admin flipping the Cashfree lock must not silently
