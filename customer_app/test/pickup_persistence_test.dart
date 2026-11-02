@@ -274,12 +274,21 @@ void main() {
       // false), so _onLeaving never touches the geolocator plugin and calls
       // depart with no coordinates — exactly the no-permission path, and
       // exactly what makes this tappable in a widget test with no GPS mock.
-      var departed = false;
+      //
+      // `departed` is DERIVED from postLog, not set by the test's own hand,
+      // on purpose: a prior version of this test flipped a local bool to
+      // true unconditionally right after the tap, so it could not fail even
+      // if _onLeaving's button were wired to do nothing at all — the next
+      // poll would still report departed=true regardless of whether a depart
+      // call ever reached the server. Reading it back off the actual logged
+      // request is what makes a gutted onTap handler fail this test.
+      final postLog = <String>[];
       SharedPreferences.setMockInitialValues({'carevo_access_token': 't'});
       final api = _api(
         statusOf: () => 'RECEIVED',
         pickupCode: '482913',
-        departedOf: () => departed,
+        postLog: postLog,
+        departedOf: () => postLog.any((p) => p.endsWith('/depart')),
       );
 
       await tester.pumpWidget(_host(api));
@@ -293,7 +302,8 @@ void main() {
       await tester.tap(find.text('I\'m on my way'));
       await tester.pump();
       await tester.pump();
-      departed = true; // the server now records it, for the next poll
+      expect(postLog.any((p) => p.endsWith('/depart')), isTrue,
+          reason: 'tapping "I\'m on my way" must actually call the server');
       expect(find.text('The restaurant knows you\'re coming'), findsOneWidget);
       expect(find.text('I\'ve arrived'), findsOneWidget);
 
