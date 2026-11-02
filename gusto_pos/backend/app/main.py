@@ -112,6 +112,12 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def on_startup():
+    # Fail-closed payment config: refuse to start rather than boot into a
+    # half-built CASHFREE_ONLY deployment. Raises PaymentConfigError, which is
+    # deliberately NOT caught — it must abort startup, not just log.
+    from app.core.config import validate_cashfree_only_config
+    validate_cashfree_only_config()
+
     await init_db()
     async with AsyncSessionLocal() as session:
         await init_initial_data(session)

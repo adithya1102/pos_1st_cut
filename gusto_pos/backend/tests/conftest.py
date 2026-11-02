@@ -26,6 +26,12 @@ sys.path.insert(0, BACKEND)
 
 TEST_URL = "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/carevo_test"
 os.environ["DATABASE_URL"] = TEST_URL
+# Literal signal read by validate_cashfree_only_config (app/core/config.py)
+# to tell this test run apart from a real deployment. main.py's on_startup
+# event never fires under httpx's ASGITransport (see below), so this alone
+# would not matter for the HTTP suite — but the validator is also called
+# directly, unit-style, by tests/test_api_cashfree_fail_closed.py.
+os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("SECRET_KEY", "test-secret-not-a-real-key")
 os.environ.setdefault("ALGORITHM", "HS256")
 os.environ.setdefault("PAYMENT_GATEWAY", "stub")

@@ -1,3 +1,4 @@
+import os
 from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -268,3 +269,61 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()
+
+
+class PaymentConfigError(RuntimeError):
+    """Raised at startup when CASHFREE_ONLY cannot be safely satisfied.
+
+    Deliberately not swallowed anywhere — letting this propagate out of the
+    FastAPI startup event is what makes the process refuse to start, rather
+    than booting into a state where CASHFREE_ONLY=true silently keeps
+    accepting pay-at-pickup/UPI (because the resolver falls back to "no
+    gateway, no methods") or routes webhooks nobody can ever authenticate.
+    """
+
+
+# The literal signal used to tell a test run from a real one. Same variable
+# and same convention as main.py's _DOCS_ENABLED (APP_ENV, default
+# "production" so an unconfigured deploy is treated as real) — but narrower:
+# only the literal value "test" exempts this check, not "dev"/"local", since
+# those are real processes that should still fail loudly if misconfigured.
+# tests/conftest.py sets APP_ENV=test before the app is ever imported.
+_TEST_APP_ENV = "test"
+
+
+def validate_cashfree_only_config(cfg: "Settings" = None, *,
+                                  env_name: Optional[str] = None) -> None:
+    """Fail closed: CASHFREE_ONLY=true must never run with a half-built
+    Cashfree setup. Checked once at process startup (app/main.py), never
+    per-request — a misconfiguration here is not something a request should
+    ever be allowed to observe.
+
+    Raises PaymentConfigError naming the offending VARIABLE, never its value
+    (a credential value must never appear in a startup log line).
+
+    No-op when:
+      * `env_name` (default: the live APP_ENV) is the literal test marker, or
+      * CASHFREE_ONLY is false — the switch nothing has turned on yet, so
+        there is nothing to enforce.
+    """
+    cfg = cfg if cfg is not None else settings
+    if env_name is None:
+        env_name = os.getenv("APP_ENV", "production").strip().lower()
+    if env_name == _TEST_APP_ENV:
+        return
+    if not cfg.CASHFREE_ONLY:
+        return
+
+    if (cfg.PAYMENT_GATEWAY or "").strip().lower() != "cashfree":
+        raise PaymentConfigError(
+            "CASHFREE_ONLY=true requires PAYMENT_GATEWAY=cashfree; the "
+            "variable PAYMENT_GATEWAY is not set to cashfree"
+        )
+
+    missing = [name for name in ("CASHFREE_APP_ID", "CASHFREE_SECRET_KEY")
+               if not getattr(cfg, name, None)]
+    if missing:
+        raise PaymentConfigError(
+            "CASHFREE_ONLY=true but required Cashfree credential "
+            f"variable(s) are not set: {', '.join(missing)}"
+        )
