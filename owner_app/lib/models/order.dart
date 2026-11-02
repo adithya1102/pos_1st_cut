@@ -79,6 +79,8 @@ class Order {
     this.paymentClaimedAt,
     this.manualRefundDue = false,
     this.manualRefundReason,
+    this.departedAt,
+    this.arrivedAt,
   });
 
   // --- Pay at pickup / direct UPI (backend migrations 034, 035) ------------
@@ -127,6 +129,20 @@ class Order {
   /// it, so the banner this drives tells the owner to refund it themselves.
   final bool manualRefundDue;
   final String? manualRefundReason;
+
+  // --- Customer arrival signals -------------------------------------------
+  //
+  // Sourced from order_events (CUSTOMER_DEPARTED / CUSTOMER_ARRIVED), read
+  // off the SAME GET /pos/orders response the queue already polls — no new
+  // timer, no new request. Null until the matching signal exists, which is
+  // every order until the customer taps or the geofence fires.
+
+  /// When the customer tapped "I'm on my way" or an inferred departure fired.
+  final String? departedAt;
+
+  /// When the customer's location ping landed inside the outlet's geofence,
+  /// or they tapped "I'm here".
+  final String? arrivedAt;
 
   /// The refund is owed because NOBODY HERE EVER LOOKED.
   ///
@@ -227,6 +243,8 @@ class Order {
       paymentClaimedAt: json['payment_claimed_at']?.toString(),
       manualRefundDue: (json['manual_refund_due'] as bool?) ?? false,
       manualRefundReason: json['manual_refund_reason']?.toString(),
+      departedAt: json['departed_at']?.toString(),
+      arrivedAt: json['arrived_at']?.toString(),
       items: rawItems
           .map((e) => OrderLineItem.fromJson(e as Map<String, dynamic>))
           .toList(),
@@ -270,6 +288,32 @@ class Order {
     if (at == null) return null;
     final mins = DateTime.now().difference(at).inMinutes;
     return mins < 0 ? 0 : mins;
+  }
+
+  /// True once the server has recorded an arrival signal for this order.
+  bool get hasArrived => arrivedAt != null && arrivedAt!.isNotEmpty;
+
+  /// Minutes since the customer departed, or null when there is no departure
+  /// signal or the timestamp is unparseable. Floored at zero on clock skew,
+  /// same convention as [minutesSincePlaced] and [minutesSinceCollected].
+  int? get minutesSinceDeparted {
+    final raw = departedAt;
+    if (raw == null || raw.isEmpty) return null;
+    final at = DateTime.tryParse(raw);
+    if (at == null) return null;
+    final mins = DateTime.now().toUtc().difference(at.toUtc()).inMinutes;
+    return mins < 0 ? 0 : mins;
+  }
+
+  /// "Left X min ago", "At the restaurant", or null when there is no signal
+  /// at all. Arrival wins over departure — once they are here, how long ago
+  /// they left no longer matters. Computed purely from the server's own
+  /// timestamps on every rebuild; no timer of its own.
+  String? get arrivalChipLabel {
+    if (hasArrived) return 'At the restaurant';
+    final mins = minutesSinceDeparted;
+    if (mins == null) return null;
+    return mins < 1 ? 'Left just now' : 'Left ${mins}m ago';
   }
 
   static double _toDouble(dynamic value) {

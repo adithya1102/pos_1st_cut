@@ -89,6 +89,17 @@ class _OrderCardState extends State<OrderCard> {
                             ),
                           ),
                         ],
+                        // "Left X min ago" / "At the restaurant" — absent
+                        // entirely when the server has no signal yet, which
+                        // is every order until the customer taps or the
+                        // geofence fires. Read straight off the same
+                        // GET /pos/orders response the queue already polls;
+                        // no new request, no new timer.
+                        if (order.arrivalChipLabel != null) ...[
+                          const SizedBox(height: 4),
+                          _ArrivalChip(label: order.arrivalChipLabel!,
+                              arrived: order.hasArrived),
+                        ],
                       ],
                     ),
                   ),
@@ -806,6 +817,35 @@ class _PayChip extends StatelessWidget {
         style: theme.textTheme.labelSmall
             ?.copyWith(color: color, fontWeight: FontWeight.w700),
       ),
+    );
+  }
+}
+
+/// "Left X min ago" / "At the restaurant" — whether the customer has left
+/// home and whether they have reached the outlet, read straight off server
+/// timestamps already carried on the order.
+class _ArrivalChip extends StatelessWidget {
+  final String label;
+  final bool arrived;
+
+  const _ArrivalChip({required this.label, required this.arrived});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = arrived ? theme.colorScheme.primary : theme.colorScheme.outline;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(arrived ? Icons.storefront : Icons.directions_walk,
+            size: 14, color: color),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          key: const Key('order_arrival_chip'),
+          style: theme.textTheme.bodySmall?.copyWith(color: color),
+        ),
+      ],
     );
   }
 }
