@@ -12,9 +12,19 @@ import 'session_log.dart';
 
 /// Thrown for any non-2xx response or transport failure.
 class ApiException implements Exception {
-  ApiException(this.message, {this.statusCode});
+  ApiException(this.message, {this.statusCode, this.detail});
   final String message;
   final int? statusCode;
+
+  /// The raw `detail` from a structured FastAPI error body, when it was a
+  /// Map — e.g. `{error, message, earliest_pickup_at}` for
+  /// SCHEDULED_PICKUP_TOO_SOON. Null for a plain-string detail or no body.
+  ///
+  /// [message] above already extracts the human-readable part for the common
+  /// "just show a SnackBar" case; this exists ADDITIONALLY for the few
+  /// screens that need a specific field out of the same body (see
+  /// checkout_screen.dart's handling of SCHEDULED_PICKUP_TOO_SOON).
+  final Map<String, dynamic>? detail;
 
   @override
   String toString() => message;
@@ -390,7 +400,12 @@ class ApiClient {
         ?? (body is Map && body['message'] != null
             ? body['message'].toString()
             : 'Request failed (${res.statusCode}).');
-    throw ApiException(detail, statusCode: res.statusCode);
+    final rawDetail = (body is Map) ? body['detail'] : null;
+    throw ApiException(
+      detail,
+      statusCode: res.statusCode,
+      detail: rawDetail is Map ? rawDetail.cast<String, dynamic>() : null,
+    );
   }
 
   /// The human-readable part of a FastAPI `detail`, or null if there is none.

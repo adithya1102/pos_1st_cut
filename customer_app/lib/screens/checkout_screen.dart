@@ -951,10 +951,21 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         ),
       );
     } on ApiException catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(e.message)));
+      if (!mounted) return;
+      // 409 SCHEDULED_PICKUP_TOO_SOON: the kitchen cannot make the requested
+      // slot. The server names the earliest it CAN make
+      // (earliest_pickup_at) — offered here rather than just reported, so
+      // the customer can accept it in one tap instead of guessing a new
+      // time and risking a second refusal. The cart is untouched either way:
+      // this dialog is reached only after createOrder failed, before any
+      // order exists.
+      final earliest = _earliestPickupFrom(e);
+      if (earliest != null) {
+        await _handleScheduledPickupTooSoon(earliest);
+        return;
       }
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -964,6 +975,66 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     } finally {
       if (mounted) setState(() => _placing = false);
     }
+  }
+
+  /// `earliest_pickup_at` out of a SCHEDULED_PICKUP_TOO_SOON 409, or null for
+  /// any other error (wrong status, wrong error code, unparseable body) — the
+  /// caller falls back to the plain SnackBar for everything that isn't this
+  /// one specific, actionable refusal.
+  DateTime? _earliestPickupFrom(ApiException e) {
+    if (e.statusCode != 409) return null;
+    final detail = e.detail;
+    if (detail == null || detail['error'] != 'SCHEDULED_PICKUP_TOO_SOON') {
+      return null;
+    }
+    final raw = detail['earliest_pickup_at']?.toString();
+    if (raw == null) return null;
+    return DateTime.tryParse(raw)?.toLocal();
+  }
+
+  /// The kitchen cannot make the requested slot. Offers the server's own
+  /// earliest feasible time in plain words, with one tap to accept it
+  /// (re-submits create_order with THAT time) or to pick a different one —
+  /// the cart is never touched by either choice, since this is reached only
+  /// after create_order itself failed, before any order exists.
+  Future<void> _handleScheduledPickupTooSoon(DateTime earliest) async {
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Kitchen needs more time'),
+        content: Text(
+          'This restaurant needs more time to prepare your order. The '
+          'earliest it can be ready is ${formatDateTimeWithDayPart(c, earliest)}.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text('Choose another time'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('Use this time'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+
+    if (accepted == true) {
+      setState(() {
+        _scheduled = true;
+        _requestedPickup = earliest;
+        _pickupMissing = false;
+      });
+      await _payNow();
+      return;
+    }
+
+    // "Choose another time": reopen the ordinary picker. _scheduled is
+    // already true (a 409 of this shape only ever follows a requested
+    // pickup time), so the picker reopens on the existing scheduled flow —
+    // nothing about the cart or the chosen payment method is disturbed.
+    await _pickPickupTime(context.read<CartState>().outlet);
   }
 
   /// True when the server says this outlet accepts nothing, which disables Pay.
