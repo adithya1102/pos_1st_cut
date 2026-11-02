@@ -5843,6 +5843,52 @@ class CarevoService:
             by_order[str(it.customer_order_id)].append(
                 {"id": it.id, "name": it.name_snap, "quantity": it.quantity}
             )
+
+        # --- Customer arrival signals (owner_app chip) -----------------------
+        #
+        # ONE batched query over the whole page for all three new fields —
+        # departed_at, arrived_at (order_events) AND est_arrival_at
+        # (order_twin) — never one query per order and never a second round
+        # trip for the second source. MAX(occurred_at) FILTER is the "latest
+        # per type" aggregate: at most one CUSTOMER_DEPARTED and one
+        # CUSTOMER_ARRIVED row exist per order in practice (both writers
+        # check-then-write exactly once — see record_departed/record_arrived),
+        # so MAX is exact, not just a safe upper bound. The two CTEs are each
+        # already scoped to :ids before the join, so the FULL OUTER JOIN can
+        # never pull in another outlet's orders or another order's twin.
+        #
+        # No lat/lng/accuracy/speed is selected anywhere here — only
+        # timestamps. The owner app has no legitimate use for a customer's
+        # raw location.
+        arrival_rows = (await db.execute(text("""
+            WITH ev AS (
+                SELECT order_id,
+                       MAX(occurred_at) FILTER (
+                           WHERE event_type = 'CUSTOMER_DEPARTED') AS departed_at,
+                       MAX(occurred_at) FILTER (
+                           WHERE event_type = 'CUSTOMER_ARRIVED') AS arrived_at
+                FROM order_events
+                WHERE order_id = ANY(:ids)
+                  AND event_type IN ('CUSTOMER_DEPARTED', 'CUSTOMER_ARRIVED')
+                GROUP BY order_id
+            ),
+            tw AS (
+                SELECT order_id, arrival_p50
+                FROM order_twin
+                WHERE order_id = ANY(:ids) AND arrival_p50 IS NOT NULL
+            )
+            SELECT COALESCE(ev.order_id, tw.order_id) AS order_id,
+                   ev.departed_at, ev.arrived_at, tw.arrival_p50 AS est_arrival_at
+            FROM ev
+            FULL OUTER JOIN tw ON tw.order_id = ev.order_id
+        """), {"ids": order_ids})).fetchall()
+        departed_by_order = {str(r.order_id): r.departed_at
+                              for r in arrival_rows if r.departed_at is not None}
+        arrived_by_order = {str(r.order_id): r.arrived_at
+                             for r in arrival_rows if r.arrived_at is not None}
+        est_arrival_by_order = {str(r.order_id): r.est_arrival_at
+                                 for r in arrival_rows if r.est_arrival_at is not None}
+
         return [
             {
                 "order_id": o.id,
@@ -5872,6 +5918,9 @@ class CarevoService:
                 "payment_claimed_at": o.payment_claimed_at,
                 "manual_refund_due": bool(o.manual_refund_due),
                 "manual_refund_reason": o.manual_refund_reason,
+                "departed_at": departed_by_order.get(str(o.id)),
+                "arrived_at": arrived_by_order.get(str(o.id)),
+                "est_arrival_at": est_arrival_by_order.get(str(o.id)),
                 "items": by_order.get(str(o.id), []),
             }
             for o in orders

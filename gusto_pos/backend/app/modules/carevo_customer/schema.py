@@ -764,6 +764,21 @@ class OwnerOrderOut(BaseModel):
     #: refund queue — CareVo was not in the payment path and cannot reverse it.
     manual_refund_due: bool = False
     manual_refund_reason: Optional[str] = None
+    # --- Customer arrival signals (read-only; owner_app chip) -----------------
+    # Sourced from order_events (CUSTOMER_DEPARTED / CUSTOMER_ARRIVED), the same
+    # table the prediction engine reads. NULL until the customer taps or the
+    # geofence fires, which is every order until one of those happens.
+    #
+    # Deliberately NO latitude/longitude/accuracy/speed here — those live only
+    # in the event payload, which this field never touches. The owner app has
+    # no legitimate use for a customer's raw location, only for the two
+    # timestamps a human reads as "have they left yet".
+    departed_at: Optional[datetime] = None
+    arrived_at: Optional[datetime] = None
+    #: order_twin.arrival_p50 — the engine's own estimated arrival instant.
+    #: NULL until a twin has been computed for the order (e.g. no travel
+    #: inputs yet), which existing owner_app builds already treat as absent.
+    est_arrival_at: Optional[datetime] = None
     items: list[OwnerOrderLineOut] = []
 
 
