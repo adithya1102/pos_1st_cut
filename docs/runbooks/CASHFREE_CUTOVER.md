@@ -85,6 +85,22 @@ before `CASHFREE_ONLY` is ever set `true` — `validate_cashfree_only_config`,
 - `CASHFREE_ENV` (`sandbox` or `production`)
 - `CASHFREE_NOTIFY_URL`
 
+**Fail-closed gateway posture (new; applies whether `CASHFREE_ONLY` is on or
+off — `validate_gateway_startup_posture`, `app/core/config.py`):**
+- `APP_ENV` — must be `production` on this service (never leave it unset: the
+  default already reads as `production`, but an explicit value is the
+  intent, not an accident). The set of values this and `validate_cashfree_only_config`
+  treat as NOT production is the shared constant `NON_PRODUCTION_ENVS` in
+  `app/core/config.py`: `{"dev", "development", "local", "test"}`.
+- `ALLOW_STUB_GATEWAY` — leave **unset** on this service, always. Setting it
+  `true` is the only way a non-`cashfree` `PAYMENT_GATEWAY` is permitted to
+  boot in a production `APP_ENV`, and on a Cashfree-only outlet's backend
+  there is never a legitimate reason to need that escape hatch.
+- `CASHFREE_WEBHOOK_MAX_AGE_S` — leave at its default (`7200`, 2 hours)
+  unless the sandbox check in step 4 below changes that judgement. It rejects
+  a validly-signed webhook whose `x-webhook-timestamp` is more than this many
+  seconds from now, in either direction.
+
 ---
 
 ## 3. Order of operations
@@ -122,6 +138,17 @@ before `CASHFREE_ONLY` is ever set `true` — `validate_cashfree_only_config`,
    - [ ] Complete a sandbox payment and confirm the webhook moves the order
          to `PAID` with a pickup code.
    - [ ] Confirm `payment_transactions.gateway = 'cashfree'` for that order.
+   - [ ] **Confirm `x-webhook-timestamp` semantics.** Trigger a webhook retry
+         from the Cashfree sandbox dashboard (or wait for a natural one) for
+         the SAME payment event, and compare the `x-webhook-timestamp` value
+         across the original delivery and the retry. If they are IDENTICAL,
+         the header is stamped once per EVENT and `CASHFREE_WEBHOOK_MAX_AGE_S`
+         (default 7200s) can safely stay generous or be tightened later. If
+         they DIFFER (the retry carries a later timestamp), the header is
+         stamped per DELIVERY ATTEMPT, and the 7200s default already
+         accommodates Cashfree's ~42-minute retry schedule — do not lower it
+         below that without re-confirming the schedule has not changed. This
+         has not yet been confirmed against the sandbox; do not skip it.
    - [ ] Only after all of the above: swap in the owner's **production**
          Cashfree keys and set `CASHFREE_ENV=production`.
 5. **The real outlet cutover:**
@@ -149,6 +176,15 @@ before `CASHFREE_ONLY` is ever set `true` — `validate_cashfree_only_config`,
    - Watch for pay-at-pickup or UPI-manual orders appearing for this outlet
      at all — in `CASHFREE_ONLY` mode `payment_methods_for` should never
      offer either, so any such order is a sign the switch did not take.
+   - **Daily, ongoing — not just the first hour**: run verify.sql query 7
+     (or `GET /api/v1/admin/orders/refund-due`) once a day. Nothing pushes
+     this list to anyone — there is no admin push/email notification on
+     `refund_required` being set, only the `REFUND_REQUIRED_FLAGGED` ERROR
+     log line — so this is a human's job to check on a schedule, not
+     something that surfaces itself. Run verify.sql query 8 alongside it as
+     a reconciliation check for the two inconsistent states it should never
+     find (a cancelled order still holding a pickup code; a PAID order with
+     `refund_required` outstanding).
 7. If anything in step 6 is wrong, run
    `docs/ops/cashfree_only_cutover_rollback.sql` immediately — it re-locks
    Cashfree for this one outlet in one transaction, independent of the

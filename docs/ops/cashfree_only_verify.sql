@@ -84,3 +84,37 @@ FROM customer_orders
 WHERE outlet_id = '<OUTLET_ID>'
   AND refund_required = true
 ORDER BY created_at DESC;
+
+
+-- ----------------------------------------------------------------------------
+-- 7. DAILY REFUND-DUE CHECK. Run once a day against the whole platform (no
+--    outlet_id filter — this is the admin's cross-outlet queue), or hit the
+--    equivalent live route: GET /api/v1/admin/orders/refund-due
+--    (carevo_admin/controller.py -> AdminService.list_refund_due,
+--    carevo_admin/service.py ~line 1512). Nothing PUSHES this list to anyone
+--    — there is no admin push/email notification on refund_required being
+--    set (confirmed by code review; see REFUND_REQUIRED_FLAGGED in the app
+--    log as the only automatic signal) — so this query (or the route) must
+--    be run on a schedule, not waited for.
+-- ----------------------------------------------------------------------------
+SELECT id, outlet_id, status, refund_required, refund_reason, total_amount,
+       refund_flagged_at
+FROM customer_orders
+WHERE refund_required = true
+ORDER BY refund_flagged_at DESC
+LIMIT 500;
+
+
+-- ----------------------------------------------------------------------------
+-- 8. RECONCILIATION: rows that are CANCELLED but still carry a presentable
+--    pickup code, or are PAID with refund_required — both are inconsistent
+--    states a cancelled/refund-due order must never be in (Task 1c closed
+--    the pickup_code half of this going forward; this query catches any
+--    pre-existing row, or a regression, either way).
+-- ----------------------------------------------------------------------------
+SELECT id, outlet_id, status, payment_status, pickup_code, refund_required,
+       refund_reason, created_at
+FROM customer_orders
+WHERE (status = 'CANCELLED' AND pickup_code IS NOT NULL)
+   OR (payment_status = 'PAID' AND refund_required = true)
+ORDER BY created_at DESC;
