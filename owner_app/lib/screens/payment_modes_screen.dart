@@ -123,6 +123,17 @@ class _PaymentModesScreenState extends State<PaymentModesScreen> {
       _vpa.text.trim() != (_settings?.upiVpa ?? '').trim();
 
   Future<void> _save() async {
+    // CASHFREE_ONLY: the controls for these two are hidden (see build()), so
+    // there is no way for the owner to flip them off here if a save from
+    // before the cutover left either true. Forcing them false on every save
+    // mirrors the honest server truth — payment_methods_for already ignores
+    // both while the switch is on — rather than 403ing on a value the screen
+    // never let the owner see or change.
+    if (_settings?.cashfreeOnly ?? false) {
+      _pickup = false;
+      _upi = false;
+    }
+
     // The local half of rule 3. The server and the database enforce it too.
     if (!_prepaid && !_pickup && !_upi) {
       setState(() => _error =
@@ -263,6 +274,23 @@ class _PaymentModesScreenState extends State<PaymentModesScreen> {
                       const Divider(height: 8),
                     ],
 
+                    // CASHFREE_ONLY (config.py): pay-at-pickup and UPI are not
+                    // a per-outlet choice while the platform switch is on —
+                    // the server 403s a PATCH that tries to turn either on —
+                    // so neither control is shown, and a plain note replaces
+                    // them instead of a switch guaranteed to fail on tap.
+                    if (s.cashfreeOnly)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                        child: Text(
+                          'Pay at pickup and UPI are turned off for now. '
+                          'Online payment is the only way customers can pay.',
+                          key: const Key('cashfree_only_note'),
+                          style: theme.textTheme.bodyMedium
+                              ?.copyWith(color: theme.colorScheme.outline),
+                        ),
+                      )
+                    else ...[
                     // ------------------- 2. Pay at pickup ------------------
                     SwitchListTile(
                       key: const Key('toggle_pay_at_pickup'),
@@ -366,6 +394,7 @@ class _PaymentModesScreenState extends State<PaymentModesScreen> {
                         ],
                       ),
                     ),
+                    ], // end else (!s.cashfreeOnly)
 
                     const SizedBox(height: 20),
 

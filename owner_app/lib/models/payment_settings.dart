@@ -18,6 +18,7 @@ class PaymentSettings {
     this.upiPayeeName,
     this.upiAttested = false,
     this.effectiveMethods = const [],
+    this.cashfreeOnly = false,
   });
 
   /// The owner WANTS to offer online payment.
@@ -40,6 +41,13 @@ class PaymentSettings {
   /// flags — prepaid additionally needs the unlock and a live gateway — so
   /// this is what the screen uses to warn that nothing is on offer.
   final List<String> effectiveMethods;
+
+  /// True when the platform-wide CASHFREE_ONLY switch is on. Pay-at-pickup
+  /// and UPI are not a per-outlet choice while this is true — the server
+  /// 403s a PATCH that tries to turn either on — so the screen hides those
+  /// controls and shows a plain note rather than letting the owner tap a
+  /// switch that is guaranteed to fail.
+  final bool cashfreeOnly;
 
   /// Whether to render the Cashfree row at all (AMENDMENT A3).
   ///
@@ -72,6 +80,10 @@ class PaymentSettings {
       effectiveMethods: ((json['effective_methods'] as List?) ?? const [])
           .map((e) => e.toString().toUpperCase())
           .toList(growable: false),
+      // Absent on an older backend that predates CASHFREE_ONLY — defaults
+      // false, matching "the switch does not exist yet" rather than hiding
+      // controls a build talking to that backend can still use.
+      cashfreeOnly: (json['cashfree_only'] as bool?) ?? false,
     );
   }
 
@@ -92,5 +104,6 @@ class PaymentSettings {
         upiPayeeName: upiPayeeName ?? this.upiPayeeName,
         upiAttested: upiAttested ?? this.upiAttested,
         effectiveMethods: effectiveMethods,
+        cashfreeOnly: cashfreeOnly,
       );
 }
