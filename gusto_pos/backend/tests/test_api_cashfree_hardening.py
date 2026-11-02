@@ -28,6 +28,7 @@ import base64
 import hashlib
 import hmac as _hmac
 import json
+import time
 import uuid
 
 import pytest
@@ -80,8 +81,14 @@ def _cf_body(*, order_id: str, status: str = "SUCCESS",
     }).encode()
 
 
-async def _post_webhook(client, body: bytes, *, timestamp="1700000000",
+async def _post_webhook(client, body: bytes, *, timestamp: str | None = None,
                         signature: str | None = None):
+    # Default is NOW, not a fixed historical literal: Task 2 added
+    # CASHFREE_WEBHOOK_MAX_AGE_S, which rejects an old-but-validly-signed
+    # timestamp outright, and every test in this file that does not care
+    # about timestamp freshness itself needs a live one to still reach 200.
+    if timestamp is None:
+        timestamp = str(int(time.time()))
     sig = signature if signature is not None else _sign(body, timestamp)
     return await client.post(
         f"{API}/customer/payment/webhook",

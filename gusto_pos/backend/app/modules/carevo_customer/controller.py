@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import time
 import uuid
 from typing import Optional
 
@@ -597,6 +599,37 @@ async def payment_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     if not gw.verify_webhook_signature(body, signature, timestamp=timestamp):
         raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
+    # Replay window (CASHFREE_WEBHOOK_MAX_AGE_S, default 7200s / 2 hours).
+    #
+    # Checked only AFTER signature verification passes — an unsigned or
+    # wrongly-signed body is already refused above, so this guards a
+    # genuinely-Cashfree-signed delivery whose timestamp is simply too old (or,
+    # symmetrically, implausibly in the future) to trust.
+    #
+    # 7200s, NOT Cashfree's own suggested 300s: their documented retry
+    # schedule spans roughly 42 minutes end to end, and at 300s this would
+    # start rejecting — and therefore permanently losing, since a 400 is not
+    # retried on a shorter cycle — their OWN later retries of a real delivery.
+    # Whether x-webhook-timestamp is stamped once per EVENT or re-stamped on
+    # every RETRY ATTEMPT is not yet confirmed against the sandbox (see
+    # docs/ops/cashfree_only_verify.sql); until it is, this stays generous
+    # rather than risking silently dropped real payments.
+    if timestamp is not None:
+        try:
+            ts_value = int(timestamp)
+        except (TypeError, ValueError):
+            ts_value = None
+        if ts_value is not None:
+            age = abs(time.time() - ts_value)
+            if age > settings.CASHFREE_WEBHOOK_MAX_AGE_S:
+                logger.warning(
+                    "payment webhook rejected: timestamp %s is %.0fs from "
+                    "now, exceeding CASHFREE_WEBHOOK_MAX_AGE_S=%s",
+                    timestamp, age, settings.CASHFREE_WEBHOOK_MAX_AGE_S)
+                raise HTTPException(
+                    status_code=400,
+                    detail="Webhook timestamp outside the accepted window")
+
     try:
         data = json.loads(body or b"{}")
     except json.JSONDecodeError:
@@ -644,6 +677,13 @@ async def payment_webhook(request: Request, db: AsyncSession = Depends(get_db)):
             raw_payload=data or None,
             amount_paise=evt.amount_paise,
         )
+        # gateway_payment_id already settled against a DIFFERENT order than
+        # the one this webhook named (see mark_paid). Nothing changed for
+        # either order — answered IGNORED, with no data from the other order,
+        # and none of the PAID cascade (auto_receive, outlet push) below runs
+        # for an order the webhook never actually paid.
+        if getattr(order, "_mark_paid_cross_order_ignored", False):
+            return {"ok": True, "outcome": "IGNORED"}
         # mark_paid refuses to reopen a finished order, so the payment may not
         # have been applied at all. Everything below assumes it WAS: auto_receive
         # moves the order on, and the outlet push tells staff food needs making.
@@ -715,9 +755,18 @@ async def simulate_payment(
     customer: Customer = Depends(get_current_customer),
     db: AsyncSession = Depends(get_db),
 ):
-    # STUB ONLY — guard behind PAYMENT_GATEWAY=stub
+    # STUB ONLY — guard behind PAYMENT_GATEWAY=stub.
     if settings.PAYMENT_GATEWAY != "stub":
         raise HTTPException(status_code=403, detail="Simulation disabled (real gateway active)")
+    # AND only in a non-production environment, unless an operator has
+    # explicitly opted in. Mirrors validate_gateway_startup_posture's fail-
+    # closed posture: a stub-gateway deploy left running in production must
+    # not also hand out a free "mark myself paid" endpoint.
+    from app.core.config import NON_PRODUCTION_ENVS
+    env_name = os.getenv("APP_ENV", "production").strip().lower()
+    allow_stub = os.getenv("ALLOW_STUB_GATEWAY", "").strip().lower() == "true"
+    if env_name not in NON_PRODUCTION_ENVS and not allow_stub:
+        raise HTTPException(status_code=403, detail="Simulation disabled outside a non-production environment")
     order = await CarevoService.get_order(db, payload.order_id, customer)
     order = await CarevoService.mark_paid(db, order, method=payload.method)
 

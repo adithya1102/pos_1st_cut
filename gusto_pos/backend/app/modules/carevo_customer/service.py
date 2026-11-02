@@ -2847,6 +2847,25 @@ class CarevoService:
             # the caller can see nothing was applied.
             return order
 
+        # CONCURRENCY (Task 3c): serialize concurrent mark_paid calls for the
+        # SAME order with a row lock, taken BEFORE either idempotency check.
+        #
+        # Without this, two near-simultaneous webhook deliveries for the same
+        # order — Cashfree's own retry landing while the first delivery is
+        # still mid-flight, or a genuine race — could both read
+        # payment_status != 'PAID' before either had committed, and both fall
+        # through into the PAID-transition body below: double loyalty-point
+        # accrual, two pickup codes minted (only the second survives, but the
+        # first was real work and a real log entry), and a close race on the
+        # stock re-reserve. SELECT ... FOR UPDATE makes the second caller
+        # block until the first COMMITs, then the refresh picks up the
+        # now-PAID row and the ordinary idempotency check two lines down
+        # short-circuits it correctly — no new code path, just serialization.
+        await db.execute(text(
+            "SELECT id FROM customer_orders WHERE id = :id FOR UPDATE"),
+            {"id": str(order.id)})
+        await db.refresh(order)
+
         # Idempotency on gateway_payment_id.
         if gateway_payment_id:
             existing = (await db.execute(text("""
@@ -2854,6 +2873,24 @@ class CarevoService:
                 WHERE gateway_payment_id = :pid AND status = 'PAID' LIMIT 1
             """), {"pid": gateway_payment_id})).first()
             if existing:
+                if str(existing[0]) != str(order.id):
+                    # gateway_payment_id already settled against a DIFFERENT
+                    # order than the one this call named. Returning that OTHER
+                    # order (the pre-existing behaviour) would hand its
+                    # pickup_code/status back to a caller that asked about
+                    # THIS order — a cross-order data leak, and if the webhook
+                    # controller then ran its PAID cascade on the returned
+                    # object, a second notify/accept for an order the webhook
+                    # never named. Nothing changes; the caller gets IGNORED
+                    # and nothing else.
+                    logger.warning(
+                        "mark_paid IGNORED: gateway_payment_id %s is already "
+                        "PAID against order %s, not the named order %s. "
+                        "Nothing changed.",
+                        gateway_payment_id, existing[0], order.id,
+                    )
+                    order._mark_paid_cross_order_ignored = True
+                    return order
                 res = await db.execute(
                     select(CustomerOrder).where(CustomerOrder.id == existing[0])
                 )
@@ -2888,7 +2925,7 @@ class CarevoService:
             # with, so this can only be reached by a genuine stray gateway
             # callback — not by the counter-payment paths those modes use.
             if (pickup_mode or "") not in _NON_GATEWAY_METHODS:
-                await db.execute(text("""
+                flagged = await db.execute(text("""
                     UPDATE customer_orders
                        SET refund_required = true,
                            refund_reason = 'late_payment_after_expiry',
@@ -2896,6 +2933,15 @@ class CarevoService:
                      WHERE id = :id AND NOT refund_required
                 """), {"id": str(order.id)})
                 await db.commit()
+                if flagged.rowcount:
+                    amt_paise = (amount_paise if amount_paise is not None
+                                 else int(round(float(order.total_amount) * 100)))
+                    logger.error(
+                        "REFUND_REQUIRED_FLAGGED order_id=%s outlet_id=%s "
+                        "amount_paise=%s reason=%s",
+                        order.id, order.outlet_id, amt_paise,
+                        "late_payment_after_expiry",
+                    )
             # Returned unchanged rather than raised: the webhook caller must
             # still answer the gateway 200, or it retries this forever. The
             # caller sees an order that is plainly not PAID and reports that,
@@ -3073,11 +3119,37 @@ class CarevoService:
             order.refund_required = True
             order.refund_reason = "stock_gone_after_payment"
             order.refund_flagged_at = datetime.now(timezone.utc)
+            # The pickup code was already minted above (before the stock
+            # re-reserve was attempted), on an order that is now CANCELLED and
+            # will never be collected against it. payment_status stays PAID —
+            # that is the truth that money was received — but a cancelled
+            # order must not keep handing out a code nobody should present at
+            # the counter.
+            #
+            # RAW SQL, not just the ORM attribute: _assign_pickup_code wrote
+            # the code with a raw UPDATE (inside its collision-retry
+            # SAVEPOINT), which the ORM's change-tracking baseline never saw.
+            # Setting order.pickup_code = None alone would look like "back to
+            # the original value" to SQLAlchemy and get silently dropped from
+            # the flush, leaving the stale code committed. The explicit UPDATE
+            # guarantees the column itself is cleared.
+            await db.execute(text(
+                "UPDATE customer_orders SET pickup_code = NULL WHERE id = :id"
+            ), {"id": str(order.id)})
+            order.pickup_code = None
             await pe.write_event(
                 db, order.id, pe.ORDER_REJECTED,
                 actor_type="system", source="system", outlet_id=order.outlet_id,
                 payload={"reason": "stock_gone_after_payment",
                          "refund_required": True},
+            )
+            amt_paise = (amount_paise if amount_paise is not None
+                         else int(round(float(order.total_amount) * 100)))
+            logger.error(
+                "REFUND_REQUIRED_FLAGGED order_id=%s outlet_id=%s "
+                "amount_paise=%s reason=%s",
+                order.id, order.outlet_id, amt_paise,
+                "stock_gone_after_payment",
             )
             await db.commit()
             await db.refresh(order)
