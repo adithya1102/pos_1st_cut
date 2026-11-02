@@ -1019,19 +1019,18 @@ class _WaitFeedbackCard extends StatelessWidget {
 
 /// Customer-facing refund copy. ONE constant, deliberately.
 ///
-/// PLACEHOLDER AWAITING APPROVAL — the `REFUND_COPY_TODO:` prefix is there so
-/// it cannot ship unnoticed. The wording commits the restaurant to returning
-/// money the app never sees move: there is no gateway refund call anywhere in
-/// the backend, refunds are settled by a human off-app, so whatever this says
-/// has to match what that human will actually do. That is not a decision to
-/// take in a UI file.
+/// Shown when a payment was taken but no order resulted (confirmation expired,
+/// or the kitchen ran out of stock after paying). Says only what the app can
+/// actually know: the payment did not result in an order, CareVo will refund
+/// it to the original payment method, and the customer does not need to chase
+/// the restaurant. No amount and no day count — this file has no gateway
+/// refund call to point at, so it promises no timeline it cannot keep.
 ///
-/// Kept as a single constant so approving the final wording is a one-line
-/// change rather than a hunt through widgets. The current text deliberately
-/// promises no timeline.
+/// Kept as a single constant so changing the wording is a one-line edit
+/// rather than a hunt through widgets.
 const String kRefundCopyTodo =
-    'REFUND_COPY_TODO: Your payment is being refunded. Please contact the '
-    'restaurant if you need it sooner.';
+    'Your payment did not result in an order. CareVo will refund it to the '
+    'original payment method. You do not need to contact the restaurant.';
 
 /// Body copy while a manual-acceptance restaurant has not yet confirmed.
 String kAwaitingConfirmationBody(String? restaurant) {

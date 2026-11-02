@@ -272,17 +272,27 @@ void main() {
       await _close(tester);
     });
 
-    test('the constant is still an unapproved placeholder', () {
-      // Deliberately asserted. This copy commits the restaurant to returning
-      // money the app never sees move, and shipping a placeholder would be
-      // worse than shipping nothing. When the real wording is approved, this
-      // expectation is the thing that tells you to delete it.
-      expect(kRefundCopyTodo, startsWith('REFUND_COPY_TODO:'),
-          reason: 'if the copy has been approved, update this test too');
+    test('the constant is the approved final copy, not a placeholder', () {
+      // The copy commits CareVo to returning money the app never sees move,
+      // so it must say only what the app can actually know: no order
+      // resulted, CareVo (not the restaurant) refunds it, and the customer
+      // need not chase anyone. No amount, no timeline — this file has no
+      // gateway refund call to point at.
+      expect(kRefundCopyTodo, isNot(contains('TODO')),
+          reason: 'the placeholder must not ship');
+      expect(kRefundCopyTodo, isNot(contains('REFUND_COPY')));
+      expect(kRefundCopyTodo.toLowerCase(), contains('did not result in an order'));
+      expect(kRefundCopyTodo.toLowerCase(), contains('refund'));
+      expect(kRefundCopyTodo.toLowerCase(), contains('do not need to contact'));
       expect(kRefundCopyTodo.toLowerCase(), isNot(contains('within')),
           reason: 'the copy must not promise a refund timeline');
       expect(kRefundCopyTodo.toLowerCase(), isNot(contains('hours')));
       expect(kRefundCopyTodo.toLowerCase(), isNot(contains('days')));
+      // No amount: a rupee sign or digit would assert a figure this screen
+      // cannot independently verify.
+      expect(kRefundCopyTodo, isNot(contains('₹')));
+      expect(RegExp(r'\d').hasMatch(kRefundCopyTodo), isFalse,
+          reason: 'the copy must not state an amount or day count');
     });
 
     testWidgets('says cancelled, not ready', (tester) async {
