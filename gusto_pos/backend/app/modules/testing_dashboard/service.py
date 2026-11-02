@@ -936,6 +936,32 @@ class TestingService:
         await db.commit()
 
 
+async def catch_up_overdue_releases(db: AsyncSession) -> int:
+    """Release every past-due held order immediately — called once, directly,
+    at app startup (main.py's on_startup), BEFORE the background poller's own
+    task is scheduled and before the app starts accepting requests.
+
+    NOT a new scheduler. This calls the same two functions the existing
+    AUTO_ADVANCE_POLL_SECONDS loop already calls on its first pass
+    (refresh_scheduled_releases then process_due_auto_advances) — the
+    loop's own "while True: do the work, THEN sleep" shape already catches
+    up on every restart, since asyncio.create_task only queues the
+    coroutine rather than running it synchronously before the server binds
+    its port. Calling it here, awaited, removes that race: a customer whose
+    scheduled pickup matured during a redeploy or a Render free-tier sleep
+    is caught up before the very first request is served, not whenever the
+    event loop next gets around to it.
+
+    Returns how many rows process_due_auto_advances processed, for the
+    caller to log.
+    """
+    try:
+        await CarevoService.refresh_scheduled_releases(db)
+    except Exception:
+        await db.rollback()
+    return await TestingService.process_due_auto_advances(db)
+
+
 async def auto_advance_poller_loop() -> None:
     """Background loop: every AUTO_ADVANCE_POLL_SECONDS, advance any due steps.
 

@@ -515,25 +515,43 @@ class TestReleaseIsRederivedNotFrozen:
 
 @pytest.mark.asyncio
 class TestNoRoomToHoldReleasesImmediately:
-    async def test_a_slot_too_close_to_now_behaves_like_a_normal_order(
-            self, client, seed, db):
-        """'If the requested time leaves no real room to hold, release
-        immediately.' A slot 2 minutes out cannot absorb prep + margin."""
-        await _set_hours(db, seed["outlet_id"], _t(-120), _t(240))
-        order = await _place_and_pay(client, seed, requested_pickup_at=_iso(
-            datetime.now(timezone.utc) + timedelta(minutes=2)))
-        row = await _row(db, order["id"])
-        assert row.release_at is None or row.release_at <= datetime.now(timezone.utc)
-        assert str(order["id"]) in await _queue_ids(client, seed)
+    """SUPERSEDED by the scheduled-release feasibility gate (launch blocker,
+    carevo_customer/service.py:_assert_scheduled_release_feasible).
 
-    async def test_the_requested_time_is_still_recorded_for_the_dataset(
+    Before that gate existed, a slot too close to now to absorb prep +
+    acceptance-timeout + margin was silently ACCEPTED and released
+    immediately — the two tests this class used to hold asserted exactly
+    that ("behaves like a normal order"). That is no longer the product
+    decision: a kitchen cannot promise food it cannot finish by the
+    customer's own chosen time, so the gate now REFUSES the request outright
+    with a 409 and the earliest pickup time that would work, rather than
+    quietly accepting it and hoping release-on-read saves it. The two tests
+    below are the 1-for-1 replacement, pinning the new refusal instead of
+    the old silent acceptance.
+    """
+
+    async def test_a_slot_too_close_to_now_is_refused_with_the_earliest_time(
             self, client, seed, db):
-        """Even when nothing was held, the customer's choice is kept — it is the
-        join key for measuring the margin later."""
         await _set_hours(db, seed["outlet_id"], _t(-120), _t(240))
-        order = await _place_and_pay(client, seed, requested_pickup_at=_iso(
+        r = await _place(client, seed, requested_pickup_at=_iso(
             datetime.now(timezone.utc) + timedelta(minutes=2)))
-        assert (await _row(db, order["id"])).requested_pickup_at is not None
+        assert r.status_code == 409, r.text
+        detail = r.json()["detail"]
+        assert detail["error"] == "SCHEDULED_PICKUP_TOO_SOON"
+        assert "earliest_pickup_at" in detail
+
+    async def test_no_order_row_is_left_behind_by_the_refusal(
+            self, client, seed, db):
+        await _set_hours(db, seed["outlet_id"], _t(-120), _t(240))
+        before = await db.scalar(text(
+            "SELECT count(*) FROM customer_orders WHERE outlet_id = :o"),
+            {"o": seed["outlet_id"]})
+        await _place(client, seed, requested_pickup_at=_iso(
+            datetime.now(timezone.utc) + timedelta(minutes=2)))
+        after = await db.scalar(text(
+            "SELECT count(*) FROM customer_orders WHERE outlet_id = :o"),
+            {"o": seed["outlet_id"]})
+        assert after == before
 
 
 # ==========================================================================

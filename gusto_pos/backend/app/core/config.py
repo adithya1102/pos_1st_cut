@@ -127,6 +127,16 @@ class Settings(BaseSettings):
     # is named (see PaymentGateway.is_live).
     PAYMENT_GATEWAY: str = "unset"
     PAYMENT_GATEWAY_SHAPE: str = "razorpay"
+
+    # ONE reversible server switch: Cashfree prepaid becomes the only payment
+    # path. Default false so nothing changes until this is explicitly set.
+    # When true, payment_methods_for (carevo_customer/service.py) stops
+    # offering PAY_AT_PICKUP/UPI_MANUAL at every outlet, create_order refuses
+    # them with a 409, and the owner payment-settings PATCH refuses to turn
+    # either on with a 403. Does not delete or rewrite any of that code — it
+    # is gated behind this flag so flipping it back to false restores the
+    # exact prior behaviour.
+    CASHFREE_ONLY: bool = False
     RAZORPAY_KEY_ID: Optional[str] = None
     RAZORPAY_KEY_SECRET: Optional[str] = None
     RAZORPAY_WEBHOOK_SECRET: Optional[str] = None

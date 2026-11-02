@@ -54,6 +54,11 @@ class WebhookEvent:
     # order_id because we supply it on create; Razorpay does not.
     our_order_id: Optional[str] = None
     method: Optional[str] = None
+    # What the gateway says actually moved, in integer paise. None when a
+    # gateway's webhook carries no amount (the stub never did) — mark_paid
+    # treats that as "nothing to check against", not as "zero was paid",
+    # which is what lets the stub flow keep working unmodified.
+    amount_paise: Optional[int] = None
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -584,6 +589,17 @@ class CashfreeGateway(PaymentGateway):
         else:
             method = payment.get("payment_group") or None
 
+        # Cashfree reports this in RUPEES (same unit order_amount was created
+        # in), so it is converted to paise here rather than at the call site —
+        # one place that knows which gateway's amount field means what.
+        amount_paise = None
+        raw_amount = payment.get("payment_amount")
+        if raw_amount is not None:
+            try:
+                amount_paise = int(round(float(raw_amount) * 100))
+            except (TypeError, ValueError):
+                amount_paise = None
+
         return WebhookEvent(
             outcome=outcome,
             gateway_order_id=str(order.get("order_id")) if order.get("order_id") else None,
@@ -592,6 +608,7 @@ class CashfreeGateway(PaymentGateway):
             # We set order_id = customer_orders.id on create, so this IS our id.
             our_order_id=str(order.get("order_id")) if order.get("order_id") else None,
             method=method,
+            amount_paise=amount_paise,
             raw=payload,
         )
 

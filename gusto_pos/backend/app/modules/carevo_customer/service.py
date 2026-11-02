@@ -241,6 +241,15 @@ _CONTACT_TERMINAL_STATUSES = ("COMPLETED", "CANCELLED", "ABANDONED")
 # evaluate as open. Bounding the horizon below 24h makes that impossible.
 SCHEDULED_MAX_AHEAD_S = 14 * 3600
 
+# --- scheduled-order feasibility gate (launch blocker) ----------------------
+# Used only when an ordered item's prep_time_minutes is NULL (no timing data
+# yet) in _estimate_prep_seconds. Deliberately on the slow side: a refusal
+# that turns out to have been avoidable costs the customer a re-pick; an
+# acceptance that turns out to have been too soon costs the kitchen a
+# scheduled order it cannot make, which is the failure this gate exists to
+# prevent.
+DEFAULT_PREP_MINUTES_IF_UNKNOWN = 15
+
 
 class CarevoService:
     #: How long a verified pickup stays in the owner app's LIVE order queue
@@ -1078,6 +1087,84 @@ class CarevoService:
         return now + timedelta(seconds=float(mu_travel)), source
 
     @staticmethod
+    async def _estimate_prep_seconds(db: AsyncSession, items) -> int:
+        """Best prep-time estimate available AT ORDER CREATION, before any
+        row exists — the twin's mu_ready_s (service.py's _recompute_twin)
+        is not an option here: it is seeded FROM a committed order and
+        recomputed after payment, so nothing upstream of create_order can
+        read it.
+
+        Uses menu_items.prep_time_minutes, the same per-item figure the
+        kitchen display and get_menu already show (service.py:930,966) — the
+        SLOWEST ordered item, not the sum, because items are prepared in
+        parallel on the same ticket and the order cannot leave before its
+        slowest component does. An item with no timing data on file falls
+        back to DEFAULT_PREP_MINUTES_IF_UNKNOWN rather than silently
+        contributing zero.
+        """
+        item_ids = [str(i.menu_item_id) for i in items]
+        if not item_ids:
+            return DEFAULT_PREP_MINUTES_IF_UNKNOWN * 60
+        minutes = await db.scalar(text(
+            "SELECT MAX(COALESCE(prep_time_minutes, :d)) "
+            "FROM menu_items WHERE id = ANY(:ids)"),
+            {"ids": item_ids, "d": DEFAULT_PREP_MINUTES_IF_UNKNOWN})
+        return int(minutes or DEFAULT_PREP_MINUTES_IF_UNKNOWN) * 60
+
+    @staticmethod
+    async def _assert_scheduled_release_feasible(
+        db: AsyncSession, *, outlet_id, items, requested_pickup_at,
+        now: Optional[datetime] = None,
+    ) -> None:
+        """Refuse a scheduled pickup too close to be realistically cooked.
+
+        Instant orders are UNCHANGED — this only runs when the customer
+        named a time. Feasible iff:
+
+            requested_pickup_at - now
+                >= estimated_prep_s + acceptance_timeout_s
+                   + SCHEDULED_RELEASE_SAFETY_MARGIN_S
+
+        acceptance_timeout_s is read per-outlet (the same column
+        AcceptanceService reads, acceptance.py:96) because a manual-
+        acceptance outlet can spend that whole window before anyone taps
+        Accept — prep has not even started yet at that point, so leaving it
+        out would let a feasible-looking slot actually be impossible at a
+        slow-to-accept restaurant.
+
+        Raises 409 with the earliest allowed pickup instant in the body, so
+        the app can offer it directly rather than making the customer guess.
+        """
+        if requested_pickup_at is None:
+            return
+        now = now or datetime.now(timezone.utc)
+
+        # Reuses prediction/service.py's ONE margin knob rather than adding a
+        # second one with the same name and a different value — see that
+        # module for why it is not tuned per call site.
+        from app.modules.prediction.service import SCHEDULED_RELEASE_SAFETY_MARGIN_S
+
+        prep_s = await CarevoService._estimate_prep_seconds(db, items)
+        timeout_s = await db.scalar(text(
+            "SELECT acceptance_timeout_s FROM outlets WHERE id = :oid"),
+            {"oid": str(outlet_id)}) or 0
+
+        required_s = prep_s + int(timeout_s) + SCHEDULED_RELEASE_SAFETY_MARGIN_S
+        earliest = now + timedelta(seconds=required_s)
+        if requested_pickup_at < earliest:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "SCHEDULED_PICKUP_TOO_SOON",
+                    "message": (
+                        "This restaurant needs more time to prepare your "
+                        "order. Please choose a later pickup time."
+                    ),
+                    "earliest_pickup_at": earliest.isoformat(),
+                },
+            )
+
+    @staticmethod
     async def _assert_arrival_feasible(
         db: AsyncSession, *, gate, outlet_id, transport_mode, origin_lat,
         origin_lng, declared_arrival_at, requested_pickup_at,
@@ -1182,6 +1269,17 @@ class CarevoService:
 
         prepaid_on, pickup_on, upi_on, cashfree_unlocked = (
             bool(row[0]), bool(row[1]), bool(row[2]), bool(row[3]))
+
+        # CASHFREE_ONLY (config.py): Cashfree prepaid is the only path the
+        # platform offers at all, full stop. Short-circuits before pickup/upi
+        # are even considered, so an outlet that has pay-at-pickup or UPI
+        # flags left on from before the cutover still gets nothing but
+        # PREPAID — or nothing, if it isn't unlocked. Default false; this
+        # branch is unreachable until the switch is set.
+        if settings.CASHFREE_ONLY:
+            return ([PAY_PREPAID]
+                    if prepaid_on and cashfree_unlocked and _gateway_can_charge()
+                    else [])
 
         methods: list[str] = []
 
@@ -1570,6 +1668,15 @@ class CarevoService:
             origin_lat=getattr(payload, "origin_lat", None),
             origin_lng=getattr(payload, "origin_lng", None),
             declared_arrival_at=getattr(payload, "declared_arrival_at", None),
+            requested_pickup_at=requested_pickup_at)
+
+        # SCHEDULED-RELEASE feasibility gate (launch blocker). A no-op for
+        # instant orders — only runs when requested_pickup_at is set — and
+        # separate from the arrival gate above: that gate asks "can the
+        # CUSTOMER get here in time", this one asks "can the KITCHEN have it
+        # ready", and a slot can fail either one independently.
+        await CarevoService._assert_scheduled_release_feasible(
+            db, outlet_id=payload.outlet_id, items=payload.items,
             requested_pickup_at=requested_pickup_at)
 
         # STOCK (033): reclaim lapsed holds BEFORE anything reads availability.
@@ -2678,6 +2785,7 @@ class CarevoService:
         gateway_signature: Optional[str] = None,
         method: Optional[str] = None,
         raw_payload: Optional[dict] = None,
+        amount_paise: Optional[int] = None,
     ) -> CustomerOrder:
         """Idempotent PAID transition shared by webhook + simulate.
 
@@ -2768,10 +2876,55 @@ class CarevoService:
                 order.payment_status,
                 json.dumps(raw_payload, default=str) if raw_payload else None,
             )
+            # A GATEWAY payment that lands after the order (or its stock hold)
+            # is already over is real money CareVo now holds against nothing —
+            # the customer never got a pickup code and the kitchen was never
+            # told to cook. That is not "nothing happened", so it goes into
+            # the SAME refund_required queue a payment-after-rejection does
+            # (see reject_order) rather than being logged and dropped.
+            #
+            # payment_mode gate mirrors the non-gateway refusal above: a
+            # pay-at-pickup/UPI order never has a gateway payment to begin
+            # with, so this can only be reached by a genuine stray gateway
+            # callback — not by the counter-payment paths those modes use.
+            if (pickup_mode or "") not in _NON_GATEWAY_METHODS:
+                await db.execute(text("""
+                    UPDATE customer_orders
+                       SET refund_required = true,
+                           refund_reason = 'late_payment_after_expiry',
+                           refund_flagged_at = now()
+                     WHERE id = :id AND NOT refund_required
+                """), {"id": str(order.id)})
+                await db.commit()
             # Returned unchanged rather than raised: the webhook caller must
             # still answer the gateway 200, or it retries this forever. The
-            # caller sees an order that is plainly not PAID and reports that.
+            # caller sees an order that is plainly not PAID and reports that,
+            # and mints no pickup code.
             return order
+
+        # UNDERPAID (Cashfree hardening). Only checked when the caller HAS an
+        # amount to check — the stub's /payment/simulate passes none, so this
+        # is a no-op there and every existing dev/test flow through it is
+        # unaffected. A short payment is not "no payment" and not "the right
+        # payment either", so it is neither silently accepted nor treated as
+        # the late-after-expiry case above: the order stays exactly as it
+        # was (no PAID, no code) and is flagged for a human to reconcile.
+        if amount_paise is not None:
+            total_paise = int(round(float(order.total_amount) * 100))
+            if amount_paise < total_paise:
+                logger.warning(
+                    "mark_paid REFUSED: order %s received %d paise, short of "
+                    "its %d paise total. Flagged, NOT marked PAID. "
+                    "gateway_payment_id=%s", order.id, amount_paise,
+                    total_paise, gateway_payment_id)
+                await db.execute(text("""
+                    UPDATE customer_orders
+                       SET payment_amount_mismatch = true,
+                           payment_amount_mismatch_at = now()
+                     WHERE id = :id
+                """), {"id": str(order.id)})
+                await db.commit()
+                return order
 
         gw = get_gateway()
         pay_id = gateway_payment_id or gw.make_payment_id()
@@ -4321,6 +4474,7 @@ class CarevoService:
             "upi_payee_name": row[5],
             "upi_attested": row[6] is not None,
             "updated_at": row[7],
+            "cashfree_only": settings.CASHFREE_ONLY,
             "effective_methods": await CarevoService.payment_methods_for(
                 db, outlet_id),
         }
@@ -4366,6 +4520,25 @@ class CarevoService:
         prepaid = bool(payload.prepaid)
         pickup = bool(payload.pay_at_pickup)
         upi = bool(payload.upi_manual)
+
+        # CASHFREE_ONLY (config.py): pay-at-pickup and direct UPI are off
+        # platform-wide, not a per-outlet preference, so trying to turn
+        # either on is refused as a permission problem (403) rather than a
+        # validation problem (422/409) — the owner did nothing wrong, the
+        # platform just isn't offering it right now. Checked first, before
+        # any of the four rules below, so the refusal names the real cause.
+        if settings.CASHFREE_ONLY and (pickup or upi):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "CASHFREE_ONLY_MODE",
+                    "message": (
+                        "Pay at pickup and UPI are switched off platform-wide "
+                        "while Cashfree-only mode is active. Online payment "
+                        "is the only method available."
+                    ),
+                },
+            )
 
         # Rule 2, checked before the "at least one" rule so the refusal names
         # the real cause: an owner who asked for prepaid-only on a locked

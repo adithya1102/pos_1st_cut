@@ -1,6 +1,7 @@
 from app.modules.sessions.router import router as sessions_router
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+import logging
 import os
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.database import init_db, AsyncSessionLocal
@@ -114,6 +115,25 @@ async def on_startup():
     await init_db()
     async with AsyncSessionLocal() as session:
         await init_initial_data(session)
+
+    # Scheduled-order launch blocker: release every past-due held order
+    # NOW, awaited here before the app accepts traffic, rather than waiting
+    # for the background poller's first tick (see catch_up_overdue_releases
+    # for why that race exists and why this closes it). Best-effort, same as
+    # the poller's own passes — a failure here must not stop the app from
+    # starting at all, which would make a transient problem here far worse
+    # than the punctuality gap it exists to close.
+    try:
+        from app.modules.testing_dashboard.service import catch_up_overdue_releases
+        async with AsyncSessionLocal() as session:
+            released = await catch_up_overdue_releases(session)
+        if released:
+            logging.getLogger(__name__).info(
+                "startup catch-up released %d past-due held order(s)",
+                released)
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "startup catch-up for overdue releases failed")
 
 
 @app.on_event("startup")

@@ -626,6 +626,11 @@ async def payment_webhook(request: Request, db: AsyncSession = Depends(get_db)):
             order = res.scalars().first()
 
     if order is None:
+        logger.warning(
+            "payment webhook for an unresolvable order ignored: "
+            "our_order_id=%s gateway_order_id=%s gateway_payment_id=%s "
+            "outcome=%s", evt.our_order_id, evt.gateway_order_id,
+            evt.gateway_payment_id, evt.outcome)
         raise HTTPException(status_code=404, detail="Order for webhook not found")
 
     if evt.outcome == "PAID":
@@ -637,6 +642,7 @@ async def payment_webhook(request: Request, db: AsyncSession = Depends(get_db)):
             gateway_payment_id=evt.gateway_payment_id,
             method=evt.method,
             raw_payload=data or None,
+            amount_paise=evt.amount_paise,
         )
         # mark_paid refuses to reopen a finished order, so the payment may not
         # have been applied at all. Everything below assumes it WAS: auto_receive

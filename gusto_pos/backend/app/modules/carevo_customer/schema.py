@@ -819,6 +819,10 @@ class OwnerPaymentMethodsOut(BaseModel):
     #: checkbox rather than having to interpret a timestamp.
     upi_attested: bool = False
     updated_at: Optional[datetime] = None
+    #: True when the platform-wide CASHFREE_ONLY switch (config.py) is on.
+    #: The owner app uses this to hide the pay-at-pickup/UPI controls and show
+    #: a plain note instead of a 403 the owner would have to tap into first.
+    cashfree_only: bool = False
     #: What a customer would actually be offered right now — which is NOT just
     #: the three flags, since prepaid also needs the unlock and a gateway.
     effective_methods: list[str] = []
