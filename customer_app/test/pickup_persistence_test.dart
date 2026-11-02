@@ -1,16 +1,20 @@
 // Order-status UI state must survive backgrounding, a process kill, and a
 // reopen — not live only in navigation-time widget memory.
 //
-// Two distinct causes, fixed on their own terms (see the diagnosis):
+// Three distinct causes, fixed on their own terms (see the diagnosis):
 //
 //  * The pickup CODE and payment status come from the server via the poll, so
 //    they were already durable — the only gap was that a RESUME did not force
 //    an immediate re-fetch. Covered by the "resume" group.
-//  * The travel flags ("I'm leaving" / "I've arrived") and the pickup ack
-//    ("I've picked this up") are client-only — the server records the travel
-//    events but does not expose them in OrderOut, and the ack has no server
-//    field at all. They now persist per order and restore on entry. Covered by
-//    the "durable flags" group.
+//  * DEPARTED is now server-sourced (OrderOut.departed / OrderStatus.departed)
+//    and read fresh on every poll, including the very first one on a cold
+//    screen — that is what makes "The restaurant knows you're coming" survive
+//    a restart, with no local record to go stale or desync.
+//  * ARRIVED ("I've arrived") and the pickup ack ("I've picked this up") are
+//    still client-only — the server records the ARRIVED travel event but does
+//    not expose it in OrderOut, and the ack has no server field at all. They
+//    still persist per order via SharedPreferences and restore on entry.
+//    Covered by the "durable flags" group.
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -45,10 +49,14 @@ class _NoCashfree implements CashfreeService {
 
 /// A backend for one order. [statusOf] is re-read on every poll, so a test can
 /// flip payment_status between polls to model a webhook landing.
+/// [departedOf] is likewise re-read on every poll, so a test can model the
+/// server recording a depart call that happened on another device/session —
+/// the scenario the server-sourced field exists for.
 ApiClient _api({
   required String Function() statusOf,
   String? pickupCode,
   List<String>? postLog,
+  bool Function()? departedOf,
 }) {
   final api = ApiClient(
     client: MockClient((req) async {
@@ -67,6 +75,7 @@ ApiClient _api({
           'payment_status': paid ? 'PAID' : 'PENDING',
           'pickup_code': paid ? pickupCode : null,
           'total_amount': 240,
+          'departed': departedOf?.call() ?? false,
           'items': [
             {'name': 'Masala Dosa', 'quantity': 2}
           ],
@@ -85,7 +94,12 @@ Widget _host(ApiClient api) {
       Provider<ApiClient>.value(value: api),
       Provider<OrderService>(create: (_) => OrderService(api)),
       Provider<CashfreeService>(create: (_) => _NoCashfree()),
-      Provider<LocationService>(create: (_) => LocationService()),
+      // ChangeNotifierProvider, matching main.dart: LocationService extends
+      // ChangeNotifier, and a plain Provider trips Flutter's debug-mode
+      // "Listenable wrapped in the wrong provider" assertion the moment
+      // anything actually reads it — which nothing in this file did until
+      // the depart tap below started exercising _onLeaving for real.
+      ChangeNotifierProvider<LocationService>(create: (_) => LocationService()),
       ChangeNotifierProvider<CartState>(create: (_) => CartState()),
       ChangeNotifierProvider<ThemeProvider>(create: (_) => ThemeProvider()),
     ],
@@ -116,22 +130,22 @@ Future<void> _backgroundAndResume(WidgetTester tester) async {
 
 void main() {
   group('durable travel + ack flags survive a rebuild', () {
-    testWidgets('a persisted "departed" restores the en-route state',
+    testWidgets('server-sourced departed restores the en-route state',
         (tester) async {
-      // The bug: after "I\'m leaving now", a background/kill reset the screen to
-      // "I\'m leaving now" again. With the flag persisted, reopening restores
-      // the en-route state instead.
-      SharedPreferences.setMockInitialValues({
-        'carevo_access_token': 't',
-        _flagKey(_orderId): 'departed',
-      });
-      await tester.pumpWidget(_host(_api(statusOf: () => 'RECEIVED')));
+      // The bug: after "I\'m on my way", a background/kill reset the screen to
+      // "I\'m on my way" again. departed is now server-sourced (OrderOut.
+      // departed), so a cold screen that polls an already-departed order
+      // restores the en-route state on the very first poll — no local flag
+      // involved.
+      SharedPreferences.setMockInitialValues({'carevo_access_token': 't'});
+      await tester.pumpWidget(_host(
+          _api(statusOf: () => 'RECEIVED', departedOf: () => true)));
       await tester.pump();
       await tester.pump();
 
-      expect(find.text('On your way — we\'re timing your food.'), findsOneWidget);
+      expect(find.text('The restaurant knows you\'re coming'), findsOneWidget);
       expect(find.text('I\'ve arrived'), findsOneWidget);
-      expect(find.text('I\'m leaving now'), findsNothing,
+      expect(find.text('I\'m on my way'), findsNothing,
           reason: 'a departed order must not offer to depart again');
 
       await _close(tester);
@@ -160,7 +174,7 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      expect(find.text('I\'m leaving now'), findsOneWidget);
+      expect(find.text('I\'m on my way'), findsOneWidget);
       expect(find.byKey(const Key('ack_picked_up')), findsOneWidget);
 
       await _close(tester);
@@ -169,13 +183,13 @@ void main() {
     testWidgets('tapping "I\'ve arrived" persists, and it survives a reopen',
         (tester) async {
       // The full round trip: an action taken now must still be true after the
-      // screen is destroyed and rebuilt (a process kill + reopen).
-      SharedPreferences.setMockInitialValues({
-        'carevo_access_token': 't',
-        _flagKey(_orderId): 'departed',
-      });
+      // screen is destroyed and rebuilt (a process kill + reopen). Departed
+      // is modelled via the server field (not a seeded local flag) since the
+      // en-route state is reached before this test's own depart tap.
+      SharedPreferences.setMockInitialValues({'carevo_access_token': 't'});
       final postLog = <String>[];
-      final api = _api(statusOf: () => 'RECEIVED', postLog: postLog);
+      final api = _api(
+          statusOf: () => 'RECEIVED', postLog: postLog, departedOf: () => true);
 
       await tester.pumpWidget(_host(api));
       await tester.pump();
@@ -255,22 +269,32 @@ void main() {
   group('a full pickup walk survives a resume mid-flow', () {
     testWidgets('leaving → resume → arrived → picked up → kill + reopen',
         (tester) async {
-      // The end-to-end walk Task 5 asks for. "Leaving" is represented by a
-      // seeded flag (the depart button needs live GPS, which a widget test
-      // cannot grant); every other step is driven for real, with a background
-      // → foreground resume in the middle to prove nothing is lost across it.
-      SharedPreferences.setMockInitialValues({
-        'carevo_access_token': 't',
-        _flagKey(_orderId): 'departed',
-      });
-      final api = _api(statusOf: () => 'RECEIVED', pickupCode: '482913');
+      // The end-to-end walk Task 5 asks for, with "leaving" now driven for
+      // real: LocationService starts with no OS answer cached (hasPermission
+      // false), so _onLeaving never touches the geolocator plugin and calls
+      // depart with no coordinates — exactly the no-permission path, and
+      // exactly what makes this tappable in a widget test with no GPS mock.
+      var departed = false;
+      SharedPreferences.setMockInitialValues({'carevo_access_token': 't'});
+      final api = _api(
+        statusOf: () => 'RECEIVED',
+        pickupCode: '482913',
+        departedOf: () => departed,
+      );
 
       await tester.pumpWidget(_host(api));
       await tester.pump();
       await tester.pump();
 
-      // Post-payment: code shown, en route.
+      // Post-payment: code shown, not yet en route.
       expect(find.text('482913'), findsOneWidget);
+      expect(find.text('I\'m on my way'), findsOneWidget);
+
+      await tester.tap(find.text('I\'m on my way'));
+      await tester.pump();
+      await tester.pump();
+      departed = true; // the server now records it, for the next poll
+      expect(find.text('The restaurant knows you\'re coming'), findsOneWidget);
       expect(find.text('I\'ve arrived'), findsOneWidget);
 
       // Resume mid-flow — code and travel state both intact.

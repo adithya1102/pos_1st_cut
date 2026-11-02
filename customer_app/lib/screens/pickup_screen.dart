@@ -152,13 +152,23 @@ class _PickupScreenState extends State<PickupScreen>
   OrderNotify? _banner;
   Timer? _bannerTimer;
 
-  // PE Step 3 travel events. Now persisted per order (see [_PickupUiStore]) and
-  // restored on entry: the backend records DEPARTED/ARRIVED as order_events but
-  // does NOT surface them in OrderOut, so without a local record these flags
-  // reset to false on every rebuild — the reverting "I'm leaving"/"I've arrived"
-  // bug. Re-taps stay safe: the endpoints are idempotent.
+  // PE Step 3 travel events.
+  //
+  // [_departed] is a LOCAL, OPTIMISTIC flag: set true the instant the depart
+  // call succeeds, so the button flips to the confirmation without waiting
+  // for the next poll. It is deliberately NOT persisted to local storage —
+  // OrderOut.departed (see OrderStatus.departed) is the authoritative,
+  // server-sourced answer, re-read on every poll including the very first one
+  // on a fresh screen, which is what makes the confirmation survive an app
+  // restart without a local record to go stale or desync.
+  //
+  // [_arrived]/[_ackPickedUp] remain client-only flags persisted via
+  // [_PickupUiStore] — the backend records ARRIVED as an order_event too, but
+  // does not surface it on OrderOut, so those two still need the local record
+  // this comment used to describe for all three.
   bool _departed = false;
   bool _departing = false;
+  String? _departError;
   bool _arrived = false;
   bool _feedbackSent = false;
   Timer? _locTimer;
@@ -219,7 +229,8 @@ class _PickupScreenState extends State<PickupScreen>
     final flags = await _PickupUiStore.read(widget.orderId);
     if (!mounted || flags.isEmpty) return;
     setState(() {
-      if (flags.contains(_PickupUiStore.departed)) _departed = true;
+      // departed is NOT restored from here — OrderStatus.departed (read fresh
+      // from the server on the very first poll) is what decides it now.
       if (flags.contains(_PickupUiStore.arrived)) _arrived = true;
       if (flags.contains(_PickupUiStore.pickedUp)) _ackPickedUp = true;
     });
@@ -229,7 +240,8 @@ class _PickupScreenState extends State<PickupScreen>
   }
 
   Future<void> _persistUiState() => _PickupUiStore.write(widget.orderId, {
-        if (_departed) _PickupUiStore.departed,
+        // departed is intentionally absent: it is server-sourced, not stored
+        // here — see the field comment on [_departed].
         if (_arrived) _PickupUiStore.arrived,
         if (_ackPickedUp) _PickupUiStore.pickedUp,
       });
@@ -322,27 +334,48 @@ class _PickupScreenState extends State<PickupScreen>
 
   // ------------------------ PE Step 3: travel events -----------------------
 
-  /// FR-C3 — "I'm leaving". Best-effort location (a denial still records the
-  /// departure, just without coordinates) then kicks off en-route pings.
+  /// FR-C3 — "I'm on my way". Calls depart exactly once per tap.
+  ///
+  /// NEVER REQUESTS LOCATION PERMISSION. [LocationService.hasPermission] is a
+  /// pure read of the OS's last-known answer — it shows no dialog — so a
+  /// customer who has not granted location still gets a reliable departure
+  /// signal, just with no coordinates attached. Only a customer who ALREADY
+  /// holds the permission (granted on some earlier, separate flow) gets a
+  /// `getCurrentLocation(allowPrompt: false)` call, and that call is itself
+  /// barred from prompting by the same flag [_pingLocation] relies on.
   Future<void> _onLeaving() async {
     final orders = context.read<OrderService>();
     final location = context.read<LocationService>();
-    setState(() => _departing = true);
+    setState(() {
+      _departing = true;
+      _departError = null;
+    });
     try {
-      final loc = await location.getCurrentLocation();
-      await orders.depart(
-        widget.orderId,
-        lat: loc.hasCoordinates ? loc.latitude : null,
-        lng: loc.hasCoordinates ? loc.longitude : null,
-      );
+      double? lat;
+      double? lng;
+      if (location.hasPermission) {
+        final loc = await location.getCurrentLocation(allowPrompt: false);
+        if (loc.hasCoordinates) {
+          lat = loc.latitude;
+          lng = loc.longitude;
+        }
+      }
+      await orders.depart(widget.orderId, lat: lat, lng: lng);
       if (!mounted) return;
-      setState(() => _departed = true);
-      _persistUiState();
+      setState(() {
+        _departed = true;
+        _departing = false;
+      });
       _startEnRoutePings();
     } catch (_) {
-      // Non-fatal: the customer can retry; the button re-enables.
-    } finally {
-      if (mounted) setState(() => _departing = false);
+      // Non-fatal: the button stays, with a short retry message, and the
+      // customer can tap again. Must never crash or block any other action
+      // on this screen — the ordinary polling and pickup flow are untouched.
+      if (!mounted) return;
+      setState(() {
+        _departing = false;
+        _departError = 'Could not reach the restaurant — tap to try again.';
+      });
     }
   }
 
@@ -490,6 +523,19 @@ class _PickupScreenState extends State<PickupScreen>
     final confirmationExpired = status?.isConfirmationExpired ?? false;
     final refundDue = status?.refundRequired ?? false;
     final estimate = status?.waitEstimate;
+
+    // Accepted, not yet collected: the one window "I'm on my way" may show
+    // in. False while AWAITING (status is already PAID there too, so isPaid
+    // alone cannot tell the two apart) — a departure declared before the
+    // restaurant has agreed to cook is not a real signal. True for every
+    // auto-mode order the instant it is paid, since there is no human gate to
+    // wait out there.
+    final acceptedByRestaurant = status?.isAcceptedByRestaurant ?? false;
+    // OrderOut.departed, read fresh on every poll, is authoritative and is
+    // what makes the confirmation survive a restart; [_departed] only adds
+    // the optimistic flip the instant THIS tap succeeds, before the next
+    // poll has had a chance to confirm it.
+    final hasDeparted = _departed || (status?.departed ?? false);
 
     // Inline payment-confirmation state. Only ever true while unpaid, so it
     // cannot collide with the paid/ready/completed UI below.
@@ -659,12 +705,16 @@ class _PickupScreenState extends State<PickupScreen>
                     const SizedBox(height: 16),
                     _WaitEstimateCard(estimate: estimate),
                   ],
-                  // FR-C3/C4/C6 — travel controls.
-                  if (isPaid && !completed) ...[
+                  // FR-C3/C4/C6 — travel controls. Gated on acceptance, not
+                  // merely on isPaid: an AWAITING order is already PAID, and
+                  // "I'm on my way" has no business showing before a human
+                  // at the restaurant has agreed to make the food.
+                  if (isPaid && !completed && acceptedByRestaurant) ...[
                     const SizedBox(height: 16),
                     _TravelControls(
-                      departed: _departed,
+                      departed: hasDeparted,
                       departing: _departing,
+                      departError: _departError,
                       arrived: _arrived,
                       onLeaving: _departing ? null : _onLeaving,
                       onArrived: _onArrived,
@@ -811,17 +861,22 @@ class _WaitEstimateCard extends StatelessWidget {
   }
 }
 
-/// FR-C3/C4/C6 — "I'm leaving" → en-route → "I've arrived".
+/// FR-C3/C4/C6 — "I'm on my way" → en-route → "I've arrived".
 class _TravelControls extends StatelessWidget {
   const _TravelControls({
     required this.departed,
     required this.departing,
+    this.departError,
     required this.arrived,
     required this.onLeaving,
     required this.onArrived,
   });
   final bool departed;
   final bool departing;
+  /// Set only after a failed depart attempt; cleared on the next tap. Shown
+  /// beside the button rather than replacing it — the customer must still be
+  /// able to retry, never left looking at a dead end.
+  final String? departError;
   final bool arrived;
   final VoidCallback? onLeaving;
   final VoidCallback? onArrived;
@@ -855,12 +910,26 @@ class _TravelControls extends StatelessWidget {
     final t = TicketColors.of(context);
 
     if (!departed) {
-      return NeoButton(
-        label: departing ? 'One sec…' : 'I\'m leaving now',
-        icon: Icons.directions_run,
-        variant: NeoButtonVariant.neutral,
-        loading: departing,
-        onPressed: onLeaving,
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          NeoButton(
+            key: const Key('i_am_on_my_way'),
+            label: departing ? 'One sec…' : 'I\'m on my way',
+            icon: Icons.directions_run,
+            variant: NeoButtonVariant.neutral,
+            loading: departing,
+            onPressed: onLeaving,
+          ),
+          if (departError != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              departError!,
+              key: const Key('depart_retry_message'),
+              style: textTheme.bodySmall?.copyWith(color: c.inkSoft),
+            ),
+          ],
+        ],
       );
     }
 
@@ -875,8 +944,11 @@ class _TravelControls extends StatelessWidget {
               Icon(Icons.navigation, color: t.ink),
               const SizedBox(width: 12),
               Expanded(
-                child: Text('On your way — we\'re timing your food.',
-                    style: textTheme.titleMedium?.copyWith(color: t.ink)),
+                child: Text(
+                  'The restaurant knows you\'re coming',
+                  key: const Key('depart_confirmation'),
+                  style: textTheme.titleMedium?.copyWith(color: t.ink),
+                ),
               ),
             ],
           ),
@@ -1404,7 +1476,9 @@ class _RetrySection extends StatelessWidget {
 /// effort: a read failure just yields the pre-fix behaviour (flags start
 /// false), never an error the customer sees.
 class _PickupUiStore {
-  static const departed = 'departed';
+  // 'departed' is deliberately NOT a flag here any more — OrderStatus.departed
+  // (server-sourced) replaced it; see the field comment on PickupScreen's
+  // own [_departed].
   static const arrived = 'arrived';
   static const pickedUp = 'picked_up';
 

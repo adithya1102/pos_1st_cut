@@ -301,6 +301,7 @@ class OrderStatus {
     this.manualRefundDue = false,
     this.manualRefundReason,
     this.upiPayment,
+    this.departed = false,
   });
 
   final String id;
@@ -395,6 +396,20 @@ class OrderStatus {
   /// can be rebuilt after a restart. Absent once the restaurant accepts.
   final UpiPaymentInfo? upiPayment;
 
+  /// True once the server has recorded a CUSTOMER_DEPARTED event for this
+  /// order (backend OrderOut.departed). This is the AUTHORITATIVE source for
+  /// "has the customer set off" — unlike a client-only flag, it survives an
+  /// app restart because it is read fresh from the server on every poll,
+  /// not reconstructed from local storage.
+  final bool departed;
+
+  /// True once the order has been accepted and there is nothing left for a
+  /// human at the restaurant to decide — which is every order at an outlet
+  /// with no manual-acceptance step (acceptanceState is null there, so there
+  /// is no "awaiting" phase to wait out), and an ACCEPTED order at an outlet
+  /// that does have one. False while AWAITING, REJECTED or EXPIRED.
+  bool get isAcceptedByRestaurant => !requiresConfirmation || isConfirmed;
+
   /// A direct-UPI order the customer has not yet said they paid for.
   bool get awaitingUpiPayment =>
       paymentMode == PaymentMode.upiManual &&
@@ -469,6 +484,9 @@ class OrderStatus {
       manualRefundDue: (json['manual_refund_due'] as bool?) ?? false,
       manualRefundReason: json['manual_refund_reason']?.toString(),
       upiPayment: UpiPaymentInfo.fromJson(json['upi_payment']),
+      // Absent on an older backend, which is read as "not departed" — the
+      // same conservative default every other additive field here uses.
+      departed: (json['departed'] as bool?) ?? false,
     );
   }
 
