@@ -19,6 +19,18 @@ always built it in:
      outlets(id), menu_items(id), ...) assume already exist —
      migrations/001_carevo_skip.sql's own header says so explicitly ("FKs to
      EXISTING customers(id) and outlets(id)").
+
+     PLUS two legacy POS model modules — app.modules.sessions.models
+     (table_sessions, customer_sessions, otp_records, waiter_notifications)
+     and app.modules.tables.models — that reset_db.py's own 21-import list
+     does NOT include, but that the suite needs: OrderService.create_order
+     (the legacy dine-in POST /orders/ path) writes a WaiterNotification row
+     on every order, so tests/test_api_legacy_order_pricing.py cannot reach
+     its assertions without that table existing. This was found by running
+     this script and the full suite against the result — not guessed —
+     and tests/bootstrap_test_db.py (pre-existing in this same directory,
+     a prior, less strictly-isolated attempt at the identical job) already
+     documents the same requirement in its own comments.
   2. Every migrations/NNN_*.sql file, 001 through 038, applied in strict
      numeric order, each as one multi-statement execute() against the
      target database. This is what layers on every CareVo Skip / owner app /
@@ -30,12 +42,21 @@ always built it in:
 SAFETY, enforced BEFORE any network I/O:
   * Refuses to run unless the target host is exactly "127.0.0.1" or
     "localhost" AND the target database name is exactly "carevo_test".
-  * Imports nothing that reads the real .env. The model modules imported for
-    step 1 (app.modules.*.model) import only app.models.base — never
-    app.core.config or app.core.database (which DOES import config.settings
-    at module level, which is exactly what must not happen here). DATABASE
-    credentials below are hardcoded local literals, never
-    settings.DATABASE_URL.
+  * DATABASE_URL is forced to the safe local literal (module level, before
+    any other import) BEFORE step 1 ever imports a model module. Most base
+    models (app.modules.*.model) import only app.models.base and never touch
+    app.core.config at all. The two legacy modules ARE the exception — they
+    import Base via `from app.core.database import Base` (the same object,
+    just re-exported), and app.core.database itself does
+    `from app.core.config import settings` at module level. There is no way
+    to use those two modules' tables without that import executing — the
+    same unavoidable fact tests/bootstrap_test_db.py's own comment notes
+    ("Point the app at the test DB BEFORE importing anything that reads
+    settings, or it will bind to prod"). Forcing DATABASE_URL first means
+    the Settings object pydantic builds, whatever else it reads out of a
+    real .env file, NEVER has the real database's URL in the field that is
+    actually used — no connection anywhere in this process ever reaches
+    anything but the hardcoded local literal below.
   * Never touches any database other than carevo_test itself (the admin
     connection used to DROP/CREATE the database connects to the `postgres`
     maintenance database, as Postgres requires — it only ever runs
@@ -47,17 +68,26 @@ Run from gusto_pos/backend:  python tests/reset_test_db.py
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
-
-import asyncpg
-from sqlalchemy import text as sa_text
-from sqlalchemy.ext.asyncio import create_async_engine
 
 HOST = "127.0.0.1"
 PORT = 5432
 DB_NAME = "carevo_test"
 USER = "postgres"
 PASSWORD = "postgres"
+
+# Forced BEFORE any other import, including asyncpg/sqlalchemy — see the
+# module docstring's SAFETY section. This is the one line standing between
+# "app.modules.sessions.models imports app.core.config" and that import
+# ever seeing the real .env's DATABASE_URL.
+os.environ["DATABASE_URL"] = (
+    f"postgresql+asyncpg://{USER}:{PASSWORD}@{HOST}:{PORT}/{DB_NAME}")
+
+import asyncpg  # noqa: E402
+from sqlalchemy import text as sa_text  # noqa: E402
+from sqlalchemy.ext.asyncio import create_async_engine  # noqa: E402
+
 ADMIN_DB = "postgres"
 
 HERE = Path(__file__).resolve().parent
@@ -97,10 +127,10 @@ async def _drop_and_create_database() -> None:
 
 async def _create_base_tables() -> int:
     print("[2/4] Creating base tables via SQLAlchemy models...")
-    # Imported directly, never via app.core.database (which imports
-    # app.core.config -> reads the real .env). Base is shared; importing
-    # each model module registers its table on Base.metadata as a side
-    # effect, exactly as reset_db.py's own import list does.
+    # The 14 pure models (import only app.models.base — never
+    # app.core.config/app.core.database). Importing each module registers
+    # its table on Base.metadata as a side effect, exactly as reset_db.py's
+    # own import list does.
     from app.models.base import Base
     import app.modules.organizations.model  # noqa: F401
     import app.modules.outlets.model  # noqa: F401
@@ -117,6 +147,17 @@ async def _create_base_tables() -> int:
     import app.modules.audit_logs.model  # noqa: F401
     import app.modules.sync_logs.model  # noqa: F401
     import app.modules.daily_sales.model  # noqa: F401
+
+    # The two legacy POS modules. These import Base via
+    # `from app.core.database import Base` (the identical object, just
+    # re-exported) rather than from app.models.base directly, so importing
+    # either one DOES pull in app.core.database -> app.core.config at this
+    # point — unavoidable, documented in the module docstring's SAFETY
+    # section, and made harmless by the os.environ override at the top of
+    # this file, which runs before even the stdlib imports below it.
+    # table_sessions, customer_sessions, otp_records, waiter_notifications:
+    import app.modules.sessions.models  # noqa: F401
+    import app.modules.tables.models  # noqa: F401
 
     url = f"postgresql+asyncpg://{USER}:{PASSWORD}@{HOST}:{PORT}/{DB_NAME}"
     engine = create_async_engine(url)
