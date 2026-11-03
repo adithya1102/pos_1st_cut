@@ -20,7 +20,7 @@ from typing import Any, Mapping, Optional
 
 import httpx
 
-from app.core.config import settings
+from app.core.config import normalize_payment_gateway, settings
 
 
 @dataclass
@@ -629,8 +629,14 @@ def get_gateway() -> PaymentGateway:
     wire shape. Before this, the factory read SHAPE while /payment/simulate
     read PAYMENT_GATEWAY — two settings for one decision, which is how you end
     up with a "real gateway" deploy still serving stub orders.
+
+    normalize_payment_gateway (app/core/config.py) is the ONE normalization
+    for this comparison, shared with validate_gateway_startup_posture and
+    _gateway_can_charge — this used to do only `.lower()`, with no strip,
+    which let " cashfree" (one leading space) pass the startup guard as
+    cashfree while silently resolving to the stub HERE.
     """
-    selected = (settings.PAYMENT_GATEWAY or "stub").lower()
+    selected = normalize_payment_gateway(settings.PAYMENT_GATEWAY)
     if selected == "cashfree":
         return CashfreeGateway()
     return StubRazorpayGateway()

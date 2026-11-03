@@ -301,6 +301,27 @@ class PaymentConfigError(RuntimeError):
 # the two could silently drift apart.
 NON_PRODUCTION_ENVS = {"dev", "development", "local", "test"}
 
+def normalize_payment_gateway(value: Optional[str]) -> str:
+    """The ONE normalization for comparing PAYMENT_GATEWAY against the known
+    literals ("cashfree", "stub"). Strips surrounding whitespace and
+    lowercases.
+
+    Before this, three call sites each did their own version of this —
+    validate_cashfree_only_config and validate_gateway_startup_posture (both
+    below) did `.strip().lower()`, while get_gateway()
+    (carevo_payments/gateway.py) and _gateway_can_charge()
+    (carevo_customer/service.py) did `.lower()` only, with NO strip. The
+    result: PAYMENT_GATEWAY=" cashfree" (one leading space) passed
+    validate_gateway_startup_posture's check (believed to be cashfree) while
+    get_gateway() and _gateway_can_charge() resolved it to the STUB — a
+    deploy that believes it is correctly configured and is actually not
+    charging anyone through a real gateway. Independent verification
+    confirmed this live. One helper, used everywhere PAYMENT_GATEWAY is
+    compared against "cashfree" or "stub", closes that gap by construction.
+    """
+    return (value or "").strip().lower()
+
+
 # The literal signal used to tell a test run from a real one. Same variable
 # and same convention as main.py's _DOCS_ENABLED (APP_ENV, default
 # "production" so an unconfigured deploy is treated as real) — but narrower:
@@ -336,7 +357,7 @@ def validate_cashfree_only_config(cfg: "Settings" = None, *,
     if not cfg.CASHFREE_ONLY:
         return
 
-    if (cfg.PAYMENT_GATEWAY or "").strip().lower() != "cashfree":
+    if normalize_payment_gateway(cfg.PAYMENT_GATEWAY) != "cashfree":
         raise PaymentConfigError(
             "CASHFREE_ONLY=true requires PAYMENT_GATEWAY=cashfree; the "
             "variable PAYMENT_GATEWAY is not set to cashfree"
@@ -372,7 +393,7 @@ def validate_gateway_startup_posture(cfg: "Settings" = None, *,
     if env_name in NON_PRODUCTION_ENVS:
         return
 
-    if (cfg.PAYMENT_GATEWAY or "").strip().lower() == "cashfree":
+    if normalize_payment_gateway(cfg.PAYMENT_GATEWAY) == "cashfree":
         return
 
     if allow_stub is None:

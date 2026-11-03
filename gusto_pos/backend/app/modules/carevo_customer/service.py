@@ -20,7 +20,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
+from app.core.config import normalize_payment_gateway, settings
 from app.core.websocket_manager import customer_manager, pos_manager
 from app.modules.customers.model import Customer
 from app.modules.carevo_customer.model import (
@@ -164,12 +164,6 @@ FALSE_CLAIM_STRIKE_LIMIT = 2
 #: that fails if this relationship is ever inverted.
 UPI_PAY_WINDOW_SECONDS = 480
 
-#: The PAYMENT_GATEWAY value meaning "nobody chose one" (config.py). Kept as a
-#: named constant here so the comparison below reads as a decision rather than
-#: as a magic string.
-_GATEWAY_UNSET = "unset"
-
-
 def _gateway_can_charge() -> bool:
     """Can this deployment open a checkout at all?
 
@@ -206,7 +200,12 @@ def _gateway_can_charge() -> bool:
     removing it), which withdraws prepaid everywhere and leaves pay-at-pickup
     as the only method — without deleting a line of Cashfree code.
     """
-    return (settings.PAYMENT_GATEWAY or _GATEWAY_UNSET).lower() in {
+    # normalize_payment_gateway is the ONE shared normalization (strip +
+    # lower), also used by get_gateway() and validate_gateway_startup_posture
+    # — this used to do `.lower()` only, with no strip, so a value like
+    # " cashfree" (one leading space) could disagree with the startup guard's
+    # own `.strip().lower()` comparison about whether Cashfree was selected.
+    return normalize_payment_gateway(settings.PAYMENT_GATEWAY) in {
         "cashfree", "stub",
     }
 
