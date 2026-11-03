@@ -64,6 +64,37 @@ class TestCrossOrderIdempotency:
         assert str(order_b["id"]) in blob
         assert str(paid_order["id"]) in blob
 
+    async def test_the_warning_logs_only_the_last_six_characters_of_the_payment_id(
+            self, client, seed, db, caplog):
+        """Task 3 (independent-verification fix): the full gateway_payment_id
+        must never appear in this WARNING — only the last 6 characters,
+        prefixed with an ellipsis."""
+        import uuid
+        known_pid = f"cfpay_KNOWN_LONG_PAYMENT_ID_{uuid.uuid4().hex}"
+        assert len(known_pid) > 6
+
+        order_a = await _unpaid_order(client, seed)
+        await CarevoService.mark_paid(
+            db, await _orm(db, order_a["id"]), gateway_payment_id=known_pid)
+        row_a = await _row(db, order_a["id"])
+        assert row_a.payment_status == "PAID"
+
+        order_b = await _unpaid_order(client, seed)
+
+        with caplog.at_level(logging.WARNING,
+                             logger="app.modules.carevo_customer.service"):
+            await CarevoService.mark_paid(
+                db, await _orm(db, order_b["id"]), gateway_payment_id=known_pid)
+
+        warnings = [r.getMessage() for r in caplog.records
+                   if r.levelno == logging.WARNING]
+        blob = " ".join(warnings)
+        assert "IGNORED" in blob
+        assert known_pid not in blob, (
+            "the FULL gateway_payment_id must never appear in this log line")
+        assert ("…" + known_pid[-6:]) in blob, (
+            "the redacted form (ellipsis + last 6 chars) must appear")
+
     async def test_webhook_controller_reports_ignored_with_no_leaked_data(
             self, client, seed, db, paid_order, monkeypatch):
         """End-to-end over the real route: a cashfree-shaped webhook whose

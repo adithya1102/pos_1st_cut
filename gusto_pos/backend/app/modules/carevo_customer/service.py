@@ -2882,11 +2882,17 @@ class CarevoService:
                     # object, a second notify/accept for an order the webhook
                     # never named. Nothing changes; the caller gets IGNORED
                     # and nothing else.
+                    # Last 6 characters only, never the full id: this is a
+                    # gateway-assigned payment identifier, and the two order
+                    # ids already say everything an investigator needs to
+                    # find the row — logging the whole id adds nothing but
+                    # exposure.
+                    redacted_pid = "…" + gateway_payment_id[-6:]
                     logger.warning(
                         "mark_paid IGNORED: gateway_payment_id %s is already "
                         "PAID against order %s, not the named order %s. "
                         "Nothing changed.",
-                        gateway_payment_id, existing[0], order.id,
+                        redacted_pid, existing[0], order.id,
                     )
                     order._mark_paid_cross_order_ignored = True
                     return order
