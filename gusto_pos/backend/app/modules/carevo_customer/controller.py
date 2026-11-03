@@ -606,6 +606,13 @@ async def payment_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     # genuinely-Cashfree-signed delivery whose timestamp is simply too old (or,
     # symmetrically, implausibly in the future) to trust.
     #
+    # SECONDS, not milliseconds: x-webhook-timestamp is compared directly
+    # against time.time() below (itself epoch seconds), and every existing
+    # caller of this endpoint — the gateway's own signer and every test in
+    # this repo — already produces str(int(time.time())). Cashfree's header
+    # is documented as a Unix epoch value in seconds; this code has always
+    # assumed exactly that and nothing here changes the unit.
+    #
     # 7200s, NOT Cashfree's own suggested 300s: their documented retry
     # schedule spans roughly 42 minutes end to end, and at 300s this would
     # start rejecting — and therefore permanently losing, since a 400 is not
@@ -614,21 +621,38 @@ async def payment_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     # every RETRY ATTEMPT is not yet confirmed against the sandbox (see
     # docs/ops/cashfree_only_verify.sql); until it is, this stays generous
     # rather than risking silently dropped real payments.
-    if timestamp is not None:
+    #
+    # FAIL CLOSED: a missing, empty, or non-numeric timestamp used to make
+    # this whole block a no-op (the age check was wrapped in `if ts_value is
+    # not None`, so a parse failure just skipped validation and let the
+    # webhook through unchecked) — a validly-signed body with a malformed
+    # timestamp defeated the replay window entirely. There is now no path
+    # through this function that reaches parse_webhook without a numeric,
+    # in-window timestamp.
+    ts_value = None
+    if timestamp is not None and timestamp.strip() != "":
         try:
-            ts_value = int(timestamp)
+            ts_value = int(timestamp.strip())
         except (TypeError, ValueError):
             ts_value = None
-        if ts_value is not None:
-            age = abs(time.time() - ts_value)
-            if age > settings.CASHFREE_WEBHOOK_MAX_AGE_S:
-                logger.warning(
-                    "payment webhook rejected: timestamp %s is %.0fs from "
-                    "now, exceeding CASHFREE_WEBHOOK_MAX_AGE_S=%s",
-                    timestamp, age, settings.CASHFREE_WEBHOOK_MAX_AGE_S)
-                raise HTTPException(
-                    status_code=400,
-                    detail="Webhook timestamp outside the accepted window")
+
+    if ts_value is None:
+        logger.warning(
+            "payment webhook rejected: x-webhook-timestamp is missing or "
+            "not a plain integer: %r", timestamp)
+        raise HTTPException(
+            status_code=400,
+            detail="Webhook timestamp missing or invalid")
+
+    age = abs(time.time() - ts_value)
+    if age > settings.CASHFREE_WEBHOOK_MAX_AGE_S:
+        logger.warning(
+            "payment webhook rejected: timestamp %s is %.0fs from "
+            "now, exceeding CASHFREE_WEBHOOK_MAX_AGE_S=%s",
+            timestamp, age, settings.CASHFREE_WEBHOOK_MAX_AGE_S)
+        raise HTTPException(
+            status_code=400,
+            detail="Webhook timestamp outside the accepted window")
 
     try:
         data = json.loads(body or b"{}")

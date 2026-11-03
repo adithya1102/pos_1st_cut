@@ -28,6 +28,9 @@ import hmac
 import json
 import time
 
+import pytest
+from sqlalchemy import text
+
 from app.core.config import settings
 from tests.conftest import API
 
@@ -137,3 +140,62 @@ class TestWebhookReplayWindow:
 
         r = await _post(client, body, ninety_seconds_old)
         assert r.status_code == 400, r.text
+
+
+# ==================== Task 1 (independent-verification fix) =================
+# FAIL CLOSED on a malformed timestamp. LITERAL BEHAVIOUR BEFORE THIS CLASS:
+# the age check lived inside `if ts_value is not None:`, so a timestamp that
+# failed int() parsing (non-numeric, empty) set ts_value=None and the WHOLE
+# block silently did nothing -- no 400, no log, the webhook proceeded as if
+# the replay window did not exist. A validly-signed webhook with
+# x-webhook-timestamp: "abc" was independently reproduced to return 200 and
+# mark the order PAID. Each case here is validly signed with the EXACT
+# string under test -- the attacker-can't-forge-a-signature argument does
+# not apply to a genuine signer (or test) that controls what string it signs.
+
+MALFORMED_TIMESTAMPS = ["abc", "", "-5", "1e999", "9" * 20]
+
+
+class TestMalformedTimestampFailsClosed:
+    @pytest.mark.parametrize("bad_ts", MALFORMED_TIMESTAMPS)
+    async def test_malformed_timestamp_rejected_order_stays_pending(
+            self, client, db, seed, monkeypatch, bad_ts):
+        order = await _unpaid_order(client, seed)
+        monkeypatch.setattr(settings, "PAYMENT_GATEWAY", "cashfree")
+        monkeypatch.setattr(settings, "CASHFREE_SECRET_KEY", CF_SECRET)
+        body = _body(order["id"], order["total_amount"])
+
+        r = await _post(client, body, bad_ts)
+        assert r.status_code == 400, (bad_ts, r.text)
+
+        status = await db.scalar(text(
+            "SELECT payment_status FROM customer_orders WHERE id = :i"),
+            {"i": order["id"]})
+        assert status == "PENDING", (bad_ts, status)
+
+    async def test_a_valid_recent_timestamp_still_passes(
+            self, client, seed, monkeypatch):
+        """The control: the fail-closed rewrite must not have broken the
+        ordinary accepted case."""
+        order = await _unpaid_order(client, seed)
+        monkeypatch.setattr(settings, "PAYMENT_GATEWAY", "cashfree")
+        monkeypatch.setattr(settings, "CASHFREE_SECRET_KEY", CF_SECRET)
+        body = _body(order["id"], order["total_amount"])
+        ts = str(int(time.time()))
+
+        r = await _post(client, body, ts)
+        assert r.status_code == 200, r.text
+
+    async def test_rejection_is_logged(self, client, seed, monkeypatch, caplog):
+        import logging
+        order = await _unpaid_order(client, seed)
+        monkeypatch.setattr(settings, "PAYMENT_GATEWAY", "cashfree")
+        monkeypatch.setattr(settings, "CASHFREE_SECRET_KEY", CF_SECRET)
+        body = _body(order["id"], order["total_amount"])
+
+        with caplog.at_level(logging.WARNING,
+                             logger="app.modules.carevo_customer.controller"):
+            r = await _post(client, body, "abc")
+        assert r.status_code == 400
+        assert any("x-webhook-timestamp" in rec.getMessage()
+                  for rec in caplog.records)
