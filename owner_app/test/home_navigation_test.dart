@@ -110,7 +110,7 @@ void main() {
     await _close(tester);
   });
 
-  testWidgets('Menu is the centre destination', (tester) async {
+  testWidgets('Menu sits second, straight after Orders', (tester) async {
     await tester.pumpWidget(_host());
     await tester.pumpAndSettle();
 
@@ -119,11 +119,11 @@ void main() {
         .map((d) => d.label)
         .toList();
 
-    expect(labels, ['Orders', 'Menu', 'Offers']);
-    // Stated separately from the list above: this is the actual requirement,
-    // and it should still read as satisfied if a fourth tab ever appears and
-    // the literal list has to change.
-    expect(labels[labels.length ~/ 2], 'Menu');
+    // Payment sits between Menu and Offers (the mission's own placement), so
+    // Menu is no longer the bar's literal centre — it is still one tap from
+    // the landing tab, which is the property that actually matters.
+    expect(labels, ['Orders', 'Menu', 'Payment', 'Offers']);
+    expect(labels[1], 'Menu');
 
     await _close(tester);
   });
@@ -138,8 +138,11 @@ void main() {
     await _openTab(tester, 'Menu');
     expect(bar().selectedIndex, 1);
 
-    await _openTab(tester, 'Offers');
+    await _openTab(tester, 'Payment');
     expect(bar().selectedIndex, 2);
+
+    await _openTab(tester, 'Offers');
+    expect(bar().selectedIndex, 3);
 
     await _close(tester);
   });
@@ -150,6 +153,9 @@ void main() {
 
     await _openTab(tester, 'Menu');
     expect(_appBarSection('Menu & Outlet'), findsOneWidget);
+
+    await _openTab(tester, 'Payment');
+    expect(_appBarSection('Payment'), findsOneWidget);
 
     await _openTab(tester, 'Offers');
     expect(_appBarSection('Offers'), findsOneWidget);

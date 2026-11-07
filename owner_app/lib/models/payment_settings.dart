@@ -19,6 +19,12 @@ class PaymentSettings {
     this.upiAttested = false,
     this.effectiveMethods = const [],
     this.cashfreeOnly = false,
+    this.gatewayAvailable = true,
+    this.gatewayUnavailableReason,
+    this.payAtPickupAvailable = true,
+    this.payAtPickupUnavailableReason,
+    this.upiAvailable = true,
+    this.upiUnavailableReason,
   });
 
   /// The owner WANTS to offer online payment.
@@ -48,6 +54,18 @@ class PaymentSettings {
   /// controls and shows a plain note rather than letting the owner tap a
   /// switch that is guaranteed to fail.
   final bool cashfreeOnly;
+
+  /// Whether the owner could flip the gateway switch ON right now (Payment
+  /// tab). Distinct from [prepaid]/[cashfreeUnlocked]: this is the single
+  /// field the new three-card screen greys the switch on, with
+  /// [gatewayUnavailableReason] behind it for the note. Defaults true so a
+  /// backend that predates this field never greys a switch that works.
+  final bool gatewayAvailable;
+  final String? gatewayUnavailableReason;
+  final bool payAtPickupAvailable;
+  final String? payAtPickupUnavailableReason;
+  final bool upiAvailable;
+  final String? upiUnavailableReason;
 
   /// Whether to render the Cashfree row at all (AMENDMENT A3).
   ///
@@ -84,6 +102,14 @@ class PaymentSettings {
       // false, matching "the switch does not exist yet" rather than hiding
       // controls a build talking to that backend can still use.
       cashfreeOnly: (json['cashfree_only'] as bool?) ?? false,
+      gatewayAvailable: (json['gateway_available'] as bool?) ?? true,
+      gatewayUnavailableReason: json['gateway_unavailable_reason'] as String?,
+      payAtPickupAvailable:
+          (json['pay_at_pickup_available'] as bool?) ?? true,
+      payAtPickupUnavailableReason:
+          json['pay_at_pickup_unavailable_reason'] as String?,
+      upiAvailable: (json['upi_manual_available'] as bool?) ?? true,
+      upiUnavailableReason: json['upi_manual_unavailable_reason'] as String?,
     );
   }
 
@@ -105,5 +131,11 @@ class PaymentSettings {
         upiAttested: upiAttested ?? this.upiAttested,
         effectiveMethods: effectiveMethods,
         cashfreeOnly: cashfreeOnly,
+        gatewayAvailable: gatewayAvailable,
+        gatewayUnavailableReason: gatewayUnavailableReason,
+        payAtPickupAvailable: payAtPickupAvailable,
+        payAtPickupUnavailableReason: payAtPickupUnavailableReason,
+        upiAvailable: upiAvailable,
+        upiUnavailableReason: upiUnavailableReason,
       );
 }

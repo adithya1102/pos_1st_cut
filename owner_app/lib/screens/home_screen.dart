@@ -24,6 +24,7 @@ import 'outlet_settings_screen.dart';
 import 'dish_edit_screen.dart';
 import 'offers_screen.dart';
 import 'orders_screen.dart';
+import 'payment_tab_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   /// Injectable so a test can watch the chime/buzz without a real device.
@@ -52,11 +53,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // all six by hand, and missing one puts a control on the wrong tab rather
   // than failing loudly. These are the single place the order is decided.
   //
-  // Menu sits in the CENTRE: it is the tab reached by thumb from either side,
-  // and it is the one the owner opens repeatedly while editing dishes.
+  // Menu sits second, immediately after Orders: it is the one the owner opens
+  // repeatedly while editing dishes, so it stays one tap from the landing tab
+  // even with Payment added as a fourth destination.
   static const _ordersTab = 0;
   static const _menuTab = 1;
-  static const _offersTab = 2;
+  static const _paymentTab = 2;
+  static const _offersTab = 3;
 
   /// Orders is where the app opens. It is the only tab that is time-critical —
   /// a queue of paying customers — so it is what should be on screen when a
@@ -262,11 +265,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   // Index-aligned with the destinations below and with the *Tab constants.
-  static const _titles = ['Orders', 'Menu & Outlet', 'Offers'];
+  static const _titles = ['Orders', 'Menu & Outlet', 'Payment', 'Offers'];
 
   @override
   Widget build(BuildContext context) {
-    final pages = const [OrdersScreen(), _DishesTab(), OffersScreen()];
+    final pages = const [
+      OrdersScreen(),
+      _DishesTab(),
+      PaymentTabScreen(),
+      OffersScreen(),
+    ];
 
     return Scaffold(
       appBar: AppBar(
@@ -337,6 +345,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             icon: Icon(Icons.restaurant_menu_outlined),
             selectedIcon: Icon(Icons.restaurant_menu),
             label: 'Menu',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.payments_outlined),
+            selectedIcon: Icon(Icons.payments),
+            label: 'Payment',
           ),
           NavigationDestination(
             icon: Icon(Icons.local_offer_outlined),
