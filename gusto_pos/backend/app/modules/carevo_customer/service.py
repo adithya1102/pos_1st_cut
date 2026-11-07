@@ -4541,19 +4541,47 @@ class CarevoService:
         """), {"oid": str(outlet_id)})).first()
         if row is None:
             raise HTTPException(status_code=404, detail="Outlet not found")
+
+        cashfree_unlocked = bool(row[3])
+        upi_vpa = row[4]
+        upi_payee_name = row[5]
+        upi_attested = row[6] is not None
+        cashfree_only = settings.CASHFREE_ONLY
+
+        # Reports the same refusals set_owner_payment_methods already enforces
+        # (CASHFREE_LOCKED, CASHFREE_ONLY_MODE) and the one setup gap that is
+        # not a refusal at all (no VPA/payee/attestation yet) — a read-only
+        # projection, not a new rule. The owner app uses this to grey a switch
+        # BEFORE a tap, instead of after a 409/403.
+        gateway_unavailable_reason = None if cashfree_unlocked else "CASHFREE_LOCKED"
+        pay_at_pickup_unavailable_reason = (
+            "CASHFREE_ONLY_MODE" if cashfree_only else None)
+        if cashfree_only:
+            upi_unavailable_reason = "CASHFREE_ONLY_MODE"
+        elif not (upi_vpa and upi_payee_name and upi_attested):
+            upi_unavailable_reason = "UPI_NOT_SET_UP"
+        else:
+            upi_unavailable_reason = None
+
         return {
             "outlet_id": outlet_id,
             "prepaid": bool(row[0]),
             "pay_at_pickup": bool(row[1]),
             "upi_manual": bool(row[2]),
-            "cashfree_unlocked": bool(row[3]),
-            "upi_vpa": row[4],
-            "upi_payee_name": row[5],
-            "upi_attested": row[6] is not None,
+            "cashfree_unlocked": cashfree_unlocked,
+            "upi_vpa": upi_vpa,
+            "upi_payee_name": upi_payee_name,
+            "upi_attested": upi_attested,
             "updated_at": row[7],
-            "cashfree_only": settings.CASHFREE_ONLY,
+            "cashfree_only": cashfree_only,
             "effective_methods": await CarevoService.payment_methods_for(
                 db, outlet_id),
+            "gateway_available": gateway_unavailable_reason is None,
+            "gateway_unavailable_reason": gateway_unavailable_reason,
+            "pay_at_pickup_available": pay_at_pickup_unavailable_reason is None,
+            "pay_at_pickup_unavailable_reason": pay_at_pickup_unavailable_reason,
+            "upi_manual_available": upi_unavailable_reason is None,
+            "upi_manual_unavailable_reason": upi_unavailable_reason,
         }
 
     @staticmethod

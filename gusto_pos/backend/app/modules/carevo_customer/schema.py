@@ -837,6 +837,20 @@ class OwnerPaymentMethodsOut(BaseModel):
     #: the three flags, since prepaid also needs the unlock and a gateway.
     effective_methods: list[str] = []
 
+    # ------------- per-mode availability (additive, Payment tab) ------------
+    #: Whether the owner could flip this switch ON right now — distinct from
+    #: whether they HAVE (that is `prepaid`/`pay_at_pickup`/`upi_manual`
+    #: above). Derived from the same rules `set_owner_payment_methods` already
+    #: enforces (CASHFREE_LOCKED, CASHFREE_ONLY_MODE); this does not add a new
+    #: rule, it only reports the existing ones for a switch the app wants to
+    #: grey out BEFORE the owner taps it and gets a 409/403.
+    gateway_available: bool = True
+    gateway_unavailable_reason: Optional[str] = None
+    pay_at_pickup_available: bool = True
+    pay_at_pickup_unavailable_reason: Optional[str] = None
+    upi_manual_available: bool = True
+    upi_manual_unavailable_reason: Optional[str] = None
+
 
 class OwnerPaymentMethodsIn(BaseModel):
     """The FULL desired state, not a delta.

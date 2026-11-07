@@ -28,6 +28,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from app.core.auth import create_access_token
+from app.core.config import settings
 from app.core.security import get_password_hash
 from app.modules.carevo_customer.service import (
     PAY_AT_PICKUP, PAY_PREPAID, PAY_UPI_MANUAL, CarevoService,
@@ -712,3 +713,64 @@ class TestSettingsExposeTheLockAndTheResolvedList:
         await db.commit()
         locked = (await client.get(SETTINGS, headers=seed["owner_auth"])).json()
         assert locked["cashfree_unlocked"] is False
+
+
+# ================ 6. per-mode availability (Payment tab, additive) ==========
+
+class TestPerModeAvailability:
+    """New additive GET fields: *_available / *_unavailable_reason per mode.
+
+    These report the SAME refusals TestCashfreeLock and TestUpiValidation
+    already prove the PATCH route enforces — this class only pins that the GET
+    response surfaces them ahead of a tap, so the owner app can grey a switch
+    instead of letting the owner hit a 409/422/403 after flipping it.
+    """
+
+    async def test_defaults_are_all_available(self, client, seed):
+        """The seeded outlet is unlocked, not CASHFREE_ONLY, UPI untouched."""
+        r = await client.get(SETTINGS, headers=seed["owner_auth"])
+        body = r.json()
+        assert body["gateway_available"] is True
+        assert body["gateway_unavailable_reason"] is None
+        assert body["pay_at_pickup_available"] is True
+        assert body["pay_at_pickup_unavailable_reason"] is None
+        # UPI has no VPA yet on a fresh seed, so it is reported unavailable —
+        # distinct from "turned off", which `upi_manual` (false) already says.
+        assert body["upi_manual_available"] is False
+        assert body["upi_manual_unavailable_reason"] == "UPI_NOT_SET_UP"
+
+    async def test_gateway_locked_is_reported(self, client, db, seed):
+        await db.execute(text(
+            "UPDATE outlets SET cashfree_unlocked = false WHERE id = :o"),
+            {"o": seed["outlet_id"]})
+        await db.commit()
+        r = await client.get(SETTINGS, headers=seed["owner_auth"])
+        body = r.json()
+        assert body["gateway_available"] is False
+        assert body["gateway_unavailable_reason"] == "CASHFREE_LOCKED"
+
+    async def test_upi_set_up_and_attested_is_available(
+            self, client, db, seed):
+        r = await client.patch(SETTINGS, headers=seed["owner_auth"],
+                               json=_body(upi_manual=True, upi_vpa=GOOD_VPA,
+                                          upi_payee_name="Test Kitchen",
+                                          upi_attested=True))
+        assert r.status_code == 200, r.text
+        g = await client.get(SETTINGS, headers=seed["owner_auth"])
+        body = g.json()
+        assert body["upi_manual_available"] is True
+        assert body["upi_manual_unavailable_reason"] is None
+
+    async def test_cashfree_only_mode_locks_pickup_and_upi_not_gateway(
+            self, client, db, seed, monkeypatch):
+        monkeypatch.setattr(settings, "CASHFREE_ONLY", True)
+        r = await client.get(SETTINGS, headers=seed["owner_auth"])
+        body = r.json()
+        assert body["pay_at_pickup_available"] is False
+        assert body["pay_at_pickup_unavailable_reason"] == "CASHFREE_ONLY_MODE"
+        assert body["upi_manual_available"] is False
+        assert body["upi_manual_unavailable_reason"] == "CASHFREE_ONLY_MODE"
+        # The gateway itself is the one method CASHFREE_ONLY mode does not
+        # lock — it is the only thing still offered while it is on.
+        assert body["gateway_available"] is True
+        assert body["gateway_unavailable_reason"] is None
