@@ -284,6 +284,24 @@ class CartState extends ChangeNotifier {
     setOutlet(outlet);
   }
 
+  /// Replace ONLY the bound outlet's payment methods, touching nothing else —
+  /// not the basket, not the outlet's hours or location. Used by checkout's
+  /// refetch-on-open and its 409 PAYMENT_METHOD_UNAVAILABLE retry: both need a
+  /// fresh read of what is currently on offer without disturbing anything the
+  /// customer has already done on this screen.
+  ///
+  /// A no-op if the cart is not bound to an outlet (should not happen while
+  /// checkout is open, but there is nothing to update either way) or if it is
+  /// bound to a DIFFERENT outlet than [outletId] — a stale response arriving
+  /// after the customer switched restaurants must not overwrite the new one.
+  void updatePaymentMethods(String outletId, List<String> methods) {
+    final current = _outlet;
+    if (current == null || current.id != outletId) return;
+    _outlet = current.withPaymentMethods(methods);
+    _persist();
+    notifyListeners();
+  }
+
   /// Drop lines whose menu item is no longer available, returning the removed
   /// names. Used by the pre-checkout availability gate (see checkout_screen).
   List<String> removeUnavailable(Set<String> unavailableItemIds) {

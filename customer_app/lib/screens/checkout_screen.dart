@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -8,6 +10,7 @@ import '../config/city_transport.dart';
 import '../models/outlet.dart';
 import '../services/api_client.dart';
 import '../services/cashfree_service.dart';
+import '../services/catalog_service.dart';
 import '../services/location_service.dart';
 import '../services/order_service.dart';
 import '../services/payment_service.dart';
@@ -199,6 +202,71 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     // the flag is read once and back would keep popping the screen even while
     // the keyboard is up.
     _couponFocus.addListener(_onFocusChanged);
+    // Checkout never fetched its own payment options before — it rendered
+    // whatever `Outlet.paymentMethods` the PREVIOUS screen happened to have in
+    // memory, which could be minutes stale by the time this screen opens. One
+    // fresh read, every time checkout opens, so a toggle the owner just
+    // flipped is reflected before the customer picks a method.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_refreshPaymentMethods());
+    });
+  }
+
+  /// The order the customer sees methods in, REGARDLESS of what order the
+  /// server lists them — gateway first (it needs no action from the
+  /// customer beyond paying), then direct UPI, then pay at pickup last (the
+  /// one with no payment confirmation at all).
+  static const _methodDisplayOrder = [
+    'PREPAID',
+    'UPI_MANUAL',
+    'PAY_AT_PICKUP',
+  ];
+
+  List<String> _sortMethods(List<String> methods) => [
+        for (final m in _methodDisplayOrder)
+          if (methods.contains(m)) m,
+        // Any method name this build does not recognise is kept, at the end,
+        // rather than silently dropped — a future method added server-side
+        // must stay choosable even before the app learns its proper slot.
+        for (final m in methods)
+          if (!_methodDisplayOrder.contains(m)) m,
+      ];
+
+  /// Re-reads this outlet's payment methods and folds them into the cart's
+  /// outlet, in the fixed [_methodDisplayOrder] — without touching the
+  /// basket, the selected transport mode, or any scheduled time.
+  ///
+  /// Used on open (initState) and again after a 409
+  /// PAYMENT_METHOD_UNAVAILABLE, so a method that was removed mid-checkout
+  /// cannot be re-offered a second time without a true refresh from the
+  /// server.
+  Future<void> _refreshPaymentMethods() async {
+    if (!mounted) return;
+    final cart = context.read<CartState>();
+    final outletId = cart.outletId;
+    if (outletId == null) return;
+    try {
+      final menu = await context.read<CatalogService>().fetchMenu(outletId);
+      if (!mounted) return;
+      final methods = menu.paymentMethods;
+      if (methods == null) return; // server did not say; leave as-is
+      cart.updatePaymentMethods(outletId, _sortMethods(methods));
+      // The previously chosen method may no longer be offered — fall back to
+      // whatever is now first rather than holding a selection that has gone
+      // stale. _effectiveMethod already does this when `_method` is not in
+      // the offered list, so clearing it here is enough.
+      if (_method != null &&
+          !(cart.outlet?.paymentMethods ?? const []).contains(_method)) {
+        setState(() => _method = null);
+      }
+    } catch (_) {
+      // A courtesy refresh, not the authority — create_order's own 409 is
+      // the real gate. Leave the existing (possibly stale) list on screen
+      // rather than blocking checkout on a flaky network call (or, in a
+      // test harness that does not wire CatalogService, rather than
+      // crashing a screen that does not otherwise need it).
+    }
   }
 
   void _onFocusChanged() {
@@ -962,6 +1030,21 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       final earliest = _earliestPickupFrom(e);
       if (earliest != null) {
         await _handleScheduledPickupTooSoon(earliest);
+        return;
+      }
+      // 409 PAYMENT_METHOD_UNAVAILABLE: the method just chosen was removed
+      // (the owner turned it off, or CASHFREE_ONLY came on) between this
+      // screen opening and Pay being tapped. Re-fetch so the list on screen
+      // matches reality before the customer tries again — the cart and any
+      // scheduled time are untouched either way, since this is reached only
+      // after create_order itself failed, before any order exists.
+      if (e.statusCode == 409 && e.detail?['error'] == 'PAYMENT_METHOD_UNAVAILABLE') {
+        await _refreshPaymentMethods();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('This payment option is no longer available. '
+              'Please choose another.'),
+        ));
         return;
       }
       ScaffoldMessenger.of(context)

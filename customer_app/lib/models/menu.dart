@@ -3,18 +3,35 @@
 // arrive as either structured option groups or a flat list of strings.
 
 class MenuResponse {
-  const MenuResponse({required this.outletId, required this.categories});
+  const MenuResponse({
+    required this.outletId,
+    required this.categories,
+    this.paymentMethods,
+  });
 
   final String outletId;
   final List<MenuCategory> categories;
+
+  /// What this outlet currently offers, resolved fresh by the server on THIS
+  /// call — the same field checkout re-fetches by calling this endpoint again
+  /// when it opens. Null (not empty) when the response carries no such key at
+  /// all, matching [Outlet.paymentMethods]'s own absent-vs-empty distinction.
+  final List<String>? paymentMethods;
 
   factory MenuResponse.fromJson(Map<String, dynamic> json) {
     final cats = (json['categories'] as List<dynamic>? ?? [])
         .map((e) => MenuCategory.fromJson(e as Map<String, dynamic>))
         .toList();
+    final rawMethods = json['payment_methods'];
     return MenuResponse(
       outletId: json['outlet_id']?.toString() ?? '',
       categories: cats,
+      paymentMethods: rawMethods is List
+          ? rawMethods
+              .map((e) => e?.toString().trim().toUpperCase() ?? '')
+              .where((s) => s.isNotEmpty)
+              .toList(growable: false)
+          : null,
     );
   }
 }

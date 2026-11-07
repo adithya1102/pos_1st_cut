@@ -429,4 +429,35 @@ class Outlet {
         'closing_time': closesAt,
         'created_at': createdAt?.toIso8601String(),
       };
+
+  /// This outlet with ONLY [paymentMethods] replaced. Used by checkout's
+  /// refetch-on-open (and on a 409 PAYMENT_METHOD_UNAVAILABLE): a fresh read
+  /// of what the owner currently offers must not touch the hours, location or
+  /// anything else the cart already has cached.
+  Outlet withPaymentMethods(List<String> methods) => Outlet(
+        id: id,
+        name: name,
+        address: address,
+        isOpen: isOpen,
+        orderStatus: orderStatus,
+        closedReason: closedReason,
+        distanceKm: distanceKm,
+        upiId: upiId,
+        imageUrl: imageUrl,
+        offerCount: offerCount,
+        offerText: offerText,
+        locality: locality,
+        city: city,
+        cityType: cityType,
+        hasMetro: hasMetro,
+        hasTrain: hasTrain,
+        transportModes: transportModes,
+        phoneNumber: phoneNumber,
+        latitude: latitude,
+        longitude: longitude,
+        opensAt: opensAt,
+        closesAt: closesAt,
+        createdAt: createdAt,
+        paymentMethods: methods,
+      );
 }
