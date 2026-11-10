@@ -40,6 +40,7 @@ from app.modules.testing_dashboard.controller import router as testing_router
 # CareVo Admin Dashboard (additive; SUPER_ADMIN-gated platform ops)
 from app.modules.carevo_admin.controller import router as carevo_admin_router
 from app.modules.carevo_payments.vendor_webhook_controller import router as vendor_gateway_router
+from app.modules.carevo_payments.reports_controller import router as reconciliation_reports_router
 from app.modules.account.controller import (
     public_router as account_public_router,
     router as account_router,
@@ -225,6 +226,12 @@ app.include_router(carevo_admin_router, prefix="/api/v1")
 # /api/v1/admin/vendor-gateway/outlets/{outlet_id}/credentials/{provider}.
 # Inert (404) until VENDOR_GATEWAY_ENABLED=true.
 app.include_router(vendor_gateway_router, prefix="/api/v1")
+# Reconciliation reports (Task 7) → /api/v1/admin/reports/daily,
+# /api/v1/admin/payment-events/{id}/confirm|reject,
+# /api/v1/owner/outlets/{outlet_id}/reports/daily|fee-ledger. Admin routes
+# SUPER_ADMIN-gated; owner routes check is_outlet_owner + the caller's own
+# outlet_id.
+app.include_router(reconciliation_reports_router, prefix="/api/v1")
 # Push notifications (migration 014). Token registration is customer-authed;
 # the nudge triggers are SUPER_ADMIN-only. Sending stays inert until
 # PUSH_ENABLED + a Firebase service account are configured.
