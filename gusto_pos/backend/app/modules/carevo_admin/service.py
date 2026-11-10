@@ -1584,6 +1584,16 @@ class AdminService:
             actor_id=getattr(actor, "id", None),
             payload={"settled_by": getattr(actor, "username", None)},
         )
+        # Service-fee REVERSAL, SAME transaction as clearing the flag: a
+        # refund is a later fact about an order that may already have been
+        # charged (migration 041's header: "a refunded order may still read
+        # COMPLETED"). reverse_if_charged is a no-op (no_charge_to_reverse)
+        # for the common case here -- refund_required is usually set on a
+        # CANCELLED order that was never charged -- and a no-op while
+        # SERVICE_FEE_LEDGER_ENABLED is false. commit=False so a ledger
+        # failure rolls back the refund-clear with it.
+        from app.modules.carevo_payments import fee_ledger as fl
+        await fl.reverse_if_charged(db, order_id, commit=False)
         await db.commit()
         return {"order_id": order_id, "already": False, "refund_required": False}
 
