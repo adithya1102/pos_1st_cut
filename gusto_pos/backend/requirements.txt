@@ -46,6 +46,12 @@ httpx>=0.27
 # the service-account file is mounted. Pinned to the version validated locally.
 google-auth==2.53.0
 
+# AES-256-GCM for app.core.secrets_box (reconciliation layer, outlet gateway
+# credentials at rest). Already present transitively (pulled in by
+# python-jose/google-auth); pinned here explicitly now that this repo imports
+# it directly. Version validated locally: 41.0.4.
+cryptography==41.0.4
+
 # --- Menu photo import (OCR) ---------------------------------------------
 # COMMENTED OUT DELIBERATELY. Uncomment together with setting OCR_ENABLED=true;
 # the two are useless apart and the code checks for both.

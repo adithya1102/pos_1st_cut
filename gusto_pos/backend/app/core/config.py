@@ -278,6 +278,18 @@ class Settings(BaseSettings):
     # (enforced by each row's due_at), this only bounds the polling lag on top.
     AUTO_ADVANCE_POLL_SECONDS: int = 5
 
+    # --- Secrets-at-rest (reconciliation layer, additive) --------------------
+    # AES-256-GCM key material for app.core.secrets_box. Not read at import
+    # time anywhere: secrets_box.from_settings() is called lazily, by whatever
+    # feature first needs to encrypt/decrypt (outlet gateway credentials,
+    # Task 5), so an app with no such feature enabled boots with these unset.
+    # SECRETS_ENC_KEY is urlsafe-base64, decoding to exactly 32 raw bytes.
+    # SECRETS_ENC_KEY_ID is an arbitrary label carried IN the ciphertext (never
+    # the key itself) so a later key can be introduced without losing the
+    # ability to decrypt rows written under the old one.
+    SECRETS_ENC_KEY: Optional[str] = None
+    SECRETS_ENC_KEY_ID: Optional[str] = None
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()
