@@ -38,9 +38,42 @@ router = APIRouter()
 
 _NOT_FOUND_DETAIL = "Not Found"
 
+# A fixed, non-secret placeholder used ONLY to give the unknown-outlet path
+# the same decrypt + HMAC cost as the known-outlet-wrong-signature path
+# (see _decoy_verify). Never derived from any real credential.
+_DECOY_SECRET_PLAINTEXT = b"timing-equalization-placeholder-secret-not-real"
+
 
 def _not_found() -> HTTPException:
     return HTTPException(status_code=404, detail=_NOT_FOUND_DETAIL)
+
+
+def _warn(reason: str, provider: str) -> None:
+    """ONE WARNING line per rejected delivery. `reason` is always a fixed
+    code from the literals below; `provider` is the path parameter the
+    caller sent. Never the body, signature, secret, ciphertext, or key id --
+    there is no f-string or %s anywhere in this module that touches any of
+    those."""
+    logger.warning("vendor_webhook_rejected reason=%s provider=%s", reason, provider)
+
+
+async def _decoy_verify(provider: str, body: bytes, headers) -> None:
+    """Does the SAME shape of work as a known outlet's credential fetch +
+    signature check -- one secrets_box decrypt, one adapter HMAC -- against
+    a throwaway secret, so a probe against an outlet id that does not exist
+    costs the same as a probe against one that does. The result is always
+    discarded; every caller ends at _not_found() regardless."""
+    try:
+        box = sb.from_settings()
+        ciphertext = box.encrypt(_DECOY_SECRET_PLAINTEXT)
+        decoy_secret = box.decrypt(ciphertext).decode("utf-8")
+    except sb.SecretsBoxConfigError:
+        decoy_secret = _DECOY_SECRET_PLAINTEXT.decode("utf-8")
+    try:
+        adapter = _build_adapter(provider, decoy_secret)
+        adapter.verify(body, headers)
+    except ad.AdapterError:
+        pass
 
 
 async def _resolve_outlet_id(db: AsyncSession, outlet_public_id: str):
@@ -86,12 +119,18 @@ async def vendor_gateway_webhook(
     db: AsyncSession = Depends(get_db),
 ):
     if not settings.VENDOR_GATEWAY_ENABLED:
+        _warn("flag_off", provider)
         raise _not_found()
 
     body = await request.body()
+    headers = dict(request.headers)
 
     outlet_id = await _resolve_outlet_id(db, outlet_public_id)
     if outlet_id is None:
+        # Same shape of work (decrypt + HMAC) as a known outlet with a
+        # wrong signature, below -- see _decoy_verify's docstring.
+        await _decoy_verify(provider, body, headers)
+        _warn("unknown_outlet", provider)
         raise _not_found()
 
     try:
@@ -99,23 +138,28 @@ async def vendor_gateway_webhook(
     except sb.SecretsBoxError:
         # Ciphertext present but fails to decrypt (wrong/rotated key) -- not
         # distinguishable from "no credential configured" to the caller.
+        _warn("credential_error", provider)
         raise _not_found()
     except sb.SecretsBoxConfigError:
         # SECRETS_ENC_KEY itself is missing/malformed. assert_startup_ready
         # should already have refused to boot in this state while the flag
         # is on; this is defence in depth, not the expected path.
+        _warn("credential_error", provider)
         raise _not_found()
     if secret is None:
+        _warn("credential_error", provider)
         raise _not_found()
 
     try:
         adapter = _build_adapter(provider, secret)
     except ad.AdapterConfigError:
+        _warn("adapter_unavailable", provider)
         raise _not_found()
 
     try:
-        event = adapter.verify(body, dict(request.headers))
+        event = adapter.verify(body, headers)
     except ad.AdapterError:
+        _warn("signature_invalid", provider)
         raise _not_found()
 
     result = await rec.apply_vendor_payment_event(
