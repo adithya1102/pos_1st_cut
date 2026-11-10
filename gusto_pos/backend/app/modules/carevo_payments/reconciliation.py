@@ -109,11 +109,36 @@ def _decide(order: Optional[_OrderRow], event: VerifiedEvent,
         return OUTCOME_REVIEW, "already_paid_different_event"
 
     if event.amount_paise is not None:
+        if not _is_valid_amount_paise(event.amount_paise):
+            return OUTCOME_REVIEW, "AMOUNT_INVALID"
         total_paise = int(round(order.total_amount * 100))
         if event.amount_paise != total_paise:
             return OUTCOME_REVIEW, "amount_mismatch"
 
     return OUTCOME_APPLIED, None
+
+
+#: Postgres `integer` (customer_orders.vendor_payment_confirmed_amount_paise
+#: and service_fee_ledger.amount_paise are both this type) is a signed
+#: 32-bit column; this is its max value.
+_MAX_INT32 = 2147483647
+
+
+def _is_valid_amount_paise(amount_paise) -> bool:
+    """int (never bool -- bool is a subclass of int), > 0, <= INT32_MAX.
+    Checked before ANY UPDATE is reached -- a value that fails this routes
+    to REVIEW instead of ever being written to customer_orders or the fee
+    ledger, and instead of letting an out-of-range value raise an uncaught
+    DataError mid-transaction."""
+    if isinstance(amount_paise, bool):
+        return False
+    if not isinstance(amount_paise, int):
+        return False
+    if amount_paise <= 0:
+        return False
+    if amount_paise > _MAX_INT32:
+        return False
+    return True
 
 
 async def apply_vendor_payment_event(

@@ -30,6 +30,7 @@ from app.modules.carevo_admin.deps import get_current_super_admin
 from app.modules.carevo_admin.service import AdminService
 from app.modules.carevo_customer.deps import get_current_staff
 from app.modules.carevo_payments import fee_ledger as fl
+from app.modules.carevo_payments import reconciliation as rec
 from app.modules.carevo_payments import reports_service as rs
 from app.modules.users.model import User
 
@@ -54,10 +55,45 @@ class ReviewDecisionIn(BaseModel):
     reason: str = Field(min_length=1)
 
 
+_RESOLVE_ACTIONS = ("payment_event_confirm", "payment_event_reject")
+
+
 async def _load_payment_event(db: AsyncSession, event_id):
     return (await db.execute(text(
         "SELECT id, outcome FROM payment_events WHERE id = :id"),
         {"id": str(event_id)})).first()
+
+
+async def _already_resolved(db: AsyncSession, event_id) -> bool:
+    """A REVIEW event is resolved once EITHER confirm or reject has ever
+    been recorded against it in admin_audit_logs -- there is no separate
+    "resolved" column on payment_events, so this IS the resolution record,
+    the same log GET /admin/audit-logs already reads."""
+    row = (await db.execute(text("""
+        SELECT 1 FROM admin_audit_logs
+         WHERE target_type = 'payment_event' AND target_id = :id
+           AND action = ANY(:actions)
+         LIMIT 1
+    """), {"id": str(event_id), "actions": list(_RESOLVE_ACTIONS)})).first()
+    return row is not None
+
+
+async def _require_resolvable_review(db: AsyncSession, event_id):
+    """Loads the event and enforces: exists (404), outcome is REVIEW (409),
+    and not already resolved by a prior confirm/reject (409). Writes no
+    audit row on any of these -- only a genuinely new decision on a
+    genuinely pending REVIEW event reaches that far."""
+    row = await _load_payment_event(db, event_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="payment event not found")
+    if row[1] != rec.OUTCOME_REVIEW:
+        raise HTTPException(
+            status_code=409,
+            detail=f"payment event outcome is {row[1]}, not REVIEW")
+    if await _already_resolved(db, event_id):
+        raise HTTPException(
+            status_code=409, detail="payment event has already been resolved")
+    return row
 
 
 @router.post("/admin/payment-events/{event_id}/confirm")
@@ -67,9 +103,7 @@ async def confirm_review_event(
     admin: User = Depends(get_current_super_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    row = await _load_payment_event(db, event_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="payment event not found")
+    row = await _require_resolvable_review(db, event_id)
     await AdminService._audit(
         db, admin, "payment_event_confirm", "payment_event", event_id,
         {"reason": payload.reason, "prior_outcome": row[1]})
@@ -84,9 +118,7 @@ async def reject_review_event(
     admin: User = Depends(get_current_super_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    row = await _load_payment_event(db, event_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="payment event not found")
+    row = await _require_resolvable_review(db, event_id)
     await AdminService._audit(
         db, admin, "payment_event_reject", "payment_event", event_id,
         {"reason": payload.reason, "prior_outcome": row[1]})
