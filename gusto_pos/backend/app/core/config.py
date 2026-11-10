@@ -305,6 +305,15 @@ class Settings(BaseSettings):
     # from app/main.py's on_startup with this flag's value.
     VENDOR_GATEWAY_ENABLED: bool = False
 
+    # app.modules.carevo_payments.fee_ledger (Task 6). False by default:
+    # charge_if_eligible() is a no-op while this is false, so migration 041
+    # existing changes no behaviour until this is explicitly turned on.
+    SERVICE_FEE_LEDGER_ENABLED: bool = False
+    # Rs 1 in paise. Named in paise, not rupees, to match every other money
+    # field already in this codebase (GatewayOrder.amount, WebhookEvent.
+    # amount_paise, payment_events.amount -- all paise, never rupees).
+    SERVICE_FEE_PAISE: int = 100
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()
