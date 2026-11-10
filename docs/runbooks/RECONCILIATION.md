@@ -4,6 +4,61 @@ Branch `reconcile` (from `payment-tab`). Everything in this layer is
 additive and OFF by default — a deploy that sets no new env var behaves
 exactly as `payment-tab` did.
 
+## Fix pass (post-independent-review)
+
+An independent review of this branch found several defects, since fixed
+in their own commits:
+
+- **The service fee was never actually charged.** `fee_ledger.
+  charge_if_eligible` had no caller anywhere in `app/` — it is now called
+  inside `CarevoService.verify_pickup` and `CarevoService.collect_order`,
+  the only two code paths that ever set `customer_orders.status =
+  'COMPLETED'`, in the SAME transaction as that status change
+  (`commit=False`, with an explicit `db.flush()` first so the ledger's own
+  re-read sees the pending ORM write). A ledger failure now rolls back the
+  whole completion/handover with it. Likewise `fee_ledger.
+  reverse_if_charged` is now called from `AdminService.mark_refund_done`,
+  the one "mark an order refunded" action in this codebase.
+- **The billable status is `'COMPLETED'` only.** `'PICKED_UP'` is never
+  written to `customer_orders.status` anywhere in this codebase
+  (`CarevoService.record_picked_up` explicitly does not move
+  `order.status`) — it was a dead literal in the old billable set and in
+  migration 041's header comment, both corrected.
+- **`payment_events.event_id` is never NULL.** A provider delivery with no
+  event id of its own (a signed Cashfree FAILED/PENDING webhook with no
+  `cf_payment_id`) now falls back to `"body:" + sha256(raw body)` instead
+  of hitting a NOT NULL violation that the old blanket
+  `except IntegrityError` mislabelled DUPLICATE — the event is recorded
+  (IGNORED/REVIEW as appropriate), not silently dropped. Only a genuine hit
+  on `uq_payment_events_provider_event` (Postgres SQLSTATE `23505` on that
+  exact constraint) is now reported as DUPLICATE; any other integrity
+  error re-raises.
+- **`amount_paise` is validated before any UPDATE.** Not a plain positive
+  `int` within Postgres `integer` range (so: no bool, no float, no string,
+  no `<= 0`, no `> 2147483647`) routes to `REVIEW`/`AMOUNT_INVALID` instead
+  of either a mismatch or an uncaught `DataError` mid-transaction.
+  `confirm`/`reject` on a `payment_events` row now only act when its
+  outcome is `REVIEW` and it has not already been resolved by a prior
+  confirm/reject (checked against `admin_audit_logs`); anything else is
+  `409` with no audit row written.
+- **`RazorpayWebhookAdapter` now accepts real Razorpay deliveries.** The
+  fabricated `X-Razorpay-Event-Timestamp` requirement (a header real
+  deliveries never send) is removed; only `X-Razorpay-Signature` is
+  required. Idempotency event id comes from `x-razorpay-event-id`,
+  falling back to the same body-hash scheme above when absent. Replay
+  defence is `payment_events`' own dedup, not a header this provider does
+  not document. `production_eligible` is now `True`. See
+  `docs/runbooks/PROVIDERS.md` for the full (re-)verification record,
+  including what WebFetch could and could not confirm about the payload's
+  optional `created_at` field.
+- **The vendor webhook route now logs a reason code on every rejection**
+  (`flag_off` / `unknown_outlet` / `credential_error` /
+  `adapter_unavailable` / `signature_invalid`, plus the provider name —
+  never a body, signature, secret, ciphertext, or key id), and the
+  unknown-outlet path now does the same decrypt-and-HMAC work the
+  known-outlet-wrong-signature path does, so the two are not
+  distinguishable by timing either.
+
 ## New environment variables
 
 | Variable | Default | Purpose |
@@ -86,12 +141,14 @@ applied is also safe (the new tables/columns simply go unread again).
   same logic `reconciliation.apply_vendor_payment_event` already has,
   re-entered from a human decision instead of a webhook delivery — not
   attempted in this pass.
-- **`RazorpayWebhookAdapter`'s replay-timestamp check is unverified
-  against real Razorpay traffic.** It reads a header
-  (`X-Razorpay-Event-Timestamp`) that Razorpay's own documentation does
-  not describe; a genuine Razorpay webhook would fail this check today.
-  See `docs/runbooks/PROVIDERS.md`. This is why the adapter stays
-  `production_eligible=False` regardless of `RAZORPAY_ADAPTER_ENABLED`.
+- **`RazorpayWebhookAdapter`'s optional `created_at` window check is
+  unverified against Razorpay's documentation** — WebFetch could not
+  confirm (or rule out) a top-level `created_at` field in the webhook
+  payload envelope after four attempts. The check is best-effort only: it
+  never rejects for the field's absence, only for its presence plus an
+  out-of-window value. See `docs/runbooks/PROVIDERS.md`. (The adapter's
+  prior production-blocking gap — the fabricated timestamp HEADER
+  requirement — is fixed; see "Fix pass" above.)
 - **The daily report's `failed`/`pending` counts only reflect
   `payment_events` rows** (i.e. vendor-gateway deliveries, Task 5). The
   pre-existing CareVo-mediated Cashfree/stub flow
@@ -110,14 +167,16 @@ applied is also safe (the new tables/columns simply go unread again).
 | Provider | Existing code | Sandbox done | Merchant onboarding | Production credentials | Production eligible |
 |---|---|---|---|---|---|
 | Cashfree | Yes (`CashfreeGateway`, pre-existing; `CashfreeAdapter` wraps it, Task 3) | Yes (this repo's existing sandbox flow, pre-existing) | **Rejected at onboarding, production not available** | No | No — platform-level Cashfree is rejected; the vendor-direct model (Task 5) uses a VENDOR's own Cashfree merchant account and secret, never CareVo's |
-| Razorpay | Yes (`StubRazorpayGateway`, pre-existing stub; `RazorpayWebhookAdapter`, Task 3, net-new) | Stub only — no real sandbox credentials exercised in this task | Not attempted | No | No (`production_eligible=False`; see Known Limitations) |
+| Razorpay | Yes (`StubRazorpayGateway`, pre-existing stub; `RazorpayWebhookAdapter`, Task 3, fixed in the post-review pass) | Stub only — no real sandbox credentials exercised in this task | Not attempted | No | Yes, as of the fix pass (`production_eligible=True`; the fabricated timestamp-header gap is closed — see Known Limitations for the one remaining UNVERIFIED point) |
 
 Row-for-row, this table says the same thing the business rules in this
 task required going in: **no provider is assumed approved**, and nothing
 built in this reconciliation layer depends on Cashfree's platform-level
 approval status.
 
-Status: **DONE**, four counts: **1362 / 0 / 0 / 1** (tests / failures /
-errors / skipped) — the original 1279 plus 83 new tests across Tasks 2–7,
-all passing; the one skipped is the same pre-existing xfail recorded in
-`docs/reports/RECON_BASELINE.md`.
+Status: **DONE**, four counts: **1406 / 0 / 0 / 1** (tests / failures /
+errors / skipped) — the original 1279, plus 83 from Tasks 2–7, plus 44
+from the post-review fix pass (new wiring/validation/visibility tests
+plus the net change to the Razorpay section of
+`test_api_webhook_adapters.py`), all passing; the one skipped is the same
+pre-existing xfail recorded in `docs/reports/RECON_BASELINE.md`.
