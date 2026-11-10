@@ -297,6 +297,14 @@ class Settings(BaseSettings):
     # that gap is closed. get_adapter("razorpay") raises when this is false.
     RAZORPAY_ADAPTER_ENABLED: bool = False
 
+    # Master switch for POST /api/v1/webhooks/{provider}/{outlet_id} (Task 5).
+    # False by default: the route 404s unconditionally while this is false,
+    # exactly like every other flag-gated surface in this file. Turning it on
+    # requires SECRETS_ENC_KEY/SECRETS_ENC_KEY_ID to already be configured --
+    # enforced at startup by app.core.secrets_box.assert_startup_ready, called
+    # from app/main.py's on_startup with this flag's value.
+    VENDOR_GATEWAY_ENABLED: bool = False
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()

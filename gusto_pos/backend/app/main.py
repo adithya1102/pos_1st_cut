@@ -39,6 +39,7 @@ from app.modules.testing_dashboard.controller import router as testing_router
 
 # CareVo Admin Dashboard (additive; SUPER_ADMIN-gated platform ops)
 from app.modules.carevo_admin.controller import router as carevo_admin_router
+from app.modules.carevo_payments.vendor_webhook_controller import router as vendor_gateway_router
 from app.modules.account.controller import (
     public_router as account_public_router,
     router as account_router,
@@ -126,6 +127,14 @@ async def on_startup():
     # ALLOW_STUB_GATEWAY=true was set deliberately.
     validate_gateway_startup_posture()
 
+    # Fail-closed secrets-at-rest posture: refuse to start with
+    # VENDOR_GATEWAY_ENABLED=true and no usable SECRETS_ENC_KEY. A no-op
+    # while the flag is false. Raises SecretsBoxConfigError, uncaught, same
+    # as the two checks above.
+    from app.core.config import settings as _settings
+    from app.core.secrets_box import assert_startup_ready
+    assert_startup_ready(_settings.VENDOR_GATEWAY_ENABLED)
+
     from app.modules.carevo_payments.gateway import log_effective_gateway
     log_effective_gateway()
 
@@ -211,6 +220,11 @@ app.include_router(onboarding_router, prefix="/api/v1")
 # CareVo Admin router → /api/v1/admin/...  (inert until migration 003 + a
 # SUPER_ADMIN role grant exist; every route 403s for ordinary staff.)
 app.include_router(carevo_admin_router, prefix="/api/v1")
+# Vendor-direct gateway webhooks + admin credential rotation (reconciliation
+# layer, Task 5) → /api/v1/webhooks/{provider}/{outlet_id} and
+# /api/v1/admin/vendor-gateway/outlets/{outlet_id}/credentials/{provider}.
+# Inert (404) until VENDOR_GATEWAY_ENABLED=true.
+app.include_router(vendor_gateway_router, prefix="/api/v1")
 # Push notifications (migration 014). Token registration is customer-authed;
 # the nudge triggers are SUPER_ADMIN-only. Sending stays inert until
 # PUSH_ENABLED + a Firebase service account are configured.
