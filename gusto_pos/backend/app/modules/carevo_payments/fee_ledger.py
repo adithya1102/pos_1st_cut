@@ -36,7 +36,7 @@ from app.core.config import settings
 _BILLABLE_STATUSES = {"COMPLETED"}
 
 
-async def charge_if_eligible(db: AsyncSession, order_id) -> dict:
+async def charge_if_eligible(db: AsyncSession, order_id, *, commit: bool = True) -> dict:
     """Charge the order's outlet the configured service fee, exactly once.
 
     UNIQUE(order_id, entry_type) + ON CONFLICT DO NOTHING is the concurrency
@@ -45,6 +45,12 @@ async def charge_if_eligible(db: AsyncSession, order_id) -> dict:
     race on the unique index, and only the one that actually inserts a row
     reports charged=True -- the other reports already_charged, having
     written nothing.
+
+    commit=False lets a caller fold this into its OWN transaction (the
+    COMPLETED status write), so a failure here rolls back the status change
+    too -- see CarevoService.verify_pickup / collect_order. The default
+    (commit=True) keeps this usable standalone, as every existing direct
+    caller (tests, ad-hoc scripts) already relies on.
     """
     if not settings.SERVICE_FEE_LEDGER_ENABLED:
         return {"charged": False, "reason": "flag_off"}
@@ -72,14 +78,15 @@ async def charge_if_eligible(db: AsyncSession, order_id) -> dict:
     """), {"outlet_id": str(outlet_id), "order_id": str(order_id),
            "amount": settings.SERVICE_FEE_PAISE})
     inserted = res.first()
-    await db.commit()
+    if commit:
+        await db.commit()
     if inserted is None:
         return {"charged": False, "reason": "already_charged"}
     return {"charged": True, "entry_id": str(inserted[0]),
             "amount_paise": settings.SERVICE_FEE_PAISE}
 
 
-async def reverse_if_charged(db: AsyncSession, order_id) -> dict:
+async def reverse_if_charged(db: AsyncSession, order_id, *, commit: bool = True) -> dict:
     """Write a REVERSAL for an order that WAS charged. A refund after a
     charge is the only caller-visible trigger for this -- it does not
     re-check order status, since the charge already happened and the
@@ -88,7 +95,8 @@ async def reverse_if_charged(db: AsyncSession, order_id) -> dict:
 
     Same UNIQUE(order_id, entry_type) + ON CONFLICT DO NOTHING idempotency
     as charge_if_eligible: calling this twice for one order writes at most
-    one REVERSAL row, ever.
+    one REVERSAL row, ever. commit=False, same reasoning as
+    charge_if_eligible: fold into the caller's own refund transaction.
     """
     if not settings.SERVICE_FEE_LEDGER_ENABLED:
         return {"reversed": False, "reason": "flag_off"}
@@ -110,7 +118,8 @@ async def reverse_if_charged(db: AsyncSession, order_id) -> dict:
         RETURNING id
     """), {"outlet_id": str(outlet_id), "order_id": str(order_id), "amount": amount_paise})
     inserted = res.first()
-    await db.commit()
+    if commit:
+        await db.commit()
     if inserted is None:
         return {"reversed": False, "reason": "already_reversed"}
     return {"reversed": True, "entry_id": str(inserted[0]), "amount_paise": amount_paise}

@@ -4348,6 +4348,17 @@ class CarevoService:
                 db, order.id, pe.PICKUP_VERIFIED,
                 actor_type="staff", source="tap", outlet_id=order.outlet_id,
             )
+            # Service-fee charge, SAME transaction as the COMPLETED write:
+            # commit=False means a ledger failure raises here, before
+            # db.commit() below, so the status change rolls back with it.
+            # No-op while SERVICE_FEE_LEDGER_ENABLED is false.
+            from app.modules.carevo_payments import fee_ledger as fl
+            # flush() first: charge_if_eligible re-reads status/payment_status
+            # via a raw SQL SELECT on this SAME connection, which only sees
+            # the ORM assignments above once they are flushed (autoflush does
+            # not reliably fire ahead of a plain text() SELECT).
+            await db.flush()
+            await fl.charge_if_eligible(db, order.id, commit=False)
             await db.commit()
             await db.refresh(order)
             await CarevoService._broadcast_status(order, db)
@@ -5254,6 +5265,17 @@ class CarevoService:
             actor_type="staff", source="tap", outlet_id=outlet_id,
             actor_id=actor_user_id,
         )
+        # Service-fee charge, SAME transaction as the COMPLETED write and
+        # the payment-confirmed write above: commit=False so a ledger
+        # failure raises here and rolls back the whole handover, same
+        # reasoning as verify_pickup. No-op while
+        # SERVICE_FEE_LEDGER_ENABLED is false.
+        from app.modules.carevo_payments import fee_ledger as fl
+        # flush() first, same reasoning as verify_pickup: record_pickup_payment
+        # set order.payment_status on the ORM object above, and
+        # charge_if_eligible reads it back via a raw SQL SELECT.
+        await db.flush()
+        await fl.charge_if_eligible(db, order_id, commit=False)
         await db.commit()
         await db.refresh(order)
 
