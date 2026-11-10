@@ -130,6 +130,15 @@ async def apply_vendor_payment_event(
     outcome, reason = _decide(order, event, outlet_id)
     order_id_for_row = order.id if order is not None else None
 
+    # event_id is NOT NULL (migration 039). A provider delivery that carries
+    # no payment/event id of its own (a FAILED/PENDING Cashfree webhook with
+    # no cf_payment_id is the known case -- see gateway.py's parse_webhook)
+    # must still get a stable, deduplicatable key, or the INSERT below hits a
+    # NOT-NULL violation instead of the UNIQUE one and the event is lost.
+    # "body:" + sha256(raw body) means a byte-identical redelivery still
+    # dedupes, exactly like a real event_id would.
+    event_id_for_row = event.event_id or f"body:{body_sha256}"
+
     try:
         res = await db.execute(text("""
             INSERT INTO payment_events
@@ -140,7 +149,7 @@ async def apply_vendor_payment_event(
             RETURNING id
         """), {
             "provider": provider,
-            "event_id": event.event_id,
+            "event_id": event_id_for_row,
             "outlet_id": str(outlet_id),
             "order_id": order_id_for_row,
             "body_sha256": body_sha256,
@@ -149,16 +158,31 @@ async def apply_vendor_payment_event(
             "reason": reason,
         })
         payment_event_id = res.scalar_one()
-    except IntegrityError:
-        # Either this exact (provider, event_id) already committed (the
-        # concurrent/sequential duplicate case), or it is still being
-        # inserted by a transaction we just blocked behind and lost the
-        # race to. Either way: nothing from THIS call is applied.
+    except IntegrityError as exc:
+        # Only a hit on uq_payment_events_provider_event (Postgres SQLSTATE
+        # 23505, unique_violation) means "this exact (provider, event_id)
+        # already committed" -- the one case that is genuinely a duplicate
+        # delivery, not a bug. Any other integrity error (a NOT NULL or FK
+        # violation on some other column, a different constraint entirely)
+        # is a real defect and must surface as one, not be silently
+        # relabelled DUPLICATE and reported as if the row existed.
+        # exc.orig is SQLAlchemy's asyncpg DBAPI wrapper, which forwards
+        # sqlstate but NOT constraint_name; the real asyncpg error (with
+        # both) is one level further down, linked via __cause__.
+        orig = getattr(exc, "orig", None)
+        cause = getattr(orig, "__cause__", None)
+        sqlstate = getattr(orig, "sqlstate", None) or getattr(cause, "sqlstate", None)
+        constraint_name = (
+            getattr(orig, "constraint_name", None)
+            or getattr(cause, "constraint_name", None)
+        )
+        if sqlstate != "23505" or constraint_name != "uq_payment_events_provider_event":
+            raise
         await db.rollback()
         existing = (await db.execute(text("""
             SELECT id, order_id FROM payment_events
              WHERE provider = :provider AND event_id = :event_id
-        """), {"provider": provider, "event_id": event.event_id})).first()
+        """), {"provider": provider, "event_id": event_id_for_row})).first()
         return {
             "outcome": OUTCOME_DUPLICATE,
             "payment_event_id": str(existing[0]) if existing else None,
