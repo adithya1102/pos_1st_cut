@@ -7,16 +7,30 @@
 -- trail. ADDITIVE ONLY, inert until SERVICE_FEE_LEDGER_ENABLED=true.
 --
 -- ============================================================================
--- BILLABLE EVENT (cite: exact status literals found in this codebase)
+-- BILLABLE EVENT (cite: exact status literal found in this codebase)
 -- ============================================================================
--- An order becomes eligible when its status reaches 'PICKED_UP' (migration
--- 023_customer_picked_up.sql) or 'COMPLETED' (both are members of
--- carevo_customer/service.py's _TERMINAL_STATUSES set, line ~89) AND EITHER
+-- An order becomes eligible when its status reaches 'COMPLETED' -- the ONLY
+-- two places that ever write this value are
+-- carevo_customer/service.py's CarevoService.verify_pickup (line ~4343,
+-- `order.status = "COMPLETED"`) and CarevoService.collect_order
+-- (line ~5223, `SET status = 'COMPLETED'`) -- AND EITHER
 --   * customer_orders.payment_status = 'PAID' (the existing CareVo-mediated
---     Cashfree/stub flow), OR
+--     Cashfree/stub flow, or the PAY_AT_PICKUP/direct-UPI counter handover
+--     recorded by record_pickup_payment, service.py line ~5112), OR
 --   * customer_orders.vendor_payment_confirmed_at IS NOT NULL (migration 039
 --     -- the vendor's OWN gateway confirmed payment directly to the vendor;
 --     Task 5's webhook route is what ever sets this).
+--
+-- 'PICKED_UP' is NOT a billable status. It is never written to
+-- customer_orders.status anywhere in this codebase: record_picked_up
+-- (service.py line ~2430) is explicit that it "Deliberately does NOT move
+-- order.status -- staff verifying the pickup code (PICKUP_VERIFIED ->
+-- COMPLETED) remains the only real completion." carevo_customer/service.py's
+-- _TERMINAL_STATUSES set (line ~89) lists PICKED_UP as a value the STATE
+-- MACHINE recognises as terminal if it were ever reached, not as a value
+-- any code path actually assigns -- an earlier version of this migration's
+-- header, and of app.modules.carevo_payments.fee_ledger, wrongly treated
+-- that membership as evidence the status is live. It is not.
 --
 -- Cancelled, rejected, and expired orders are excluded STRUCTURALLY, not by
 -- a separate negative check: carevo_customer/service.py sets status =
@@ -24,14 +38,13 @@
 -- expired direct-UPI claim (expire_unclaimed_upi_orders, line ~2663), and
 -- status = 'ABANDONED' for an unpaid TTL sweep (line ~2540) and a no-show
 -- (mark_no_show, line ~5310). An order's status is one value; one that is
--- CANCELLED or ABANDONED cannot simultaneously be PICKED_UP or COMPLETED, so
--- the positive billable-event gate above already excludes every one of
--- these without a second condition. "Refunded" is not a status value in
--- this codebase (see customer_orders.refund_required, migration 032) --
--- a refunded order may still read COMPLETED/PICKED_UP, which is exactly why
--- a charge already written is reversed (entry_type='REVERSAL') rather than
--- prevented: the charge was correct when it was written; the refund is a
--- later fact.
+-- CANCELLED or ABANDONED cannot simultaneously be COMPLETED, so the positive
+-- billable-event gate above already excludes every one of these without a
+-- second condition. "Refunded" is not a status value in this codebase (see
+-- customer_orders.refund_required, migration 032) -- a refunded order may
+-- still read COMPLETED, which is exactly why a charge already written is
+-- reversed (entry_type='REVERSAL') rather than prevented: the charge was
+-- correct when it was written; the refund is a later fact.
 --
 -- ============================================================================
 -- WHAT THIS DOES

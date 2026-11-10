@@ -10,10 +10,19 @@ holds, splits, or settles the customer's payment to the vendor -- this
 module only writes an audit-trail entry recording what the vendor owes the
 platform.
 
-BILLABLE EVENT (see migration 041's header for the exact status literals
-and line citations): customer_orders.status IN ('PICKED_UP', 'COMPLETED')
+BILLABLE EVENT (see migration 041's header for the exact status literal
+and line citations): customer_orders.status = 'COMPLETED'
 AND (customer_orders.payment_status = 'PAID' OR
 customer_orders.vendor_payment_confirmed_at IS NOT NULL).
+
+'PICKED_UP' is deliberately NOT in the billable set. It is never written to
+customer_orders.status anywhere in this codebase -- see
+app/modules/carevo_customer/service.py's record_picked_up (around line
+2430): "Deliberately does NOT move order.status -- staff verifying the
+pickup code (PICKUP_VERIFIED -> COMPLETED) remains the only real
+completion." The only two places that ever set status = 'COMPLETED' are
+CarevoService.verify_pickup (service.py line ~4343) and
+CarevoService.collect_order (service.py line ~5223).
 """
 from __future__ import annotations
 
@@ -24,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 
-_BILLABLE_STATUSES = {"PICKED_UP", "COMPLETED"}
+_BILLABLE_STATUSES = {"COMPLETED"}
 
 
 async def charge_if_eligible(db: AsyncSession, order_id) -> dict:
