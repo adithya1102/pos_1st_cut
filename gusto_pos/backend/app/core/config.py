@@ -290,6 +290,13 @@ class Settings(BaseSettings):
     SECRETS_ENC_KEY: Optional[str] = None
     SECRETS_ENC_KEY_ID: Optional[str] = None
 
+    # carevo_payments/adapters.py : RazorpayWebhookAdapter. False by default —
+    # the adapter is production_eligible=False regardless (see that class's
+    # docstring: its replay-timestamp check reads a header real Razorpay
+    # webhooks do not send), so this flag only ever matters for tests until
+    # that gap is closed. get_adapter("razorpay") raises when this is false.
+    RAZORPAY_ADAPTER_ENABLED: bool = False
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()
