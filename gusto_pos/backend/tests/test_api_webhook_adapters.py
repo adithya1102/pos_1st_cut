@@ -168,6 +168,18 @@ def _rzp_body(order_id: str = "order_abc", amount: int = 10000) -> bytes:
     }, separators=(",", ":")).encode()
 
 
+def _rzp_body_with_created_at(created_at: int, order_id: str = "order_abc",
+                               amount: int = 10000) -> bytes:
+    return json.dumps({
+        "event": "payment.captured",
+        "created_at": created_at,
+        "payload": {"payment": {"entity": {
+            "id": "pay_adapter_test", "order_id": order_id,
+            "status": "captured", "amount": amount, "currency": "INR",
+        }}},
+    }, separators=(",", ":")).encode()
+
+
 @pytest.fixture
 def razorpay_adapter(monkeypatch):
     monkeypatch.setattr(settings, "RAZORPAY_WEBHOOK_SECRET", RZP_SECRET)
@@ -175,12 +187,13 @@ def razorpay_adapter(monkeypatch):
 
 
 class TestRazorpayAdapter:
-    def test_valid_signature_and_timestamp_verifies(self, razorpay_adapter):
+    def test_signature_and_event_id_only_is_accepted(self, razorpay_adapter):
+        """The real-delivery shape: only X-Razorpay-Signature and
+        x-razorpay-event-id, no timestamp header of any kind -- the
+        fabricated X-Razorpay-Event-Timestamp requirement is gone."""
         body = _rzp_body()
-        ts = str(int(time.time()))
         evt = razorpay_adapter.verify(body, {
             "X-Razorpay-Signature": _rzp_sign(body),
-            "X-Razorpay-Event-Timestamp": ts,
             "x-razorpay-event-id": "evt_adapter_test",
         })
         assert evt.provider == "razorpay_webhook"
@@ -190,83 +203,90 @@ class TestRazorpayAdapter:
         assert evt.event_id == "evt_adapter_test"
         assert evt.amount_paise == 10000
 
+    def test_missing_event_id_falls_back_to_body_hash(self, razorpay_adapter):
+        body = _rzp_body()
+        evt = razorpay_adapter.verify(body, {
+            "X-Razorpay-Signature": _rzp_sign(body),
+        })
+        assert evt.event_id == f"body:{hashlib.sha256(body).hexdigest()}"
+
     def test_body_altered_by_one_byte_fails(self, razorpay_adapter):
         body = _rzp_body()
         sig = _rzp_sign(body)
-        ts = str(int(time.time()))
         tampered = bytearray(body)
         tampered[-2] ^= 0x01
         with pytest.raises(ad.InvalidSignatureError):
             razorpay_adapter.verify(bytes(tampered), {
-                "X-Razorpay-Signature": sig, "X-Razorpay-Event-Timestamp": ts,
+                "X-Razorpay-Signature": sig,
             })
 
     def test_whitespace_altered_body_fails(self, razorpay_adapter):
         body = _rzp_body()
         sig = _rzp_sign(body)
-        ts = str(int(time.time()))
         reserialized = json.dumps(json.loads(body), indent=2).encode()
         with pytest.raises(ad.InvalidSignatureError):
             razorpay_adapter.verify(reserialized, {
-                "X-Razorpay-Signature": sig, "X-Razorpay-Event-Timestamp": ts,
+                "X-Razorpay-Signature": sig,
             })
 
     def test_wrong_secret_fails(self, razorpay_adapter):
         body = _rzp_body()
         sig = _rzp_sign(body, secret="a-different-secret-entirely")
-        ts = str(int(time.time()))
         with pytest.raises(ad.InvalidSignatureError):
             razorpay_adapter.verify(body, {
-                "X-Razorpay-Signature": sig, "X-Razorpay-Event-Timestamp": ts,
+                "X-Razorpay-Signature": sig,
             })
 
     def test_missing_signature_fails(self, razorpay_adapter):
         body = _rzp_body()
-        ts = str(int(time.time()))
         with pytest.raises(ad.MissingSignatureError):
-            razorpay_adapter.verify(body, {"X-Razorpay-Event-Timestamp": ts})
+            razorpay_adapter.verify(body, {})
 
-    def test_missing_timestamp_fails(self, razorpay_adapter):
+    def test_no_timestamp_header_of_any_kind_is_required(self, razorpay_adapter):
+        """A real Razorpay delivery sends no timestamp header at all; this
+        must verify, not raise MissingTimestampError."""
         body = _rzp_body()
         sig = _rzp_sign(body)
-        with pytest.raises(ad.MissingTimestampError):
+        evt = razorpay_adapter.verify(body, {"X-Razorpay-Signature": sig})
+        assert evt.status == "PAID"
+
+    def test_present_but_stale_created_at_in_the_payload_is_rejected(
+            self, razorpay_adapter):
+        body = _rzp_body_with_created_at(int(time.time()) - 7201)
+        sig = _rzp_sign(body)
+        with pytest.raises(ad.StaleTimestampError):
             razorpay_adapter.verify(body, {"X-Razorpay-Signature": sig})
 
-    def test_non_numeric_timestamp_fails(self, razorpay_adapter):
-        body = _rzp_body()
+    def test_present_but_future_created_at_in_the_payload_is_rejected(
+            self, razorpay_adapter):
+        body = _rzp_body_with_created_at(int(time.time()) + 7201)
         sig = _rzp_sign(body)
-        with pytest.raises(ad.InvalidTimestampError):
-            razorpay_adapter.verify(body, {
-                "X-Razorpay-Signature": sig,
-                "X-Razorpay-Event-Timestamp": "not-a-number",
-            })
-
-    def test_stale_timestamp_beyond_tolerance_fails(self, razorpay_adapter):
-        body = _rzp_body()
-        sig = _rzp_sign(body)
-        ts = str(int(time.time()) - 7201)
         with pytest.raises(ad.StaleTimestampError):
-            razorpay_adapter.verify(body, {
-                "X-Razorpay-Signature": sig, "X-Razorpay-Event-Timestamp": ts,
-            })
+            razorpay_adapter.verify(body, {"X-Razorpay-Signature": sig})
 
-    def test_future_timestamp_beyond_tolerance_fails(self, razorpay_adapter):
-        body = _rzp_body()
+    def test_present_and_fresh_created_at_in_the_payload_is_accepted(
+            self, razorpay_adapter):
+        body = _rzp_body_with_created_at(int(time.time()))
         sig = _rzp_sign(body)
-        ts = str(int(time.time()) + 7201)
-        with pytest.raises(ad.StaleTimestampError):
-            razorpay_adapter.verify(body, {
-                "X-Razorpay-Signature": sig, "X-Razorpay-Event-Timestamp": ts,
-            })
+        evt = razorpay_adapter.verify(body, {"X-Razorpay-Signature": sig})
+        assert evt.status == "PAID"
+
+    def test_absent_created_at_never_causes_a_rejection(self, razorpay_adapter):
+        """_rzp_body() carries no top-level created_at at all -- confirms
+        the optional check never rejects for ABSENCE, only for presence
+        plus an out-of-window value."""
+        body = _rzp_body()
+        assert "created_at" not in json.loads(body)
+        sig = _rzp_sign(body)
+        evt = razorpay_adapter.verify(body, {"X-Razorpay-Signature": sig})
+        assert evt.status == "PAID"
 
     def test_missing_secret_fails_closed(self):
         adapter = ad.RazorpayWebhookAdapter(secret=None, max_age_s=7200)
         body = _rzp_body()
-        ts = str(int(time.time()))
         with pytest.raises(ad.AdapterConfigError):
             adapter.verify(body, {
                 "X-Razorpay-Signature": "irrelevant",
-                "X-Razorpay-Event-Timestamp": ts,
             })
 
 
@@ -283,11 +303,11 @@ class TestGetAdapterRegistry:
         with pytest.raises(ad.AdapterConfigError):
             ad.get_adapter("razorpay")
 
-    def test_razorpay_enabled_returns_a_non_production_eligible_adapter(self, monkeypatch):
+    def test_razorpay_enabled_returns_a_production_eligible_adapter(self, monkeypatch):
         monkeypatch.setattr(settings, "RAZORPAY_ADAPTER_ENABLED", True)
         adapter = ad.get_adapter("razorpay")
         assert isinstance(adapter, ad.RazorpayWebhookAdapter)
-        assert adapter.production_eligible is False
+        assert adapter.production_eligible is True
 
     def test_unknown_provider_raises(self):
         with pytest.raises(ad.AdapterConfigError):

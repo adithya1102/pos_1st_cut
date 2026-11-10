@@ -208,24 +208,38 @@ class RazorpayWebhookAdapter(ProviderAdapter):
     """HMAC-SHA256 hex over the raw body, header X-Razorpay-Signature.
 
     Verified against Razorpay's official documentation
-    (https://razorpay.com/docs/webhooks/validate-test/, fetched during this
-    task): the header name, the hex encoding, and "sign the raw body, never
-    the parsed/re-serialised one" all match this implementation exactly.
+    (https://razorpay.com/docs/webhooks/validate-test/, re-fetched for this
+    fix pass via WebFetch): the header name (`X-Razorpay-Signature`), the
+    hex encoding, "sign the raw body, never the parsed/re-serialised one",
+    and the `x-razorpay-event-id` duplicate-detection header all match this
+    implementation exactly. See docs/runbooks/PROVIDERS.md for the full
+    verification record.
 
-    NOT verified against that documentation: a timestamp-based replay
-    header. Razorpay's own docs describe `x-razorpay-event-id` for
-    duplicate-event detection but no timestamp field used for signature
-    replay protection. The timestamp check below is OUR OWN requirement,
-    layered on top of Razorpay's documented contract, reading a header
-    (`X-Razorpay-Event-Timestamp`) that real Razorpay webhooks do not send.
-    See docs/runbooks/PROVIDERS.md. This is one of the reasons
-    `production_eligible` is False: enabling this against real Razorpay
-    traffic would need that gap resolved first (e.g. deriving a timestamp
-    from the payload body instead of requiring an unverified header).
+    ONLY X-Razorpay-Signature is required. The earlier `production_eligible
+    = False` gap was this adapter requiring a header
+    (`X-Razorpay-Event-Timestamp`) that real Razorpay deliveries never
+    send -- every genuine delivery failed MissingTimestampError. That
+    requirement is removed. Replay defence is now what the task asked for:
+    payment_events' own UNIQUE(provider, event_id) dedup
+    (reconciliation.apply_vendor_payment_event), not a header this
+    provider does not document.
+
+    Idempotency event id: `x-razorpay-event-id` when present (Razorpay's
+    own documented mechanism); when absent, the SAME "body:" + sha256(raw
+    body) fallback reconciliation.py uses for a Cashfree delivery with no
+    payment id, so a byte-identical redelivery still dedupes.
+
+    Creation-time check: UNVERIFIED against Razorpay's documentation --
+    WebFetch could not confirm (nor rule out) a top-level `created_at`
+    field in the webhook envelope (see docs/runbooks/PROVIDERS.md). Best
+    effort only: if the parsed payload has a numeric top-level
+    `created_at`, it is checked against a generous window and rejected
+    only if OUT of it; if absent or non-numeric, no check runs and nothing
+    is rejected for its absence.
     """
 
     name = "razorpay_webhook"
-    production_eligible = False
+    production_eligible = True
 
     def __init__(self, *, secret: Optional[str] = None,
                  max_age_s: Optional[int] = None):
@@ -239,7 +253,6 @@ class RazorpayWebhookAdapter(ProviderAdapter):
         _check_body_size(raw_body)
         h = _lower_headers(headers)
         signature = h.get("x-razorpay-signature")
-        timestamp = h.get("x-razorpay-event-timestamp")
 
         if not signature:
             raise MissingSignatureError("X-Razorpay-Signature header is missing")
@@ -252,9 +265,20 @@ class RazorpayWebhookAdapter(ProviderAdapter):
         if not hmac.compare_digest(expected, signature):
             raise InvalidSignatureError("Razorpay webhook signature verification failed")
 
-        _check_timestamp_window(timestamp, max_age_s=self._max_age_s)
-
         payload = _safe_json(raw_body)
+
+        # Best-effort, optional: see the class docstring's "Creation-time
+        # check" note. Never raises for a MISSING field -- only for one
+        # present and out of window.
+        created_at = payload.get("created_at")
+        if isinstance(created_at, (int, float)) and not isinstance(created_at, bool):
+            age = time.time() - float(created_at)
+            if abs(age) > self._max_age_s:
+                raise StaleTimestampError(
+                    f"webhook created_at is {age:.0f}s from now, exceeding "
+                    f"{self._max_age_s}s tolerance"
+                )
+
         entity = {}
         if isinstance(payload.get("payload"), dict):
             entity = payload["payload"].get("payment", {}).get("entity", {}) or {}
@@ -272,15 +296,20 @@ class RazorpayWebhookAdapter(ProviderAdapter):
         except (TypeError, ValueError):
             amount_paise = None
 
+        event_id = h.get("x-razorpay-event-id") or (
+            f"body:{hashlib.sha256(raw_body).hexdigest()}"
+        )
+
         return VerifiedEvent(
             provider=self.name,
-            event_id=h.get("x-razorpay-event-id"),
+            event_id=event_id,
             order_ref=entity.get("order_id"),
             provider_payment_id=entity.get("id"),
             amount_paise=amount_paise,
             currency=entity.get("currency"),
             status=outcome,
-            occurred_at=float(timestamp) if timestamp else None,
+            occurred_at=float(created_at) if isinstance(created_at, (int, float))
+            and not isinstance(created_at, bool) else None,
             raw=payload,
         )
 
