@@ -128,6 +128,13 @@ async def on_startup():
     # ALLOW_STUB_GATEWAY=true was set deliberately.
     validate_gateway_startup_posture()
 
+    # Fail-closed customer-auth posture: the OTP stub (OTP_STUB_MODE) must
+    # never be reachable (CUSTOMER_AUTH_ENABLED) outside a non-production
+    # environment. Raises AuthConfigError, deliberately NOT caught — same
+    # shape as the two checks above.
+    from app.core.config import validate_auth_posture
+    validate_auth_posture()
+
     # Fail-closed secrets-at-rest posture: refuse to start with
     # VENDOR_GATEWAY_ENABLED=true and no usable SECRETS_ENC_KEY. A no-op
     # while the flag is false. Raises SecretsBoxConfigError, uncaught, same

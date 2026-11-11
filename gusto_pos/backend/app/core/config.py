@@ -444,3 +444,61 @@ def validate_gateway_startup_posture(cfg: "Settings" = None, *,
         "ALLOW_STUB_GATEWAY=true to run a stub gateway here. The variable "
         "PAYMENT_GATEWAY is the one that must change"
     )
+
+
+class AuthConfigError(RuntimeError):
+    """Raised at startup when the customer OTP stub would be reachable in
+    production.
+
+    Deliberately not swallowed anywhere — letting this propagate out of the
+    FastAPI startup event is what makes the process refuse to start, rather
+    than booting into a state where any caller holding a known phone number
+    and the literal OTP_STUB_CODE can mint a customer token for it.
+    """
+
+
+def validate_auth_posture(cfg: "Settings" = None, *,
+                           env_name: Optional[str] = None) -> None:
+    """Fail closed: the customer OTP stub must never be reachable outside a
+    non-production environment. Checked once at process startup
+    (app/main.py's on_startup), alongside — and independently of — the
+    Cashfree guards above.
+
+    `POST /customer/auth/verify-otp` (carevo_customer/controller.py)
+    accepts the literal OTP_STUB_CODE for ANY phone number whenever
+    OTP_STUB_MODE is true, and that route is gated only by
+    CUSTOMER_AUTH_ENABLED (_require_customer_auth_enabled, same
+    controller) — not by OTP_STUB_MODE itself. OTP_STUB_MODE=true AND
+    CUSTOMER_AUTH_ENABLED=true together are exactly what leaves that route
+    reachable with the stub code; either one alone already closes it
+    (CUSTOMER_AUTH_ENABLED=false makes the route 503; OTP_STUB_MODE=false
+    makes verify_otp 501 instead of accepting the stub code).
+
+    Raises AuthConfigError naming both variables and the safe values.
+    Never a secret — there is no secret value in play here, only two
+    booleans.
+
+    No-op when:
+      * `env_name` (default: the live APP_ENV) is in NON_PRODUCTION_ENVS,
+        or is the literal test marker (redundant with the above today,
+        since NON_PRODUCTION_ENVS already contains "test" — kept explicit
+        so this guard keeps working even if that set's membership ever
+        changes), or
+      * OTP_STUB_MODE is false, or CUSTOMER_AUTH_ENABLED is false — either
+        alone already closes the hole, so there is nothing to enforce.
+    """
+    cfg = cfg if cfg is not None else settings
+    if env_name is None:
+        env_name = os.getenv("APP_ENV", "production").strip().lower()
+    if env_name in NON_PRODUCTION_ENVS or env_name == _TEST_APP_ENV:
+        return
+    if not (cfg.OTP_STUB_MODE and cfg.CUSTOMER_AUTH_ENABLED):
+        return
+
+    raise AuthConfigError(
+        "OTP_STUB_MODE=true and CUSTOMER_AUTH_ENABLED=true together leave "
+        "the customer OTP stub reachable in production; set "
+        "OTP_STUB_MODE=false (and/or CUSTOMER_AUTH_ENABLED=false) before "
+        "deploying here. The variables OTP_STUB_MODE and "
+        "CUSTOMER_AUTH_ENABLED are the ones that must change"
+    )
