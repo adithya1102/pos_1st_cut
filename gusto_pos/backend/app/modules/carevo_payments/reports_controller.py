@@ -70,13 +70,16 @@ async def list_uncharged_completed(
 async def run_charge_missing(
     outlet_id: Optional[uuid.UUID] = Query(None),
     since: Optional[datetime] = Query(None),
+    limit: int = Query(200, gt=0),
     _admin: User = Depends(get_current_super_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Idempotently charge every order list_uncharged_completed finds.
-    No-op while SERVICE_FEE_LEDGER_ENABLED is false, same as every other
-    fee_ledger entry point."""
-    return await fl.charge_missing(db, outlet_id=outlet_id, since=since)
+    """Idempotently charge up to `limit` orders list_uncharged_completed
+    finds, each in its own committed transaction. No-op while
+    SERVICE_FEE_LEDGER_ENABLED is false, same as every other fee_ledger
+    entry point. A `remaining` count in the response tells the caller
+    whether to call this again."""
+    return await fl.charge_missing(db, outlet_id=outlet_id, since=since, limit=limit)
 
 
 class ReviewDecisionIn(BaseModel):

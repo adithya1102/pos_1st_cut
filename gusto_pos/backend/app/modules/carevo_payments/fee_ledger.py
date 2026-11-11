@@ -176,26 +176,40 @@ async def find_uncharged_completed(
 
 
 async def charge_missing(db: AsyncSession, outlet_id=None,
-                          since: Optional[datetime] = None) -> dict:
-    """Idempotently charge every order find_uncharged_completed finds.
+                          since: Optional[datetime] = None,
+                          limit: int = 200) -> dict:
+    """Idempotently charge every order find_uncharged_completed finds, up
+    to `limit` of them.
 
     Flag-gated exactly like charge_if_eligible: a no-op while
-    SERVICE_FEE_LEDGER_ENABLED is false. Each order is charged inside its
-    OWN SAVEPOINT, so one order raising (a repeat of the same failure that
-    produced the gap, say) rolls back only that attempt and the sweep
-    continues with the rest rather than aborting the whole run.
+    SERVICE_FEE_LEDGER_ENABLED is false.
+
+    Each candidate is charged and COMMITTED in its OWN transaction --
+    charge_if_eligible's chain-building trigger holds a per-outlet
+    pg_advisory_xact_lock for the rest of whatever transaction it runs in
+    (migration 041), so committing after every item is what releases that
+    lock between items instead of holding it for the whole sweep. One
+    order raising rolls back only that order's own transaction (nothing
+    else is pending on `db` at that point) and the sweep continues with
+    the rest rather than aborting the whole run. Idempotent: a candidate
+    already committed as charged by an earlier run of this sweep is never
+    a candidate again (find_uncharged_completed excludes it), so running
+    the sweep twice charges each order exactly once.
     """
     if not settings.SERVICE_FEE_LEDGER_ENABLED:
         return {"charged": 0, "already_charged": 0, "failed": 0,
-                "candidates": 0, "reason": "flag_off"}
+                "candidates": 0, "processed": 0, "remaining": 0,
+                "reason": "flag_off"}
 
     candidates = await find_uncharged_completed(db, outlet_id=outlet_id, since=since)
+    batch = candidates[:limit]
+    remaining = max(0, len(candidates) - len(batch))
     charged = already_charged = failed = 0
-    for c in candidates:
+    for c in batch:
         try:
-            async with db.begin_nested():
-                result = await charge_if_eligible(db, c["order_id"], commit=False)
+            result = await charge_if_eligible(db, c["order_id"], commit=True)
         except Exception:
+            await db.rollback()
             failed += 1
             logger.warning(
                 "fee_ledger_sweep_charge_failed order_id=%s", c["order_id"])
@@ -206,9 +220,9 @@ async def charge_missing(db: AsyncSession, outlet_id=None,
             already_charged += 1
         else:
             failed += 1
-    await db.commit()
     return {"charged": charged, "already_charged": already_charged,
-            "failed": failed, "candidates": len(candidates)}
+            "failed": failed, "candidates": len(candidates),
+            "processed": len(batch), "remaining": remaining}
 
 
 async def verify_chain(db: AsyncSession, outlet_id) -> dict:
