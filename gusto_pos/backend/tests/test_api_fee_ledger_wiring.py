@@ -120,8 +120,8 @@ class TestVerifyPickupWiring:
         rows = await _charges(db, order_id)
         assert rows == []
 
-    async def test_ledger_failure_rolls_back_the_completion(
-            self, db, seed, monkeypatch):
+    async def test_ledger_failure_does_not_block_the_completion(
+            self, db, seed, monkeypatch, caplog):
         monkeypatch.setattr(settings, "SERVICE_FEE_LEDGER_ENABLED", True)
         order_id = await _insert_order(
             db, outlet_id=seed["outlet_id"], customer_id=seed["customer_id"],
@@ -132,16 +132,53 @@ class TestVerifyPickupWiring:
 
         monkeypatch.setattr(fl, "charge_if_eligible", _boom)
 
-        with pytest.raises(RuntimeError):
-            await CarevoService.verify_pickup(
+        with caplog.at_level("WARNING"):
+            result = await CarevoService.verify_pickup(
                 db, uuid.UUID(order_id), "ABC123", uuid.UUID(seed["outlet_id"]))
-        await db.rollback()
+        assert result["verified"] is True
+        assert result["status"] == "COMPLETED"
 
         row = (await db.execute(text(
             "SELECT status, pickup_verified_at FROM customer_orders WHERE id = :id"),
             {"id": order_id})).first()
-        assert row[0] == "PAID", "the COMPLETED write must not survive a ledger failure"
-        assert row[1] is None
+        assert row[0] == "COMPLETED", "a ledger failure must never block the completion"
+        assert row[1] is not None
+
+        rows = await _charges(db, order_id)
+        assert rows == [], "no ledger row may be written when the ledger write failed"
+
+        assert "fee_ledger_charge_failed" in caplog.text
+        assert order_id in caplog.text
+
+    async def test_ledger_failure_leaves_the_hash_chain_intact(
+            self, db, seed, monkeypatch):
+        """A failed charge attempt (whether it inserted nothing, or the
+        SAVEPOINT rolled back a partial insert) must never leave a broken
+        link for the NEXT real charge on this outlet to chain from."""
+        monkeypatch.setattr(settings, "SERVICE_FEE_LEDGER_ENABLED", True)
+        failing_order_id = await _insert_order(
+            db, outlet_id=seed["outlet_id"], customer_id=seed["customer_id"],
+            status="PAID", payment_status="PAID")
+
+        async def _boom(*args, **kwargs):
+            raise RuntimeError("ledger write exploded")
+
+        monkeypatch.setattr(fl, "charge_if_eligible", _boom)
+        await CarevoService.verify_pickup(
+            db, uuid.UUID(failing_order_id), "ABC123", uuid.UUID(seed["outlet_id"]))
+        assert await _charges(db, failing_order_id) == []
+
+        monkeypatch.undo()
+        monkeypatch.setattr(settings, "SERVICE_FEE_LEDGER_ENABLED", True)
+        next_order_id = await _insert_order(
+            db, outlet_id=seed["outlet_id"], customer_id=seed["customer_id"],
+            status="PAID", payment_status="PAID")
+        await CarevoService.verify_pickup(
+            db, uuid.UUID(next_order_id), "ABC123", uuid.UUID(seed["outlet_id"]))
+        assert len(await _charges(db, next_order_id)) == 1
+
+        result = await fl.verify_chain(db, seed["outlet_id"])
+        assert result == {"ok": True}
 
 
 class TestCollectOrderWiring:
@@ -219,8 +256,8 @@ class TestCollectOrderWiring:
         rows = await _charges(db, order_id)
         assert rows == []
 
-    async def test_ledger_failure_rolls_back_the_handover(
-            self, db, seed, monkeypatch):
+    async def test_ledger_failure_does_not_block_the_handover(
+            self, db, seed, monkeypatch, caplog):
         monkeypatch.setattr(settings, "SERVICE_FEE_LEDGER_ENABLED", True)
         order_id = await _insert_order(
             db, outlet_id=seed["outlet_id"], customer_id=seed["customer_id"],
@@ -231,21 +268,28 @@ class TestCollectOrderWiring:
 
         monkeypatch.setattr(fl, "charge_if_eligible", _boom)
 
-        with pytest.raises(RuntimeError):
-            await CarevoService.collect_order(
+        with caplog.at_level("WARNING"):
+            result = await CarevoService.collect_order(
                 db, uuid.UUID(order_id), uuid.UUID(seed["outlet_id"]),
                 pickup_code="ABC123", method="cash",
                 actor_user_id=uuid.UUID(seed["owner_id"]))
-        await db.rollback()
+        assert result["collected"] is True
+        assert result["status"] == "COMPLETED"
 
         row = (await db.execute(text(
             "SELECT status, payment_status, collected_at FROM customer_orders "
             "WHERE id = :id"), {"id": order_id})).first()
-        assert row[0] == "READY", "status must not have moved to COMPLETED"
-        assert row[1] == "PENDING", "payment must not have been recorded"
-        assert row[2] is None
+        assert row[0] == "COMPLETED", "a ledger failure must never block the handover"
+        assert row[1] == "PAID", "the payment must still be recorded"
+        assert row[2] is not None
 
         txns = (await db.execute(text(
             "SELECT count(*) FROM payment_transactions WHERE customer_order_id = :id"),
             {"id": order_id})).scalar()
-        assert txns == 0, "no counter PaymentTransaction may survive the rollback"
+        assert txns == 1, "the counter PaymentTransaction must still commit"
+
+        rows = await _charges(db, order_id)
+        assert rows == [], "no ledger row may be written when the ledger write failed"
+
+        assert "fee_ledger_charge_failed" in caplog.text
+        assert order_id in caplog.text

@@ -4348,17 +4348,25 @@ class CarevoService:
                 db, order.id, pe.PICKUP_VERIFIED,
                 actor_type="staff", source="tap", outlet_id=order.outlet_id,
             )
-            # Service-fee charge, SAME transaction as the COMPLETED write:
-            # commit=False means a ledger failure raises here, before
-            # db.commit() below, so the status change rolls back with it.
+            # Service-fee charge, best-effort: it must NEVER block this
+            # completion. Run inside a SAVEPOINT (begin_nested) so a ledger
+            # failure rolls back ONLY the attempted ledger write -- the
+            # COMPLETED status change above commits normally either way.
             # No-op while SERVICE_FEE_LEDGER_ENABLED is false.
             from app.modules.carevo_payments import fee_ledger as fl
-            # flush() first: charge_if_eligible re-reads status/payment_status
-            # via a raw SQL SELECT on this SAME connection, which only sees
-            # the ORM assignments above once they are flushed (autoflush does
-            # not reliably fire ahead of a plain text() SELECT).
+            # flush() first, OUTSIDE the savepoint: charge_if_eligible
+            # re-reads status/payment_status via a raw SQL SELECT on this
+            # SAME connection, which only sees the ORM assignments above
+            # once they are flushed (autoflush does not reliably fire ahead
+            # of a plain text() SELECT), and the flush must survive even if
+            # the ledger write itself fails.
             await db.flush()
-            await fl.charge_if_eligible(db, order.id, commit=False)
+            try:
+                async with db.begin_nested():
+                    await fl.charge_if_eligible(db, order.id, commit=False)
+            except Exception:
+                logger.warning(
+                    "fee_ledger_charge_failed order_id=%s", order.id)
             await db.commit()
             await db.refresh(order)
             await CarevoService._broadcast_status(order, db)
@@ -5265,17 +5273,23 @@ class CarevoService:
             actor_type="staff", source="tap", outlet_id=outlet_id,
             actor_id=actor_user_id,
         )
-        # Service-fee charge, SAME transaction as the COMPLETED write and
-        # the payment-confirmed write above: commit=False so a ledger
-        # failure raises here and rolls back the whole handover, same
-        # reasoning as verify_pickup. No-op while
-        # SERVICE_FEE_LEDGER_ENABLED is false.
+        # Service-fee charge, best-effort: it must NEVER block this
+        # handover. Run inside a SAVEPOINT (begin_nested), same reasoning
+        # as verify_pickup -- a ledger failure rolls back ONLY the
+        # attempted ledger write, never the payment/handover above. No-op
+        # while SERVICE_FEE_LEDGER_ENABLED is false.
         from app.modules.carevo_payments import fee_ledger as fl
-        # flush() first, same reasoning as verify_pickup: record_pickup_payment
-        # set order.payment_status on the ORM object above, and
-        # charge_if_eligible reads it back via a raw SQL SELECT.
+        # flush() first, OUTSIDE the savepoint, same reasoning as
+        # verify_pickup: record_pickup_payment set order.payment_status on
+        # the ORM object above, and charge_if_eligible reads it back via a
+        # raw SQL SELECT, which must see the flushed value even if the
+        # ledger write itself then fails.
         await db.flush()
-        await fl.charge_if_eligible(db, order_id, commit=False)
+        try:
+            async with db.begin_nested():
+                await fl.charge_if_eligible(db, order_id, commit=False)
+        except Exception:
+            logger.warning("fee_ledger_charge_failed order_id=%s", order_id)
         await db.commit()
         await db.refresh(order)
 

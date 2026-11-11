@@ -12,6 +12,7 @@ transaction as the change itself, so an audit gap cannot open.
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -26,6 +27,8 @@ from app.modules.users.model import User
 # Reused rather than reimplemented — one haversine in the codebase, so the
 # admin log and the customer's distance sort can never disagree.
 from app.modules.carevo_customer.service import CarevoService
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Activity heuristic (NOT a churn model, NOT a prediction).
@@ -1584,16 +1587,21 @@ class AdminService:
             actor_id=getattr(actor, "id", None),
             payload={"settled_by": getattr(actor, "username", None)},
         )
-        # Service-fee REVERSAL, SAME transaction as clearing the flag: a
-        # refund is a later fact about an order that may already have been
-        # charged (migration 041's header: "a refunded order may still read
-        # COMPLETED"). reverse_if_charged is a no-op (no_charge_to_reverse)
-        # for the common case here -- refund_required is usually set on a
-        # CANCELLED order that was never charged -- and a no-op while
-        # SERVICE_FEE_LEDGER_ENABLED is false. commit=False so a ledger
-        # failure rolls back the refund-clear with it.
+        # Service-fee REVERSAL, best-effort: it must NEVER block recording
+        # this refund. A refund is a later fact about an order that may
+        # already have been charged (migration 041's header: "a refunded
+        # order may still read COMPLETED"). reverse_if_charged is a no-op
+        # (no_charge_to_reverse) for the common case here -- refund_required
+        # is usually set on a CANCELLED order that was never charged -- and
+        # a no-op while SERVICE_FEE_LEDGER_ENABLED is false. Run inside a
+        # SAVEPOINT so a ledger failure rolls back ONLY the attempted
+        # reversal, never the refund-clear above.
         from app.modules.carevo_payments import fee_ledger as fl
-        await fl.reverse_if_charged(db, order_id, commit=False)
+        try:
+            async with db.begin_nested():
+                await fl.reverse_if_charged(db, order_id, commit=False)
+        except Exception:
+            logger.warning("fee_ledger_reversal_failed order_id=%s", order_id)
         await db.commit()
         return {"order_id": order_id, "already": False, "refund_required": False}
 

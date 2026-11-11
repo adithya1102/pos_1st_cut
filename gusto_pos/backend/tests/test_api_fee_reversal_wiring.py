@@ -103,7 +103,8 @@ class TestRefundReversalWiring:
         result = await fl.verify_chain(db, seed["outlet_id"])
         assert result == {"ok": True}
 
-    async def test_ledger_failure_rolls_back_the_refund_clear(self, db, seed, monkeypatch):
+    async def test_ledger_failure_does_not_block_the_refund_clear(
+            self, db, seed, monkeypatch, caplog):
         order_id = await _insert_order(
             db, outlet_id=seed["outlet_id"], customer_id=seed["customer_id"],
             refund_required=True)
@@ -114,14 +115,35 @@ class TestRefundReversalWiring:
 
         monkeypatch.setattr(fl, "reverse_if_charged", _boom)
 
-        with pytest.raises(RuntimeError):
-            await AdminService.mark_refund_done(db, order_id, actor=_ACTOR)
-        await db.rollback()
+        with caplog.at_level("WARNING"):
+            result = await AdminService.mark_refund_done(db, order_id, actor=_ACTOR)
+        assert result["already"] is False
+        assert result["refund_required"] is False
 
         row = (await db.execute(text(
             "SELECT refund_required FROM customer_orders WHERE id = :id"),
             {"id": order_id})).first()
-        assert row[0] is True, "refund_required must still be set after rollback"
+        assert row[0] is False, "the refund must still be recorded despite the ledger failure"
 
         rows = await _ledger_rows(db, order_id)
-        assert [r[0] for r in rows] == ["CHARGE"]
+        assert [r[0] for r in rows] == ["CHARGE"], (
+            "no REVERSAL row may be written when the ledger write failed")
+
+        assert "fee_ledger_reversal_failed" in caplog.text
+        assert order_id in caplog.text
+
+    async def test_ledger_failure_leaves_the_hash_chain_intact(
+            self, db, seed, monkeypatch):
+        order_id = await _insert_order(
+            db, outlet_id=seed["outlet_id"], customer_id=seed["customer_id"],
+            refund_required=True)
+        await fl.charge_if_eligible(db, order_id)
+
+        async def _boom(*args, **kwargs):
+            raise RuntimeError("ledger write exploded")
+
+        monkeypatch.setattr(fl, "reverse_if_charged", _boom)
+        await AdminService.mark_refund_done(db, order_id, actor=_ACTOR)
+
+        result = await fl.verify_chain(db, seed["outlet_id"])
+        assert result == {"ok": True}
