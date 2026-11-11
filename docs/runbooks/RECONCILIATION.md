@@ -280,3 +280,55 @@ from the post-review fix pass (new wiring/validation/visibility tests
 plus the net change to the Razorpay section of
 `test_api_webhook_adapters.py`), all passing; the one skipped is the same
 pre-existing xfail recorded in `docs/reports/RECON_BASELINE.md`.
+
+## Trial service
+
+Environment variables for a trial rehearsal of this reconciliation layer
+against a Neon branch copy of production — never production itself:
+
+| Variable | Value | Why |
+|---|---|---|
+| `DATABASE_URL` | `postgresql+asyncpg://<user>:<password>@<neon-trial-host>/<db>?ssl=require` | the Neon branch copy, in the application form (see "Neon connection strings" above) |
+| `SECRET_KEY` | generated at your own terminal, never committed | required field, no default (`app/core/config.py:7-8`) |
+| `APP_ENV` | `production` | see below — `development` must NOT be used for this rehearsal |
+| `ALLOW_STUB_GATEWAY` | `true` | the explicit, visible opt-in to run the stub gateway with no Cashfree keys, under the SAME fail-closed check (`validate_gateway_startup_posture`, `app/core/config.py:411-446`) production itself is subject to |
+| `CASHFREE_ONLY` | unset | default `False` (`config.py:140`); no Cashfree keys are needed for the first boot |
+| `VENDOR_GATEWAY_ENABLED` | unset | default `False` (`config.py:306`); no `SECRETS_ENC_KEY`/`SECRETS_ENC_KEY_ID` needed for the first boot |
+| `SERVICE_FEE_LEDGER_ENABLED` | unset for the first boot, then `true` alone | per the pilot pattern "Render + Neon deploy order" above already describes — one flag at a time |
+
+**`APP_ENV=development` must NOT be used for this rehearsal.** The Render
+production service never sets `APP_ENV=development` — it either leaves
+`APP_ENV` unset (defaults to `"production"`, `config.py:390,428`) or sets it
+explicitly to `production`. A rehearsal run under `development` is not
+rehearsing production's behavior; it is exercising a different, more
+permissive code path production itself cannot reach. `APP_ENV=production`
+with the explicit `ALLOW_STUB_GATEWAY=true` opt-in instead exercises the
+exact same fail-closed startup check production runs, with the same opt-in
+a real trial-without-Cashfree deploy would need.
+
+Every other behaviour `APP_ENV=development` (or any value in
+`NON_PRODUCTION_ENVS = {"dev", "development", "local", "test"}`,
+`app/core/config.py:338`) changes, with file and line:
+
+1. **`/docs`, `/redoc`, `/openapi.json` are enabled** —
+   `app/main.py:73` (`_DOCS_ENABLED = os.getenv("APP_ENV", "production").strip().lower() in NON_PRODUCTION_ENVS`),
+   consumed at `app/main.py:78-80`. In production this enumerates all ~220
+   routes, their schemas and their auth requirements (`main.py:62-63`'s own
+   comment).
+2. **`validate_gateway_startup_posture` no-ops entirely** —
+   `app/core/config.py:429-430` returns immediately once `env_name` is in
+   `NON_PRODUCTION_ENVS`, skipping the fail-closed check that otherwise
+   requires `PAYMENT_GATEWAY=cashfree` or an explicit
+   `ALLOW_STUB_GATEWAY=true` (`config.py:432-440`). A trial run under
+   `development` would pass this check by being exempt from it, not by
+   satisfying it the way production has to.
+3. **`POST /customer/payment/simulate` opens up** —
+   `app/modules/carevo_customer/controller.py:788-791`: outside
+   `NON_PRODUCTION_ENVS` this stub "mark myself paid" endpoint 403s unless
+   `ALLOW_STUB_GATEWAY=true` is also set; under `development` it is
+   reachable with no opt-in at all.
+
+`validate_cashfree_only_config` (`config.py:373-408`) is NOT on this list —
+it only special-cases the literal `APP_ENV=test` (`config.py:370,391`), not
+the whole `NON_PRODUCTION_ENVS` set, so `development` vs `production` makes
+no difference to that particular guard.
