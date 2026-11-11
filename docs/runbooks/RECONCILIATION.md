@@ -71,16 +71,18 @@ in their own commits:
   outcome is `REVIEW` and it has not already been resolved by a prior
   confirm/reject (checked against `admin_audit_logs`); anything else is
   `409` with no audit row written.
-- **`RazorpayWebhookAdapter` now accepts real Razorpay deliveries.** The
-  fabricated `X-Razorpay-Event-Timestamp` requirement (a header real
-  deliveries never send) is removed; only `X-Razorpay-Signature` is
-  required. Idempotency event id comes from `x-razorpay-event-id`,
-  falling back to the same body-hash scheme above when absent. Replay
-  defence is `payment_events`' own dedup, not a header this provider does
-  not document. `production_eligible` is now `True`. See
-  `docs/runbooks/PROVIDERS.md` for the full (re-)verification record,
-  including what WebFetch could and could not confirm about the payload's
-  optional `created_at` field.
+- **`RazorpayWebhookAdapter`'s verification logic is fixed to match real
+  Razorpay deliveries.** The fabricated `X-Razorpay-Event-Timestamp`
+  requirement (a header real deliveries never send) is removed; only
+  `X-Razorpay-Signature` is required. Idempotency event id comes from
+  `x-razorpay-event-id`, falling back to the same body-hash scheme above
+  when absent. Replay defence is `payment_events`' own dedup, not a
+  header this provider does not document. `production_eligible` STAYS
+  `False`, deliberately — matching the documentation is not the same
+  claim as having been proven against a real delivery, and no real
+  Razorpay delivery has been observed by this adapter yet. See
+  `docs/runbooks/PROVIDERS.md` for the full verification record and the
+  exact bar that flips this flag to `True`.
 - **The vendor webhook route now logs a reason code on every rejection**
   (`flag_off` / `unknown_outlet` / `credential_error` /
   `adapter_unavailable` / `signature_invalid`, plus the provider name —
@@ -179,6 +181,13 @@ applied is also safe (the new tables/columns simply go unread again).
   out-of-window value. See `docs/runbooks/PROVIDERS.md`. (The adapter's
   prior production-blocking gap — the fabricated timestamp HEADER
   requirement — is fixed; see "Fix pass" above.)
+- **`RazorpayWebhookAdapter.production_eligible` is `False`, and stays
+  that way, until a real sandbox delivery has been observed end to end.**
+  The verification logic matching Razorpay's documentation is a
+  different, weaker claim than having actually been exercised against a
+  genuine delivery — this codebase has never received one. See
+  `docs/runbooks/PROVIDERS.md` for the exact observation that flips the
+  flag.
 - **The daily report's `failed`/`pending` counts only reflect
   `payment_events` rows** (i.e. vendor-gateway deliveries, Task 5). The
   pre-existing CareVo-mediated Cashfree/stub flow
@@ -197,7 +206,7 @@ applied is also safe (the new tables/columns simply go unread again).
 | Provider | Existing code | Sandbox done | Merchant onboarding | Production credentials | Production eligible |
 |---|---|---|---|---|---|
 | Cashfree | Yes (`CashfreeGateway`, pre-existing; `CashfreeAdapter` wraps it, Task 3) | Yes (this repo's existing sandbox flow, pre-existing) | **Rejected at onboarding, production not available** | No | No — platform-level Cashfree is rejected; the vendor-direct model (Task 5) uses a VENDOR's own Cashfree merchant account and secret, never CareVo's |
-| Razorpay | Yes (`StubRazorpayGateway`, pre-existing stub; `RazorpayWebhookAdapter`, Task 3, fixed in the post-review pass) | Stub only — no real sandbox credentials exercised in this task | Not attempted | No | Yes, as of the fix pass (`production_eligible=True`; the fabricated timestamp-header gap is closed — see Known Limitations for the one remaining UNVERIFIED point) |
+| Razorpay | Yes (`StubRazorpayGateway`, pre-existing stub; `RazorpayWebhookAdapter`, Task 3, verification logic fixed in the post-review pass) | Stub only — no real sandbox credentials exercised in this task | Not attempted | No | No (`production_eligible=False`, deliberately kept — the fabricated timestamp-header gap is closed, but no real sandbox delivery has been observed end to end yet; see `docs/runbooks/PROVIDERS.md` for the exact bar) |
 
 Row-for-row, this table says the same thing the business rules in this
 task required going in: **no provider is assumed approved**, and nothing

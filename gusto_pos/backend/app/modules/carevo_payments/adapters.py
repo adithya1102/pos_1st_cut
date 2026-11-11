@@ -215,12 +215,12 @@ class RazorpayWebhookAdapter(ProviderAdapter):
     implementation exactly. See docs/runbooks/PROVIDERS.md for the full
     verification record.
 
-    ONLY X-Razorpay-Signature is required. The earlier `production_eligible
-    = False` gap was this adapter requiring a header
+    ONLY X-Razorpay-Signature is required. The PRIOR `production_eligible
+    = False` gap -- this adapter requiring a header
     (`X-Razorpay-Event-Timestamp`) that real Razorpay deliveries never
-    send -- every genuine delivery failed MissingTimestampError. That
-    requirement is removed. Replay defence is now what the task asked for:
-    payment_events' own UNIQUE(provider, event_id) dedup
+    send, so every genuine delivery failed MissingTimestampError -- is
+    fixed; that requirement is removed. Replay defence is now what the
+    task asked for: payment_events' own UNIQUE(provider, event_id) dedup
     (reconciliation.apply_vendor_payment_event), not a header this
     provider does not document.
 
@@ -236,10 +236,17 @@ class RazorpayWebhookAdapter(ProviderAdapter):
     `created_at`, it is checked against a generous window and rejected
     only if OUT of it; if absent or non-numeric, no check runs and nothing
     is rejected for its absence.
+
+    `production_eligible` STAYS `False` even though the documented
+    header/signature/event-id logic is verified against Razorpay's docs:
+    "matches the documentation" and "has been proven against a real
+    delivery" are different claims, and only this codebase's OWN sandbox
+    run can establish the second one. No such run has happened yet. See
+    docs/runbooks/PROVIDERS.md for the exact bar that flips this to True.
     """
 
     name = "razorpay_webhook"
-    production_eligible = True
+    production_eligible = False
 
     def __init__(self, *, secret: Optional[str] = None,
                  max_age_s: Optional[int] = None):

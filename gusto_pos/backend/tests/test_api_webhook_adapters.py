@@ -303,11 +303,16 @@ class TestGetAdapterRegistry:
         with pytest.raises(ad.AdapterConfigError):
             ad.get_adapter("razorpay")
 
-    def test_razorpay_enabled_returns_a_production_eligible_adapter(self, monkeypatch):
+    def test_razorpay_enabled_returns_a_non_production_eligible_adapter(self, monkeypatch):
+        """production_eligible stays False until a real sandbox delivery
+        has been observed end to end (docs/runbooks/PROVIDERS.md) -- the
+        documented header/signature/event-id logic being verified against
+        Razorpay's docs is not the same claim as having been proven
+        against a real delivery."""
         monkeypatch.setattr(settings, "RAZORPAY_ADAPTER_ENABLED", True)
         adapter = ad.get_adapter("razorpay")
         assert isinstance(adapter, ad.RazorpayWebhookAdapter)
-        assert adapter.production_eligible is True
+        assert adapter.production_eligible is False
 
     def test_unknown_provider_raises(self):
         with pytest.raises(ad.AdapterConfigError):

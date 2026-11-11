@@ -68,14 +68,29 @@ the reconcile-fix-pass requirement ("check it against a generous window
 and reject only when it is present and out of window") without claiming
 documentation this task could not actually confirm.
 
-**`production_eligible` is now `True`** (was `False`): the only
-documented gap — the fabricated timestamp-header requirement — is fixed.
-The adapter is still gated behind `RAZORPAY_ADAPTER_ENABLED` (default
-`false`), which is a deployment decision, not a correctness one.
+**`production_eligible` is `False`, deliberately, and stays `False`
+until a real sandbox delivery has been observed end to end.** The
+fabricated timestamp-header requirement is fixed, and the header,
+signature algorithm, and event-id logic are all verified against
+Razorpay's own documentation (above) — but "matches the documentation"
+and "has been proven against a real delivery" are two different claims.
+No code in this repository has ever received an actual signed webhook
+from Razorpay's sandbox or production systems; every test here signs a
+synthetic body with a secret generated in-memory. **The bar to flip this
+to `True`:** a real Razorpay test/sandbox account delivers at least one
+genuine webhook to this adapter (via `RAZORPAY_WEBHOOK_SECRET` and
+`RAZORPAY_ADAPTER_ENABLED=true` pointed at a reachable endpoint), that
+delivery verifies and produces the expected `VerifiedEvent`, and that
+observation is recorded here with the date and the delivery's
+`x-razorpay-event-id`. Until then this flag is a documentation gap
+being honestly reported, not a correctness bug being fixed by flipping
+a boolean. The adapter is also still gated behind
+`RAZORPAY_ADAPTER_ENABLED` (default `false`), which is a separate,
+deployment-level decision.
 
 ## Status table
 
 | Provider | Header | Algorithm | Doc source | Verified | production_eligible |
 |---|---|---|---|---|---|
 | Cashfree | `x-webhook-signature` + `x-webhook-timestamp` | base64(HMAC-SHA256(timestamp+body)) | this repo's existing, shipped code | YES (pre-existing) | True |
-| Razorpay | `X-Razorpay-Signature` | hex(HMAC-SHA256(body)) | https://razorpay.com/docs/webhooks/validate-test/ | YES for signature + event-id; the old timestamp-header requirement (never in Razorpay's docs) is removed; optional `created_at` window check is UNVERIFIED against Razorpay's docs (best-effort, never rejects for absence) | True |
+| Razorpay | `X-Razorpay-Signature` | hex(HMAC-SHA256(body)) | https://razorpay.com/docs/webhooks/validate-test/ | YES for signature + event-id against the DOCS; NO real sandbox/production delivery has ever been observed; optional `created_at` window check is UNVERIFIED against Razorpay's docs (best-effort, never rejects for absence) | False — flips to True only after a real sandbox delivery is observed end to end (see above) |
