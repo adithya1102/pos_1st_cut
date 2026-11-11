@@ -116,6 +116,36 @@ label of your own (e.g. `k1`) for `SECRETS_ENC_KEY_ID`. Nothing in this
 repository ever prints, logs, or stores this value anywhere except as
 ciphertext.
 
+## Required production settings
+
+**`CUSTOMER_AUTH_ENABLED=false` and `OTP_STUB_MODE=false` must already be
+set on Render BEFORE this guard is deployed, otherwise production will not
+boot.**
+
+`validate_auth_posture` (`app/core/config.py`), called from `app/main.py`'s
+`on_startup` alongside the existing Cashfree guards, raises
+`AuthConfigError` and aborts startup whenever `OTP_STUB_MODE` and
+`CUSTOMER_AUTH_ENABLED` are **both** true outside a non-production
+environment. Both default to `true` (`config.py:13-14`), and neither is
+currently set on the production Render service — so the first deploy that
+includes this guard will refuse to start unless at least one of the two is
+set to `false` in the Render dashboard **first, in a deploy that precedes
+this one**:
+
+- `CUSTOMER_AUTH_ENABLED=false` — closes `POST /customer/auth/request-otp`
+  and `POST /customer/auth/verify-otp` (503) without touching
+  `POST /customer/auth/firebase` or `POST /customer/auth/google`, which are
+  independently gated by `FIREBASE_ENABLED`/`FIREBASE_PROJECT_ID` and are
+  what the shipped `customer_app` build uses by default.
+- `OTP_STUB_MODE=false` — makes `verify_otp` 501 instead of accepting the
+  literal stub code, as a second, independent closure of the same hole.
+
+Setting **both** is the safest production value and carries no known cost
+to either shipped app. Deploying the code in this commit onto a Render
+service that still has both variables at their default (unset, meaning
+`true`) will not result in a half-working deploy — it will refuse to boot
+at all, the same fail-closed shape as every other guard in this file.
+
 ## Render + Neon deploy order
 
 1. **Migrations 039, 040, 041 first**, against Neon, before any new code
