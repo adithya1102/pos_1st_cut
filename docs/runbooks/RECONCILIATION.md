@@ -145,6 +145,42 @@ ciphertext.
    credential set via `PUT /admin/vendor-gateway/outlets/{id}/
    credentials/{provider}`.
 
+## Neon connection strings
+
+The app passes `settings.DATABASE_URL` straight to `create_async_engine()`
+(`gusto_pos/backend/app/core/database.py:34-36`) with no `connect_args` and
+no SSL override anywhere in that call. `DATABASE_URL` is a required,
+untyped string field (`app/core/config.py:7`) — nothing in this codebase
+validates its scheme or query string before handing it to the driver. The
+driver is `asyncpg` (`gusto_pos/backend/requirements.txt:8` pins
+`asyncpg==0.31.0`; the local example in `.env.example:5` already uses the
+`+asyncpg` scheme).
+
+NO EVIDENCE in this codebase of an explicit `ssl=`/`sslmode=` default —
+whatever query string is in `DATABASE_URL` reaches the driver unmodified.
+The application and `psql` need two different forms of the same Neon
+string, because `sslmode` is a libpq/`psql` convention and the `asyncpg`
+driver does not accept a `sslmode` keyword (it raises `TypeError: connect()
+got an unexpected keyword argument 'sslmode'` if one reaches it):
+
+- **Application (async engine, `asyncpg` driver)** — scheme
+  `postgresql+asyncpg://`, query parameter `ssl=require` (NOT `sslmode`):
+  `postgresql+asyncpg://<user>:<password>@<host>/<db>?ssl=require`
+- **`psql` (libpq)** — scheme `postgresql://` (no `+asyncpg`), query
+  parameter `sslmode=require` (NOT `ssl`):
+  `postgresql://<user>:<password>@<host>/<db>?sslmode=require`
+
+**Exact edit from a Neon-issued string.** Neon's dashboard issues
+connection strings already in the second (libpq/`psql`) form above. To
+produce the first (application) form from that same string:
+1. Insert `+asyncpg` after `postgresql` → `postgresql+asyncpg://...`.
+2. Replace `sslmode=require` with `ssl=require` in the query string.
+
+Host, database name and credentials are identical between the two forms —
+only the scheme and the one query parameter name change. Never paste the
+credential portion of a real connection string into this or any other
+runbook — only the placeholder shape above.
+
 ## Rollback
 
 Each migration has a paired rollback script:
