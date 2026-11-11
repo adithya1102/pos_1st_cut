@@ -1,5 +1,9 @@
 # CASHFREE_ONLY cutover runbook
 
+> **SHELVED: Cashfree production onboarding was rejected; PREPAID cannot go
+> live; this runbook is retained for reference and must not be followed
+> until a payment provider is approved.**
+
 Cutting one outlet over to Cashfree as its only payment path. This document
 is the authority for the order of operations; the actual SQL lives in
 `docs/ops/cashfree_only_cutover.sql`, `docs/ops/cashfree_only_cutover_rollback.sql`
