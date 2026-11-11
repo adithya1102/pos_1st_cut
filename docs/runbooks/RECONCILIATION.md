@@ -4,6 +4,36 @@ Branch `reconcile` (from `payment-tab`). Everything in this layer is
 additive and OFF by default — a deploy that sets no new env var behaves
 exactly as `payment-tab` did.
 
+## Billing eligibility, per payment mode
+
+`charge_if_eligible` (`app/modules/carevo_payments/fee_ledger.py:66-69`)
+writes a `CHARGE` row for exactly one condition, applied uniformly to
+every mode: `customer_orders.status = 'COMPLETED'` (line 66, via
+`_BILLABLE_STATUSES = {"COMPLETED"}` at line 36) **AND**
+(`customer_orders.payment_status = 'PAID'` **OR**
+`customer_orders.vendor_payment_confirmed_at IS NOT NULL`) (line 67).
+What differs per mode is only WHICH function sets `payment_status =
+'PAID'`, and when, relative to the `COMPLETED` write:
+
+| Mode | Completion path (status → `COMPLETED`) | Payment-confirmed condition | Charged |
+|---|---|---|---|
+| `PREPAID` | `CarevoService.verify_pickup` — `app/modules/carevo_customer/service.py:4243` (def), write at line `4343` | `payment_status = 'PAID'`, set by `CarevoService.mark_paid` — `service.py:2779` (def), write at line `3003` (the gateway webhook/simulate path, BEFORE the order ever reaches pickup) | **YES** |
+| `UPI_MANUAL` | `CarevoService.verify_pickup` — `service.py:4243`, write at line `4343` (the non-gateway money guard at `service.py:4320-4335` refuses this transition unless `payment_status` is already `'PAID'`) | `payment_status = 'PAID'`, set by `CarevoService.record_pickup_payment` — `service.py:5070` (def), write at line `5124` — called from `AcceptanceService.accept` — `app/modules/carevo_customer/acceptance.py:233` (def), call site at line `377-378`, with `at_counter=False` (staff checked their own UPI app at ACCEPT time, before pickup) | **YES** |
+| `PAY_AT_PICKUP` | `CarevoService.collect_order` — `service.py:5156` (def), write at line `5234` | `payment_status = 'PAID'`, set by the SAME `CarevoService.record_pickup_payment` (`service.py:5070`/`5124`), called from `collect_order` itself with `at_counter=True`, in the SAME transaction as the `COMPLETED` write | **YES** |
+| any mode, vendor-direct gateway | `reconciliation.apply_vendor_payment_event` (Task 5) | `vendor_payment_confirmed_at IS NOT NULL`, set at `reconciliation.py` on an `APPLIED` outcome — orthogonal to `payment_mode` | **YES** |
+| `CANCELLED` / `ABANDONED` (rejected, expired, no-show) | none — `status` never reaches `COMPLETED` for these; see `_TERMINAL_STATUSES`, `service.py:89` | n/a | **NO** |
+| refunded after completion | `AdminService.mark_refund_done` (`app/modules/carevo_admin/service.py`) | a REVERSAL is written for an already-charged order, not a charge refusal — the charge was correct when written; the refund is a later fact (migration 041's header) | **NO** (new charge); existing charge is reversed |
+
+**Status per mode: STATED for all three (`PREPAID`, `UPI_MANUAL`,
+`PAY_AT_PICKUP`).** None contradicts "charged when `COMPLETED` and
+payment is confirmed (gateway-paid, vendor-confirmed, or collected at
+pickup)" — no code change was needed. `CANCELLED`/`ABANDONED` orders
+never reach `COMPLETED` at all (status is one value, structurally
+exclusive), so they are excluded without a separate check;
+`manual_refund_due` (the restaurant's own direct-UPI refund obligation)
+is written only alongside `status = 'CANCELLED'` in this codebase (inside
+`reject_order`), so it can never co-occur with a `COMPLETED` order either.
+
 ## Fix pass (post-independent-review)
 
 An independent review of this branch found several defects, since fixed
