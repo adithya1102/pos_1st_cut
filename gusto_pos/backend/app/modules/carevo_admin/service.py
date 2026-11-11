@@ -1597,11 +1597,15 @@ class AdminService:
         # SAVEPOINT so a ledger failure rolls back ONLY the attempted
         # reversal, never the refund-clear above.
         from app.modules.carevo_payments import fee_ledger as fl
-        try:
-            async with db.begin_nested():
-                await fl.reverse_if_charged(db, order_id, commit=False)
-        except Exception:
-            logger.warning("fee_ledger_reversal_failed order_id=%s", order_id)
+        # Gated here, not just inside reverse_if_charged: with the flag off
+        # this must issue zero extra SQL, not just skip the ledger write --
+        # a SAVEPOINT is itself a statement on the wire.
+        if settings.SERVICE_FEE_LEDGER_ENABLED:
+            try:
+                async with db.begin_nested():
+                    await fl.reverse_if_charged(db, order_id, commit=False)
+            except Exception:
+                logger.warning("fee_ledger_reversal_failed order_id=%s", order_id)
         await db.commit()
         return {"order_id": order_id, "already": False, "refund_required": False}
 

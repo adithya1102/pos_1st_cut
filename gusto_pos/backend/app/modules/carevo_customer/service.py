@@ -4360,13 +4360,19 @@ class CarevoService:
             # once they are flushed (autoflush does not reliably fire ahead
             # of a plain text() SELECT), and the flush must survive even if
             # the ledger write itself fails.
-            await db.flush()
-            try:
-                async with db.begin_nested():
-                    await fl.charge_if_eligible(db, order.id, commit=False)
-            except Exception:
-                logger.warning(
-                    "fee_ledger_charge_failed order_id=%s", order.id)
+            #
+            # Gated here, not just inside charge_if_eligible: with the flag
+            # off this block must issue NO extra SQL at all, not merely skip
+            # the ledger write -- a flush() and a SAVEPOINT are themselves
+            # statements on the wire.
+            if settings.SERVICE_FEE_LEDGER_ENABLED:
+                await db.flush()
+                try:
+                    async with db.begin_nested():
+                        await fl.charge_if_eligible(db, order.id, commit=False)
+                except Exception:
+                    logger.warning(
+                        "fee_ledger_charge_failed order_id=%s", order.id)
             await db.commit()
             await db.refresh(order)
             await CarevoService._broadcast_status(order, db)
@@ -5284,12 +5290,16 @@ class CarevoService:
         # the ORM object above, and charge_if_eligible reads it back via a
         # raw SQL SELECT, which must see the flushed value even if the
         # ledger write itself then fails.
-        await db.flush()
-        try:
-            async with db.begin_nested():
-                await fl.charge_if_eligible(db, order_id, commit=False)
-        except Exception:
-            logger.warning("fee_ledger_charge_failed order_id=%s", order_id)
+        #
+        # Gated here too, same reasoning as verify_pickup: with the flag off
+        # this must issue zero extra SQL, not just skip the ledger write.
+        if settings.SERVICE_FEE_LEDGER_ENABLED:
+            await db.flush()
+            try:
+                async with db.begin_nested():
+                    await fl.charge_if_eligible(db, order_id, commit=False)
+            except Exception:
+                logger.warning("fee_ledger_charge_failed order_id=%s", order_id)
         await db.commit()
         await db.refresh(order)
 
