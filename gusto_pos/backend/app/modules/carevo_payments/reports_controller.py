@@ -18,6 +18,7 @@ here. See docs/runbooks/RECONCILIATION.md's known limitations.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -49,6 +50,33 @@ async def admin_daily_report(
     if outlet_id is not None:
         return await rs.daily_report(db, outlet_id=outlet_id, date_str=date)
     return await rs.daily_report_all_outlets(db, date_str=date)
+
+
+@router.get("/admin/fee-ledger/uncharged")
+async def list_uncharged_completed(
+    outlet_id: Optional[uuid.UUID] = Query(None),
+    since: Optional[datetime] = Query(None),
+    _admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """COMPLETED, payment-confirmed orders with no CHARGE row yet (Task 3,
+    reconcile fix pass 2) -- a missed charge from a ledger failure, or any
+    order that completed while SERVICE_FEE_LEDGER_ENABLED was off."""
+    rows = await fl.find_uncharged_completed(db, outlet_id=outlet_id, since=since)
+    return {"count": len(rows), "orders": rows}
+
+
+@router.post("/admin/fee-ledger/charge-missing")
+async def run_charge_missing(
+    outlet_id: Optional[uuid.UUID] = Query(None),
+    since: Optional[datetime] = Query(None),
+    _admin: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Idempotently charge every order list_uncharged_completed finds.
+    No-op while SERVICE_FEE_LEDGER_ENABLED is false, same as every other
+    fee_ledger entry point."""
+    return await fl.charge_missing(db, outlet_id=outlet_id, since=since)
 
 
 class ReviewDecisionIn(BaseModel):

@@ -26,12 +26,16 @@ CarevoService.collect_order (service.py line ~5223).
 """
 from __future__ import annotations
 
+import logging
+from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 _BILLABLE_STATUSES = {"COMPLETED"}
 
@@ -133,6 +137,78 @@ async def advance_status(db: AsyncSession, entry_id, status: str,
         "SELECT fn_advance_fee_entry_status(:id, :status, :ref)"),
         {"id": str(entry_id), "status": status, "ref": invoice_ref})
     await db.commit()
+
+
+async def find_uncharged_completed(
+    db: AsyncSession, outlet_id=None, since: Optional[datetime] = None,
+) -> list[dict]:
+    """Orders that are COMPLETED and eligible per the Task 1 rule
+    (payment_status='PAID' OR vendor_payment_confirmed_at IS NOT NULL) but
+    have no CHARGE row in service_fee_ledger -- a missed charge from a
+    ledger failure, a flag that was off when the order completed and has
+    since been turned on, or any other gap. `outlet_id`/`since` narrow the
+    scan; both default to "every outlet, all time".
+    """
+    clauses = [
+        "co.status = 'COMPLETED'",
+        "(co.payment_status = 'PAID' OR co.vendor_payment_confirmed_at IS NOT NULL)",
+        "NOT EXISTS (SELECT 1 FROM service_fee_ledger sfl "
+        "WHERE sfl.order_id = co.id AND sfl.entry_type = 'CHARGE')",
+    ]
+    params: dict = {}
+    if outlet_id is not None:
+        clauses.append("co.outlet_id = :outlet_id")
+        params["outlet_id"] = str(outlet_id)
+    if since is not None:
+        clauses.append("co.updated_at >= :since")
+        params["since"] = since
+
+    rows = (await db.execute(text(f"""
+        SELECT co.id, co.outlet_id, co.updated_at
+          FROM customer_orders co
+         WHERE {' AND '.join(clauses)}
+         ORDER BY co.updated_at ASC
+    """), params)).fetchall()
+    return [
+        {"order_id": str(r[0]), "outlet_id": str(r[1]), "updated_at": r[2]}
+        for r in rows
+    ]
+
+
+async def charge_missing(db: AsyncSession, outlet_id=None,
+                          since: Optional[datetime] = None) -> dict:
+    """Idempotently charge every order find_uncharged_completed finds.
+
+    Flag-gated exactly like charge_if_eligible: a no-op while
+    SERVICE_FEE_LEDGER_ENABLED is false. Each order is charged inside its
+    OWN SAVEPOINT, so one order raising (a repeat of the same failure that
+    produced the gap, say) rolls back only that attempt and the sweep
+    continues with the rest rather than aborting the whole run.
+    """
+    if not settings.SERVICE_FEE_LEDGER_ENABLED:
+        return {"charged": 0, "already_charged": 0, "failed": 0,
+                "candidates": 0, "reason": "flag_off"}
+
+    candidates = await find_uncharged_completed(db, outlet_id=outlet_id, since=since)
+    charged = already_charged = failed = 0
+    for c in candidates:
+        try:
+            async with db.begin_nested():
+                result = await charge_if_eligible(db, c["order_id"], commit=False)
+        except Exception:
+            failed += 1
+            logger.warning(
+                "fee_ledger_sweep_charge_failed order_id=%s", c["order_id"])
+            continue
+        if result["charged"]:
+            charged += 1
+        elif result.get("reason") == "already_charged":
+            already_charged += 1
+        else:
+            failed += 1
+    await db.commit()
+    return {"charged": charged, "already_charged": already_charged,
+            "failed": failed, "candidates": len(candidates)}
 
 
 async def verify_chain(db: AsyncSession, outlet_id) -> dict:

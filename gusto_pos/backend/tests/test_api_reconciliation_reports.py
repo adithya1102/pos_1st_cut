@@ -102,14 +102,17 @@ class TestReportNumbersMatchSeededFixture:
         monkeypatch.setattr(settings, "SERVICE_FEE_LEDGER_ENABLED", True)
         outlet_id = seed["outlet_id"]
 
-        # 3 orders that day: 2 eligible (PICKED_UP/COMPLETED + PAID), 1 not
-        # (CREATED, never paid).
+        # 3 orders that day: 2 eligible (both COMPLETED + PAID -- 'PICKED_UP'
+        # is never a real customer_orders.status value, see Task 1 of the
+        # reconcile fix pass), 1 not (CREATED, never paid).
         o1 = await _insert_order(db, outlet_id=outlet_id, customer_id=seed["customer_id"],
                                   status="COMPLETED", payment_status="PAID")
         o2 = await _insert_order(db, outlet_id=outlet_id, customer_id=seed["customer_id"],
-                                  status="PICKED_UP", payment_status="PAID")
+                                  status="COMPLETED", payment_status="PAID")
         o3 = await _insert_order(db, outlet_id=outlet_id, customer_id=seed["customer_id"],
                                   status="CREATED", payment_status="PENDING")
+        o4 = await _insert_order(db, outlet_id=outlet_id, customer_id=seed["customer_id"],
+                                  status="COMPLETED", payment_status="PAID")
 
         # payment_events: 1 duplicate, 1 failed (IGNORED/status_failed),
         # 1 pending (IGNORED/status_pending), 1 amount-mismatch REVIEW.
@@ -144,14 +147,15 @@ class TestReportNumbersMatchSeededFixture:
         assert r.status_code == 200, r.text
         body = r.json()
 
-        assert body["total_orders"] == 3
-        assert body["verified_payments"] == 2       # o1, o2 PAID
+        assert body["total_orders"] == 4
+        assert body["verified_payments"] == 3        # o1, o2, o4 PAID
         assert body["failed"] == 1
         assert body["pending"] == 1
         assert body["mismatches"] == 1
         assert body["duplicates"] == 1
-        assert body["eligible_orders"] == 2          # o1, o2
-        assert body["fees_paise"] == 100              # 100 (o1) + 100 - 100 (o2 net 0)
+        assert body["eligible_orders"] == 3           # o1, o2, o4
+        assert body["fees_paise"] == 100               # 100 (o1) + 100 - 100 (o2 net 0)
+        assert body["completed_without_charge"] == 1  # o4: eligible, no CHARGE row
         assert body["basis"] == "verified payment evidence, not bank settlement"
 
 

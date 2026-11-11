@@ -44,12 +44,19 @@ SELECT
     (SELECT count(*) FROM day_events WHERE outcome = 'REVIEW' AND reason = 'amount_mismatch') AS mismatches,
     (SELECT count(*) FROM day_events WHERE outcome = 'DUPLICATE') AS duplicates,
     (SELECT count(*) FROM day_orders
-      WHERE upper(status) IN ('PICKED_UP', 'COMPLETED')
+      WHERE upper(status) = 'COMPLETED'
         AND (payment_status = 'PAID' OR vendor_payment_confirmed_at IS NOT NULL)
     ) AS eligible_orders,
     (SELECT coalesce(sum(
             CASE entry_type WHEN 'CHARGE' THEN amount_paise ELSE -amount_paise END
-        ), 0) FROM day_fees) AS fees_paise
+        ), 0) FROM day_fees) AS fees_paise,
+    (SELECT count(*) FROM day_orders d
+      WHERE upper(d.status) = 'COMPLETED'
+        AND (d.payment_status = 'PAID' OR d.vendor_payment_confirmed_at IS NOT NULL)
+        AND NOT EXISTS (
+            SELECT 1 FROM service_fee_ledger sfl
+             WHERE sfl.order_id = d.id AND sfl.entry_type = 'CHARGE')
+    ) AS completed_without_charge
 """
 
 
@@ -68,6 +75,7 @@ async def daily_report(db: AsyncSession, *, outlet_id, date_str: str) -> dict:
         "duplicates": row[5],
         "eligible_orders": row[6],
         "fees_paise": int(row[7]),
+        "completed_without_charge": row[8],
         "basis": BASIS,
     }
 
