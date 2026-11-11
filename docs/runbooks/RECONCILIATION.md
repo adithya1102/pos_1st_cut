@@ -181,6 +181,31 @@ only the scheme and the one query parameter name change. Never paste the
 credential portion of a real connection string into this or any other
 runbook — only the placeholder shape above.
 
+## Startup table creation
+
+`init_db()` (`gusto_pos/backend/app/core/database.py:40-42`) is a no-op:
+
+    async def init_db():
+        """No-op — schema is managed by reset_db.py."""
+        pass
+
+It creates NONE of the tables from migrations 039, 040 or 041
+(`payment_events`, `outlet_gateway_credentials`, `service_fee_ledger`) —
+and it creates none of the pre-existing base tables either. Schema creation
+for every table in this codebase, old and new, happens only through the
+numbered `migrations/*.sql` files (applied by hand against Neon) or through
+`tests/reset_test_db.py` (local `carevo_test` only).
+
+**Consequence for deploy order: migrations before code, always.** Nothing
+in `app/main.py`'s startup path (`on_startup`, `main.py:119-164`) creates a
+missing table or column. A code deploy that reads or writes
+`payment_events`, `outlet_gateway_credentials` or `service_fee_ledger`
+before migrations 039-041 have been applied against the target database
+fails at the first query that touches one of them, not at startup — there
+is no code-side fallback that builds the schema for you. This is the reason
+step 1 of "Render + Neon deploy order" above runs the migrations before
+step 2 deploys the code, not the other way around.
+
 ## Rollback
 
 Each migration has a paired rollback script:
