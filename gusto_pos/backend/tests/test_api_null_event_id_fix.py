@@ -51,7 +51,13 @@ class TestNullEventIdFallback:
         order_id = await _insert_order(
             db, outlet_id=seed["outlet_id"], customer_id=seed["customer_id"])
         event = _event(order_id, event_id=None, status="FAILED")
-        body_sha = rec.sha256_hex(b"a-failed-cashfree-webhook-body")
+        # The body content (not just the event_id) must be unique PER RUN:
+        # payment_events has UNIQUE(provider, event_id), the fallback id for
+        # a null event_id is "body:{sha256}" (see reconciliation.py), and
+        # nothing deletes rows mid-session -- a literal body like this
+        # collides with the row THIS SAME test left behind the last time the
+        # suite ran against this scratch DB without an intervening reset.
+        body_sha = rec.sha256_hex(f"a-failed-cashfree-webhook-body-{uuid.uuid4().hex}".encode())
 
         result = await rec.apply_vendor_payment_event(
             db, provider="cashfree", event=event, outlet_id=seed["outlet_id"],
@@ -71,7 +77,7 @@ class TestNullEventIdFallback:
             self, db, seed):
         order_id = await _insert_order(
             db, outlet_id=seed["outlet_id"], customer_id=seed["customer_id"])
-        body_sha = rec.sha256_hex(b"same-body-twice")
+        body_sha = rec.sha256_hex(f"same-body-twice-{uuid.uuid4().hex}".encode())
 
         first = await rec.apply_vendor_payment_event(
             db, provider="cashfree", event=_event(order_id, event_id=None),

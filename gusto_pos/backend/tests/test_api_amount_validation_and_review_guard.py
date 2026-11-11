@@ -52,11 +52,19 @@ class TestAmountValidation:
         order_id = await _insert_order(
             db, outlet_id=seed["outlet_id"], customer_id=seed["customer_id"],
             total_amount=100.0)
-        event = _event(order_id, event_id=f"evt-{label}", amount_paise=bad_amount)
+        # event_id (and the body hash below) must be unique PER RUN, not just
+        # per test: payment_events has UNIQUE(provider, event_id) and is
+        # never cleaned up mid-session, so a literal like "evt-negative"
+        # collides with the row THIS SAME test left behind the last time the
+        # suite ran against this scratch DB without an intervening reset,
+        # and apply_vendor_payment_event correctly reports that as DUPLICATE
+        # instead of applying this run's logic.
+        unique = uuid.uuid4().hex[:8]
+        event = _event(order_id, event_id=f"evt-{label}-{unique}", amount_paise=bad_amount)
 
         result = await rec.apply_vendor_payment_event(
             db, provider="cashfree", event=event, outlet_id=seed["outlet_id"],
-            body_sha256=rec.sha256_hex(label.encode()))
+            body_sha256=rec.sha256_hex(f"{label}-{unique}".encode()))
 
         assert result["outcome"] == rec.OUTCOME_REVIEW
         assert result["reason"] == "AMOUNT_INVALID"
@@ -69,22 +77,24 @@ class TestAmountValidation:
         order_id = await _insert_order(
             db, outlet_id=seed["outlet_id"], customer_id=seed["customer_id"],
             total_amount=100.0)
-        event = _event(order_id, event_id="evt-valid", amount_paise=10000)
+        unique = uuid.uuid4().hex[:8]
+        event = _event(order_id, event_id=f"evt-valid-{unique}", amount_paise=10000)
 
         result = await rec.apply_vendor_payment_event(
             db, provider="cashfree", event=event, outlet_id=seed["outlet_id"],
-            body_sha256=rec.sha256_hex(b"valid"))
+            body_sha256=rec.sha256_hex(f"valid-{unique}".encode()))
         assert result["outcome"] == rec.OUTCOME_APPLIED
 
     async def test_max_int32_amount_is_accepted_as_valid_magnitude(self, db, seed):
         order_id = await _insert_order(
             db, outlet_id=seed["outlet_id"], customer_id=seed["customer_id"],
             total_amount=21474836.47)
-        event = _event(order_id, event_id="evt-max", amount_paise=2147483647)
+        unique = uuid.uuid4().hex[:8]
+        event = _event(order_id, event_id=f"evt-max-{unique}", amount_paise=2147483647)
 
         result = await rec.apply_vendor_payment_event(
             db, provider="cashfree", event=event, outlet_id=seed["outlet_id"],
-            body_sha256=rec.sha256_hex(b"max"))
+            body_sha256=rec.sha256_hex(f"max-{unique}".encode()))
         assert result["outcome"] == rec.OUTCOME_APPLIED
 
 

@@ -47,6 +47,17 @@ async def _order_row(db, order_id) -> dict:
     }
 
 
+def _unique(tag: str) -> str:
+    """A fresh per-call suffix. payment_events has UNIQUE(provider, event_id)
+    and nothing deletes rows mid-session, so a literal id like "evt-mismatch"
+    collides with the row THIS SAME test left behind the last time the suite
+    ran against this scratch DB without an intervening reset -- and
+    apply_vendor_payment_event correctly reports that as DUPLICATE instead of
+    applying this run's logic. Every event_id/body here must be unique per
+    RUN, not just per test."""
+    return f"{tag}-{uuid.uuid4().hex[:8]}"
+
+
 def _paid_event(order_id, *, event_id, amount_paise=10000, provider="cashfree") -> VerifiedEvent:
     return VerifiedEvent(
         provider=provider, event_id=event_id, order_ref=order_id,
@@ -60,20 +71,23 @@ class TestSequentialDuplicate:
     async def test_second_delivery_of_the_same_event_is_duplicate(self, db, seed):
         order_id = await _insert_order(
             db, outlet_id=seed["outlet_id"], customer_id=seed["customer_id"])
-        event = _paid_event(order_id, event_id="evt-seq-dup")
+        event_id = _unique("evt-seq-dup")
+        body = _unique("body").encode()
+        event = _paid_event(order_id, event_id=event_id)
 
         first = await rec.apply_vendor_payment_event(
             db, provider="cashfree", event=event, outlet_id=seed["outlet_id"],
-            body_sha256=rec.sha256_hex(b"body-1"))
+            body_sha256=rec.sha256_hex(body))
         assert first["outcome"] == rec.OUTCOME_APPLIED
 
         second = await rec.apply_vendor_payment_event(
             db, provider="cashfree", event=event, outlet_id=seed["outlet_id"],
-            body_sha256=rec.sha256_hex(b"body-1"))
+            body_sha256=rec.sha256_hex(body))
         assert second["outcome"] == rec.OUTCOME_DUPLICATE
 
         count = await db.scalar(text(
-            "SELECT count(*) FROM payment_events WHERE provider='cashfree' AND event_id='evt-seq-dup'"))
+            "SELECT count(*) FROM payment_events WHERE provider='cashfree' AND event_id=:eid"),
+            {"eid": event_id})
         assert count == 1
 
         row = await _order_row(db, order_id)
@@ -85,21 +99,24 @@ class TestConcurrentDuplicate:
     async def test_two_concurrent_deliveries_produce_one_applied_one_duplicate(self, db, seed):
         order_id = await _insert_order(
             db, outlet_id=seed["outlet_id"], customer_id=seed["customer_id"])
+        event_id = _unique("evt-concurrent")
+        body = _unique("concurrent-body").encode()
 
         async def _deliver():
             async with AsyncSessionLocal() as session:
-                event = _paid_event(order_id, event_id="evt-concurrent")
+                event = _paid_event(order_id, event_id=event_id)
                 return await rec.apply_vendor_payment_event(
                     session, provider="cashfree", event=event,
                     outlet_id=seed["outlet_id"],
-                    body_sha256=rec.sha256_hex(b"concurrent-body"))
+                    body_sha256=rec.sha256_hex(body))
 
         r1, r2 = await asyncio.gather(_deliver(), _deliver())
         outcomes = sorted([r1["outcome"], r2["outcome"]])
         assert outcomes == [rec.OUTCOME_APPLIED, rec.OUTCOME_DUPLICATE]
 
         count = await db.scalar(text(
-            "SELECT count(*) FROM payment_events WHERE provider='cashfree' AND event_id='evt-concurrent'"))
+            "SELECT count(*) FROM payment_events WHERE provider='cashfree' AND event_id=:eid"),
+            {"eid": event_id})
         assert count == 1
 
         row = await _order_row(db, order_id)
@@ -114,14 +131,14 @@ class TestAlreadyPaidDifferentEvent:
 
         first = await rec.apply_vendor_payment_event(
             db, provider="cashfree",
-            event=_paid_event(order_id, event_id="evt-first"),
-            outlet_id=seed["outlet_id"], body_sha256=rec.sha256_hex(b"first"))
+            event=_paid_event(order_id, event_id=_unique("evt-first")),
+            outlet_id=seed["outlet_id"], body_sha256=rec.sha256_hex(_unique("first").encode()))
         assert first["outcome"] == rec.OUTCOME_APPLIED
 
         second = await rec.apply_vendor_payment_event(
             db, provider="cashfree",
-            event=_paid_event(order_id, event_id="evt-second", amount_paise=10000),
-            outlet_id=seed["outlet_id"], body_sha256=rec.sha256_hex(b"second"))
+            event=_paid_event(order_id, event_id=_unique("evt-second"), amount_paise=10000),
+            outlet_id=seed["outlet_id"], body_sha256=rec.sha256_hex(_unique("second").encode()))
         assert second["outcome"] == rec.OUTCOME_REVIEW
         assert second["reason"] == "already_paid_different_event"
 
@@ -154,8 +171,8 @@ class TestCrossOutlet:
 
         result = await rec.apply_vendor_payment_event(
             db, provider="cashfree",
-            event=_paid_event(order_id, event_id="evt-cross-outlet"),
-            outlet_id=other_outlet, body_sha256=rec.sha256_hex(b"cross-outlet"))
+            event=_paid_event(order_id, event_id=_unique("evt-cross-outlet")),
+            outlet_id=other_outlet, body_sha256=rec.sha256_hex(_unique("cross-outlet").encode()))
         assert result["outcome"] == rec.OUTCOME_REVIEW
         assert result["reason"] == "order_belongs_to_another_outlet"
 
@@ -172,8 +189,8 @@ class TestAmountMismatch:
 
         result = await rec.apply_vendor_payment_event(
             db, provider="cashfree",
-            event=_paid_event(order_id, event_id="evt-mismatch", amount_paise=9000),
-            outlet_id=seed["outlet_id"], body_sha256=rec.sha256_hex(b"mismatch"))
+            event=_paid_event(order_id, event_id=_unique("evt-mismatch"), amount_paise=9000),
+            outlet_id=seed["outlet_id"], body_sha256=rec.sha256_hex(_unique("mismatch").encode()))
         assert result["outcome"] == rec.OUTCOME_REVIEW
         assert result["reason"] == "amount_mismatch"
 
@@ -190,8 +207,8 @@ class TestPaymentAfterCancellation:
 
         result = await rec.apply_vendor_payment_event(
             db, provider="cashfree",
-            event=_paid_event(order_id, event_id="evt-after-cancel"),
-            outlet_id=seed["outlet_id"], body_sha256=rec.sha256_hex(b"after-cancel"))
+            event=_paid_event(order_id, event_id=_unique("evt-after-cancel")),
+            outlet_id=seed["outlet_id"], body_sha256=rec.sha256_hex(_unique("after-cancel").encode()))
         assert result["outcome"] == rec.OUTCOME_REVIEW
         assert result["reason"] == "payment_after_cancellation"
 
