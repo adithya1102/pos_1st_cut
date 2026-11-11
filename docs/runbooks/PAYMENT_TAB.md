@@ -54,8 +54,12 @@ checked before this release's three-mode logic is even reached.
 ## Migrations that must be applied first
 
 Migrations 034 through 038 must already be applied before this release goes
-out (run `python tests/reset_test_db.py` to verify locally — it applies all
-38 and prints the count):
+out (run `python tests/reset_test_db.py` to verify locally — it applies
+every file in `migrations/` and prints the count; the `migrations/` directory
+on this branch has grown to 41 files since this runbook was written, so the
+printed count is 41, not 38. `tests/reset_test_db.py:34`'s own docstring
+still says "001 through 038" — out of scope here, as it is a test script,
+not a documentation file):
 
 | Migration | What it adds |
 |---|---|

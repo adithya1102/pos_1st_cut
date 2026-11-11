@@ -53,7 +53,7 @@ resolve correctly:
   `true` default. Skipping it means every new signup after this point is
   Cashfree-unlocked by accident.
 - **037** (`users.is_outlet_owner`) gates who may change an outlet's payment
-  settings at all — read in `app/modules/carevo_pos/deps.py:85`
+  settings at all — read in `app/modules/carevo_pos/deps.py:76`
   (`may_manage_outlet_settings`). Without it, the owner self-serve
   payment-settings route (the UI path an owner would otherwise use instead of
   this SQL runbook) has no authorization check to key on.
@@ -81,13 +81,18 @@ design — see that file's header comment):
   what adds it. Set to `true` only after every step below is complete.
 
 **Already-required Cashfree selector/credentials** (must already be correct
-before `CASHFREE_ONLY` is ever set `true` — `validate_cashfree_only_config`,
-`app/core/config.py`, refuses to start the process otherwise):
-- `PAYMENT_GATEWAY` (must equal `cashfree`)
-- `CASHFREE_APP_ID`
-- `CASHFREE_SECRET_KEY`
-- `CASHFREE_ENV` (`sandbox` or `production`)
-- `CASHFREE_NOTIFY_URL`
+before `CASHFREE_ONLY` is ever set `true`). `validate_cashfree_only_config`
+(`app/core/config.py:373-408`) refuses to start the process otherwise, but it
+only checks three of these five variables — `PAYMENT_GATEWAY`,
+`CASHFREE_APP_ID` and `CASHFREE_SECRET_KEY` (`config.py:396-408`). It does
+**not** check `CASHFREE_ENV` or `CASHFREE_NOTIFY_URL`; those two still must be
+correct for Cashfree to actually work, there is simply no startup guard
+enforcing them:
+- `PAYMENT_GATEWAY` (must equal `cashfree`) — enforced at startup
+- `CASHFREE_APP_ID` — enforced at startup
+- `CASHFREE_SECRET_KEY` — enforced at startup
+- `CASHFREE_ENV` (`sandbox` or `production`) — NOT enforced at startup; wrong value fails silently
+- `CASHFREE_NOTIFY_URL` — NOT enforced at startup; wrong value fails silently
 
 **Fail-closed gateway posture (new; applies whether `CASHFREE_ONLY` is on or
 off — `validate_gateway_startup_posture`, `app/core/config.py`):**
