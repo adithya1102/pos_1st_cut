@@ -94,7 +94,16 @@ class TestOtpFlowUsesTheHelper:
         """Rule 8: a value the helper cannot read (legacy fixtures, odd test
         data) must flow through exactly as before — stored verbatim, matched
         exactly — rather than being rejected."""
-        raw = f"+9199{uuid.uuid4().hex[:8]}"  # hex letters: not a mobile
+        # DETERMINISTICALLY unreadable: at most six digits can appear, so the
+        # last-ten-digits rule can never find a 10-digit number here however
+        # the random part falls.
+        #
+        # This was "+9199" + hex[:8], which was unreadable only when the hex
+        # happened to contain letters in the right places — strip the letters
+        # out of "+91997dd26588" and exactly ten valid digits remain
+        # (9199726588), so the helper read it as a real mobile and the test
+        # failed on roughly one seed in a handful.
+        raw = f"legacy-{uuid.uuid4().hex[:6]}"
         body = await self._verify(client, raw)
         stored = await db.scalar(text(
             "SELECT phone_number FROM customers WHERE id = :i"),
