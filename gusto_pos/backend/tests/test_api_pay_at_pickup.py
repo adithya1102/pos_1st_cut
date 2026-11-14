@@ -375,17 +375,25 @@ class TestVerifiedPhoneRequired:
                 "customer_auth": {"Authorization":
                                   f"Bearer {create_customer_token(str(cid))}"}}
 
-    async def test_not_offered_without_a_verified_phone(self, db, seed, phoneless):
+    async def test_offered_without_a_phone_but_flagged(self, db, seed, phoneless):
+        """TASK 3: no phone no longer withdraws the method — checkout collects
+        a contact number instead, and the detail list flags requires_phone."""
         await _set_methods(db, seed["outlet_id"], prepaid=True, pickup=True)
         cust = (await db.execute(text(
             "SELECT * FROM customers WHERE id = :i"),
             {"i": phoneless["customer_id"]})).first()
         methods = await CarevoService.payment_methods_for(
             db, seed["outlet_id"], cust)
-        assert methods == [PAY_PREPAID]
+        assert methods == [PAY_PREPAID, PAY_AT_PICKUP]
+        detail = await CarevoService.payment_methods_for(
+            db, seed["outlet_id"], cust, detail=True)
+        flags = {d["method"]: d["requires_phone"] for d in detail}
+        assert flags[PAY_AT_PICKUP] is True
 
-    async def test_forced_request_is_refused_with_a_usable_message(
+    async def test_request_without_a_number_is_422_phone_required(
             self, client, db, seed, phoneless):
+        """TASK 3: the refusal moved from 409 method-unavailable to a 422
+        naming exactly what checkout still has to collect."""
         await _set_methods(db, seed["outlet_id"], prepaid=True, pickup=True)
         r = await client.post(f"{API}/customer/orders",
                              headers=phoneless["customer_auth"], json={
@@ -393,7 +401,8 @@ class TestVerifiedPhoneRequired:
             "items": [{"menu_item_id": seed["menu_item_id"], "quantity": 1}],
             "payment_method": PAY_AT_PICKUP,
         })
-        assert r.status_code == 409, r.text
+        assert r.status_code == 422, r.text
+        assert r.json()["detail"]["error"] == "PHONE_REQUIRED"
         assert "mobile number" in r.json()["detail"]["message"]
 
 

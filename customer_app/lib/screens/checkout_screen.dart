@@ -153,6 +153,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   /// back and tapping Pay again does not re-ask.
   bool _contactConfirmed = false;
 
+  /// Canonical '+91…' contact number typed on ConfirmContactScreen by an
+  /// account with no phone on file (TASK 3). Null for every other account.
+  String? _contactPhone;
+
   /// Human label for a wire method value, for copy that names it.
   static String _methodLabel(String wire) => switch (wire) {
         'PAY_AT_PICKUP' => 'Pay at pickup',
@@ -878,6 +882,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       final ok = await Navigator.of(context).push<bool>(MaterialPageRoute(
         builder: (_) => ConfirmContactScreen(
           methodLabel: _methodLabel(chosen),
+          // A phone-less (Google-only) account types a number there (TASK 3);
+          // it comes back canonical and is sent as contact_phone below.
+          onContactPhone: (p) => _contactPhone = p,
           onConfirmed: () => Navigator.of(context).pop(true),
         ),
       ));
@@ -892,6 +899,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       final order = await context.read<OrderService>().createOrder(
             cart.toOrderPayload(
               paymentMethod: chosen,
+              // Only ever set for a non-prepaid order from a phone-less
+              // account (TASK 3); null otherwise, which the server reads as
+              // "use the account's phone" — the pre-existing behaviour.
+              contactPhone: chosen == 'PREPAID' ? null : _contactPhone,
               customerNotes: widget.customerNotes,
               transportMode: mode.wire,
               originLat: _originLat,

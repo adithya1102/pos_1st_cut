@@ -202,6 +202,18 @@ class MenuCategoryOut(BaseModel):
     items: list[MenuItemOut] = []
 
 
+class PaymentMethodDetailOut(BaseModel):
+    """One offered method plus what checkout still has to collect (TASK 3).
+
+    `requires_phone` is true when the method is offered to an account with no
+    phone on file — the app then collects a contact number and sends it as
+    CreateOrderIn.contact_phone. Additive: an installed build reads only the
+    plain `payment_methods` strings and never sees this list.
+    """
+    method: str
+    requires_phone: bool = False
+
+
 class MenuOut(BaseModel):
     outlet_id: uuid.UUID
     # Carried here too so the menu screen can offer the call button without a
@@ -217,6 +229,8 @@ class MenuOut(BaseModel):
     # open-order state and their no-show strikes. It is therefore the list
     # checkout should actually render.
     payment_methods: list[str] = []
+    # TASK 3: the same methods with their requires_phone flag. Additive.
+    payment_methods_detail: list[PaymentMethodDetailOut] = []
     categories: list[MenuCategoryOut] = []
 
 
@@ -258,6 +272,11 @@ class CreateOrderIn(BaseModel):
     # known-but-unavailable one. 'UPI_MANUAL' is reserved in the database CHECK
     # but is never offered, so asking for it is refused like any other.
     payment_method: Optional[str] = Field(None, max_length=20)
+    # Contact number for a pay-at-pickup / direct-UPI order (TASK 3), for
+    # accounts with no phone on file (Google-only sign-ins). Normalized and
+    # validated server-side (app/core/phones.py); absent means "use the
+    # account's phone", which is exactly what every installed build does.
+    contact_phone: Optional[str] = Field(None, max_length=20)
     # Optional POINTS_DISCOUNT coupon applied at checkout (migration 010).
     coupon_code: Optional[str] = Field(None, min_length=4, max_length=24)
     # Promotion applied at checkout (migration 016). Two ways in, because the

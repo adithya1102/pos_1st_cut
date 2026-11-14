@@ -1015,13 +1015,18 @@ class CarevoService:
                 })
         phone = (await db.execute(text(
             "SELECT phone_number FROM outlets WHERE id = :o"), {"o": str(outlet_id)})).scalar()
+        # Payment methods (034), resolved for THIS customer when there is
+        # one. This is the list checkout should render. The detail list
+        # (TASK 3) additionally says which methods need a contact phone
+        # collected at checkout; the plain string list stays untouched so an
+        # installed build keeps parsing exactly what it always has.
+        methods_detail = await CarevoService.payment_methods_for(
+            db, outlet_id, customer, detail=True)
         return {
             "outlet_id": outlet_id,
             "outlet_phone_number": (phone or "").strip() or None,
-            # Payment methods (034), resolved for THIS customer when there is
-            # one. This is the list checkout should render.
-            "payment_methods": await CarevoService.payment_methods_for(
-                db, outlet_id, customer),
+            "payment_methods": [d["method"] for d in methods_detail],
+            "payment_methods_detail": methods_detail,
             "categories": [cats[k] for k in order],
         }
 
@@ -1260,8 +1265,9 @@ class CarevoService:
     # --------------------- Payment methods (migration 034) ------------------
     @staticmethod
     async def payment_methods_for(
-        db: AsyncSession, outlet_id, customer: Optional[Customer] = None
-    ) -> list[str]:
+        db: AsyncSession, outlet_id, customer: Optional[Customer] = None,
+        *, detail: bool = False,
+    ) -> list:
         """Which payment methods this outlet can offer THIS customer, in order.
 
         THE one place that decision is made. create_order refuses anything this
@@ -1313,9 +1319,12 @@ class CarevoService:
         # PREPAID — or nothing, if it isn't unlocked. Default false; this
         # branch is unreachable until the switch is set.
         if settings.CASHFREE_ONLY:
-            return ([PAY_PREPAID]
-                    if prepaid_on and cashfree_unlocked and _gateway_can_charge()
-                    else [])
+            offered = ([PAY_PREPAID]
+                       if prepaid_on and cashfree_unlocked and _gateway_can_charge()
+                       else [])
+            if detail:
+                return [{"method": m, "requires_phone": False} for m in offered]
+            return offered
 
         methods: list[str] = []
 
@@ -1330,20 +1339,22 @@ class CarevoService:
         if prepaid_on and cashfree_unlocked and _gateway_can_charge():
             methods.append(PAY_PREPAID)
 
-        # Both customer-side methods need a VERIFIED PHONE, and for the same
-        # reason: the restaurant is going to ring them (pay-at-pickup) or has
-        # to be able to chase a payment that did not arrive (direct UPI). A
-        # Google-only account has no phone (migration 008) and is offered
-        # prepaid instead.
+        # Both customer-side methods need a phone the restaurant can ring
+        # (pay-at-pickup) or chase a payment on (direct UPI) — but since
+        # TASK 3 a MISSING phone no longer withdraws the method. The method
+        # stays offered, flagged requires_phone, and POST /orders collects a
+        # `contact_phone` at checkout (422 PHONE_REQUIRED without one). Only
+        # the abuse gates (open order, strikes, false claims) still withdraw.
         has_phone = (customer is not None
                      and bool((customer.phone_number or "").strip()))
+        needs_phone = customer is not None and not has_phone
 
         if pickup_on:
             if customer is None:
                 # CAPABILITY ONLY — the discovery list has no customer, so it
                 # reports what the outlet offers, not what this person may use.
                 methods.append(PAY_AT_PICKUP)
-            elif has_phone:
+            else:
                 blocked = await CarevoService._open_pickup_order_id(db, customer)
                 strikes = await CarevoService._no_show_count(db, customer)
                 if blocked is None and strikes < NO_SHOW_STRIKE_LIMIT:
@@ -1360,11 +1371,16 @@ class CarevoService:
         if upi_on:
             if customer is None:
                 methods.append(PAY_UPI_MANUAL)
-            elif has_phone:
+            else:
                 claims = await CarevoService._false_claim_count(db, customer)
                 if claims < FALSE_CLAIM_STRIKE_LIMIT:
                     methods.append(PAY_UPI_MANUAL)
 
+        if detail:
+            return [{
+                "method": m,
+                "requires_phone": needs_phone and m in _NON_GATEWAY_METHODS,
+            } for m in methods]
         return methods
 
     @staticmethod
@@ -1610,6 +1626,69 @@ class CarevoService:
         # contact snapshot, no scheduling, and the open-order cap.
         non_gateway = payment_mode in _NON_GATEWAY_METHODS
 
+        # CONTACT PHONE (TASK 3). Both non-gateway methods need a number the
+        # restaurant can ring. An account with one on file keeps the exact
+        # snapshot behaviour it always had; an account without one (Google-only
+        # sign-in) must send `contact_phone`, which is validated against the
+        # one shared rule (app/core/phones.py), stored canonically on the
+        # order, and — when no other account owns it — adopted as the
+        # account's number. A number another account owns is refused 409
+        # rather than silently joining two people's order histories.
+        contact_override = None
+        if non_gateway:
+            sent = (getattr(payload, "contact_phone", None) or "").strip()
+            account_phone = (customer.phone_number or "").strip()
+            if sent:
+                try:
+                    contact_override = canonical_in_mobile(sent)
+                except PhoneValidationError:
+                    raise HTTPException(
+                        status_code=422,
+                        detail={
+                            "error": "PHONE_REQUIRED",
+                            "message": (
+                                "Enter a 10-digit Indian mobile number "
+                                "(it starts with 6-9)."
+                            ),
+                        },
+                    )
+            elif not account_phone:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "error": "PHONE_REQUIRED",
+                        "message": (
+                            "Add a mobile number so the restaurant can "
+                            "reach you about this order."
+                        ),
+                    },
+                )
+            if contact_override and not account_phone:
+                owner_row = (await db.execute(
+                    select(Customer.id).where(
+                        Customer.phone_number.in_(
+                            in_mobile_variants(contact_override)),
+                        Customer.id != customer.id,
+                    ))).first()
+                if owner_row is not None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "error": "PHONE_IN_USE",
+                            "message": (
+                                "That mobile number is already linked to "
+                                "another account. Sign in with that number, "
+                                "or use a different one."
+                            ),
+                        },
+                    )
+                # Adopt it: same transaction as the order, so a failed order
+                # does not leave a half-claimed number behind.
+                await db.execute(text(
+                    "UPDATE customers SET phone_number = :p WHERE id = :i"),
+                    {"p": contact_override, "i": str(customer.id)})
+                customer.phone_number = contact_override
+
         # SCHEDULED PICKUP IS NOT AVAILABLE FOR PAY AT PICKUP (migration 034).
         #
         # Refused rather than quietly accepted, because quietly accepted is
@@ -1780,9 +1859,11 @@ class CarevoService:
             # Snapshotted for BOTH non-gateway modes (035). A direct-UPI order
             # needs it too: if the money does not arrive, or arrives short, the
             # restaurant has to be able to reach the person who claimed to have
-            # sent it.
+            # sent it. A checkout-supplied contact (TASK 3, already validated
+            # and canonical) wins over the account snapshot.
             "cname": (customer.name or None) if non_gateway else None,
-            "cphone": (customer.phone_number or None) if non_gateway else None,
+            "cphone": (contact_override or customer.phone_number or None)
+                      if non_gateway else None,
             # call_state is PAY-AT-PICKUP ONLY. Nobody rings a direct-UPI
             # customer as part of the flow — the restaurant checks its own UPI
             # app — so leaving it NULL is what keeps "is there a call to make"

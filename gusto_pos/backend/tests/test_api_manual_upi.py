@@ -188,7 +188,10 @@ class TestResolverWithThreeFlags:
         assert await CarevoService.payment_methods_for(
             db, seed["outlet_id"]) == expected
 
-    async def test_upi_withdrawn_without_a_verified_phone(self, db, seed):
+    async def test_upi_stays_offered_without_a_phone_but_flagged(self, db, seed):
+        """TASK 3: a phone-less account KEEPS the method — checkout collects a
+        contact number instead (contact_phone, 422 PHONE_REQUIRED without
+        one) — and the detail list flags it requires_phone."""
         from app.modules.carevo_customer.deps import create_customer_token
         cid = uuid.uuid4()
         await db.execute(text("""
@@ -203,7 +206,13 @@ class TestResolverWithThreeFlags:
             "SELECT * FROM customers WHERE id = :i"), {"i": str(cid)})).first()
         methods = await CarevoService.payment_methods_for(
             db, seed["outlet_id"], cust)
-        assert methods == [PAY_PREPAID], "no phone, no direct UPI"
+        assert methods == [PAY_PREPAID, PAY_UPI_MANUAL], (
+            "no phone no longer withdraws direct UPI (TASK 3)")
+        detail = await CarevoService.payment_methods_for(
+            db, seed["outlet_id"], cust, detail=True)
+        flags = {d["method"]: d["requires_phone"] for d in detail}
+        assert flags[PAY_UPI_MANUAL] is True
+        assert flags[PAY_PREPAID] is False
 
     async def test_upi_withdrawn_after_two_false_claims(self, db, seed):
         """false_claim_count, NOT no_show_count: a UPI order is paid before the

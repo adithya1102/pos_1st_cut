@@ -411,6 +411,7 @@ class CartState extends ChangeNotifier {
     DateTime? declaredArrivalAt,
     DateTime? requestedPickupAt,
     String? paymentMethod,
+    String? contactPhone,
   }) =>
       {
         'outlet_id': _outlet?.id,
@@ -421,6 +422,11 @@ class CartState extends ChangeNotifier {
         // meaning what it always meant. Checkout always sends it now, because
         // the outlet may not offer prepaid at all.
         'payment_method': ?paymentMethod,
+        // Contact number for a non-prepaid order from a phone-less account
+        // (TASK 3). Omitted when null — an absent field means "use the
+        // account's phone", exactly what every build before this one sent.
+        if (contactPhone != null && contactPhone.trim().isNotEmpty)
+          'contact_phone': contactPhone.trim(),
         'items': _items.map((i) => i.toOrderItemJson()).toList(),
         if (customerNotes != null && customerNotes.trim().isNotEmpty)
           'customer_notes': customerNotes.trim(),

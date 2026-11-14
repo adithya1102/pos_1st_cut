@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../services/api_client.dart';
+import '../utils/in_mobile.dart';
 import '../services/customer_service.dart';
 import '../state/auth_state.dart';
 import '../theme/app_colors.dart';
@@ -39,10 +41,18 @@ class ConfirmContactScreen extends StatefulWidget {
     required this.onConfirmed,
     this.methodLabel = 'Pay at pickup',
     this.onVerifyPhone,
+    this.onContactPhone,
   });
 
   /// Called once the name is settled and the customer has confirmed.
   final VoidCallback onConfirmed;
+
+  /// Receives the canonical '+91…' contact number when the ACCOUNT has none
+  /// (TASK 3): a Google-only sign-in types one here, validated by the shared
+  /// rule, and checkout sends it as `contact_phone`. Never called for an
+  /// account that already has a verified phone — that number stays read-only
+  /// (see the class docstring) and the server snapshots it as before.
+  final ValueChanged<String>? onContactPhone;
 
   /// What the customer chose, echoed so this screen is not a context-free
   /// interruption between tapping Pay and anything happening.
@@ -59,8 +69,14 @@ class ConfirmContactScreen extends StatefulWidget {
 
 class _ConfirmContactScreenState extends State<ConfirmContactScreen> {
   late final TextEditingController _name;
+  final _phone = TextEditingController();
   bool _saving = false;
   String? _error;
+
+  /// True when the signed-in account has no verified phone — the one case
+  /// the screen asks for a number instead of showing one (TASK 3).
+  bool get _needsPhone =>
+      (context.read<AuthState>().customer?.phoneNumber ?? '').trim().isEmpty;
 
   @override
   void initState() {
@@ -72,6 +88,7 @@ class _ConfirmContactScreenState extends State<ConfirmContactScreen> {
   @override
   void dispose() {
     _name.dispose();
+    _phone.dispose();
     super.dispose();
   }
 
@@ -80,6 +97,19 @@ class _ConfirmContactScreenState extends State<ConfirmContactScreen> {
     if (typed.isEmpty) {
       setState(() => _error = 'Please enter a name for the order.');
       return;
+    }
+
+    // The contact number, for an account with none on file. Validated by the
+    // shared rule and handed back canonical, so checkout sends exactly what
+    // the server will store.
+    if (_needsPhone) {
+      final canonical = canonicalInMobile(_phone.text);
+      if (canonical == null) {
+        setState(() => _error =
+            'Enter a 10-digit mobile number (it starts with 6-9).');
+        return;
+      }
+      widget.onContactPhone?.call(canonical);
     }
 
     final auth = context.read<AuthState>();
@@ -144,6 +174,33 @@ class _ConfirmContactScreenState extends State<ConfirmContactScreen> {
             ),
             const SizedBox(height: 16),
 
+            if (phone.isEmpty) ...[
+              // No verified number on the account (Google-only sign-in):
+              // the restaurant still needs one to ring, so ask for it here
+              // (TASK 3). Numeric keypad; the shared rule validates on
+              // Confirm. The permissive formatter (digits, +, space, dash,
+              // 18 chars) deliberately mirrors the login field — a stricter
+              // digits-only+maxLength pair silently corrupts autofilled
+              // "+91 98765 43210" (see login_screen.dart's autofill note).
+              NeoTextField(
+                key: const Key('confirm_contact_phone_field'),
+                controller: _phone,
+                labelText: 'Mobile number for this order',
+                hintText: '10-digit mobile number',
+                keyboardType: TextInputType.phone,
+                maxLength: 18,
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[0-9+\-\s]')),
+                ],
+                onChanged: (_) => setState(() => _error = null),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'The restaurant will call this number about your order.',
+                key: const Key('confirm_contact_phone_ask_note'),
+                style: textTheme.bodySmall?.copyWith(color: c.inkSoft),
+              ),
+            ] else ...[
             // READ-ONLY, by design. See the class docstring.
             NeoCard(
               key: const Key('confirm_contact_phone'),
@@ -181,6 +238,7 @@ class _ConfirmContactScreenState extends State<ConfirmContactScreen> {
               key: const Key('confirm_contact_phone_note'),
               style: textTheme.bodySmall?.copyWith(color: c.inkSoft),
             ),
+            ], // end else (account has a phone)
 
             if (_error != null) ...[
               const SizedBox(height: 16),
