@@ -3,6 +3,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:provider/single_child_widget.dart';
 
 import 'config/app_config.dart';
 import 'services/api_client.dart';
@@ -50,6 +51,48 @@ Future<void> main() async {
   runApp(GustoOwnerApp(apiClient: apiClient));
 }
 
+/// The app's provider list, shared by [main] and by widget tests that need
+/// the real tree rather than a hand-picked subset — a subset is exactly how
+/// the OutletService gap (missing from this list, see payment_modes_screen.dart
+/// and payment_tab_screen.dart) went unnoticed by the existing test suite.
+List<SingleChildWidget> buildAppProviders(ApiClient apiClient) {
+  // One instance, shared between HomeState's constructor and its own
+  // Provider — PaymentModesScreen and PaymentTabScreen look this up directly
+  // via context.read<OutletService>() and need it exposed on its own, not
+  // just buried inside HomeState's constructor arguments.
+  final outletService = OutletService(apiClient);
+  return [
+    ChangeNotifierProvider(
+      create: (_) => AuthState(AuthService(apiClient))..bootstrap(),
+    ),
+    Provider<OutletService>.value(value: outletService),
+    ChangeNotifierProvider(
+      create: (_) => HomeState(
+        outletService,
+        MenuService(apiClient),
+      ),
+    ),
+    ChangeNotifierProvider(
+      create: (_) => OrdersState(OrderService(apiClient)),
+    ),
+    ChangeNotifierProvider(
+      create: (_) => OffersState(OfferService(apiClient)),
+    ),
+    // Not a ChangeNotifier — it holds no UI state, it just registers this
+    // device's token after login and clears it on logout.
+    Provider(
+      create: (_) => StaffPushService(OrderService(apiClient)),
+    ),
+    // Registered app-wide, exactly as customer_app registers it: the
+    // one-prompt latch inside is app-wide bookkeeping, and a per-screen
+    // instance would reset it and re-raise the OS dialog.
+    ChangeNotifierProvider<LocationService>(create: (_) => LocationService()),
+    // Menu photo import. Holds no state — it uploads and returns
+    // suggestions; the review screen owns them until they are approved.
+    Provider(create: (_) => MenuOcrService(apiClient)),
+  ];
+}
+
 class GustoOwnerApp extends StatelessWidget {
   final ApiClient apiClient;
 
@@ -58,35 +101,7 @@ class GustoOwnerApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
-      providers: [
-        ChangeNotifierProvider(
-          create: (_) => AuthState(AuthService(apiClient))..bootstrap(),
-        ),
-        ChangeNotifierProvider(
-          create: (_) => HomeState(
-            OutletService(apiClient),
-            MenuService(apiClient),
-          ),
-        ),
-        ChangeNotifierProvider(
-          create: (_) => OrdersState(OrderService(apiClient)),
-        ),
-        ChangeNotifierProvider(
-          create: (_) => OffersState(OfferService(apiClient)),
-        ),
-        // Not a ChangeNotifier — it holds no UI state, it just registers this
-        // device's token after login and clears it on logout.
-        Provider(
-          create: (_) => StaffPushService(OrderService(apiClient)),
-        ),
-        // Registered app-wide, exactly as customer_app registers it: the
-        // one-prompt latch inside is app-wide bookkeeping, and a per-screen
-        // instance would reset it and re-raise the OS dialog.
-        ChangeNotifierProvider<LocationService>(create: (_) => LocationService()),
-        // Menu photo import. Holds no state — it uploads and returns
-        // suggestions; the review screen owns them until they are approved.
-        Provider(create: (_) => MenuOcrService(apiClient)),
-      ],
+      providers: buildAppProviders(apiClient),
       child: MaterialApp(
         title: AppConfig.appName,
         debugShowCheckedModeBanner: false,
