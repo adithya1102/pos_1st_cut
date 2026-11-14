@@ -8,12 +8,20 @@ import '../state/orders_state.dart';
 import 'notify_section.dart';
 import 'verify_box.dart';
 
+/// Opens [uri] in whatever app handles it. Injectable so a widget test can
+/// observe the dial without a platform channel on the other end.
+typedef UriLauncher = Future<bool> Function(Uri uri);
+
 /// A single order in the queue. Anchored by order_id (short form shown).
 /// Tapping the header expands the detail IN PLACE — no navigation.
 class OrderCard extends StatefulWidget {
   final Order order;
 
-  const OrderCard({super.key, required this.order});
+  /// How the Call button opens the dialer. Defaults to url_launcher, which is
+  /// what every real build uses; a test passes a fake.
+  final UriLauncher? launcher;
+
+  const OrderCard({super.key, required this.order, this.launcher});
 
   @override
   State<OrderCard> createState() => _OrderCardState();
@@ -117,7 +125,7 @@ class _OrderCardState extends State<OrderCard> {
                 ? CrossFadeState.showSecond
                 : CrossFadeState.showFirst,
             firstChild: const SizedBox(width: double.infinity),
-            secondChild: _Detail(order: order),
+            secondChild: _Detail(order: order, launcher: widget.launcher),
           ),
         ],
       ),
@@ -127,8 +135,9 @@ class _OrderCardState extends State<OrderCard> {
 
 class _Detail extends StatelessWidget {
   final Order order;
+  final UriLauncher? launcher;
 
-  const _Detail({required this.order});
+  const _Detail({required this.order, this.launcher});
 
   @override
   Widget build(BuildContext context) {
@@ -149,7 +158,7 @@ class _Detail extends StatelessWidget {
           ],
           // Who to call, for the two modes that have a customer to reach.
           if (order.contactVisible) ...[
-            _ContactRow(order: order),
+            _ContactRow(order: order, launcher: launcher),
             const Divider(height: 24),
           ],
           _PaymentAction(order: order),
@@ -512,7 +521,7 @@ class _PaymentActionState extends State<_PaymentAction> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (order.isUpiManual)
+          if (order.isUpiManual) ...[
             // THE SENTENCE THAT MATTERS. Staff must check their own UPI app
             // for the EXACT amount — not trust the customer's word, which is
             // all payment_claimed_at is.
@@ -527,6 +536,29 @@ class _PaymentActionState extends State<_PaymentAction> {
                     ?.copyWith(color: theme.colorScheme.error),
               ),
             ),
+            // WHAT TO LOOK FOR, in the customer's own spelling: the payment
+            // in the UPI app carries this as its note, so it is the string
+            // that identifies which order a received amount belongs to.
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(
+                'Payment reference ${order.orderReference}',
+                key: const Key('upi_claim_reference'),
+                style: theme.textTheme.bodyMedium,
+              ),
+            ),
+            if (order.minutesSinceClaimed != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Text(
+                  order.minutesSinceClaimed == 0
+                      ? 'Claimed just now'
+                      : 'Claimed ${order.minutesSinceClaimed}m ago',
+                  key: const Key('upi_claim_time'),
+                  style: theme.textTheme.bodySmall,
+                ),
+              ),
+          ],
           if (order.isPayAtPickup && order.needsCall)
             Padding(
               padding: const EdgeInsets.only(bottom: 10),
@@ -892,30 +924,112 @@ class _StatusChip extends StatelessWidget {
 /// suppresses it once the visibility window closes and nulls it for good on
 /// redaction, so this widget never has to decide. [Order.contactVisible] is
 /// that answer.
-class _ContactRow extends StatelessWidget {
-  const _ContactRow({required this.order});
+class _ContactRow extends StatefulWidget {
+  const _ContactRow({required this.order, this.launcher});
 
   final Order order;
+  final UriLauncher? launcher;
 
-  Future<void> _call(BuildContext context) async {
-    final uri = order.telUri;
+  @override
+  State<_ContactRow> createState() => _ContactRowState();
+}
+
+class _ContactRowState extends State<_ContactRow>
+    with WidgetsBindingObserver {
+  /// True between opening the dialer and asking what happened. It is what
+  /// makes the question follow a CALL rather than any return to the app — a
+  /// resume after an unrelated trip to another app must not re-ask.
+  bool _awaitingOutcome = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _awaitingOutcome) {
+      _awaitingOutcome = false;
+      _askOutcome();
+    }
+  }
+
+  Future<void> _call() async {
+    final uri = widget.order.telUri;
     if (uri == null) return;
-    final ok = await launchUrl(uri);
-    if (!ok && context.mounted) {
+    final launch = widget.launcher ?? launchUrl;
+    final ok = await launch(uri);
+    if (!mounted) return;
+    if (!ok) {
+      // The dialer never opened, so there is no call to ask about.
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not open the dialer.')),
       );
+      return;
     }
-    if (context.mounted) {
-      // Record the attempt so the queue stops nagging and the customer-facing
-      // state moves to CALLED. Best-effort: a failed log must not stop a call
-      // that has already been placed.
-      await context.read<OrdersState>().logCall(order.orderId);
-    }
+    // NOTHING IS RECORDED YET. The attempt used to be logged here, which
+    // meant the counter measured TAPS: an accidental tap, or a tap by someone
+    // who then changed their mind, moved the order to CALLED. The answer to
+    // the dialog below is what records it.
+    _awaitingOutcome = true;
+  }
+
+  /// What happened on the call, asked when the app comes back.
+  ///
+  /// "Spoke to customer" and "Called, no answer" both send the ONE existing
+  /// request (POST /pos/orders/{id}/call → call_state='CALLED',
+  /// call_attempts+1). `call_state` only has PENDING / CALLED / UNREACHABLE
+  /// (migration 034), and UNREACHABLE is reachable solely by REJECTING the
+  /// order — so no existing value can record "nobody answered" on an order
+  /// that is still live, and distinguishing the two would need a migration.
+  /// The distinction is therefore in the question, not yet in the data.
+  Future<void> _askOutcome() async {
+    final outcome = await showDialog<String>(
+      context: context,
+      builder: (c) => AlertDialog(
+        key: const Key('call_outcome_dialog'),
+        title: const Text('How did the call go?'),
+        content: const Text(
+          'This is what the order records. Nothing is counted if you did '
+          'not ring them.',
+        ),
+        actions: [
+          TextButton(
+            key: const Key('call_outcome_did_not_call'),
+            onPressed: () => Navigator.pop(c, 'none'),
+            child: const Text('Did not call'),
+          ),
+          TextButton(
+            key: const Key('call_outcome_no_answer'),
+            onPressed: () => Navigator.pop(c, 'called'),
+            child: const Text('Called, no answer'),
+          ),
+          FilledButton(
+            key: const Key('call_outcome_spoke'),
+            onPressed: () => Navigator.pop(c, 'called'),
+            child: const Text('Spoke to customer'),
+          ),
+        ],
+      ),
+    );
+    // Dismissed without answering counts as nothing, same as "Did not call":
+    // the app must never assert a call it was not told about.
+    if (outcome != 'called' || !mounted) return;
+    // Best-effort: the call has already happened, and failing to log it must
+    // not look like a failure to call.
+    await context.read<OrdersState>().logCall(widget.order.orderId);
   }
 
   @override
   Widget build(BuildContext context) {
+    final order = widget.order;
     final theme = Theme.of(context);
     final name = order.contactFirstName?.trim();
     final phone = order.contactPhone?.trim();
@@ -943,9 +1057,12 @@ class _ContactRow extends StatelessWidget {
         if (order.telUri != null)
           FilledButton.tonalIcon(
             key: const Key('order_call_button'),
-            onPressed: () => _call(context),
+            // Dead when the stored number does not normalize: opening a
+            // dialer on it cannot connect, so the control is shown disabled
+            // rather than inviting a call that fails. See Order.canCall.
+            onPressed: order.canCall ? _call : null,
             icon: const Icon(Icons.call, size: 18),
-            label: Text(order.callAttempts > 0
+            label: Text(order.canCall && order.callAttempts > 0
                 ? 'Call again (${order.callAttempts})'
                 : 'Call'),
           ),

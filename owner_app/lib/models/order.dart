@@ -172,6 +172,18 @@ class Order {
   /// What is still owed. 0 once the money is recorded.
   double get amountDue => isPaid ? 0 : totalAmount;
 
+  /// The contact number in canonical +91 form, or null when the stored value
+  /// is not a usable Indian mobile.
+  ///
+  /// THE gate for the Call button: a number that cannot be dialed must not
+  /// present an action that opens a dialer on it, and must not carry an
+  /// attempt counter either — a count of calls to an unreachable number reads
+  /// as "we tried" when nothing could have connected.
+  String? get dialableNumber => canonicalInMobile(contactPhone ?? '');
+
+  /// True only when there is a number a dialer can actually use.
+  bool get canCall => dialableNumber != null;
+
   /// A `tel:` URI for the call button, or null when there is no number to dial.
   Uri? get telUri {
     final p = contactPhone?.trim();
@@ -263,6 +275,19 @@ class Order {
     return orderId.substring(orderId.length - 6);
   }
 
+  /// The reference the CUSTOMER was shown, in their exact spelling.
+  ///
+  /// The server builds it as `short_order_number(order.id)` — the last six hex
+  /// characters, dashes stripped, UPPER-CASED (carevo_customer/service.py:2309)
+  /// — and it travels in the UPI note, so this is the string that appears on
+  /// both parties' bank statements. The owner matches a payment against it,
+  /// which is why it is rendered in the same case rather than the lower-case
+  /// [shortId] used for the queue row's own label.
+  String get orderReference {
+    final hex = orderId.replaceAll('-', '').toUpperCase();
+    return hex.length <= 6 ? hex : hex.substring(hex.length - 6);
+  }
+
   /// [createdAt] as a local DateTime, or null when absent/unparseable.
   ///
   /// Local, not UTC: this is read off a tablet on a counter in one restaurant,
@@ -293,6 +318,18 @@ class Order {
     final at = placedAt;
     if (at == null) return null;
     final mins = DateTime.now().difference(at).inMinutes;
+    return mins < 0 ? 0 : mins;
+  }
+
+  /// Minutes since the customer said they had paid (direct UPI), or null when
+  /// there is no claim or the timestamp is unusable. Floored at zero on clock
+  /// skew, same convention as [minutesSincePlaced].
+  int? get minutesSinceClaimed {
+    final raw = paymentClaimedAt;
+    if (raw == null || raw.isEmpty) return null;
+    final at = DateTime.tryParse(raw);
+    if (at == null) return null;
+    final mins = DateTime.now().toUtc().difference(at.toUtc()).inMinutes;
     return mins < 0 ? 0 : mins;
   }
 
