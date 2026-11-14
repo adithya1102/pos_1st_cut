@@ -48,6 +48,30 @@ from tests.conftest import API
 VPA = "testrestaurant@okaxis"
 PAYEE = "Test Kitchen"
 
+#: Distinguishes "send no request body" from "send the JSON value null" in
+#: _claim below. The live apps send the former and must keep working.
+_NO_BODY = object()
+
+
+def _fresh_reference() -> str:
+    """A 12-digit UPI reference no other order can already be holding.
+
+    MINTED, NOT A CONSTANT, and that is not fussiness. 042's
+    ux_customer_orders_upi_reference is unique across the WHOLE table, while
+    the `seed` fixture only isolates each test's org/outlet/customer — the
+    order rows accumulate, and the scratch database is not dropped between
+    runs of the suite (tests/test_api_amount_validation_and_review_guard.py
+    says so in as many words). A hardcoded number therefore passes on a fresh
+    database and 409s on the second run, which is a test that fails for a
+    reason that has nothing to do with the code under test.
+    """
+    return f"{uuid.uuid4().int % 10 ** 12:012d}"
+
+
+def _spaced(reference: str) -> str:
+    """A reference in the grouped form a UPI app displays it in."""
+    return " ".join(reference[i:i + 4] for i in range(0, len(reference), 4))
+
 
 # ------------------------------- helpers -------------------------------------
 
@@ -117,9 +141,22 @@ async def _place_ok(client, seed, **kw) -> dict:
     return r.json()
 
 
-async def _claim(client, seed, order_id):
+async def _claim(client, seed, order_id, *, reference=None, body=_NO_BODY):
+    """POST claim-paid.
+
+    With neither `reference` nor `body`, this sends NO REQUEST BODY AT ALL —
+    byte-for-byte the shape the live customer builds (1.0.1 and 1.0.2+8) send,
+    which migration 042 must not break. That is why the default is a sentinel
+    rather than None: `body=None` would serialise a JSON `null`, which is a
+    body, and would stop testing the thing that needs testing.
+    """
+    kwargs = {}
+    if body is not _NO_BODY:
+        kwargs["json"] = body
+    elif reference is not None:
+        kwargs["json"] = {"upi_reference": reference}
     return await client.post(f"{API}/customer/orders/{order_id}/claim-paid",
-                             headers=seed["customer_auth"])
+                             headers=seed["customer_auth"], **kwargs)
 
 
 async def _accept(client, seed, order_id, *, prep=15):
@@ -477,6 +514,259 @@ class TestClaim:
         assert row["payment_claimed_at"] is not None
         assert row["payment_status"] == "PENDING"
         assert row["contact_phone"], "so the restaurant can chase it"
+
+
+# ===================== 3b. the 12-digit UPI reference (042) ==================
+
+class TestUpiReferenceNumber:
+    """The customer's own 12-digit UPI reference number (UTR), migration 042.
+
+    STILL NOT A PAYMENT CONFIRMATION. CareVo cannot ask any bank whether this
+    number exists; what it buys is a string the restaurant can search for in
+    its own UPI app instead of matching on amount-and-timestamp.
+
+    THE ASSERTION THAT MATTERS MOST is the first one: the live customer builds
+    (1.0.1 and 1.0.2+8) post this endpoint with NO BODY, and those claims must
+    keep succeeding exactly as they do today, leaving the column NULL.
+    """
+
+    @pytest.fixture
+    async def placed(self, client, db, seed):
+        await _enable_upi(db, seed["outlet_id"])
+        await db.execute(text(
+            "UPDATE menu_items SET stock_remaining = 10 WHERE id = :i"),
+            {"i": seed["menu_item_id"]})
+        await db.commit()
+        return await _place_ok(client, seed)
+
+    async def _reference_of(self, db, order_id):
+        return await db.scalar(text(
+            "SELECT upi_reference_number FROM customer_orders WHERE id = :i"),
+            {"i": str(order_id)})
+
+    async def _another_customer(self, db, seed):
+        """A second customer at the SAME outlet, with their own token.
+
+        Needed because the open-order cap is per customer: the duplicate case
+        has to be a reference re-used on somebody else's order, which is the
+        case that actually matters (one UTR, two orders).
+        """
+        from app.modules.carevo_customer.deps import create_customer_token
+        cid = uuid.uuid4()
+        await db.execute(text("""
+            INSERT INTO customers (id, phone_number, name, points_balance,
+                                   created_at)
+            VALUES (:i, :p, 'Second Customer', 0, now())"""),
+            {"i": str(cid), "p": f"+9177{uuid.uuid4().hex[:8]}"})
+        await db.commit()
+        return {
+            **seed,
+            "customer_id": str(cid),
+            "customer_auth": {
+                "Authorization": f"Bearer {create_customer_token(str(cid))}"},
+        }
+
+    # --------------------------- backward compatibility ----------------------
+
+    async def test_a_claim_with_no_body_still_works(
+            self, client, db, seed, placed):
+        """THE COMPATIBILITY TEST. No body, exactly as 1.0.1 and 1.0.2+8 send."""
+        r = await _claim(client, seed, placed["id"])
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["claimed"] is True
+        assert body["already"] is False
+        assert body["payment_claimed_at"] is not None
+        # The claim is complete and the column is simply empty.
+        assert await self._reference_of(db, placed["id"]) is None
+
+        row = await _order_row(db, placed["id"])
+        assert row.payment_claimed_at is not None
+        assert row.payment_status == "PENDING"
+        assert row.acceptance_state == AWAITING
+        assert await _stock_states(db, placed["id"]) == ["COMMITTED"]
+        assert "PAYMENT_CLAIMED" in await _events(db, placed["id"])
+
+    async def test_an_explicitly_empty_body_still_works(
+            self, client, db, seed, placed):
+        """`{}` — a client that sends a body but omits the field."""
+        r = await _claim(client, seed, placed["id"], body={})
+        assert r.status_code == 200, r.text
+        assert r.json()["claimed"] is True
+        assert await self._reference_of(db, placed["id"]) is None
+
+    async def test_an_explicit_null_reference_still_works(
+            self, client, db, seed, placed):
+        r = await _claim(client, seed, placed["id"],
+                         body={"upi_reference": None})
+        assert r.status_code == 200, r.text
+        assert r.json()["claimed"] is True
+        assert await self._reference_of(db, placed["id"]) is None
+
+    # ------------------------------- the happy path --------------------------
+
+    async def test_twelve_digits_are_stored(self, client, db, seed, placed):
+        ref = _fresh_reference()
+        r = await _claim(client, seed, placed["id"], reference=ref)
+        assert r.status_code == 200, r.text
+        assert r.json()["claimed"] is True
+        assert r.json()["upi_reference_number"] == ref
+        assert await self._reference_of(db, placed["id"]) == ref
+
+    async def test_spaces_are_stripped(self, client, db, seed, placed):
+        """UPI apps show the UTR in groups, and people paste what they see."""
+        ref = _fresh_reference()
+        r = await _claim(client, seed, placed["id"],
+                         reference=f"  {_spaced(ref)}  ")
+        assert r.status_code == 200, r.text
+        assert await self._reference_of(db, placed["id"]) == ref
+
+    # --------------------------------- 422 cases -----------------------------
+
+    @pytest.mark.parametrize("bad,why", [
+        ("12345678901", "eleven digits"),
+        ("1234567890123", "thirteen digits"),
+        ("abcdefghijkl", "twelve letters"),
+        ("12345678901a", "eleven digits and a letter"),
+        ("1234-5678-901", "punctuation is not a space"),
+        ("", "empty string"),
+        ("            ", "nothing but spaces"),
+    ])
+    async def test_a_malformed_reference_is_422(
+            self, client, db, seed, placed, bad, why):
+        r = await _claim(client, seed, placed["id"], reference=bad)
+        assert r.status_code == 422, f"{why}: {r.text}"
+        detail = r.json()["detail"]
+        # A STRUCTURED detail with a `message`, not FastAPI's per-field list:
+        # customer_app renders `detail.message` and falls back to
+        # "Request failed (422)" for a list, so a validation error raised by
+        # Pydantic instead of here would reach the customer as a bare code.
+        assert detail["error"] == "INVALID_UPI_REFERENCE"
+        assert "12" in detail["message"]
+
+        # AND THE CLAIM DID NOT HAPPEN. A rejected reference must not leave a
+        # half-claimed order: the stock hold is uncommitted and the acceptance
+        # window never opened, so the customer can correct the number and
+        # claim again.
+        row = await _order_row(db, placed["id"])
+        assert row.payment_claimed_at is None
+        assert row.acceptance_state != AWAITING
+        assert await self._reference_of(db, placed["id"]) is None
+        assert "PAYMENT_CLAIMED" not in await _events(db, placed["id"])
+
+    async def test_a_rejected_reference_can_be_corrected_and_retried(
+            self, client, db, seed, placed):
+        bad = await _claim(client, seed, placed["id"], reference="12345")
+        assert bad.status_code == 422, bad.text
+
+        ref = _fresh_reference()
+        good = await _claim(client, seed, placed["id"], reference=ref)
+        assert good.status_code == 200, good.text
+        assert await self._reference_of(db, placed["id"]) == ref
+
+    # -------------------------------- the 409 case ---------------------------
+
+    async def test_a_reference_already_used_is_409(
+            self, client, db, seed, placed):
+        ref = _fresh_reference()
+        first = await _claim(client, seed, placed["id"], reference=ref)
+        assert first.status_code == 200, first.text
+
+        other = await self._another_customer(db, seed)
+        second_order = await _place_ok(client, other)
+        r = await _claim(client, other, second_order["id"], reference=ref)
+        assert r.status_code == 409, r.text
+        detail = r.json()["detail"]
+        assert detail["error"] == "UPI_REFERENCE_ALREADY_USED"
+        assert detail["message"]
+
+        # THE SECOND ORDER IS NOT CLAIMED. The whole point of the 409: a
+        # re-used UTR must not buy a second order, so nothing is stamped and
+        # the acceptance window never opens.
+        row = await _order_row(db, second_order["id"])
+        assert row.payment_claimed_at is None
+        assert row.acceptance_state != AWAITING
+        assert await self._reference_of(db, second_order["id"]) is None
+        assert "PAYMENT_CLAIMED" not in await _events(db, second_order["id"])
+
+        # And the first order keeps it.
+        assert await self._reference_of(db, placed["id"]) == ref
+
+    async def test_the_duplicate_check_ignores_spacing(
+            self, client, db, seed, placed):
+        """'1234 5678 9012' and '123456789012' are one number, so re-using it
+        in a different spelling must still be refused."""
+        ref = _fresh_reference()
+        first = await _claim(client, seed, placed["id"], reference=ref)
+        assert first.status_code == 200, first.text
+
+        other = await self._another_customer(db, seed)
+        second_order = await _place_ok(client, other)
+        r = await _claim(client, other, second_order["id"],
+                         reference=_spaced(ref))
+        assert r.status_code == 409, r.text
+        assert r.json()["detail"]["error"] == "UPI_REFERENCE_ALREADY_USED"
+
+    async def test_re_sending_the_same_reference_on_the_same_order_is_idempotent(
+            self, client, db, seed, placed):
+        """A double-tap must read as the second tap of one claim, NOT as a
+        customer re-using a reference against themselves."""
+        ref = _fresh_reference()
+        first = await _claim(client, seed, placed["id"], reference=ref)
+        assert first.status_code == 200, first.text
+        assert first.json()["already"] is False
+
+        second = await _claim(client, seed, placed["id"], reference=ref)
+        assert second.status_code == 200, second.text
+        assert second.json()["already"] is True
+        assert second.json()["upi_reference_number"] == ref
+        assert (await _events(db, placed["id"])).count("PAYMENT_CLAIMED") == 1
+
+    # ----------------------------- the owner payload -------------------------
+
+    async def test_the_owner_queue_shows_the_reference(
+            self, client, db, seed, placed):
+        ref = _fresh_reference()
+        await _claim(client, seed, placed["id"], reference=ref)
+
+        r = await client.get(f"{API}/pos/orders", headers=seed["owner_auth"])
+        assert r.status_code == 200, r.text
+        row = next((o for o in r.json() if o["order_id"] == placed["id"]), None)
+        assert row is not None
+        assert row["upi_reference_number"] == ref
+        # Alongside what the owner already had, not instead of it.
+        assert row["payment_mode"] == PAY_UPI_MANUAL
+        assert row["payment_claimed_at"] is not None
+
+    async def test_the_owner_queue_shows_null_for_a_claim_without_one(
+            self, client, db, seed, placed):
+        """An old app build's claim. The key is present and null — the owner
+        app renders nothing rather than drawing an empty label."""
+        await _claim(client, seed, placed["id"])
+
+        r = await client.get(f"{API}/pos/orders", headers=seed["owner_auth"])
+        row = next((o for o in r.json() if o["order_id"] == placed["id"]), None)
+        assert row is not None
+        assert "upi_reference_number" in row
+        assert row["upi_reference_number"] is None
+
+    # ------------------------------- not a UPI order -------------------------
+
+    async def test_a_prepaid_order_is_still_refused_with_a_reference(
+            self, client, db, seed):
+        """The mode check comes FIRST: a reference does not make a prepaid
+        order claimable, and nothing is stored on it."""
+        await db.execute(text(
+            "UPDATE outlets SET payment_prepaid_enabled = true WHERE id = :o"),
+            {"o": seed["outlet_id"]})
+        await db.commit()
+        order = await _place_ok(client, seed, method=PAY_PREPAID)
+
+        r = await _claim(client, seed, order["id"],
+                         reference=_fresh_reference())
+        assert r.status_code == 409, r.text
+        assert r.json()["detail"]["error"] == "NOT_A_UPI_ORDER"
+        assert await self._reference_of(db, order["id"]) is None
 
 
 class TestPayWindow:

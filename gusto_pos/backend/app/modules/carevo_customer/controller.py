@@ -387,23 +387,41 @@ async def picked_up(
 @router.post("/orders/{order_id}/claim-paid", response_model=s.ClaimPaidOut)
 async def claim_paid(
     order_id: uuid.UUID,
+    # OPTIONAL BODY, and that is load-bearing rather than tidy. The customer
+    # builds already in the Play Store (1.0.1 and 1.0.2+8) POST this route
+    # with no body whatsoever; `Optional[...] = None` is what keeps those
+    # calls working untouched, and tests/test_api_manual_upi.py's
+    # TestUpiReferenceNumber asserts it with a request that really does send
+    # no body (not a JSON `null`, which is a body).
+    payload: Optional[s.ClaimPaidIn] = None,
     customer: Customer = Depends(get_current_customer),
     db: AsyncSession = Depends(get_db),
 ):
-    """"I've paid" for a direct-UPI order (migration 035).
+    """"I've paid" for a direct-UPI order (migration 035), optionally with the
+    customer's own 12-digit UPI reference number (migration 042).
 
     THIS DOES NOT CONFIRM A PAYMENT. It records that the customer says they
     sent money to the restaurant's VPA — payment_status stays PENDING until a
     human at the restaurant checks their own UPI app and taps Accept, which is
-    the only evidence that exists outside the gateway.
+    the only evidence that exists outside the gateway. A reference number does
+    not change that: CareVo cannot ask any bank whether the UTR exists. What
+    it gives the restaurant is a string to search for in its own UPI app.
 
     Scoped to the order's own customer (get_order enforces it), idempotent via
     compare-and-set on payment_claimed_at IS NULL, and allowed only while the
     order is CREATED and inside the pay window. It commits the stock hold and
     opens the acceptance window, so from here a restaurant that never looks
     cannot leave the customer waiting indefinitely.
+
+    422 for a reference that is not exactly 12 digits once spaces are removed;
+    409 UPI_REFERENCE_ALREADY_USED if some other order already carries it. In
+    both cases the order is NOT claimed, so the customer can fix the number
+    and tap again.
     """
-    return await CarevoService.claim_upi_payment(db, order_id, customer)
+    return await CarevoService.claim_upi_payment(
+        db, order_id, customer,
+        upi_reference=(payload.upi_reference if payload else None),
+    )
 
 
 @router.get("/orders/{order_id}", response_model=s.OrderOut)

@@ -789,6 +789,14 @@ class OwnerOrderOut(BaseModel):
     # state on — NOT a payment. The restaurant confirms the money by looking at
     # its own UPI app, and that confirmation is the Accept tap.
     payment_claimed_at: Optional[datetime] = None
+    #: The 12-digit UPI reference (UTR) the customer typed (migration 042).
+    #: ADDITIVE and Optional: NULL for every order placed before 042, every
+    #: claim from an older app build, and every non-UPI mode — so an owner_app
+    #: build that does not know this field exists is unaffected.
+    #:
+    #: NOT a verified payment. It is a string to SEARCH FOR in the
+    #: restaurant's own UPI app; the confirmation is still the Accept tap.
+    upi_reference_number: Optional[str] = None
     #: The RESTAURANT owes this customer money directly. Never the gateway
     #: refund queue — CareVo was not in the payment path and cannot reverse it.
     manual_refund_due: bool = False
@@ -944,6 +952,30 @@ class CollectOrderOut(BaseModel):
     locked: Optional[bool] = None
 
 
+class ClaimPaidIn(BaseModel):
+    """Optional body for "I've paid" (migration 042).
+
+    THE WHOLE BODY IS OPTIONAL, and so is its one field. The live customer
+    builds (1.0.1 and 1.0.2+8) POST this endpoint with NO BODY AT ALL, and
+    those calls must keep working exactly as they do — see the `Optional`
+    body parameter on the route itself. A claim with no reference is still a
+    claim; it just leaves customer_orders.upi_reference_number NULL.
+
+    `upi_reference` is DELIBERATELY NOT validated by Pydantic (no
+    `pattern=`), even though that would be shorter. FastAPI renders a
+    Pydantic failure as a 422 whose `detail` is a LIST of per-field objects,
+    and customer_app's api_client only extracts a human message from a
+    `detail` that is a Map — a list falls through to "Request failed (422)".
+    The customer typing their own UTR is exactly the person who needs to be
+    told what was wrong with it, so the rule is enforced in the service and
+    raised as a structured detail with a `message` instead.
+    """
+    #: The 12-digit UPI reference number (UTR) as the customer typed it,
+    #: spaces and all — UPI apps display it in groups and people paste what
+    #: they see. Normalised and checked server-side.
+    upi_reference: Optional[str] = Field(None, max_length=64)
+
+
 class ClaimPaidOut(BaseModel):
     """Result of the customer tapping "I've paid" (035).
 
@@ -956,6 +988,11 @@ class ClaimPaidOut(BaseModel):
     already: bool = False
     payment_claimed_at: Optional[datetime] = None
     status: Optional[str] = None
+    #: The reference as STORED (042) — normalised, so the app can show the
+    #: customer what the server actually kept rather than what they typed.
+    #: NULL for a claim that carried none, which is every claim from an app
+    #: build older than customer_app 1.0.2+9.
+    upi_reference_number: Optional[str] = None
 
 
 class PaymentNotReceivedOut(BaseModel):

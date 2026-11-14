@@ -4976,7 +4976,8 @@ class CarevoService:
     # --------------------- Direct UPI: the claim (035) ----------------------
     @staticmethod
     async def claim_upi_payment(
-        db: AsyncSession, order_id: uuid.UUID, customer: Customer
+        db: AsyncSession, order_id: uuid.UUID, customer: Customer,
+        *, upi_reference: Optional[str] = None,
     ) -> dict:
         """The customer says they have sent the money. Starts the clock.
 
@@ -5003,8 +5004,19 @@ class CarevoService:
         IDEMPOTENT by compare-and-set on payment_claimed_at IS NULL, so a
         double-tap on a slow connection returns the first claim rather than
         re-committing stock or restarting the clock.
+
+        `upi_reference` (migration 042) is the customer's own 12-digit UTR and
+        is OPTIONAL — None is what every claim from an app build older than
+        customer_app 1.0.2+9 sends, and those claims behave exactly as before.
         """
         order = await CarevoService.get_order(db, order_id, customer)
+
+        # NORMALISE AND CHECK FIRST, before anything is written or committed.
+        # A reference the server will not accept must not leave a half-claimed
+        # order behind: the customer has to be able to fix the number and tap
+        # again, which means the stock hold stays uncommitted and the
+        # acceptance window stays shut on this path.
+        reference = CarevoService._normalise_upi_reference(upi_reference)
 
         mode = await db.scalar(text(
             "SELECT payment_mode FROM customer_orders WHERE id = :id"),
@@ -5017,17 +5029,50 @@ class CarevoService:
                     "message": "This order is not paid by UPI.",
                 })
 
+        # ONE UTR IS ONE TRANSFER. Re-use on a DIFFERENT order is refused:
+        # either somebody is claiming a new order with an old payment, or they
+        # have mistyped. `id <> :id` is what keeps a double-tap on the SAME
+        # order out of this — that is the idempotent path just below, not a
+        # conflict.
+        #
+        # Checked here as well as enforced by ux_customer_orders_upi_reference
+        # so the caller gets a 409 with prose instead of a 500 from a unique
+        # violation; the index is still the backstop for a race, caught below.
+        if reference is not None:
+            clash = await db.scalar(text("""
+                SELECT id FROM customer_orders
+                 WHERE upi_reference_number = :ref AND id <> :id
+                 LIMIT 1
+            """), {"ref": reference, "id": str(order_id)})
+            if clash is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "UPI_REFERENCE_ALREADY_USED",
+                        "message": (
+                            "That UPI reference number has already been used "
+                            "for another order. Check the number in your UPI "
+                            "app and enter the one for this payment."
+                        ),
+                    })
+
         existing = await db.scalar(text(
             "SELECT payment_claimed_at FROM customer_orders WHERE id = :id"),
             {"id": str(order_id)})
         if existing is not None:
             # Already claimed. Not an error — the second tap of a double-tap.
+            # The FIRST claim's reference is what is returned: a later tap
+            # carrying a different number does not overwrite a stamped claim.
+            stored = await db.scalar(text(
+                "SELECT upi_reference_number FROM customer_orders "
+                "WHERE id = :id"), {"id": str(order_id)})
             return {
                 "order_id": order_id,
                 "claimed": True,
                 "already": True,
                 "payment_claimed_at": existing,
                 "status": order.status,
+                "upi_reference_number": stored,
             }
 
         current = (order.status or "").upper()
@@ -5068,20 +5113,44 @@ class CarevoService:
 
         # COMPARE-AND-SET on payment_claimed_at IS NULL — the winner-picker for
         # two taps arriving together.
-        res = await db.execute(text("""
-            UPDATE customer_orders
-               SET payment_claimed_at = now(), updated_at = now()
-             WHERE id = :id AND payment_claimed_at IS NULL
-               AND upper(coalesce(status, '')) = 'CREATED'
-        """), {"id": str(order_id)})
+        # The reference is stamped in the SAME statement as the claim, so
+        # there is no window in which an order is claimed but its reference
+        # has not landed (or the reverse).
+        from sqlalchemy.exc import IntegrityError
+        try:
+            res = await db.execute(text("""
+                UPDATE customer_orders
+                   SET payment_claimed_at = now(), updated_at = now(),
+                       upi_reference_number = :ref
+                 WHERE id = :id AND payment_claimed_at IS NULL
+                   AND upper(coalesce(status, '')) = 'CREATED'
+            """), {"id": str(order_id), "ref": reference})
+        except IntegrityError:
+            # ux_customer_orders_upi_reference fired: two claims carrying the
+            # same UTR raced past the SELECT above. The loser is told the same
+            # thing it would have been told a millisecond earlier.
+            await db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "UPI_REFERENCE_ALREADY_USED",
+                    "message": (
+                        "That UPI reference number has already been used for "
+                        "another order. Check the number in your UPI app and "
+                        "enter the one for this payment."
+                    ),
+                })
         if res.rowcount != 1:
             await db.rollback()
             claimed = await db.scalar(text(
                 "SELECT payment_claimed_at FROM customer_orders WHERE id = :id"),
                 {"id": str(order_id)})
+            stored = await db.scalar(text(
+                "SELECT upi_reference_number FROM customer_orders "
+                "WHERE id = :id"), {"id": str(order_id)})
             return {"order_id": order_id, "claimed": claimed is not None,
                     "already": True, "payment_claimed_at": claimed,
-                    "status": order.status}
+                    "status": order.status, "upi_reference_number": stored}
 
         # The units are now committed to this order while the restaurant
         # decides. Same reasoning as accept for pay-at-pickup: an order under
@@ -5115,7 +5184,45 @@ class CarevoService:
             "already": False,
             "payment_claimed_at": claimed_at,
             "status": order.status,
+            "upi_reference_number": reference,
         }
+
+    #: Exactly twelve digits, which is what every Indian bank's UTR is. The
+    #: same rule as ck_customer_orders_upi_reference_format in migration 042 —
+    #: deliberately spelled identically so the API and the column cannot drift
+    #: into disagreeing about what a reference is.
+    UPI_REFERENCE_RE = re.compile(r"^[0-9]{12}$")
+
+    @staticmethod
+    def _normalise_upi_reference(raw: Optional[str]) -> Optional[str]:
+        """The stored form of a customer-typed UTR, or 422.
+
+        None in, None out — a claim with no reference, which is what every
+        older app build sends and is not an error.
+
+        WHITESPACE IS REMOVED THROUGHOUT, not just trimmed at the ends. UPI
+        apps display the UTR in groups ("1234 5678 9012") and people paste or
+        retype what they see; rejecting that would be rejecting the correct
+        number for being correctly copied. Nothing else is stripped: a dash or
+        a letter means they have pasted the wrong field out of their UPI app
+        (a transaction ID, an RRN, an order note), and silently deleting
+        characters until it looked like a UTR would store a number that
+        matches no transfer at all.
+        """
+        if raw is None:
+            return None
+        compact = "".join(raw.split())
+        if not CarevoService.UPI_REFERENCE_RE.match(compact):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "INVALID_UPI_REFERENCE",
+                    "message": (
+                        "A UPI reference number is exactly 12 digits. Check "
+                        "the number in your UPI app and enter all 12."
+                    ),
+                })
+        return compact
 
     # ------------------- Pay at pickup: staff actions (034) -----------------
     @staticmethod
@@ -6179,6 +6286,10 @@ class CarevoService:
                    -- Direct UPI (035), additive and NULL/false for every
                    -- other mode.
                    payment_claimed_at, manual_refund_due, manual_refund_reason,
+                   -- The customer's own 12-digit UTR (042). NULL for every
+                   -- order placed before it, every claim from an older app
+                   -- build, and every non-UPI mode.
+                   upi_reference_number,
                    -- CONTACT VISIBILITY, DECIDED IN SQL.
                    --
                    -- Computed here rather than in Python so there is no path
@@ -6358,6 +6469,10 @@ class CarevoService:
                 "collected_payment_method": o.collected_payment_method,
                 # Direct UPI (035), additive.
                 "payment_claimed_at": o.payment_claimed_at,
+                # The UTR (042), additive. The key is always present and null
+                # when there is none, so the owner app can tell "this build
+                # does not send it" from "this claim carried none".
+                "upi_reference_number": o.upi_reference_number,
                 "manual_refund_due": bool(o.manual_refund_due),
                 "manual_refund_reason": o.manual_refund_reason,
                 "departed_at": departed_by_order.get(str(o.id)),
