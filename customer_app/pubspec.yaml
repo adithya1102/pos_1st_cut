@@ -1,7 +1,7 @@
-name: customer_app
-description: "CareVo Skip — self-pickup restaurant ordering (neobrutalist retro diner)."
+﻿name: customer_app
+description: "CareVo Skip â€” self-pickup restaurant ordering (neobrutalist retro diner)."
 publish_to: 'none'
-version: 1.0.2+8
+version: 1.0.2+9
 
 environment:
   sdk: ^3.12.1
@@ -73,7 +73,7 @@ flutter:
     # rootBundle. Dropping it here would fail them.
     - assets/animation/final_walk.gif
     # Brand lockup on transparency, for the splash. Keyed off the source photo
-    # by scripts/make_app_icon.py — the splash field is cream, not white, so an
+    # by scripts/make_app_icon.py â€” the splash field is cream, not white, so an
     # opaque asset would show as a white slab.
     - assets/brand/gusto_logo.png
 
@@ -83,7 +83,7 @@ flutter:
 # field. It is used as-is for iOS and for the legacy (pre-API-26) Android icon,
 # both of which want an opaque full-bleed square.
 #
-# Android adaptive icons get `app_icon_foreground.png` instead — the same logo
+# Android adaptive icons get `app_icon_foreground.png` instead â€” the same logo
 # keyed onto TRANSPARENCY, generated from app_icon.png (see scripts/).
 # Reason: feeding the white square in as the foreground layer leaves a faint
 # rounded-square ghost inside Android's circular mask. The square's field is not
@@ -92,7 +92,7 @@ flutter:
 # transparent foreground has no square to reveal, at any mask shape.
 #
 # Inset 12 (not the default 16): the keyed artwork fills 92% of its canvas, so
-# 12% lands it at ~56% of the 108dp adaptive canvas — inside Android's 61% safe
+# 12% lands it at ~56% of the 108dp adaptive canvas â€” inside Android's 61% safe
 # zone (66dp of 108dp) with margin, without looking undersized.
 flutter_launcher_icons:
   image_path: "assets/icon/app_icon.png"

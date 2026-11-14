@@ -1,4 +1,4 @@
-name: owner_app
+﻿name: owner_app
 description: "A new Flutter project."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.1+7
+version: 1.0.1+8
 
 environment:
   sdk: ^3.12.1
@@ -63,7 +63,7 @@ dependencies:
   geolocator: ^13.0.2
   # Staff push (migration 017): buzz every device at the outlet when a paid
   # order lands, so staff can reject a wrong one. Versions pinned to match
-  # customer_app — both apps live in the same Firebase project (carevo-pos)
+  # customer_app â€” both apps live in the same Firebase project (carevo-pos)
   # and a version skew between them buys nothing but divergent SDK behaviour.
   #
   # NOTE: do NOT add firebase_bom here. It breaks FlutterFire's own version
@@ -87,7 +87,7 @@ dev_dependencies:
   flutter_launcher_icons: ^0.14.4
 
 # Launcher icon generation: `dart run flutter_launcher_icons`.
-# Same brand mark and same split as customer_app — see that pubspec for the full
+# Same brand mark and same split as customer_app â€” see that pubspec for the full
 # reasoning. In short: `app_icon.png` (opaque white square) drives iOS and the
 # legacy pre-API-26 Android icon, while Android's adaptive icon takes
 # `app_icon_foreground.png`, the same logo keyed onto TRANSPARENCY.
@@ -123,7 +123,7 @@ flutter:
 
   assets:
     # Brand lockup on transparency, for the splash. The same bytes customer_app
-    # ships — both are written by scripts/make_app_icon.py rather than copied by
+    # ships â€” both are written by scripts/make_app_icon.py rather than copied by
     # hand. Declared as a single file, not the whole directory: assets/icon is a
     # build-time input for flutter_launcher_icons and must NOT ship in the APK.
     - assets/brand/gusto_logo.png

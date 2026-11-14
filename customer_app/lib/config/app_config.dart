@@ -111,4 +111,13 @@ class AppConfig {
 
   /// App display name.
   static const String appName = 'Gusto Skip';
+
+  /// The shipped version, as a label.
+  ///
+  /// A CONSTANT, not read from the package at runtime: this app has no
+  /// package_info_plus dependency and adding one to display a string would be
+  /// a plugin for a label. The cost of a constant is that it can drift from
+  /// pubspec.yaml, so test/app_version_test.dart reads the pubspec and asserts
+  /// they agree — the same arrangement owner_app already uses.
+  static const String appVersion = '1.0.2+9';
 }
