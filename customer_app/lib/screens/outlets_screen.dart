@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models/outlet.dart';
 import '../models/outlet_sort.dart';
+import '../utils/in_mobile.dart';
 import '../services/api_client.dart';
 import '../services/app_error.dart';
 import '../services/image_cdn.dart';
@@ -2015,8 +2016,11 @@ class _CallButton extends StatelessWidget {
 
   Future<void> _call(BuildContext context) async {
     // tel: rather than a dialler package — no dependency, and it hands off to
-    // whatever the customer's phone already uses.
-    final uri = Uri(scheme: 'tel', path: outlet.phoneNumber);
+    // whatever the customer's phone already uses. A readable Indian mobile
+    // dials in canonical +91 form (utils/in_mobile.dart); anything else —
+    // e.g. a landline the outlet saved — dials exactly as stored.
+    final raw = outlet.phoneNumber ?? '';
+    final uri = Uri(scheme: 'tel', path: canonicalInMobile(raw) ?? raw);
     final ok = await launchUrl(uri);
     if (!ok && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(

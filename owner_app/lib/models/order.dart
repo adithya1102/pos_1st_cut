@@ -1,3 +1,5 @@
+import '../utils/in_mobile.dart';
+
 /// A line item within an order. Deliberately carries NO customer data.
 class OrderLineItem {
   final String id;
@@ -174,8 +176,12 @@ class Order {
   Uri? get telUri {
     final p = contactPhone?.trim();
     if (p == null || p.isEmpty) return null;
-    // Strip spaces and dashes only. The leading + is kept — it is part of the
-    // number, and dialers handle it.
+    // ONE phone rule (utils/in_mobile.dart): a readable Indian mobile is
+    // dialed in its canonical +91 form whatever spelling the row holds.
+    final canonical = canonicalInMobile(p);
+    if (canonical != null) return Uri(scheme: 'tel', path: canonical);
+    // Unreadable value: the old strip-spaces-and-dashes behaviour, so a
+    // legacy row never dials worse than it used to.
     return Uri(scheme: 'tel', path: p.replaceAll(RegExp(r'[\s-]'), ''));
   }
 

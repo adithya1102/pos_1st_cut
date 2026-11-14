@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../state/auth_state.dart';
+import '../utils/in_mobile.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/widgets/neo_button.dart';
@@ -47,7 +48,11 @@ String? normalisePhone(String raw) {
     digits = digits.substring(digits.length - 10);
   }
 
-  if (!RegExp(r'^\d{10}$').hasMatch(digits)) return null;
+  // The SHARED rule (utils/in_mobile.dart) has the final say: exactly ten
+  // digits in the 6-9 mobile space. This is what rejects "0000000000" and
+  // landline-shaped numbers that the length check alone let through.
+  final ten = normalizeInMobile(digits);
+  if (ten == null || ten != digits) return null;
   return '+91$digits';
 }
 

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import '../config/app_config.dart';
 import '../models/customer.dart';
+import '../utils/in_mobile.dart';
 import 'api_client.dart';
 import 'otp_auth_service.dart';
 
@@ -79,14 +80,16 @@ class FirebaseOtpService implements OtpAuthService {
   /// Firebase requires E.164. Bare 10-digit input is assumed Indian (+91),
   /// matching the rest of the app's phone handling.
   static String toE164(String raw) {
+    // ONE phone rule first (utils/in_mobile.dart): a readable Indian mobile
+    // in ANY spelling becomes its canonical +91 form.
+    final canonical = canonicalInMobile(raw);
+    if (canonical != null) return canonical;
+    // Not an Indian mobile: the pre-existing permissive fallback, unchanged.
     final trimmed = raw.trim();
     if (trimmed.startsWith('+')) {
       return '+${trimmed.substring(1).replaceAll(RegExp(r'\D'), '')}';
     }
-    final digits = trimmed.replaceAll(RegExp(r'\D'), '');
-    if (digits.length == 10) return '+91$digits';
-    if (digits.length > 10 && digits.startsWith('91')) return '+$digits';
-    return '+$digits';
+    return '+${trimmed.replaceAll(RegExp(r'\D'), '')}';
   }
 
   @override

@@ -21,6 +21,11 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import normalize_payment_gateway, settings
+from app.core.phones import (
+    PhoneValidationError,
+    canonical_in_mobile,
+    in_mobile_variants,
+)
 from app.core.websocket_manager import customer_manager, pos_manager
 from app.modules.customers.model import Customer
 from app.modules.carevo_customer.model import (
@@ -389,7 +394,14 @@ class CarevoService:
 
     @staticmethod
     def request_otp(phone_number: str) -> dict:
-        CarevoService.check_otp_rate_limit(phone_number)
+        # Rate-limit on the CANONICAL spelling when the input is a readable
+        # Indian mobile, so "+91 94999..." and "094999..." share one bucket.
+        # Unreadable values keep their raw key — behaviour unchanged (TASK 2).
+        try:
+            key = canonical_in_mobile(phone_number)
+        except PhoneValidationError:
+            key = phone_number
+        CarevoService.check_otp_rate_limit(key)
         # Stub: no SMS actually sent.
         return {"request_id": uuid.uuid4().hex, "stub": True}
 
@@ -402,11 +414,30 @@ class CarevoService:
             # No real OTP provider wired yet.
             raise HTTPException(status_code=501, detail="OTP verification not configured")
 
-        res = await db.execute(select(Customer).where(Customer.phone_number == phone_number))
+        # ONE phone rule (app/core/phones.py). A readable Indian mobile is
+        # matched against every legacy spelling a row might hold and stored in
+        # the canonical '+91' form — the same upgrade the Firebase path does.
+        # A value the helper cannot read (legacy fixtures, non-mobile input)
+        # keeps the exact-match-and-store-verbatim behaviour it always had, so
+        # nothing already installed changes behaviour (rule 8).
+        try:
+            variants = in_mobile_variants(phone_number)
+            canonical = variants[0]
+        except PhoneValidationError:
+            variants = [phone_number]
+            canonical = phone_number
+
+        res = await db.execute(
+            select(Customer).where(Customer.phone_number.in_(variants)))
         customer = res.scalars().first()
         if not customer:
-            customer = Customer(phone_number=phone_number)
+            customer = Customer(phone_number=canonical)
             db.add(customer)
+            await db.commit()
+            await db.refresh(customer)
+        elif customer.phone_number != canonical:
+            # Upgrade a legacy spelling to the canonical form on sight.
+            customer.phone_number = canonical
             await db.commit()
             await db.refresh(customer)
         return customer
@@ -433,7 +464,13 @@ class CarevoService:
             )
 
         phone, _uid = await verify_phone_token(id_token)
-        canonical = normalize_phone(phone)
+        # ONE phone rule (app/core/phones.py) where it applies; Firebase's
+        # E.164 is already the canonical form for an Indian mobile, and a
+        # non-Indian number keeps the pre-existing normalize_phone spelling.
+        try:
+            canonical = canonical_in_mobile(phone)
+        except PhoneValidationError:
+            canonical = normalize_phone(phone)
 
         # Match legacy spellings too, so pre-Firebase rows (and their order
         # history) are reused instead of duplicated under the E.164 form.

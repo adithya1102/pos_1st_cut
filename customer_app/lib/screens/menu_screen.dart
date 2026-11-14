@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models/menu.dart';
 import '../models/outlet.dart';
+import '../utils/in_mobile.dart';
 import '../services/api_client.dart';
 import '../services/catalog_service.dart';
 import '../state/cart_state.dart';
@@ -210,7 +211,11 @@ class _MenuScreenState extends State<MenuScreen> {
               icon: const Icon(Icons.call),
               tooltip: 'Call ${widget.outlet.name}',
               onPressed: () async {
-                final uri = Uri(scheme: 'tel', path: widget.outlet.phoneNumber);
+                // Canonical +91 for a readable mobile; verbatim otherwise
+                // (a landline must keep dialing) — utils/in_mobile.dart.
+                final raw = widget.outlet.phoneNumber ?? '';
+                final uri =
+                    Uri(scheme: 'tel', path: canonicalInMobile(raw) ?? raw);
                 final ok = await launchUrl(uri);
                 if (!ok && context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(

@@ -3,6 +3,7 @@ from typing import Optional
 from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.phones import PhoneValidationError, in_mobile_variants
 from app.modules.customers.model import Customer
 from app.modules.customers.schema import CustomerCreate, CustomerUpdate
 
@@ -27,9 +28,19 @@ class CustomerService:
 
     @staticmethod
     async def get_customer_by_phone(session: AsyncSession, phone_number: str) -> Optional[Customer]:
-        """Get a customer by phone number."""
-        result = await session.execute(select(Customer).filter(Customer.phone_number == phone_number))
-        return result.scalar_one_or_none()
+        """Get a customer by phone number.
+
+        A readable Indian mobile matches every legacy spelling a row might
+        hold (bare ten digits, 91-prefixed, E.164) via the one shared rule in
+        app/core/phones.py; anything else keeps exact matching (TASK 2).
+        """
+        try:
+            candidates = in_mobile_variants(phone_number)
+        except PhoneValidationError:
+            candidates = [phone_number]
+        result = await session.execute(
+            select(Customer).filter(Customer.phone_number.in_(candidates)))
+        return result.scalars().first()
 
     @staticmethod
     async def get_all_customers(session: AsyncSession) -> list[Customer]:
