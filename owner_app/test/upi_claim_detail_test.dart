@@ -13,9 +13,13 @@
 //   * WHEN the customer said they paid (payment_claimed_at), so "they claimed
 //     this an hour ago and nothing has arrived" is answerable.
 //
-// The UPI REFERENCE NUMBER the customer typed is NOT here: there is no column
-// to carry it (customer_orders has payment_claimed_at and no reference field),
-// so it is BLOCKED_NEEDS_MIGRATION rather than faked.
+// The UPI REFERENCE NUMBER the customer typed IS now here too, as of backend
+// migration 042 (customer_orders.upi_reference_number). It was previously
+// BLOCKED_NEEDS_MIGRATION — there was no column to carry it, and it was left
+// out rather than faked. It is the bank's own identifier for the transfer, so
+// it is the one string the owner can SEARCH for; the two tests at the bottom
+// pin both the present and the absent case, because every order placed before
+// 042 and every claim from an older customer_app build has none.
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -98,5 +102,72 @@ void main() {
   testWidgets('an unclaimed UPI order shows no claim block', (tester) async {
     await _openCard(tester, _order(const {'acceptance_state': 'AWAITING'}));
     expect(find.byKey(const Key('upi_claim_time')), findsNothing);
+  });
+
+  // ============== the 12-digit UPI reference (migration 042) ==============
+
+  test('the reference is parsed off the wire', () {
+    expect(
+        _order(const {'upi_reference_number': '123456789012'})
+            .upiReferenceNumber,
+        '123456789012');
+  });
+
+  test('an order without one carries null, not an empty string', () {
+    // Both shapes a real payload produces: the key absent (a backend older
+    // than 042) and the key present-but-null (a claim that carried none).
+    expect(_order(const {}).upiReferenceNumber, isNull);
+    expect(_order(const {'upi_reference_number': null}).upiReferenceNumber,
+        isNull);
+  });
+
+  testWidgets('a claim with a reference shows it, labelled "UPI ref"',
+      (tester) async {
+    await _openCard(
+        tester,
+        _order({
+          'payment_claimed_at': '2026-10-28T10:05:00Z',
+          'upi_reference_number': '123456789012',
+          'acceptance_state': 'AWAITING',
+        }));
+
+    expect(find.byKey(const Key('upi_reference_number')), findsOneWidget);
+    expect(find.text('UPI ref 123456789012'), findsOneWidget);
+    // Alongside the order reference and the claim age, not instead of them —
+    // the owner uses all three for different questions.
+    expect(find.byKey(const Key('upi_claim_reference')), findsOneWidget);
+    expect(find.byKey(const Key('upi_claim_time')), findsOneWidget);
+  });
+
+  testWidgets('an OLD claim with no reference shows nothing at all',
+      (tester) async {
+    // The compatibility case, and the reason the widget is behind a null
+    // check rather than rendering "UPI ref " with nothing after it: every
+    // order placed before 042, and every claim from a customer_app build
+    // older than 1.0.2+9, looks exactly like this.
+    await _openCard(
+        tester,
+        _order({
+          'payment_claimed_at': '2026-10-28T10:05:00Z',
+          'acceptance_state': 'AWAITING',
+        }));
+
+    expect(find.byKey(const Key('upi_reference_number')), findsNothing);
+    expect(find.textContaining('UPI ref'), findsNothing);
+    // And the rest of the claim block is untouched.
+    expect(find.byKey(const Key('upi_claim_reference')), findsOneWidget);
+    expect(find.byKey(const Key('upi_claim_time')), findsOneWidget);
+  });
+
+  testWidgets('an empty-string reference is treated as absent',
+      (tester) async {
+    await _openCard(
+        tester,
+        _order({
+          'payment_claimed_at': '2026-10-28T10:05:00Z',
+          'upi_reference_number': '',
+          'acceptance_state': 'AWAITING',
+        }));
+    expect(find.byKey(const Key('upi_reference_number')), findsNothing);
   });
 }

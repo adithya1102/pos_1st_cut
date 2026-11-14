@@ -547,6 +547,26 @@ class _PaymentActionState extends State<_PaymentAction> {
                 style: theme.textTheme.bodyMedium,
               ),
             ),
+            // THE NUMBER TO SEARCH FOR. The order reference above identifies
+            // which order a received amount belongs to; this is the bank's own
+            // identifier for the transfer itself, so the owner can look it up
+            // in their UPI app instead of matching on amount-and-time (which
+            // is ambiguous the moment two customers owe the same total within
+            // a few minutes).
+            //
+            // ABSENT, NOT BLANK, when there is none: every order from before
+            // migration 042 and every claim from an older customer_app build
+            // has nothing here, and an empty "UPI ref" label reads as a bug.
+            if (order.upiReferenceNumber != null &&
+                order.upiReferenceNumber!.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  'UPI ref ${order.upiReferenceNumber}',
+                  key: const Key('upi_reference_number'),
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ),
             if (order.minutesSinceClaimed != null)
               Padding(
                 padding: const EdgeInsets.only(bottom: 10),

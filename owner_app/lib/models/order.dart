@@ -79,6 +79,7 @@ class Order {
     this.callAttempts = 0,
     this.collectedPaymentMethod,
     this.paymentClaimedAt,
+    this.upiReferenceNumber,
     this.manualRefundDue = false,
     this.manualRefundReason,
     this.departedAt,
@@ -124,6 +125,21 @@ class Order {
   /// that confirmation is the Accept tap — which is why the card's copy says
   /// "Customer says paid" rather than "Paid".
   final String? paymentClaimedAt;
+
+  /// Direct UPI: the 12-digit UPI reference number (UTR) the CUSTOMER typed
+  /// when they claimed the payment (backend migration 042).
+  ///
+  /// NOT a verified payment, and the card's copy must never imply otherwise.
+  /// CareVo never asked a bank whether this number exists. It is a string to
+  /// SEARCH FOR in the restaurant's own UPI app — which is the whole point:
+  /// matching a direct-UPI payment by amount and time stops being unique the
+  /// moment two customers owe the same total within a few minutes of each
+  /// other, and this is the bank's own identifier for the transfer.
+  ///
+  /// NULL for every order placed before 042, every claim from a customer_app
+  /// build older than 1.0.2+9, and every payment mode but UPI_MANUAL. The card
+  /// draws nothing at all in that case rather than an empty label.
+  final String? upiReferenceNumber;
 
   /// The RESTAURANT owes this customer money back, directly.
   ///
@@ -259,6 +275,10 @@ class Order {
       callAttempts: (json['call_attempts'] as num?)?.toInt() ?? 0,
       collectedPaymentMethod: json['collected_payment_method']?.toString(),
       paymentClaimedAt: json['payment_claimed_at']?.toString(),
+      // 042. Absent on a backend predating it and null on every claim that
+      // carried no reference — read defensively, both meaning "nothing to
+      // show", which is the safe default here.
+      upiReferenceNumber: json['upi_reference_number']?.toString(),
       manualRefundDue: (json['manual_refund_due'] as bool?) ?? false,
       manualRefundReason: json['manual_refund_reason']?.toString(),
       departedAt: json['departed_at']?.toString(),
