@@ -142,7 +142,7 @@ def test_d_wrong_confirm_host_refuses_apply():
     assert "REFUSED" in result.stdout
 
 
-def test_e_baseline_through_33_then_apply_34_to_41():
+def test_e_baseline_through_33_then_apply_the_rest():
     asyncio.run(_reset_base_only())
     asyncio.run(_apply_subset_directly(33))
 
@@ -151,17 +151,30 @@ def test_e_baseline_through_33_then_apply_34_to_41():
     baselined = [l for l in result.stdout.splitlines() if l.startswith("BASELINED ")]
     assert len(baselined) == 33, result.stdout
 
+    # Derived from the migrations directory rather than hardcoded. 33 is the
+    # real production baseline and stays a literal, but the set above it grows
+    # by one every time a migration is added — and a test that has to be edited
+    # to add a migration stops testing the tool and starts testing the editor's
+    # memory. What is asserted is the invariant: everything past the baseline is
+    # pending, and then every one of those gets applied.
+    expected_pending = {
+        f.name.split("_", 1)[0]
+        for f in MIGRATIONS_DIR.glob("[0-9][0-9][0-9]_*.sql")
+        if int(f.name.split("_", 1)[0]) > 33
+    }
+    assert expected_pending, "no migrations above the 33 baseline"
+
     dry = _run_tool()
     assert dry.returncode == 0, dry.stdout + dry.stderr
     pending = [l for l in dry.stdout.splitlines() if l.startswith("PENDING ")]
     already = [l for l in dry.stdout.splitlines() if l.startswith("ALREADY_APPLIED ")]
     assert len(already) == 33, dry.stdout
-    assert {l.split()[1] for l in pending} == {f"{n:03d}" for n in range(34, 42)}, dry.stdout
+    assert {l.split()[1] for l in pending} == expected_pending, dry.stdout
 
     apply_result = _run_tool("--apply", confirm_host=HOST)
     assert apply_result.returncode == 0, apply_result.stdout + apply_result.stderr
     applied = [l for l in apply_result.stdout.splitlines() if l.startswith("APPLIED ")]
-    assert len(applied) == 8, apply_result.stdout
+    assert len(applied) == len(expected_pending), apply_result.stdout
 
 
 def test_f_failing_migration_stops_run(tmp_path):

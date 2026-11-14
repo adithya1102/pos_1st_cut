@@ -1,6 +1,6 @@
 -- docs/ops/predeploy_markers.sql
 --
--- READ-ONLY. One SELECT per migration 001-041 that have something checkable
+-- READ-ONLY. One SELECT per migration 001-042 that have something checkable
 -- (at least one new table or new column). Each row reports the migration
 -- number and a boolean that is true only when every table AND every column
 -- that migration creates is present in schema public right now.
@@ -300,4 +300,9 @@ SELECT '040' AS migration,
 -- 041_service_fee_ledger.sql
 SELECT '041' AS migration,
     EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='service_fee_ledger')
+    AS present;
+
+-- 042_upi_reference_number.sql
+SELECT '042' AS migration,
+    EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='customer_orders' AND column_name='upi_reference_number')
     AS present;
