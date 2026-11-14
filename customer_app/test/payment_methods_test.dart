@@ -474,8 +474,11 @@ void main() {
       expect(find.byKey(const Key('upi_amount_heading')), findsOneWidget);
       expect(find.text('to Test Kitchen'), findsOneWidget);
       expect(find.byKey(const Key('upi_vpa_text')), findsOneWidget);
-      // The reference the restaurant matches the payment against.
-      expect(find.text('Reference: A1B2C3'), findsOneWidget);
+      // The reference the restaurant matches the payment against. Shown as a
+      // labelled, copyable value since TASK 3, so the reference itself is its
+      // own Text rather than being glued to the word "Reference:".
+      expect(find.text('A1B2C3'), findsOneWidget);
+      expect(find.text('Order reference'), findsOneWidget);
       // And the instruction that makes the amount matter.
       expect(find.byKey(const Key('upi_exact_amount_note')), findsOneWidget);
     });
@@ -490,6 +493,10 @@ void main() {
       var claimed = 0;
       await open(tester, backend, onClaimed: () => claimed++);
 
+      // The copyable amount and reference cards (TASK 3) pushed the button
+      // below the fold on this surface, so scroll to it before tapping.
+      await tester.drag(find.byType(ListView), const Offset(0, -500));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('upi_claim_paid')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
@@ -511,6 +518,11 @@ void main() {
 
     testWidgets('says the order expires if unpaid', (tester) async {
       await open(tester, _Backend());
+      // Below the fold since the TASK 3 cards were added, and a ListView
+      // only builds what is visible — so scroll to it rather than asserting
+      // on a child that was never created.
+      await tester.drag(find.byType(ListView), const Offset(0, -500));
+      await tester.pumpAndSettle();
       expect(find.byKey(const Key('upi_window_note')), findsOneWidget);
     });
 

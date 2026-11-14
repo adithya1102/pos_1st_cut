@@ -64,14 +64,39 @@ class _UpiPayScreenState extends State<UpiPayScreen> {
 
   UpiPaymentInfo? get _upi => widget.order.upiPayment;
 
-  Future<void> _copyVpa() async {
-    final vpa = _upi?.vpa;
-    if (vpa == null) return;
-    await Clipboard.setData(ClipboardData(text: vpa));
+  /// Puts [value] on the clipboard and says so.
+  ///
+  /// Every value the restaurant matches a payment against is copyable, because
+  /// the alternative is the customer retyping it into a bank app mid-payment:
+  /// a mistyped VPA sends money to a stranger and a mistyped amount cannot be
+  /// matched to the order at all.
+  Future<void> _copy(String value, String said) async {
+    await Clipboard.setData(ClipboardData(text: value));
     if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(const SnackBar(content: Text('UPI ID copied')));
+      ..showSnackBar(SnackBar(content: Text(said)));
+  }
+
+  Future<void> _copyVpa() async {
+    final vpa = _upi?.vpa;
+    if (vpa == null) return;
+    await _copy(vpa, 'UPI ID copied');
+  }
+
+  /// The exact payable figure, in the form a bank app accepts pasted in —
+  /// two decimals, no symbol, no separators. The same string the intent
+  /// carries in `am=`, so what is pasted and what is deep-linked agree.
+  Future<void> _copyAmount() async {
+    final upi = _upi;
+    if (upi == null) return;
+    await _copy(upi.amountParam, 'Amount copied');
+  }
+
+  Future<void> _copyNote() async {
+    final note = _upi?.note;
+    if (note == null || note.isEmpty) return;
+    await _copy(note, 'Reference copied');
   }
 
   /// Hands off to whatever UPI apps are installed.
@@ -227,17 +252,65 @@ class _UpiPayScreenState extends State<UpiPayScreen> {
             ),
             const SizedBox(height: 12),
 
-            // The order number, because it is what the restaurant matches the
-            // payment against alongside the amount.
+            // The exact amount, copyable. The restaurant matches the payment
+            // on the amount as well as the reference, so a figure retyped
+            // slightly wrong is a payment nobody can place.
+            NeoCard(
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Exact amount',
+                            style: textTheme.bodySmall
+                                ?.copyWith(color: c.inkSoft)),
+                        const SizedBox(height: 2),
+                        Text(upi.amountParam,
+                            key: const Key('upi_amount_text'),
+                            style: textTheme.titleMedium),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    key: const Key('upi_copy_amount'),
+                    tooltip: 'Copy amount',
+                    onPressed: _copyAmount,
+                    icon: const Icon(Icons.copy_outlined),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // The order reference, prominent and copyable. It is what the
+            // restaurant reads in its own UPI app — it travels in the
+            // intent's `tn=` field (see UpiPaymentInfo.intentUri), so the
+            // string shown here and the one in the deep link are one value.
             NeoCard(
               child: Row(
                 children: [
                   Icon(Icons.receipt_long_outlined, color: c.primary),
                   const SizedBox(width: 14),
                   Expanded(
-                    child: Text('Reference: ${upi.note}',
-                        key: const Key('upi_note_text'),
-                        style: textTheme.titleMedium),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Order reference',
+                            style: textTheme.bodySmall
+                                ?.copyWith(color: c.inkSoft)),
+                        const SizedBox(height: 2),
+                        Text(upi.note,
+                            key: const Key('upi_note_text'),
+                            style: textTheme.titleMedium),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    key: const Key('upi_copy_note'),
+                    tooltip: 'Copy order reference',
+                    onPressed: _copyNote,
+                    icon: const Icon(Icons.copy_outlined),
                   ),
                 ],
               ),
