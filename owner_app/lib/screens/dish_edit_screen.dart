@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
@@ -282,9 +283,13 @@ class _DishEditScreenState extends State<DishEditScreen> {
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
+                    key: const Key('dish_price_field'),
                     controller: _price,
                     decoration: const InputDecoration(labelText: 'Price (₹)', prefixText: '₹ '),
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+                    ],
                     validator: (v) {
                       final d = double.tryParse((v ?? '').trim());
                       if (d == null || d < 0) return 'Enter a valid price';
@@ -303,11 +308,15 @@ class _DishEditScreenState extends State<DishEditScreen> {
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
+                    key: const Key('dish_prep_field'),
                     controller: _prep,
                     decoration: const InputDecoration(
                       labelText: 'Prep time (minutes, optional)',
                     ),
                     keyboardType: TextInputType.number,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly,
+                    ],
                   ),
                   const SizedBox(height: 8),
                   SwitchListTile(
@@ -359,6 +368,9 @@ class _DishEditScreenState extends State<DishEditScreen> {
                                       'Live count — drops as orders come in.',
                                 ),
                                 keyboardType: TextInputType.number,
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.digitsOnly,
+                                ],
                               ),
                             ),
                             const SizedBox(width: 12),

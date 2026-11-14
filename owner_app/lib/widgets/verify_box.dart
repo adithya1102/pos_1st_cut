@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../services/order_service.dart';
@@ -105,6 +106,14 @@ class _VerifyBoxState extends State<VerifyBox> {
               child: TextField(
                 controller: _controller,
                 enabled: !verified,
+                // Codes are digits 2-9 and six long (server-generated), so a
+                // numeric keypad and the filter keep a mistyped letter from
+                // ever reaching the server.
+                keyboardType: TextInputType.number,
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(6),
+                ],
                 textInputAction: TextInputAction.done,
                 onSubmitted: (_) => _verify(),
                 decoration: const InputDecoration(

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -388,6 +389,11 @@ class _PaymentActionState extends State<_PaymentAction> {
                 key: const Key('collect_code'),
                 controller: code,
                 keyboardType: TextInputType.number,
+                // Codes are digits 2-9 and six long (server-generated).
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(6),
+                ],
                 decoration: const InputDecoration(
                   labelText: 'Pickup code',
                   hintText: '6 digits',
