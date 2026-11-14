@@ -33,6 +33,7 @@ import 'package:customer_app/services/order_service.dart';
 import 'package:customer_app/state/cart_state.dart';
 import 'package:customer_app/theme/app_theme.dart';
 import 'package:customer_app/theme/theme_provider.dart';
+import 'package:customer_app/theme/widgets/neo_button.dart';
 
 const String _orderId = '11111111-2222-3333-4444-555555555555';
 
@@ -67,15 +68,40 @@ Outlet _outlet({List<String>? methods, bool coords = true}) =>
 /// A backend that records what create_order was asked for and answers in the
 /// shape the server would for that method.
 class _Backend {
+  _Backend({this.claimStatus = 200, this.claimDetail});
+
   Map<String, dynamic>? lastOrderBody;
   int claims = 0;
+
+  /// The raw body of the last POST to claim-paid, so a test can assert the
+  /// 12-digit reference really travelled (migration 042).
+  Map<String, dynamic>? lastClaimBody;
+
+  /// Lets a test make claim-paid answer 409 / 422 with the structured detail
+  /// the real backend sends, so the screen's error rendering is exercised
+  /// against the actual wire shape rather than a hand-written string.
+  final int claimStatus;
+  final Map<String, dynamic>? claimDetail;
 
   late final ApiClient api = ApiClient(
     client: MockClient((req) async {
       if (req.url.path.endsWith('/claim-paid')) {
         claims++;
+        lastClaimBody = req.body.isEmpty
+            ? null
+            : (jsonDecode(req.body) as Map).cast<String, dynamic>();
+        if (claimStatus != 200) {
+          return http.Response(
+              jsonEncode({'detail': claimDetail}), claimStatus,
+              headers: {'content-type': 'application/json'});
+        }
         return http.Response(
-            jsonEncode({'order_id': _orderId, 'claimed': true}), 200,
+            jsonEncode({
+              'order_id': _orderId,
+              'claimed': true,
+              'upi_reference_number': lastClaimBody?['upi_reference'],
+            }),
+            200,
             headers: {'content-type': 'application/json'});
       }
       if (req.method == 'POST' && req.url.path.endsWith('/customer/orders')) {
@@ -167,6 +193,28 @@ Future<void> _closePickup(WidgetTester tester) async {
   await tester.pumpWidget(const SizedBox.shrink());
   await tester.pumpAndSettle();
 }
+
+/// Types [value] into the UPI reference field and settles.
+///
+/// Goes through enterText rather than setting the controller directly, so the
+/// input formatters (digits only, 12 max) are actually exercised — which is
+/// the point of several of the tests below.
+Future<void> _enterReference(WidgetTester tester, String value) async {
+  await tester.enterText(find.byKey(const Key('upi_reference_field')), value);
+  await tester.pump();
+}
+
+/// What the reference field currently holds, after formatting.
+String _referenceText(WidgetTester tester) =>
+    tester
+        .widget<TextField>(find.byKey(const Key('upi_reference_field')))
+        .controller!
+        .text;
+
+/// The "I've paid" button, for asserting on its enabled state. A null
+/// `onPressed` is what NeoButton renders as disabled (and refuses to tap).
+NeoButton _claimButton(WidgetTester tester) =>
+    tester.widget<NeoButton>(find.byKey(const Key('upi_claim_paid')));
 
 void main() {
   // ===================== the model, in isolation ===========================
@@ -440,6 +488,18 @@ void main() {
   group('UpiPayScreen', () {
     Future<void> open(WidgetTester tester, _Backend backend,
         {VoidCallback? onClaimed}) async {
+      // A VIEWPORT TALL ENOUGH FOR THE WHOLE SCREEN. The reference field
+      // (migration 042) pushed "I've paid" past the bottom of the default
+      // 600px test surface, and a ListView does not build what is not
+      // visible — so `tester.widget(upi_claim_paid)` threw "No element" for a
+      // button that renders perfectly well on a phone. Asserting on a widget
+      // that exists is the point; scrolling to it in every test would be
+      // asserting on the test's scroll offset instead.
+      tester.view.physicalSize = const Size(1200, 3000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
       SharedPreferences.setMockInitialValues({'carevo_access_token': 't'});
       final order = CreatedOrder.fromJson({
         'id': _orderId,
@@ -493,6 +553,11 @@ void main() {
       var claimed = 0;
       await open(tester, backend, onClaimed: () => claimed++);
 
+      // The claim now requires the 12-digit reference (migration 042), so the
+      // button is inert until one is entered — this test asks "how many times
+      // does one tap claim", which needs a tappable button first.
+      await _enterReference(tester, '123456789012');
+
       // The copyable amount and reference cards (TASK 3) pushed the button
       // below the fold on this surface, so scroll to it before tapping.
       await tester.drag(find.byType(ListView), const Offset(0, -500));
@@ -503,6 +568,165 @@ void main() {
 
       expect(backend.claims, 1);
       expect(claimed, 1);
+    });
+
+    // ================ the 12-digit reference (migration 042) ===============
+    //
+    // WHY THE BUTTON IS GATED AT ALL. Before 042 the restaurant matched a
+    // direct-UPI payment by amount and timestamp, which stops being unique the
+    // moment two customers owe the same total in the same few minutes. The UTR
+    // is the bank's identifier for the transfer, so requiring it is what makes
+    // the claim checkable by the only party who can check it. It does NOT make
+    // the claim verified — nothing in this app can do that.
+
+    testWidgets('the field says exactly what is wanted', (tester) async {
+      await open(tester, _Backend());
+      expect(find.byKey(const Key('upi_reference_field')), findsOneWidget);
+      expect(find.text('12-digit UPI reference number'), findsOneWidget);
+    });
+
+    testWidgets('the field takes 12 digits and refuses everything else',
+        (tester) async {
+      await open(tester, _Backend());
+      // Letters and punctuation are dropped by the formatters, and the 13th
+      // digit never lands — so the field cannot hold a value the server
+      // would bounce for its shape.
+      await _enterReference(tester, 'ab12-34 5678901234567');
+      expect(_referenceText(tester), '123456789012');
+      expect(_referenceText(tester).length, 12);
+    });
+
+    testWidgets('the keypad is numeric', (tester) async {
+      await open(tester, _Backend());
+      final field = tester.widget<TextField>(
+          find.byKey(const Key('upi_reference_field')));
+      expect(field.keyboardType, TextInputType.number);
+      expect(field.maxLength, 12);
+    });
+
+    testWidgets('"I\'ve paid" is disabled below 12 digits', (tester) async {
+      final backend = _Backend();
+      await open(tester, backend);
+
+      // Empty.
+      expect(_claimButton(tester).onPressed, isNull,
+          reason: 'nothing typed yet');
+
+      // Eleven — one short, which is the case a length check gets wrong.
+      await _enterReference(tester, '12345678901');
+      expect(_claimButton(tester).onPressed, isNull,
+          reason: 'eleven digits is not a reference');
+      expect(find.byKey(const Key('upi_reference_required_note')),
+          findsOneWidget);
+
+      // And tapping it does nothing, not merely "looks disabled".
+      await tester.drag(find.byType(ListView), const Offset(0, -500));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('upi_claim_paid')));
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(backend.claims, 0);
+    });
+
+    testWidgets('"I\'ve paid" is enabled at exactly 12 digits',
+        (tester) async {
+      await open(tester, _Backend());
+      await _enterReference(tester, '123456789012');
+      expect(_claimButton(tester).onPressed, isNotNull);
+      // And the prompt to enter one is gone.
+      expect(find.byKey(const Key('upi_reference_required_note')), findsNothing);
+    });
+
+    testWidgets('the reference travels in the claim body', (tester) async {
+      final backend = _Backend();
+      await open(tester, backend);
+      await _enterReference(tester, '987654321098');
+
+      await tester.drag(find.byType(ListView), const Offset(0, -500));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('upi_claim_paid')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(backend.claims, 1);
+      expect(backend.lastClaimBody, {'upi_reference': '987654321098'});
+    });
+
+    testWidgets('a 409 for a re-used reference is shown in plain words',
+        (tester) async {
+      // The real backend body, verbatim: a structured `detail` with a
+      // `message`. The screen must render that prose, not the error code and
+      // not a generic failure.
+      final backend = _Backend(claimStatus: 409, claimDetail: const {
+        'error': 'UPI_REFERENCE_ALREADY_USED',
+        'message': 'That UPI reference number has already been used for '
+            'another order. Check the number in your UPI app and enter the '
+            'one for this payment.',
+      });
+      await open(tester, backend);
+      await _enterReference(tester, '123456789012');
+
+      await tester.drag(find.byType(ListView), const Offset(0, -500));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('upi_claim_paid')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.byKey(const Key('upi_error')), findsOneWidget);
+      expect(
+          find.textContaining('already been used for another order'),
+          findsOneWidget);
+      // And the raw code is NOT what the customer reads.
+      expect(find.textContaining('UPI_REFERENCE_ALREADY_USED'), findsNothing);
+    });
+
+    testWidgets('a 422 for a malformed reference is shown in plain words',
+        (tester) async {
+      final backend = _Backend(claimStatus: 422, claimDetail: const {
+        'error': 'INVALID_UPI_REFERENCE',
+        'message': 'A UPI reference number is exactly 12 digits. Check the '
+            'number in your UPI app and enter all 12.',
+      });
+      await open(tester, backend);
+      await _enterReference(tester, '123456789012');
+
+      await tester.drag(find.byType(ListView), const Offset(0, -500));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('upi_claim_paid')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.byKey(const Key('upi_error')), findsOneWidget);
+      expect(find.textContaining('exactly 12 digits'), findsOneWidget);
+      expect(find.textContaining('INVALID_UPI_REFERENCE'), findsNothing);
+    });
+
+    testWidgets('editing the number clears the last error', (tester) async {
+      final backend = _Backend(claimStatus: 409, claimDetail: const {
+        'error': 'UPI_REFERENCE_ALREADY_USED',
+        'message': 'That UPI reference number has already been used.',
+      });
+      await open(tester, backend);
+      await _enterReference(tester, '123456789012');
+      await tester.drag(find.byType(ListView), const Offset(0, -500));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('upi_claim_paid')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.byKey(const Key('upi_error')), findsOneWidget);
+
+      // Correcting the number should not leave last attempt's complaint about
+      // it sitting on screen.
+      await _enterReference(tester, '555666777888');
+      expect(find.byKey(const Key('upi_error')), findsNothing);
+    });
+
+    testWidgets('the copy buttons are all still there', (tester) async {
+      // The reference field is an ADDITION. The three values the restaurant
+      // matches a payment against stay copyable.
+      await open(tester, _Backend());
+      expect(find.byKey(const Key('upi_copy_vpa')), findsOneWidget);
+      expect(find.byKey(const Key('upi_copy_amount')), findsOneWidget);
+      expect(find.byKey(const Key('upi_copy_note')), findsOneWidget);
     });
 
     testWidgets('the claim button is available before the UPI app is opened',

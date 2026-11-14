@@ -62,7 +62,29 @@ class _UpiPayScreenState extends State<UpiPayScreen> {
   String? _error;
   bool _opened = false;
 
+  /// The 12-digit UPI reference number (UTR) the customer reads out of their
+  /// own UPI app after paying.
+  ///
+  /// WHY THE CLAIM NOW REQUIRES IT. Before this, "I've paid" was a bare
+  /// assertion and the restaurant had to match a payment by amount and
+  /// timestamp — which is ambiguous the moment two customers owe the same
+  /// total within the same few minutes. The UTR is the bank's own identifier
+  /// for the transfer, so the restaurant can search for it. Requiring it does
+  /// not make the claim any more verified (CareVo cannot ask a bank anything);
+  /// it makes the claim CHECKABLE by the only party who can check it.
+  final _referenceController = TextEditingController();
+
   UpiPaymentInfo? get _upi => widget.order.upiPayment;
+
+  /// Digits only and never more than 12, enforced by the input formatters on
+  /// the field — so "complete" is simply "all 12 are there".
+  bool get _referenceComplete => _referenceController.text.length == 12;
+
+  @override
+  void dispose() {
+    _referenceController.dispose();
+    super.dispose();
+  }
 
   /// Puts [value] on the clipboard and says so.
   ///
@@ -136,7 +158,8 @@ class _UpiPayScreenState extends State<UpiPayScreen> {
     final orders = context.read<OrderService>();
     final cart = context.read<CartState>();
     try {
-      await orders.claimPaid(widget.order.id);
+      await orders.claimPaid(widget.order.id,
+          upiReference: _referenceController.text);
       if (!mounted) return;
       // The cart is cleared only now. Before the claim the order is still
       // cancellable by the pay window, and a customer who backs out should
@@ -152,8 +175,15 @@ class _UpiPayScreenState extends State<UpiPayScreen> {
         ),
       ));
     } on ApiException catch (e) {
-      // The server's own prose, not a generic failure: PAY_WINDOW_EXPIRED and
-      // NOT_CLAIMABLE both tell the customer something they can act on.
+      // The server's own prose, not a generic failure: PAY_WINDOW_EXPIRED,
+      // NOT_CLAIMABLE, INVALID_UPI_REFERENCE (422) and
+      // UPI_REFERENCE_ALREADY_USED (409) all tell the customer something they
+      // can act on. Every one of those arrives as a `detail` MAP carrying a
+      // `message`, which ApiClient extracts into [ApiException.message] — so
+      // showing it is showing plain words, not a code. (This is also why the
+      // backend raises the 12-digit rule itself instead of leaving it to
+      // Pydantic, whose 422 body is a list that would surface here as the
+      // useless "Request failed (422)".)
       if (mounted) {
         setState(() {
           _claiming = false;
@@ -333,17 +363,63 @@ class _UpiPayScreenState extends State<UpiPayScreen> {
             ),
             const SizedBox(height: 14),
 
+            // THE REFERENCE NUMBER. Typed, not copied: it does not exist
+            // until the transfer has actually happened, which is what makes
+            // it worth asking for — an empty field means there is nothing for
+            // the restaurant to go and look up.
+            //
+            // Digits only and capped at 12 by the formatters, so the field
+            // cannot hold a value the server would reject for its shape. The
+            // server still re-checks: formatters are a convenience, not a
+            // guarantee (a paste, an IME, or an older build all bypass them).
+            TextField(
+              key: const Key('upi_reference_field'),
+              controller: _referenceController,
+              keyboardType: TextInputType.number,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(12),
+              ],
+              maxLength: 12,
+              decoration: const InputDecoration(
+                hintText: '12-digit UPI reference number',
+                labelText: 'UPI reference number',
+                helperText: 'Find it in your UPI app next to this payment.',
+                counterText: '',
+                prefixIcon: Icon(Icons.pin_outlined),
+                border: OutlineInputBorder(),
+              ),
+              // Rebuilds so the button below re-reads [_referenceComplete],
+              // and clears a stale server error: once they are editing the
+              // number, last attempt's complaint about it is noise.
+              onChanged: (_) => setState(() => _error = null),
+            ),
+            const SizedBox(height: 14),
+
             NeoButton(
               key: const Key('upi_claim_paid'),
               label: "I've paid",
               icon: Icons.check_circle_outline,
               loading: _claiming,
-              // Deliberately enabled even when the intent was never opened:
-              // paying from another device or another app is normal, and the
-              // app must not decide it knows better. `_opened` only changes
-              // the emphasis below.
-              onPressed: _claiming ? null : _claim,
+              // GATED ON THE REFERENCE, and deliberately on nothing else.
+              // Still enabled when the intent was never opened: paying from
+              // another device or a banking app is normal and the app must not
+              // decide it knows better. `_opened` only changes the emphasis
+              // below. What it will not do is send a claim the restaurant
+              // cannot look up, or one the server would bounce with a 422.
+              onPressed:
+                  (_claiming || !_referenceComplete) ? null : _claim,
             ),
+            if (!_referenceComplete) ...[
+              const SizedBox(height: 10),
+              Text(
+                'Enter the 12-digit reference number from your UPI app to '
+                'confirm you have paid.',
+                key: const Key('upi_reference_required_note'),
+                style: textTheme.bodySmall?.copyWith(color: c.inkSoft),
+                textAlign: TextAlign.center,
+              ),
+            ],
             if (!_opened) ...[
               const SizedBox(height: 10),
               Text(

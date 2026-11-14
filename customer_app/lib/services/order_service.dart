@@ -43,8 +43,26 @@ class OrderService {
   ///
   /// Idempotent server-side (compare-and-set on payment_claimed_at), so a
   /// double-tap on a slow connection is safe and returns the first claim.
-  Future<void> claimPaid(String orderId) async {
-    await _api.post('/customer/orders/$orderId/claim-paid');
+  ///
+  /// [upiReference] is the customer's own 12-digit UPI reference number (UTR,
+  /// backend migration 042). Spaces are tolerated by the server, which also
+  /// re-checks the 12-digit rule and answers 422 for a malformed number or 409
+  /// for one already used on another order.
+  ///
+  /// With no reference this sends `{}` — byte-identical to what 1.0.1 and
+  /// 1.0.2+8 already put on the wire, because [ApiClient.post] encodes
+  /// `body ?? {}` and so has never sent a bodyless POST here. Worth stating
+  /// because the server's compatibility guarantee is written against that
+  /// exact shape: `{}` and a genuinely absent body both claim the order and
+  /// leave the reference NULL, and the backend has a test for each.
+  Future<void> claimPaid(String orderId, {String? upiReference}) async {
+    final reference = upiReference?.trim();
+    await _api.post(
+      '/customer/orders/$orderId/claim-paid',
+      body: (reference == null || reference.isEmpty)
+          ? null
+          : {'upi_reference': reference},
+    );
   }
 
   Future<OrderStatus> fetchStatus(String orderId) async {
