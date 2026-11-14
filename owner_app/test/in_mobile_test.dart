@@ -14,7 +14,7 @@ Order _order(String? contactPhone) => Order.fromJson({
       'items': const [
         {'id': 'i1', 'name': 'Dosa', 'quantity': 1}
       ],
-      if (contactPhone != null) 'contact_phone': contactPhone,
+      'contact_phone': ?contactPhone,
     });
 
 void main() {

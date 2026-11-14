@@ -47,7 +47,7 @@ class AppConfig {
   /// rather than read from the package at runtime: package_info_plus is not a
   /// dependency here, and adding a plugin to render six characters would be a
   /// poor trade.
-  static const String appVersion = '1.0.1+6';
+  static const String appVersion = '1.0.1+7';
 
   /// Brand palette (used lightly for accents only).
   static const int brandPurple = 0xFF6B2FB3;

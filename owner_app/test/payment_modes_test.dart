@@ -575,7 +575,7 @@ void main() {
     });
 
     test('it is the expected build for this release', () {
-      expect(AppConfig.appVersion, '1.0.1+6');
+      expect(AppConfig.appVersion, '1.0.1+7');
     });
   });
 
