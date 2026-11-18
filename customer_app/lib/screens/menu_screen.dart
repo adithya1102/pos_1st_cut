@@ -160,6 +160,30 @@ class _MenuScreenState extends State<MenuScreen> {
   void _retry() => setState(() => _future = _load());
 
   Future<void> _openItem(MenuItem item) async {
+    // CLOSED FIRST, before the per-item check and before the outlet-switch
+    // prompt. The dish screen exists to build an order line, and there is no
+    // order to build at a closed restaurant — the server would refuse it with
+    // a 409 at creation anyway (CarevoService.create_order), so letting
+    // someone fill a cart here would only move the refusal later, after they
+    // had done the work.
+    //
+    // Ordered ahead of _confirmOutletSwitch deliberately: a closed restaurant
+    // must never be the reason a customer is asked to discard a cart they
+    // built somewhere that was open.
+    //
+    // 'closing_soon' is NOT gated. The server still accepts a scheduled
+    // pickup in that window, and refusing the dish screen would block an
+    // order the backend would have taken.
+    if (widget.outlet.orderStatus == 'closed') {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(
+          key: const Key('outlet_closed_notice'),
+          content: Text('${widget.outlet.name} is closed'),
+        ));
+      return;
+    }
+
     // Sold-out items are LISTED (the API now returns them with
     // `is_available: false` instead of hiding them) and are tappable, but they
     // do not open the dish screen — that screen's entire purpose is building an
@@ -230,7 +254,9 @@ class _MenuScreenState extends State<MenuScreen> {
       bottomNavigationBar: CartBar(onView: _openCart),
       body: SafeArea(
         bottom: false,
-        child: FutureBuilder<MenuResponse>(
+        child: _ClosedOverlay(
+          outlet: widget.outlet,
+          child: FutureBuilder<MenuResponse>(
           future: _future,
           builder: (context, snap) {
             if (snap.connectionState == ConnectionState.waiting) {
@@ -364,9 +390,99 @@ class _MenuScreenState extends State<MenuScreen> {
                 ),
               ],
             );
-          },
+            },
+          ),
         ),
       ),
+    );
+  }
+}
+
+/// Greys the menu out and labels it when the outlet is CLOSED.
+///
+/// The menu is still shown, in full, and that is the point: a customer who
+/// opened a restaurant wants to know what it serves whether or not it is
+/// serving right now, and a blank screen or a bounce back to the list cannot
+/// tell them "closed" apart from "broken". So the content stays and loses its
+/// colour, which reads as unavailable at a glance without hiding anything.
+///
+/// Only 'closed' desaturates. 'closing_soon' is deliberately untouched here:
+/// the server still refuses an ASAP order in that window, but a scheduled
+/// pickup is accepted, so the menu is genuinely still useful and greying it
+/// would overstate the situation. See CarevoService.outlet_availability.
+class _ClosedOverlay extends StatelessWidget {
+  const _ClosedOverlay({required this.outlet, required this.child});
+
+  final Outlet outlet;
+  final Widget child;
+
+  static const bannerKey = Key('menu_closed_banner');
+  static const greyscaleKey = Key('menu_greyscale');
+
+  /// Luminance-weighted desaturation. Not a flat average of the channels: that
+  /// renders reds and greens at the same grey, which on a food menu collapses
+  /// the veg/non-veg dot — the one indicator a customer may be scanning for.
+  static const _greyscale = ColorFilter.matrix(<double>[
+    0.2126, 0.7152, 0.0722, 0, 0,
+    0.2126, 0.7152, 0.0722, 0, 0,
+    0.2126, 0.7152, 0.0722, 0, 0,
+    0, 0, 0, 1, 0,
+  ]);
+
+  @override
+  Widget build(BuildContext context) {
+    if (outlet.orderStatus != 'closed') return child;
+
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      children: [
+        // OUTSIDE the filter, so the one thing explaining the grey keeps its
+        // own colour. A greyed-out "Closed" label would be the first thing
+        // lost to the effect it is describing.
+        Container(
+          key: bannerKey,
+          width: double.infinity,
+          color: scheme.errorContainer,
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          child: Row(
+            children: [
+              Icon(Icons.block, size: 20, color: scheme.onErrorContainer),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Closed',
+                      style: TextStyle(
+                        color: scheme.onErrorContainer,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                      ),
+                    ),
+                    // The server's own reason, which distinguishes "outside
+                    // opening hours" from the owner's manual closure. Falls
+                    // back to a plain line rather than showing a bare label
+                    // with no explanation.
+                    Text(
+                      outlet.closedReason ??
+                          'This restaurant is not taking orders right now.',
+                      style: TextStyle(color: scheme.onErrorContainer),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ColorFiltered(
+            key: greyscaleKey,
+            colorFilter: _greyscale,
+            child: child,
+          ),
+        ),
+      ],
     );
   }
 }
