@@ -9,6 +9,7 @@ import 'config/app_config.dart';
 import 'services/api_client.dart';
 import 'services/auth_service.dart';
 import 'services/location_service.dart';
+import 'services/meal_slot_service.dart';
 import 'services/menu_ocr_service.dart';
 import 'services/menu_service.dart';
 import 'services/offer_service.dart';
@@ -70,6 +71,10 @@ List<SingleChildWidget> buildAppProviders(ApiClient apiClient) {
       create: (_) => HomeState(
         outletService,
         MenuService(apiClient),
+        // Meal slots (migration 043). Optional on HomeState so the dozens of
+        // existing two-argument call sites keep compiling; the real app always
+        // passes it, and a server without the routes degrades to no chip row.
+        MealSlotService(apiClient),
       ),
     ),
     ChangeNotifierProvider(

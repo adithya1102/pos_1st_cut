@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/meal_slot.dart';
 import '../models/menu_item.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -25,6 +26,7 @@ import 'dish_edit_screen.dart';
 import 'offers_screen.dart';
 import 'orders_screen.dart';
 import 'payment_tab_screen.dart';
+import 'slot_editor_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   /// Injectable so a test can watch the chime/buzz without a real device.
@@ -466,6 +468,11 @@ class _DishesTab extends StatelessWidget {
       child: ListView(
         padding: const EdgeInsets.symmetric(vertical: 8),
         children: [
+          // FIRST on the tab, above everything. A closed restaurant taking no
+          // orders is the single most important fact on this screen, and an
+          // owner who forgot the toggle is on will otherwise sit watching an
+          // empty queue and conclude the app is broken.
+          if (state.outlet?.isManuallyClosed == true) const _ClosedBanner(),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
             child: Text(
@@ -473,6 +480,10 @@ class _DishesTab extends StatelessWidget {
               style: Theme.of(context).textTheme.titleMedium,
             ),
           ),
+          // Meal times (migration 043), between the heading and the list.
+          // Hidden entirely when the server has not answered — four dead
+          // chips would be worse than none.
+          if (state.slots.isNotEmpty) const _TimingsSection(),
           if (state.items.isEmpty)
             // A new restaurant lands here, and typing twenty dishes into a
             // phone by hand is where owners give up — so this leads with
@@ -501,6 +512,209 @@ class _DishesTab extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+}
+
+/// "You are closed" — shown on the Menu tab while the manual closure is on.
+///
+/// Tapping it opens the screen that turns it off, because a banner telling an
+/// owner something is wrong without a route to fixing it just becomes noise
+/// they learn to scroll past.
+class _ClosedBanner extends StatelessWidget {
+  const _ClosedBanner();
+
+  static const bannerKey = Key('menu_closed_banner');
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Material(
+        color: scheme.errorContainer,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          key: bannerKey,
+          borderRadius: BorderRadius.circular(10),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const OutletSettingsScreen()),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            child: Row(
+              children: [
+                Icon(Icons.block, size: 20, color: scheme.onErrorContainer),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'You are closed — customers cannot order',
+                    style: TextStyle(
+                      color: scheme.onErrorContainer,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                Icon(Icons.chevron_right, color: scheme.onErrorContainer),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The four meal-time chips, plus an edit affordance on each.
+///
+/// A chip is DISABLED when its slot has no dishes and reads "Set up", because
+/// applying an empty slot is refused by the server (422 SLOT_EMPTY) rather
+/// than turning the entire menu off — so a tappable empty chip would only ever
+/// produce an error.
+///
+/// A chip is SELECTED when its dish set equals the set that is currently
+/// available. That is computed client-side from the dish list (see
+/// HomeState.activeSlotKey) and no column stores it: availability is the one
+/// source of truth for what is on, and a stored "active slot" would go stale
+/// the first time somebody flipped a single dish.
+class _TimingsSection extends StatelessWidget {
+  const _TimingsSection();
+
+  static const sectionKey = Key('timings_section');
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<HomeState>();
+    final active = state.activeSlotKey;
+
+    return Column(
+      key: sectionKey,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 2),
+          child: Text('Timings',
+              style: Theme.of(context).textTheme.titleMedium),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: Text(
+            'Tap a meal time to show only its dishes.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            children: [
+              for (final slot in state.slots)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: _SlotChip(
+                    slot: slot,
+                    selected: slot.slotKey == active,
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+}
+
+class _SlotChip extends StatelessWidget {
+  final MealSlot slot;
+  final bool selected;
+
+  const _SlotChip({required this.slot, required this.selected});
+
+  Future<void> _confirmAndApply(BuildContext context) async {
+    final state = context.read<HomeState>();
+    final count = slot.itemIds.length;
+    // Everything currently on that this slot does NOT contain. Floored at 0:
+    // a slot wider than what is on now would otherwise read "-2 dishes".
+    final inSlot = slot.itemIds.toSet();
+    final others = state.items
+        .where((i) => i.isAvailable && !inSlot.contains(i.id))
+        .length;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: const Key('slot_confirm_dialog'),
+        title: Text('Switch to ${slot.label}?'),
+        content: Text(
+          'Show only the $count ${count == 1 ? 'dish' : 'dishes'} in '
+          '${slot.label}? $others other '
+          '${others == 1 ? 'dish' : 'dishes'} will be turned off.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const Key('slot_confirm_apply'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Switch'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    if (!context.mounted) return;
+
+    // applySlot reloads the dish list itself, so the rows and the selected
+    // chip show what the server did rather than what was requested — the two
+    // differ whenever a dish was skipped for being sold out.
+    final result = await state.applySlot(slot.slotKey);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        key: const Key('slot_applied_snackbar'),
+        content: Text(result == null
+            ? (state.slotError ?? 'Could not switch to this meal time.')
+            : '${slot.label}: ${result.summary}'),
+      ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = !slot.isEmpty;
+    final range = slot.rangeLabel;
+    final subtitle = enabled ? range : 'Set up';
+
+    return InputChip(
+      key: Key('slot_chip_${slot.slotKey}'),
+      selected: selected,
+      // showCheckmark false: the selected chip is already filled, and a tick
+      // next to "Morning" was read as a checkbox for inclusion rather than as
+      // "this is what is on now".
+      showCheckmark: false,
+      onPressed: enabled ? () => _confirmAndApply(context) : null,
+      label: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(slot.label,
+              style: const TextStyle(fontWeight: FontWeight.w600)),
+          if (subtitle != null)
+            Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
+        ],
+      ),
+      // The edit route stays reachable even on a disabled chip — an empty slot
+      // is precisely the one an owner needs to open.
+      onDeleted: () => Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => SlotEditorScreen(slotKey: slot.slotKey),
+        ),
+      ),
+      deleteIcon: const Icon(Icons.edit_outlined, size: 16),
+      deleteButtonTooltipMessage: 'Edit ${slot.label}',
     );
   }
 }

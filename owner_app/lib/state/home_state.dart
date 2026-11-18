@@ -1,8 +1,11 @@
 import 'package:flutter/foundation.dart' hide Category;
 
 import '../models/category.dart';
+import '../models/meal_slot.dart';
 import '../models/menu_item.dart';
 import '../models/outlet.dart';
+import '../services/api_client.dart';
+import '../services/meal_slot_service.dart';
 import '../services/menu_service.dart';
 import '../services/outlet_service.dart';
 
@@ -12,17 +15,61 @@ class HomeState extends ChangeNotifier {
   final OutletService _outletService;
   final MenuService _menuService;
 
-  HomeState(this._outletService, this._menuService);
+  /// Meal slots (migration 043). OPTIONAL, and deliberately so: every existing
+  /// construction site passes two services, and a required third would have
+  /// made this feature a breaking change to callers that have nothing to do
+  /// with it. Null means the chip row simply does not render.
+  final MealSlotService? _slotService;
+
+  HomeState(this._outletService, this._menuService, [this._slotService]);
 
   bool _loading = false;
   String? _error;
   Outlet? _outlet;
   List<MenuItem> _items = [];
+  List<MealSlot> _slots = [];
 
   bool get loading => _loading;
   String? get error => _error;
   Outlet? get outlet => _outlet;
   List<MenuItem> get items => List.unmodifiable(_items);
+
+  /// The four meal slots, or EMPTY when the server has not answered.
+  ///
+  /// Empty is the "no answer" state and the Timings section hides on it,
+  /// rather than rendering four dead chips an owner would tap at. That is the
+  /// same fallback shape the city transport flags use: absent means absent,
+  /// not false.
+  List<MealSlot> get slots => List.unmodifiable(_slots);
+
+  /// Which slot, if any, matches what is on the menu RIGHT NOW.
+  ///
+  /// Computed here rather than stored on the server, and that is the point:
+  /// `menu_items.is_available` is the single source of truth for what is on,
+  /// so "which slot is active" is a question about it. A stored active-slot
+  /// column would go stale the first time an owner toggled one dish by hand.
+  ///
+  /// An EMPTY slot never matches, even when the whole menu is off — otherwise
+  /// an unconfigured chip would light up on a restaurant that had simply
+  /// switched everything off, and it cannot be applied anyway.
+  String? get activeSlotKey {
+    final onNow = _items
+        .where((i) => i.isAvailable)
+        .map((i) => i.id)
+        .toSet();
+    for (final slot in _slots) {
+      if (slot.isEmpty) continue;
+      if (slot.itemIds.toSet().length == onNow.length &&
+          onNow.containsAll(slot.itemIds)) {
+        return slot.slotKey;
+      }
+    }
+    return null;
+  }
+
+  /// How many dishes are currently on — the "M other dishes will be turned
+  /// off" half of the confirm dialog.
+  int get availableCount => _items.where((i) => i.isAvailable).length;
 
   Future<void> load() async {
     _loading = true;
@@ -45,6 +92,95 @@ class HomeState extends ChangeNotifier {
     } finally {
       _loading = false;
       notifyListeners();
+    }
+    // SEPARATE, AND DELIBERATELY NON-FATAL. Not folded into the Future.wait
+    // above: a slot fetch that fails — an older backend without migration
+    // 043, or a 404 from a client that does not stub the route — must not
+    // blank the dish list, which is what this screen is actually for.
+    await _loadSlots();
+  }
+
+  Future<void> _loadSlots() async {
+    final service = _slotService;
+    if (service == null) return;
+    try {
+      _slots = await service.getSlots();
+    } catch (e) {
+      if (kDebugMode) debugPrint('HomeState meal slots unavailable: $e');
+      _slots = const [];
+    }
+    notifyListeners();
+  }
+
+  // ------------------------ Meal slots (043) -----------------------------
+  /// Replace one slot's times and its whole dish set.
+  ///
+  /// Returns null on success, or a staff-facing message. A 403 here means the
+  /// account is not an owner or manager; the app carries no role field, so the
+  /// server's own message is what gets shown rather than a guess made locally.
+  Future<String?> saveSlot(
+    String slotKey, {
+    String? startTime,
+    String? endTime,
+    required List<String> itemIds,
+  }) async {
+    final service = _slotService;
+    if (service == null) return 'Meal times are not available.';
+    try {
+      final saved = await service.saveSlot(
+        slotKey,
+        startTime: startTime,
+        endTime: endTime,
+        itemIds: itemIds,
+      );
+      final i = _slots.indexWhere((s) => s.slotKey == slotKey);
+      if (i >= 0) {
+        _slots[i] = saved;
+      } else {
+        _slots = [..._slots, saved];
+      }
+      notifyListeners();
+      return null;
+    } on ApiException catch (e) {
+      if (kDebugMode) debugPrint('saveSlot failed: $e');
+      return e.serverMessage ?? 'Could not save this meal time.';
+    } catch (e) {
+      if (kDebugMode) debugPrint('saveSlot failed: $e');
+      return 'Could not save this meal time.';
+    }
+  }
+
+  /// Apply a slot: its dishes on, every other dish off, in one server
+  /// transaction. Reloads the dish list afterwards so the rows and the
+  /// selected chip reflect what the server actually did rather than what was
+  /// asked for — the two differ whenever a dish was skipped for being sold
+  /// out, which is exactly the case the owner needs to see.
+  ///
+  /// Returns the counts on success, or throws nothing: failure comes back as a
+  /// null result plus a message in [slotError].
+  String? slotError;
+
+  Future<ApplySlotResult?> applySlot(String slotKey) async {
+    final service = _slotService;
+    if (service == null) {
+      slotError = 'Meal times are not available.';
+      return null;
+    }
+    slotError = null;
+    try {
+      final result = await service.applySlot(slotKey);
+      await load();
+      return result;
+    } on ApiException catch (e) {
+      if (kDebugMode) debugPrint('applySlot failed: $e');
+      slotError = e.serverMessage ?? 'Could not switch to this meal time.';
+      notifyListeners();
+      return null;
+    } catch (e) {
+      if (kDebugMode) debugPrint('applySlot failed: $e');
+      slotError = 'Could not switch to this meal time.';
+      notifyListeners();
+      return null;
     }
   }
 
