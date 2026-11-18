@@ -5,10 +5,11 @@ no back_populates is attached to existing Customer/Outlet/MenuItem mappers, so
 existing mappings are untouched.
 """
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 
 from sqlalchemy import (
-    String, ForeignKey, DECIMAL, Integer, Boolean, DateTime, Text, text,
+    CheckConstraint, Column, DECIMAL, DateTime, ForeignKey, Index, Integer,
+    Boolean, String, Table as SATable, Text, Time, UniqueConstraint, text,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -292,3 +293,89 @@ class Coupon(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
     )
+
+
+# ----------------------------- Meal slots (043) -----------------------------
+# Declared here for the same reason every other model in this file is: the
+# tables are created by a raw-SQL migration applied out of band, and these
+# mappers exist so `Base.metadata.create_all` also produces them on a database
+# built from this repo alone (see the note on menu/model.py `tags`, where the
+# absence of exactly this was a 500).
+#
+# The service layer reads and writes these two tables with raw SQL, the same
+# way the availability and stock paths do. These mappers are therefore the
+# SCHEMA DECLARATION, not the access path — which is why no relationship is
+# attached to the existing Outlet or MenuItem mappers. Adding back_populates
+# there would change how those long-standing models load, and nothing here
+# needs it.
+
+
+class OutletMealSlot(Base):
+    """One of at most four named dish groupings for an outlet (migration 043).
+
+    `start_time` / `end_time` are DISPLAY ONLY — the label on the owner's chip.
+    Nothing reads them to decide anything and no slot is ever auto-applied
+    when the clock reaches one. The times that genuinely gate behaviour are
+    `outlets.opens_at` / `outlets.closes_at` from migration 024, evaluated by
+    CarevoService.outlet_availability, and those gate ORDERING rather than
+    which dishes are on.
+
+    There is deliberately no "is_active" / "current_slot" column: what is
+    currently switched on is `menu_items.is_available`, and a second copy of
+    that fact would drift the first time an owner toggles one dish by hand.
+    """
+
+    __tablename__ = "outlet_meal_slots"
+
+    outlet_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("outlets.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # CHECK (slot_key IN ('morning','afternoon','evening','night')) lives in
+    # the migration. Not restated as a SQLAlchemy Enum: an Enum would create a
+    # Postgres TYPE that the migration does not create, so create_all and the
+    # migration would disagree about the schema they produce.
+    slot_key: Mapped[str] = mapped_column(String(16), nullable=False)
+    start_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    end_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+    __table_args__ = (
+        UniqueConstraint("outlet_id", "slot_key",
+                         name="ux_outlet_meal_slots_outlet_slot"),
+        CheckConstraint(
+            "slot_key IN ('morning', 'afternoon', 'evening', 'night')",
+            name="ck_outlet_meal_slots_slot_key",
+        ),
+    )
+
+
+# A Core Table, not a Base subclass, and that is required rather than stylistic:
+# `Base` declares a surrogate `id` primary key (app/models/base.py:9), but this
+# table's identity IS the (slot_id, menu_item_id) pair — that composite PK is
+# what makes adding the same dish twice a no-op. A Base subclass would add an
+# `id` column the migration never creates, so create_all would build a table
+# that does not match production. This is the same pattern `user_roles_table`
+# (users/model.py:9) already uses for the same reason.
+meal_slot_items_table = SATable(
+    "meal_slot_items",
+    Base.metadata,
+    Column("slot_id", UUID(as_uuid=True),
+           ForeignKey("outlet_meal_slots.id", ondelete="CASCADE"),
+           primary_key=True),
+    # CASCADE on the dish too: without it, deleting a menu item that sits in
+    # any slot would start raising a foreign-key violation, i.e. this feature
+    # would silently break the existing DELETE /pos/menu-items/{id} route.
+    Column("menu_item_id", UUID(as_uuid=True),
+           ForeignKey("menu_items.id", ondelete="CASCADE"),
+           primary_key=True),
+    Column("created_at", DateTime(timezone=True), nullable=False,
+           server_default=text("now()")),
+    Index("ix_meal_slot_items_menu_item", "menu_item_id"),
+)

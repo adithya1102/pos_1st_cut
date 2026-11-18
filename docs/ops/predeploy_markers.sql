@@ -306,3 +306,9 @@ SELECT '041' AS migration,
 SELECT '042' AS migration,
     EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='customer_orders' AND column_name='upi_reference_number')
     AS present;
+
+-- 043_meal_slots.sql
+SELECT '043' AS migration,
+    EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='outlet_meal_slots')
+    AND EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='meal_slot_items')
+    AS present;
