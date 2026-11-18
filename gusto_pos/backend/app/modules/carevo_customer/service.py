@@ -7341,3 +7341,252 @@ class CarevoService:
             "SELECT id, name FROM cities WHERE status = 'active' ORDER BY name"
         ))).fetchall()
         return [{"id": r.id, "name": r.name} for r in rows]
+
+    # ===================== Meal-time slots (migration 043) ====================
+    #
+    # THE ONE GATE. Applying a slot writes `menu_items.is_available` — the
+    # column that has always been the customer-facing availability gate (see
+    # get_menu, which returns unavailable dishes greyed rather than hiding
+    # them, and create_order, which refuses them at service.py:1902). No
+    # second notion of availability is introduced and no "active slot" is
+    # stored anywhere: what is currently on IS is_available, so there is
+    # nothing to drift out of step when an owner toggles one dish by hand.
+    #
+    # THE TIMES ARE DISPLAY ONLY. start_time/end_time label the chip. Nothing
+    # here reads them and no slot is ever applied because a clock reached one.
+    # The times that gate behaviour are opens_at/closes_at (migration 024),
+    # and they gate ORDERING, not which dishes are on.
+
+    #: "Tracked and sold out", spelled exactly as the stock module spells it.
+    #: `stock_remaining IS NULL` is UNTRACKED (unlimited) and is every dish
+    #: until a restaurant sets a number — so this predicate must test IS NOT
+    #: NULL first. `COALESCE(stock_remaining, 0) = 0` alone would read every
+    #: untracked dish as sold out and refuse to turn the whole menu on.
+    #: See stock.py:3 (untracked) and stock.py:171-174 (zero hides the dish).
+    _OUT_OF_STOCK_SQL = "(mi.stock_remaining IS NOT NULL AND mi.stock_remaining = 0)"
+
+    @staticmethod
+    async def get_meal_slots(db: AsyncSession, outlet_id: uuid.UUID) -> list[dict]:
+        """All four slots for this outlet, saved or not.
+
+        Returns every key in MEAL_SLOT_KEYS order whether or not a row exists,
+        because the owner app renders four chips unconditionally; a missing
+        slot comes back with null times and an empty item list, which is what
+        makes its chip read "Set up" rather than vanishing.
+        """
+        from app.modules.carevo_customer.schema import MEAL_SLOT_KEYS
+
+        rows = (await db.execute(text("""
+            SELECT s.slot_key, s.start_time, s.end_time, i.menu_item_id
+              FROM outlet_meal_slots s
+              LEFT JOIN meal_slot_items i ON i.slot_id = s.id
+             WHERE s.outlet_id = :oid
+             ORDER BY s.slot_key
+        """), {"oid": str(outlet_id)})).fetchall()
+
+        by_key: dict[str, dict] = {
+            k: {"slot_key": k, "start_time": None, "end_time": None,
+                "item_ids": []}
+            for k in MEAL_SLOT_KEYS
+        }
+        for r in rows:
+            slot = by_key.get(r.slot_key)
+            if slot is None:
+                # A key the database holds but this build does not know. Not
+                # reachable today (the CHECK constraint and MEAL_SLOT_KEYS
+                # agree), and skipped rather than crashing the owner's menu
+                # screen if that ever stops being true.
+                continue
+            slot["start_time"] = (
+                r.start_time.strftime("%H:%M") if r.start_time else None)
+            slot["end_time"] = (
+                r.end_time.strftime("%H:%M") if r.end_time else None)
+            # LEFT JOIN: a saved slot with no dishes yields one row with a NULL
+            # menu_item_id, which must not become a null entry in item_ids.
+            if r.menu_item_id is not None:
+                slot["item_ids"].append(r.menu_item_id)
+        return [by_key[k] for k in MEAL_SLOT_KEYS]
+
+    @staticmethod
+    async def set_meal_slot(
+        db: AsyncSession, outlet_id: uuid.UUID, slot_key: str,
+        start_time: Optional[str], end_time: Optional[str],
+        item_ids: list,
+    ) -> dict:
+        """Replace one slot's times and its entire dish set.
+
+        VALIDATE EVERYTHING FIRST, WRITE NOTHING UNTIL IT PASSES. A single
+        foreign or unknown id fails the whole request with 404 and leaves the
+        slot exactly as it was — the alternative (write the ids that resolve,
+        drop the rest) would silently save a different dish set from the one
+        the owner ticked, which is worse than an error.
+
+        Ownership is the SAME join the per-dish availability route already
+        uses: menu_items -> categories -> menus -> outlet. One restaurant
+        therefore cannot put another restaurant's dish in its slot, nor
+        discover whether an id exists — a foreign id and a nonexistent id are
+        both a flat 404.
+        """
+        o = CarevoService._parse_hhmm(start_time)
+        c = CarevoService._parse_hhmm(end_time)
+
+        # De-duplicate before counting: the primary key collapses repeats
+        # anyway, so a list naming the same dish twice is legitimate input and
+        # must not fail the "did every id resolve" comparison below.
+        wanted = {str(i) for i in (item_ids or [])}
+        if wanted:
+            found = (await db.execute(text("""
+                SELECT mi.id
+                  FROM menu_items mi
+                  JOIN categories c ON c.id = mi.category_id
+                  JOIN menus m ON m.id = c.menu_id
+                 WHERE m.outlet_id = :oid AND mi.id = ANY(:ids)
+            """), {"oid": str(outlet_id), "ids": list(wanted)})).fetchall()
+            if len(found) != len(wanted):
+                raise HTTPException(
+                    status_code=404,
+                    detail="One or more menu items do not belong to this outlet",
+                )
+
+        # Upsert the slot row. ON CONFLICT on the (outlet_id, slot_key) unique
+        # constraint, so a second save edits rather than duplicating, and two
+        # concurrent saves cannot create two rows for one slot.
+        slot_id = await db.scalar(text("""
+            INSERT INTO outlet_meal_slots (outlet_id, slot_key, start_time, end_time)
+            VALUES (:oid, :k, :s, :e)
+            ON CONFLICT (outlet_id, slot_key) DO UPDATE
+               SET start_time = EXCLUDED.start_time,
+                   end_time   = EXCLUDED.end_time,
+                   updated_at = now()
+            RETURNING id
+        """), {"oid": str(outlet_id), "k": slot_key, "s": o, "e": c})
+
+        # Replace the membership wholesale: delete-then-insert inside this one
+        # transaction. Simpler than diffing, and the net effect is identical
+        # because nothing else references a membership row.
+        await db.execute(text("DELETE FROM meal_slot_items WHERE slot_id = :sid"),
+                         {"sid": str(slot_id)})
+        if wanted:
+            await db.execute(text("""
+                INSERT INTO meal_slot_items (slot_id, menu_item_id)
+                SELECT :sid, unnest(CAST(:ids AS uuid[]))
+                ON CONFLICT DO NOTHING
+            """), {"sid": str(slot_id), "ids": list(wanted)})
+        await db.commit()
+
+        slots = await CarevoService.get_meal_slots(db, outlet_id)
+        return next(s for s in slots if s["slot_key"] == slot_key)
+
+    @staticmethod
+    async def apply_meal_slot(
+        db: AsyncSession, outlet_id: uuid.UUID, slot_key: str
+    ) -> dict:
+        """One tap: turn this slot's dishes on and every other dish off.
+
+        ONE TRANSACTION, two UPDATEs, one commit — so the menu is never
+        observable in a half-switched state where last night's dishes and this
+        morning's are both on.
+
+        IDEMPOTENT BY CONSTRUCTION. Each UPDATE guards on the value it is
+        about to change (`is_available = false` before turning on, `= true`
+        before turning off), so a second identical apply matches zero rows and
+        reports turned_on=0, turned_off=0 while leaving the menu in exactly the
+        same state. That is what makes a double-tap safe.
+
+        THE ONE EXCEPTION: a dish that is tracked and sitting at zero is never
+        turned on. Its is_available=false was written by the stock path
+        (stock.py:171-174) and means "there are none", which a menu switch has
+        no business overruling — turning it on would offer a dish the kitchen
+        cannot produce and the order gate would refuse anyway. It is counted
+        as skipped_out_of_stock so the owner is told rather than left to
+        discover it from a customer.
+
+        AN EMPTY SLOT IS REFUSED (422 SLOT_EMPTY) BEFORE ANYTHING IS WRITTEN.
+        Applying the empty set would mean "turn the entire menu off", which is
+        the one destructive reading of this action and is never what a tap on
+        an unconfigured chip meant.
+
+        Outlet-scoped through the same menu_items -> categories -> menus ->
+        outlet join as everything else here, on BOTH updates, so applying a
+        slot cannot alter another restaurant's dishes even if a slot id from
+        elsewhere were somehow supplied.
+        """
+        slot_id = await db.scalar(text(
+            "SELECT id FROM outlet_meal_slots "
+            "WHERE outlet_id = :oid AND slot_key = :k"
+        ), {"oid": str(outlet_id), "k": slot_key})
+
+        member_ids = []
+        if slot_id is not None:
+            member_ids = [
+                r[0] for r in (await db.execute(text(
+                    "SELECT menu_item_id FROM meal_slot_items WHERE slot_id = :sid"
+                ), {"sid": str(slot_id)})).fetchall()
+            ]
+        if not member_ids:
+            raise HTTPException(status_code=422, detail={
+                "error": "SLOT_EMPTY",
+                "slot_key": slot_key,
+                "message": (
+                    "This meal time has no dishes yet. Add some before "
+                    "switching to it."
+                ),
+            })
+
+        ids = [str(i) for i in member_ids]
+        params = {"oid": str(outlet_id), "ids": ids}
+
+        # Turn ON the slot's dishes that are currently off, except anything
+        # tracked and at zero.
+        on_rows = (await db.execute(text(f"""
+            UPDATE menu_items mi
+               SET is_available = true
+              FROM categories c, menus m
+             WHERE mi.category_id = c.id AND c.menu_id = m.id
+               AND m.outlet_id = :oid
+               AND mi.id = ANY(CAST(:ids AS uuid[]))
+               AND mi.is_active = true
+               AND mi.is_available = false
+               AND NOT {CarevoService._OUT_OF_STOCK_SQL}
+            RETURNING mi.id
+        """), params)).fetchall()
+
+        # Turn OFF every other dish of this outlet that is currently on.
+        #
+        # is_active = true on both updates: a soft-deleted dish (the DELETE
+        # route sets is_active = false AND is_available = false together) is
+        # not part of "every other dish" in any sense the owner means, and
+        # counting it would inflate turned_off with rows no customer can see.
+        off_rows = (await db.execute(text("""
+            UPDATE menu_items mi
+               SET is_available = false
+              FROM categories c, menus m
+             WHERE mi.category_id = c.id AND c.menu_id = m.id
+               AND m.outlet_id = :oid
+               AND NOT (mi.id = ANY(CAST(:ids AS uuid[])))
+               AND mi.is_active = true
+               AND mi.is_available = true
+            RETURNING mi.id
+        """), params)).fetchall()
+
+        # Counted every time, not only on the first apply: it describes the
+        # STATE the owner is being handed ("1 of these is sold out"), not what
+        # this particular call changed. A second apply still reports it.
+        skipped = await db.scalar(text(f"""
+            SELECT count(*)
+              FROM menu_items mi
+              JOIN categories c ON c.id = mi.category_id
+              JOIN menus m ON m.id = c.menu_id
+             WHERE m.outlet_id = :oid
+               AND mi.id = ANY(CAST(:ids AS uuid[]))
+               AND mi.is_active = true
+               AND {CarevoService._OUT_OF_STOCK_SQL}
+        """), params)
+
+        await db.commit()
+        return {
+            "slot_key": slot_key,
+            "turned_on": len(on_rows),
+            "turned_off": len(off_rows),
+            "skipped_out_of_stock": int(skipped or 0),
+        }

@@ -1293,3 +1293,69 @@ class CityOut(BaseModel):
     """One selectable city for the owner signup dropdown."""
     id: uuid.UUID
     name: str
+
+
+# ------------------------- Meal-time slots (043) ----------------------------
+#: The only four legal slot keys. A fifth value is a 422 at the route, and the
+#: database refuses it too (ck_outlet_meal_slots_slot_key), so this list and
+#: the CHECK must stay in step.
+MEAL_SLOT_KEYS = ("morning", "afternoon", "evening", "night")
+
+
+class MealSlotOut(BaseModel):
+    """One slot as the owner app renders it.
+
+    `start_time` / `end_time` are HH:MM strings and DISPLAY ONLY — the label on
+    the chip. Nothing on the server reads them to decide anything and no slot
+    is applied automatically when the clock reaches one; applying is always an
+    explicit tap. The times that genuinely gate behaviour are the outlet's
+    opening_time/closing_time (migration 024), which gate ORDERING.
+
+    Always present for all four keys even when the owner has never saved one,
+    in which case both times are null and `item_ids` is empty. The app can
+    therefore render four chips without a "does this slot exist" branch, and
+    an empty `item_ids` is exactly what makes a chip read "Set up".
+    """
+
+    slot_key: str
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    item_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class SetMealSlotIn(BaseModel):
+    """Replace one slot's times and its WHOLE dish set.
+
+    `item_ids` is a REPLACEMENT, not a delta: whatever is sent becomes the
+    slot's membership. That matches the editor, which posts the state of its
+    checkbox list, and it means the API has no "remove this dish" verb to keep
+    consistent with the "add" one.
+
+    Duplicates in the list are harmless — the (slot_id, menu_item_id) primary
+    key collapses them — but every id must belong to the caller's own outlet or
+    the entire request is refused with 404 and nothing is written.
+    """
+
+    start_time: Optional[str] = Field(None, pattern=_HHMM)
+    end_time: Optional[str] = Field(None, pattern=_HHMM)
+    item_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class ApplyMealSlotOut(BaseModel):
+    """What one tap of a slot actually changed.
+
+    Three counts rather than a bare ok, because the interesting case is
+    `skipped_out_of_stock`: a dish in the slot that was NOT turned on because
+    it is tracked and sitting at zero. Reporting that is the difference
+    between an owner seeing "12 on, 1 skipped" and silently serving a menu
+    with a dish they believe they switched on.
+
+    `turned_on` and `turned_off` count rows actually CHANGED, so a second
+    identical apply reports zeros for both while leaving the menu in the same
+    state — which is what makes the operation safe to double-tap.
+    """
+
+    slot_key: str
+    turned_on: int
+    turned_off: int
+    skipped_out_of_stock: int

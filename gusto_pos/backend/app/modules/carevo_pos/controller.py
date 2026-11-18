@@ -219,6 +219,86 @@ async def set_item_availability(
     )
 
 
+# ---------------------- Meal-time slots (migration 043) ---------------------
+def _require_slot_key(slot_key: str) -> str:
+    """One of the four legal keys, or 422.
+
+    Validated here rather than by typing the path parameter as an Enum so the
+    refusal carries the legal values in its message. The database CHECK
+    (ck_outlet_meal_slots_slot_key) is the backstop behind this, not the
+    front door.
+    """
+    key = (slot_key or "").strip().lower()
+    if key not in s.MEAL_SLOT_KEYS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"slot_key must be one of {', '.join(s.MEAL_SLOT_KEYS)}",
+        )
+    return key
+
+
+@router.get("/meal-slots", response_model=list[s.MealSlotOut])
+async def list_meal_slots(
+    staff: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """All four meal slots for the caller's outlet, saved or not.
+
+    Readable by ANY active staff of the outlet, deliberately: the chip row is
+    how whoever is on shift sees which menu is currently up. Changing a slot
+    is the restricted action, not looking at one.
+    """
+    return await CarevoService.get_meal_slots(db, _require_outlet(staff))
+
+
+@router.put("/meal-slots/{slot_key}", response_model=s.MealSlotOut)
+async def set_meal_slot(
+    slot_key: str,
+    payload: s.SetMealSlotIn,
+    staff: User = Depends(get_outlet_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """Replace one slot's times and its whole dish set.
+
+    OWNER / MANAGER only — the same get_outlet_manager gate as the payment
+    settings and /payment-not-received, because defining the slots decides
+    what the restaurant can sell at each part of the day. Applying one is a
+    shift-floor action and is NOT restricted; see the apply route below.
+
+    Every item_id must belong to this outlet via the existing menu_items ->
+    categories -> menus -> outlet join. One foreign or unknown id refuses the
+    whole request with 404 and writes nothing.
+    """
+    return await CarevoService.set_meal_slot(
+        db, _require_outlet(staff), _require_slot_key(slot_key),
+        payload.start_time, payload.end_time, payload.item_ids,
+    )
+
+
+@router.post("/meal-slots/{slot_key}/apply", response_model=s.ApplyMealSlotOut)
+async def apply_meal_slot(
+    slot_key: str,
+    staff: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Turn this slot's dishes on and every other dish of the outlet off.
+
+    ANY active staff with an outlet, unlike the editor above. Switching from
+    the breakfast menu to the lunch menu is what the person opening up does,
+    and gating it on the owner's own login would mean the menu is wrong until
+    they wake up. It only ever moves availability between dishes the owner
+    already chose, so the blast radius is bounded by the slot.
+
+    One transaction. Idempotent — a second tap reports zeros and changes
+    nothing. A dish tracked at zero stock is left off and counted as
+    skipped_out_of_stock. An empty slot is refused with 422 SLOT_EMPTY rather
+    than turning the entire menu off.
+    """
+    return await CarevoService.apply_meal_slot(
+        db, _require_outlet(staff), _require_slot_key(slot_key)
+    )
+
+
 # ------------------------- Menu CRUD (Owner App) ---------------------------
 @router.get("/categories", response_model=list[s.OwnerCategoryOut])
 async def list_categories(
