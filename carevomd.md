@@ -8013,3 +8013,272 @@ NOT applied to prod; no backfill (see the SQL below).
 
 Suite: **1101 passed, 1 xfailed -> 1149 passed, 1 xfailed.** 48 new tests, no
 regressions. Nothing pushed, nothing deployed, prod DB untouched.
+
+---
+
+## 2026-11-19 — Local emulator test rig for Gusto Skip (branch 21_7)
+
+A rig for testing both Flutter apps on an Android emulator against a backend
+on this machine. Neon, Render and every production credential were untouched.
+
+**Database.** `tests/reset_test_db.py` dropped and rebuilt the scratch
+`carevo_test` (127.0.0.1) — it had drifted to 3,884 outlets / 7,576 users of
+pytest residue and was missing migration 043, so `meal_slots` did not exist.
+Rebuilt: 25 base tables, 43 migrations, 55 tables final. Seeded ONE fake
+outlet (Local Test Kitchen, Bengaluru/Koramangala, manual acceptance, UPI
+manual + pay-at-pickup, 6 dishes in 2 categories, all four meal slots left
+EMPTY so the "Set up" path is testable), one owner login and one customer.
+
+**Backend.** Local uvicorn on 0.0.0.0:8000 with APP_ENV=local,
+PAYMENT_GATEWAY=stub, OTP_STUB_MODE=true, FIREBASE_ENABLED=false.
+`GET /` -> 200. Env vars, not the committed `.env`, which still names Neon.
+
+**One committed file changed:** `customer_app/android/app/src/debug/
+AndroidManifest.xml` gained `usesCleartextTraffic="true"`, which owner_app's
+debug manifest already had. Without it the customer debug build cannot reach
+`http://10.0.2.2:8000` at all — cleartext is off by default at this targetSdk.
+Debug source set only; no release setting, version or API-base default moved.
+
+**Builds.** Both debug APKs built with
+`--dart-define=API_BASE_URL=http://10.0.2.2:8000/api/v1` (customer also
+`USE_FIREBASE_AUTH=false`). The override is present in both kernel blobs.
+Emulator available: `pixel_7_-_api_36_0`. Nothing was installed anywhere.
+
+**Local-only docs** (both added to `.git/info/exclude`, neither committed):
+`docs/local_test_logins.txt` and `docs/emulator_test_checklist.txt` — a
+15-step script covering the 4fc4b449-era payment checks and the new meal-slot
+and closed-state checks. The emulator tests themselves were NOT run.
+
+---
+
+## 2026-11-24 — POS registration link (Phase A: Skip side), branch `21_7`
+
+Implements the Task 1 contract from the mission prompt, as amended by the
+user mid-session (see below) — a one-time Registration ID flow replacing
+open sign-up on the Native Gusto POS. **Nothing applied to any database,
+nothing committed, nothing pushed.** This entry covers code/file writes
+only.
+
+**Contract amendments the user made before implementation** (override the
+original mission prompt where they conflict):
+1. `fixed-test` mode gated by the existing `NON_PRODUCTION_ENVS` convention
+   (`app/core/config.py`), not a hostname sniff.
+2. **No HMAC, no `POS_LINK_SHARED_SECRET`.** `/pos-link/verify` and
+   `/pos-link/consume` are public endpoints — "a secret embedded in the
+   desktop installer is not a secret." Protection is code entropy + TTL +
+   single-use + rate limiting only.
+3. Rate limiting: existing in-memory per-IP pattern (5 failures/IP/15min)
+   PLUS a new DB-backed global failure counter (50 failures/hour -> 10 min
+   cooldown), because the in-memory counters reset on restart.
+4. Migration `migrations/044_pos_registration.sql`, raw idempotent SQL, no
+   Alembic. Apply ONLY to `carevo_test`, never Neon. Diff shown for approval
+   BEFORE applying anywhere — not yet approved as of this entry.
+5. Never log/print/write a code, `registration_ref`, or any secret value.
+6. Phase B (POS repo) will need only `SKIP_LINK_BASE_URL`, no shared secret.
+
+**Files written:**
+- `gusto_pos/backend/migrations/044_pos_registration.sql` — NEW. Creates
+  `pos_registration_codes`, `pos_link_rate_limit_state`; adds
+  `outlets.pos_registered_at`. Idempotent (`CREATE TABLE IF NOT EXISTS` /
+  `ADD COLUMN IF NOT EXISTS`). **NOT APPLIED anywhere, including
+  `carevo_test`** — awaiting Checkpoint A approval.
+- `gusto_pos/backend/app/modules/pos_link/{__init__,schema,service,
+  controller}.py` — NEW module. `PosLinkService.mint_code/verify/consume`;
+  reuses `carevo_pos.deps.get_outlet_manager` for owner auth (no second auth
+  path), SHA-256(code + `SECRET_KEY` pepper) hashing, generic `400 "Code not
+  valid"` on every failure path, two-layer rate limiting.
+- `gusto_pos/backend/app/core/config.py` — added `POS_REG_MODE` and five
+  other `POS_LINK_*` settings; added `PosLinkConfigError` +
+  `validate_pos_link_startup_posture` (mirrors `validate_auth_posture`
+  exactly).
+- `gusto_pos/backend/app/main.py` — registered `pos_link_router`; wired
+  `validate_pos_link_startup_posture()` into `on_startup`, alongside the
+  existing Cashfree/auth posture checks.
+- `gusto_pos/backend/tests/test_api_pos_link_posture.py` — NEW. Unit-level,
+  no DB. **Ran this session: 21 passed, 0 failed.**
+- `gusto_pos/backend/tests/test_api_pos_link.py` — NEW. HTTP-level, needs
+  migration 044 applied to `carevo_test`. **NOT YET RUN** — blocked on
+  Checkpoint A.
+- `owner_app/lib/services/pos_link_service.dart`,
+  `owner_app/lib/screens/connect_pos_screen.dart` — NEW. "Connect your POS"
+  screen: mints a fresh code on every open (revokes the prior one
+  server-side), live countdown, copy-to-clipboard, "not yet approved" state
+  on a 403. No hardcoded code, no test flag.
+- `owner_app/lib/main.dart`, `owner_app/lib/screens/home_screen.dart` —
+  wired the new service/screen into the existing provider tree and app bar.
+- `docs/pos_registration_link.md` — NEW. Flow, endpoints, why no HMAC,
+  rate-limit design, modes, env vars, schema, test status.
+
+**Verified this session (no DB, no app startup):**
+- `app.main` imports cleanly with all three new routes present
+  (`/api/v1/owner/pos-registration-code`, `/api/v1/pos-link/verify`,
+  `/api/v1/pos-link/consume`) — checked by importing the ASGI app directly,
+  no server run, no DB connection attempted.
+- `validate_pos_link_startup_posture` refuses `POS_REG_MODE=fixed-test` in
+  `production`, allows it in `dev`, allows `random` (default) in
+  `production` — checked by calling the function directly with constructed
+  `Settings` objects.
+- `flutter analyze` in `owner_app`: 33 issues found, **none** in the two new
+  files or the edited lines in `main.dart`/`home_screen.dart` (confirmed by
+  grepping the output for those paths).
+
+**Not yet done (blocked on Checkpoint A / user approval):**
+- Migration 044 not applied to `carevo_test` or anywhere else.
+- `tests/test_api_pos_link.py` not run (needs the migration applied first).
+- Task 6 (Google Play readiness audit for `customer_app`/`owner_app`) is
+  read-only research, reported separately, no file writes.
+- Phase B (POS repo, `C:\gusto_test1`) not started — explicit user
+  instruction to wait for "proceed" after this checkpoint.
+
+---
+
+## 2026-11-24 (same day, after approval) — Migration 044 applied to carevo_test; Phase B started
+
+User approved Checkpoint A explicitly ("apply migration 044 to carevo_test")
+and told Phase B to proceed. **Applied ONLY to the local `carevo_test`
+database** via `PYTHONPATH=. python tests/reset_test_db.py` from
+`gusto_pos/backend` — that script is hardcoded (`assert_safe_target`) to
+refuse any host other than `127.0.0.1`/`localhost` and any database name
+other than `carevo_test`; it drops/rebuilds the whole DB from base tables +
+all 44 migrations in order. **Never touched Neon (prod or any dev branch).**
+
+**Test results (Skip repo, carevo_test):**
+- `tests/test_api_pos_link.py` + `tests/test_api_pos_link_posture.py`:
+  **34 passed, 0 failed.**
+- Full suite (`python -m pytest -q`, three separate runs to get a clean
+  summary line past an intermittent output-capture truncation in this
+  session's shell tool — not a test issue): run 1 showed **1 failure**
+  (`test_api_stock_hold_ttl.py::TestSweep::test_it_leaves_an_unexpired_hold_alone`);
+  re-run of that file ALONE passed (36/36); a full clean re-run of the
+  entire suite showed **0 failures**. Conclusion: that one failure was
+  cross-test pollution from the full run's shared process/DB, not caused by
+  anything in this session's changes (nothing touched `stock.py` or
+  anything in that area) — reported as the flake it is, not hidden.
+  Total suite size: **1584 passed + 1 xfailed = 1585**, confirmed by the
+  clean re-run.
+
+No other write to this repo in this entry — the rest of today's work
+(Phase B) is in the Native Gusto POS repo (`C:\gusto_test1`), which has its
+own `docs/POS_REGISTRATION_LINK.md` rather than a carevomd.md (that
+convention is specific to this repo per AGENT_GUARDRAILS.md). Summary for
+cross-reference: gated `/auth/register` behind a `registrationToken` minted
+from Skip's `/pos-link/verify`/`consume` (no HMAC, matching this repo's own
+public, unauthenticated pos-link endpoints by design); new
+`Branch.skipOutletId`/`skipRegisteredAt` columns (own migration,
+`20261124000000_pos_registration_link`, applied only to a local scratch
+Postgres DB, never to anything resembling production); `/register` page in
+`apps/web`; `/signup` now redirects there. Backend unit tests (5/5) and a
+self-contained Playwright suite against a mocked Skip (5/5, API-level) both
+passing. Full details, env vars, and the literal list of changed files are
+in that repo's own doc and session report — nothing here needs duplicating
+beyond this pointer.
+
+---
+
+## 2026-11-24 (same day, third pass) — Live no-mock verification, two defects fixed, Play-readiness fixes
+
+Verified the POS registration link against the REAL Skip backend and the
+REAL POS backend (no mocks), both running locally. **No Neon branch, no
+production database touched** — Skip side used `carevo_test` only; POS
+side used scratch Postgres databases, dropped after use.
+
+**Services run (local only):** Skip backend on `127.0.0.1:8001`
+(`APP_ENV=test`, alternating `POS_REG_MODE=fixed-test`/`random` across
+test phases, `DATABASE_URL` -> `carevo_test`). POS backend on
+`127.0.0.1:4105`/`4106` against fresh scratch Postgres DBs, each with
+`SKIP_LINK_BASE_URL` pointed at the real local Skip. A plain Node delaying
+reverse proxy (not a mock of Skip's responses — a real proxy to the real
+Skip, just slow) was used once to test the 90s timeout + one retry.
+
+**Fixtures used (TEST_CAREVO_ prefixed, AGENT_GUARDRAILS discipline):**
+several outlet+owner rows created and torn down via `asyncpg` scripts, each
+run proving a 0 delta on `organizations`/`outlets`/`users`/
+`pos_registration_codes` row counts after teardown. One stray pair (browser
+-flow fixtures, tags `27bdaae2`/`55f56f73`) was torn down in a follow-up
+script after the fact — confirmed 0 remaining.
+
+**Two real defects found and fixed (both in code written this same day,
+earlier in this session — not pre-existing):**
+
+1. **Missing `Retry-After` header on `/pos-link/verify`'s 429 response**
+   (`app/modules/pos_link/service.py`, both `check_rate_limit` and
+   `check_global_cooldown`). Every other rate limiter in this codebase
+   sends one; this one didn't. Found by literally hitting the live
+   endpoint 6 times and inspecting headers. Added a new failing test
+   (`tests/test_api_pos_link.py::TestVerify::test_rate_limit_429_has_retry_after_header`)
+   first, confirmed it failed, then fixed, confirmed it passed.
+2. **POS backend mapped a 429 from Skip to a 400** (`apps/backend/src/
+   modules/registration/registration.service.ts`'s `mapSkipError` --
+   `SkipLinkRateLimitedError` was wrapped in a `BadRequestException`
+   instead of a 429 `HttpException`). Found via the live slow-Skip test
+   when the in-memory per-IP bucket on Skip (shared across this session's
+   repeated test calls) tripped mid-test. New failing spec
+   (`registration.service.spec.ts`, three cases: 429/400/unreachable) added
+   first in the POS repo, confirmed it failed, then fixed.
+
+**Also found, not a defect, worth recording:** `fixed-test` mode's
+`consumed_at` stays NULL by design (the mode is "reusable" per its own
+spec) -- `random` mode sets it. The mission's Task 3.4 wording assumed the
+default mode; cross-checked both explicitly in this session.
+
+**Test counts after both fixes:**
+- Skip: `test_api_pos_link.py` + `test_api_pos_link_posture.py`: 35 passed
+  (was 34; +1 new regression test). Full suite: reset `carevo_test` via
+  `tests/reset_test_db.py` (the DB had accumulated enough rows across many
+  past sessions that 5 unrelated admin/promotions-listing tests were
+  failing on stale pagination -- reproduced in isolation, confirmed
+  unrelated to this feature, fixed by resetting the disposable test DB,
+  not by changing any application code). See the session's own final
+  report for the post-reset literal count.
+- POS: `registration.service.spec.ts` (new): 3/3. Full jest suite: 307
+  passed (was 304), 13 skipped, 0 failed. Playwright registration suite:
+  5/5, unchanged.
+
+**Also verified live (no mocks), summarized — full detail in the session
+report, not duplicated here:** wrong/expired/used code all return the
+identical `400 "Code not valid"`; token-claim identity cannot be
+overridden by the request body (tried deliberately, confirmed ignored);
+reused token refused (409, since this install already has a restaurant);
+no-token refused; `random` mode regenerate revokes the prior code; 6th
+rate-limited attempt returns 429 (with `Retry-After`, post-fix); a
+production-posture start with `POS_REG_MODE=fixed-test` refuses to start,
+literal error text captured; a 95s-delayed Skip triggers exactly one retry
+(2 proxy hits, ~180s total, then 503) and a 60s delay does not (1 hit,
+succeeds within the 90s timeout); `/register` against a `next build` +
+`next start` production server works in a real browser end-to-end
+(code -> prefilled Create Account, with real Skip data -- not a mock ->
+account created -> `/dashboard`), resolving the earlier session's
+`next dev` Turbopack-specific stall.
+
+**Play-readiness fixes (small, scoped, per explicit instruction):**
+- `customer_app/android/app/build.gradle.kts`,
+  `owner_app/android/app/build.gradle.kts`: `targetSdk` pinned to the
+  literal `36` (was `flutter.targetSdkVersion`, which drifts with whatever
+  Flutter SDK happens to build the release).
+- `customer_app/lib/config/app_config.dart`: `devOtpCode` changed from a
+  bare `'000000'` literal to `kDebugMode ? '000000' : ''`, so the literal
+  const-folds away entirely in a release build rather than merely being
+  unreachable at runtime. **Verified, not just claimed:** built a real
+  `flutter build apk --release`, extracted `libapp.so` for all three ABIs,
+  and confirmed byte-for-byte that neither `'000000'` nor any of the
+  dev-shortcut UI strings ("Skip (dev", "Dev build: use code") appear
+  anywhere in the compiled binary.
+- `docs/play/PRIVACY_POLICY.md`, `docs/play/ACCOUNT_DELETION_REQUEST.html`,
+  `docs/play/README.md`: **drafts only, not published, not linked from any
+  app.** Company CareVo, contact adithya@carevo.co.in, data list drawn from
+  the earlier Play-readiness audit. 11 distinct bracketed placeholders
+  (registered address, grievance officer, retention policy, etc.), all
+  listed in `docs/play/README.md` -- none guessed or invented.
+- `docs/DEPLOY_POS_REGISTRATION.md` (this repo) and the POS repo's own copy:
+  written, not run. Surfaced two real mismatches with the mission's
+  assumptions rather than writing around them: this repo's Render
+  blueprint pins the Skip service to branch `21_7` (current branch is
+  `fix/upi-ref-accept-sheet`), and neither repo's deploy actually uses a
+  Render `preDeployCommand` the way the mission text assumed -- Skip's
+  deploy runs no migration at all (manual `scripts/apply_migrations.py`
+  is the real mechanism); the POS repo's Docker `CMD` runs
+  `prisma migrate deploy` on every container start instead.
+
+**Nothing committed, nothing pushed, nothing deployed, no Neon branch
+touched.** Changed-file list and secret-scan results (0 matches) are in the
+session's own Checkpoint report, pending "commit approved".

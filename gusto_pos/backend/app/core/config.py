@@ -314,6 +314,25 @@ class Settings(BaseSettings):
     # amount_paise, payment_events.amount -- all paise, never rupees).
     SERVICE_FEE_PAISE: int = 100
 
+    # --- POS registration link (Native Gusto POS <-> Gusto Skip) -----------
+    # 'random' (default): CSPRNG 8-char code, 15 min TTL, single use.
+    # 'fixed-test': code is always "1234", reusable, TTL ignored. SERVER-SIDE
+    # ONLY -- never read by any client build. Refused at startup outside
+    # NON_PRODUCTION_ENVS, see validate_pos_link_startup_posture below.
+    POS_REG_MODE: str = "random"
+    POS_REG_CODE_TTL_MINUTES: int = 15
+    # Per-IP cap on FAILED /pos-link/verify or /pos-link/consume calls.
+    # Mirrors check_register_rate_limit's in-memory pattern -- forgotten on
+    # restart, which is exactly why POS_LINK_GLOBAL_FAILURE_LIMIT below also
+    # exists as a DB-backed backstop.
+    POS_LINK_RATE_LIMIT_PER_IP: int = 5
+    POS_LINK_RATE_LIMIT_WINDOW_SECONDS: int = 900
+    # DB-backed GLOBAL failure counter (pos_link_rate_limit_state, migration
+    # 044): survives a restart/redeploy, unlike the per-IP bucket above.
+    POS_LINK_GLOBAL_FAILURE_LIMIT: int = 50
+    POS_LINK_GLOBAL_FAILURE_WINDOW_SECONDS: int = 3600
+    POS_LINK_GLOBAL_COOLDOWN_SECONDS: int = 600
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()
@@ -501,4 +520,48 @@ def validate_auth_posture(cfg: "Settings" = None, *,
         "OTP_STUB_MODE=false (and/or CUSTOMER_AUTH_ENABLED=false) before "
         "deploying here. The variables OTP_STUB_MODE and "
         "CUSTOMER_AUTH_ENABLED are the ones that must change"
+    )
+
+
+class PosLinkConfigError(RuntimeError):
+    """Raised at startup when POS_REG_MODE=fixed-test would be reachable in
+    production.
+
+    Deliberately not swallowed anywhere — letting this propagate out of the
+    FastAPI startup event is what makes the process refuse to start, rather
+    than booting into a state where every POS registration ID in
+    /owner/pos-registration-code is the literal "1234", reusable, with no
+    expiry.
+    """
+
+
+def validate_pos_link_startup_posture(cfg: "Settings" = None, *,
+                                       env_name: Optional[str] = None) -> None:
+    """Fail closed: POS_REG_MODE=fixed-test must never be reachable outside a
+    non-production environment. Checked once at process startup
+    (app/main.py's on_startup), alongside — and independently of — the
+    Cashfree/auth guards above. Uses the SAME NON_PRODUCTION_ENVS set as
+    those checks, so this can never silently drift from them.
+
+    Raises PosLinkConfigError naming the offending variable (POS_REG_MODE).
+    Never a secret — POS_REG_MODE carries no secret value.
+
+    No-op when:
+      * `env_name` (default: the live APP_ENV) is in NON_PRODUCTION_ENVS, or
+        is the literal test marker, or
+      * POS_REG_MODE is not "fixed-test" — the mode nothing has turned on.
+    """
+    cfg = cfg if cfg is not None else settings
+    if env_name is None:
+        env_name = os.getenv("APP_ENV", "production").strip().lower()
+    if env_name in NON_PRODUCTION_ENVS or env_name == _TEST_APP_ENV:
+        return
+    if (cfg.POS_REG_MODE or "").strip().lower() != "fixed-test":
+        return
+
+    raise PosLinkConfigError(
+        "POS_REG_MODE=fixed-test leaves every POS registration ID as the "
+        "literal \"1234\", reusable, with no expiry; this must never run in "
+        "production. Set POS_REG_MODE=random (or unset it) before deploying "
+        "here. The variable POS_REG_MODE is the one that must change"
     )

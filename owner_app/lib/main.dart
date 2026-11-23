@@ -15,6 +15,7 @@ import 'services/menu_service.dart';
 import 'services/offer_service.dart';
 import 'services/order_service.dart';
 import 'services/outlet_service.dart';
+import 'services/pos_link_service.dart';
 import 'services/staff_push_service.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
@@ -95,6 +96,9 @@ List<SingleChildWidget> buildAppProviders(ApiClient apiClient) {
     // Menu photo import. Holds no state — it uploads and returns
     // suggestions; the review screen owns them until they are approved.
     Provider(create: (_) => MenuOcrService(apiClient)),
+    // POS registration link ("Connect your POS"). Holds no state — it mints
+    // a fresh code on demand; the screen owns the countdown.
+    Provider(create: (_) => PosLinkService(apiClient)),
   ];
 }
 

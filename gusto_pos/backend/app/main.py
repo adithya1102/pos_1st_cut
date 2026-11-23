@@ -33,6 +33,7 @@ from app.modules.carevo_customer.controller import router as carevo_customer_rou
 from app.modules.carevo_pos.controller import router as carevo_pos_router
 from app.modules.menu_ocr.controller import router as menu_ocr_router
 from app.modules.onboarding.controller import router as onboarding_router
+from app.modules.pos_link.controller import router as pos_link_router
 
 # Local testing dashboard (additive; every route gated by X-Testing-Key)
 from app.modules.testing_dashboard.controller import router as testing_router
@@ -135,6 +136,14 @@ async def on_startup():
     from app.core.config import validate_auth_posture
     validate_auth_posture()
 
+    # Fail-closed POS-link posture: POS_REG_MODE=fixed-test (every
+    # registration ID is the literal "1234", reusable, no expiry) must never
+    # be reachable outside a non-production environment. Raises
+    # PosLinkConfigError, deliberately NOT caught, same shape as the checks
+    # above.
+    from app.core.config import validate_pos_link_startup_posture
+    validate_pos_link_startup_posture()
+
     # Fail-closed secrets-at-rest posture: refuse to start with
     # VENDOR_GATEWAY_ENABLED=true and no usable SECRETS_ENC_KEY. A no-op
     # while the flag is false. Raises SecretsBoxConfigError, uncaught, same
@@ -225,6 +234,9 @@ app.include_router(menu_ocr_router, prefix="/api/v1")
 app.include_router(testing_router, prefix="/api/v1")
 # Public owner self-signup → /api/v1/register (unauthenticated, rate-limited).
 app.include_router(onboarding_router, prefix="/api/v1")
+# POS registration link → /api/v1/owner/pos-registration-code (owner auth);
+# /api/v1/pos-link/verify, /api/v1/pos-link/consume (public, rate-limited).
+app.include_router(pos_link_router, prefix="/api/v1")
 # CareVo Admin router → /api/v1/admin/...  (inert until migration 003 + a
 # SUPER_ADMIN role grant exist; every route 403s for ordinary staff.)
 app.include_router(carevo_admin_router, prefix="/api/v1")

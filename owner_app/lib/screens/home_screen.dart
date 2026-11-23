@@ -21,6 +21,7 @@ import '../widgets/dish_row.dart';
 import '../widgets/order_acceptance_modal.dart';
 import '../widgets/menu_import_empty_state.dart';
 import 'change_password_screen.dart';
+import 'connect_pos_screen.dart';
 import 'outlet_settings_screen.dart';
 import 'dish_edit_screen.dart';
 import 'offers_screen.dart';
@@ -290,6 +291,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             icon: const Icon(Icons.schedule_outlined),
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const OutletSettingsScreen()),
+            ),
+          ),
+          IconButton(
+            key: const Key('open_connect_pos'),
+            tooltip: 'Connect your POS',
+            icon: const Icon(Icons.point_of_sale_outlined),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const ConnectPosScreen()),
             ),
           ),
           IconButton(
