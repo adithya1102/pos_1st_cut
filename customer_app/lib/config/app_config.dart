@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
+
 /// Central, swappable configuration for the CareVo Skip customer app.
 ///
 /// The base URL defaults to the deployed backend on Render.
@@ -32,7 +34,15 @@ class AppConfig {
 
   /// Dev OTP code accepted by the stub auth service / backend stub.
   /// Only meaningful when [useFirebaseAuth] is false.
-  static const String devOtpCode = '000000';
+  ///
+  /// `kDebugMode ? '000000' : ''`, NOT a bare literal: `kDebugMode` is a
+  /// compile-time constant (false in every release build), so this whole
+  /// expression const-folds to `''` at compile time in release -- the
+  /// literal `'000000'` is dead code and is never emitted into the release
+  /// binary at all, not just unreachable at runtime. Verified by building a
+  /// release APK and confirming the string is absent from it (see
+  /// docs/play/ in the session that added this).
+  static const String devOtpCode = kDebugMode ? '000000' : '';
 
   /// Real Firebase phone OTP (default) vs the backend stub. Opt back into the
   /// stub for offline/dev work against a backend without FIREBASE_ENABLED:

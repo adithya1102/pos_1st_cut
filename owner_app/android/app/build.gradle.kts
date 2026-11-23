@@ -69,7 +69,10 @@ android {
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        // Pinned (Play Console target-API requirement): the Flutter-tooling
+        // default resolves to whatever SDK the installed Flutter happens to
+        // ship, which drifts the shipped targetSdk without any repo change.
+        targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }

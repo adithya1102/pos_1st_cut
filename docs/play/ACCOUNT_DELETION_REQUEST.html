@@ -1,0 +1,73 @@
+<!--
+  DRAFT ONLY — not published, not hosted, not linked from any app or
+  Play Console listing. Written for the Google Play account-deletion-
+  request requirement (a web page reachable even without the app
+  installed). Placeholders are listed at the bottom of this file and in
+  docs/play/PRIVACY_POLICY.md's own placeholder list.
+
+  Company: CareVo. Contact: adithya@carevo.co.in.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Delete your Gusto Skip account — CareVo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; line-height: 1.6; color: #171512; }
+  h1 { font-size: 1.5rem; }
+  .notice { background: #f5f3f0; border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin: 20px 0; }
+  label { display: block; margin-top: 16px; font-weight: 600; }
+  input, textarea { width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
+  button { margin-top: 20px; padding: 10px 20px; background: #6B2FB3; color: white; border: none; border-radius: 6px; cursor: pointer; }
+  footer { margin-top: 40px; font-size: 0.85rem; color: #666; }
+</style>
+</head>
+<body>
+
+<h1>Delete your Gusto Skip account</h1>
+
+<p>
+  Gusto Skip already offers in-app account deletion
+  (Profile → Delete account). Use this page only if you no longer have the
+  app installed, or prefer to request deletion by email.
+</p>
+
+<div class="notice">
+  <strong>What gets deleted:</strong> your name, phone number, email,
+  order history, and loyalty points balance. [CONFIRM EXACT RETENTION
+  BEHAVIOR — e.g. "order records required for tax/accounting purposes are
+  retained for [N] days in anonymized form" — before publishing; do not
+  promise immediate, total erasure unless that is literally true of the
+  backend's delete-account implementation.]
+</div>
+
+<!--
+  DRAFT FORM ONLY. Before publishing, this must actually submit to a real,
+  authenticated-by-email-ownership endpoint (e.g. a verification email with
+  a confirm link) — a bare form that deletes on submission with no identity
+  check would let anyone delete anyone else's account by guessing a phone
+  number. This is a layout draft, not a wired integration.
+-->
+<form>
+  <label for="identifier">Phone number or email on your account</label>
+  <input type="text" id="identifier" name="identifier" placeholder="e.g. +91 98765 43210 or you@example.com" required />
+
+  <label for="reason">Reason (optional)</label>
+  <textarea id="reason" name="reason" rows="3"></textarea>
+
+  <button type="submit" disabled>Request deletion (not yet wired — draft only)</button>
+</form>
+
+<p>
+  You can also email <strong>adithya@carevo.co.in</strong> from the address
+  on your account and we will process the deletion request manually within
+  [SLA — e.g. "30 days"].
+</p>
+
+<footer>
+  CareVo · [REGISTERED ADDRESS] · <a href="PRIVACY_POLICY.md">Privacy Policy</a>
+</footer>
+
+</body>
+</html>
